@@ -32,7 +32,7 @@ Search may call a model. / 搜索可能调用模型。
 New restricted conversation / 新建受限会话：
   anda agent run --memory-mode no-store --prompt 'Help with this task'
   anda agent run --memory-mode off --prompt 'Use only this new conversation'
-These constrain Brain/Notes, not chat, files, logs or providers. / 只约束 Brain/Notes，聊天、文件、日志和服务商处理仍保留。
+These constrain Brain, not chat, files, logs or providers. / 只约束 Brain，聊天、文件、日志和服务商处理仍保留。
 Optional inbox / 可选待办：anda memory inbox setup → review/apply → anda restart
 TUI /memory inbox → /memory answer <number> <text>; /memory retry <number> reuses the saved answer and event key.
 TUI /memory inbox 查看编号；/memory answer <编号> <正文> 回答；/memory retry <编号> 用已保存的原正文和事件键重试。

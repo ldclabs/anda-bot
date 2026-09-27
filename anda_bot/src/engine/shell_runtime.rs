@@ -1,7 +1,10 @@
 use anda_core::{BoxError, Principal, RequestMeta, StateFeatures};
 use anda_engine::{
     context::BaseCtx,
-    extension::shell::{ExecArgs, ExecOutput, Executor, NativeRuntime},
+    extension::shell::{
+        CommandArgs, CommandOutput, ExecArgs, ExecOutput, Executor, ExecutorCapabilities,
+        NativeRuntime, SessionArgs, SessionLimits, SessionOutput,
+    },
 };
 use async_trait::async_trait;
 use parking_lot::RwLock;
@@ -179,6 +182,13 @@ impl NativeShellRuntime {
         }
     }
 
+    pub fn session_limits(self, limits: SessionLimits) -> Self {
+        Self {
+            inner: self.inner.session_limits(limits),
+            cli_workspaces: self.cli_workspaces,
+        }
+    }
+
     async fn cli_workspace(&self, ctx: &BaseCtx) -> Result<Option<PathBuf>, BoxError> {
         let meta: RequestMeta = ctx
             .get_state::<SessionRequestMeta>()
@@ -229,6 +239,40 @@ impl NativeShellRuntime {
 
 #[async_trait]
 impl Executor for NativeShellRuntime {
+    fn capabilities(&self) -> ExecutorCapabilities {
+        self.inner.capabilities()
+    }
+
+    async fn execute_session(
+        &self,
+        ctx: BaseCtx,
+        input: CommandArgs,
+        mut envs: HashMap<String, String>,
+    ) -> Result<CommandOutput, BoxError> {
+        let cli_workspace = self.cli_workspace(&ctx).await?;
+        augment_command_path(&mut envs);
+        match cli_workspace {
+            // This root was registered out of band by the authenticated owner.
+            // The derived runtime shares this one's sessions, so `shell_session`
+            // reaches the command and dropping it does not end the command.
+            Some(workspace) => {
+                self.inner
+                    .for_workspace(workspace)
+                    .execute_session(ctx, input, envs)
+                    .await
+            }
+            None => self.inner.execute_session(ctx, input, envs).await,
+        }
+    }
+
+    async fn interact_session(
+        &self,
+        ctx: BaseCtx,
+        input: SessionArgs,
+    ) -> Result<SessionOutput, BoxError> {
+        self.inner.interact_session(ctx, input).await
+    }
+
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -521,6 +565,64 @@ mod tests {
         let second_project = second_project.canonicalize().unwrap();
         assert_eq!(second_output.workspace.as_deref(), second_project.to_str());
         assert_same_directory(second_output.stdout.as_deref(), &second_project);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn registered_workspace_sessions_outlive_their_call() {
+        use anda_engine::extension::shell::{CommandState, ShellSessionScope};
+        let temp = tempfile::tempdir().unwrap();
+        let default = temp.path().join("default");
+        let project = temp.path().join("project");
+        tokio::fs::create_dir_all(&default).await.unwrap();
+        tokio::fs::create_dir_all(&project).await.unwrap();
+        let owner = Principal::management_canister();
+        let grants = CliWorkspaceGrants::new(owner);
+        grants.register(&project).await.unwrap();
+        let runtime = NativeShellRuntime::new(default)
+            .with_cli_workspaces(grants)
+            .insecure();
+        let ctx = anda_engine::engine::EngineBuilder::new()
+            .mock_ctx()
+            .base
+            .with_caller(owner);
+        ctx.set_state(SessionRequestMeta::new(cli_meta(&project)));
+        ctx.set_state(ShellSessionScope::new());
+
+        let mut output = runtime
+            .execute_session(
+                ctx.clone(),
+                CommandArgs {
+                    command: "sleep 0.2; pwd".into(),
+                    background: true,
+                    ..Default::default()
+                },
+                HashMap::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output.state, CommandState::Running);
+        let mut stdout = output.output.stdout.clone().unwrap_or_default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while output.state == CommandState::Running {
+            assert!(Instant::now() < deadline, "session did not finish");
+            output = runtime
+                .interact_session(
+                    ctx.clone(),
+                    SessionArgs {
+                        task_id: Some(output.task_id.clone()),
+                        yield_time_ms: Some(100),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap()
+                .command
+                .unwrap();
+            stdout.push_str(output.output.stdout.as_deref().unwrap_or_default());
+        }
+        assert_eq!(output.state, CommandState::Exited);
+        assert_same_directory(Some(&stdout), &project);
     }
 
     #[tokio::test]

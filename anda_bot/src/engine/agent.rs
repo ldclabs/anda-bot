@@ -14,10 +14,8 @@ use anda_engine::{
     },
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
-        note::NoteTool,
-        shell::{ShellTool, ShellToolHook},
-        skill::SkillManager,
-        todo::TodoTool,
+        shell::{ShellCommandToolHook, ShellSessionScope, ShellTool, ShellToolHook},
+        skill::{SkillManager, SkillsListTool, SkillsReadTool},
     },
     hook::DynAgentHook,
     memory::{Conversation, ConversationRef, ConversationStatus},
@@ -144,24 +142,31 @@ fn anda_bot_tool_parameters() -> Value {
     })
 }
 
+/// Name of `anda_engine`'s `ApplyPatchTool`, which has no `NAME` constant.
+pub(crate) const APPLY_PATCH_NAME: &str = "apply_patch";
+/// Name of `anda_engine`'s `ShellSessionTool`, which has no `NAME` constant.
+pub(crate) const SHELL_SESSION_NAME: &str = "shell_session";
+
 fn base_tool_dependencies() -> Vec<String> {
     let mut tools = vec![
         brain::Client::NAME.to_string(),
-        NoteTool::NAME.to_string(),
         GoalTool::NAME.to_string(),
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
+        SHELL_SESSION_NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
         EditFileTool::NAME.to_string(),
         WriteFileTool::NAME.to_string(),
-        TodoTool::NAME.to_string(),
+        APPLY_PATCH_NAME.to_string(),
         McpServerTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
+        SkillsListTool::NAME.to_string(),
+        SkillsReadTool::NAME.to_string(),
         cron::CreateCronTool::NAME.to_string(),
         cron::UpdateCronJobTool::NAME.to_string(),
         cron::ManageCronJobTool::NAME.to_string(),
@@ -180,10 +185,8 @@ fn base_tool_dependencies() -> Vec<String> {
 fn base_tools() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
-        NoteTool::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
-        TodoTool::NAME.to_string(),
         ShellTool::NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
@@ -405,6 +408,10 @@ impl AndaBot {
         ctx.base.set_state(spec.request_meta);
         ctx.base.set_state(session.actions.clone());
         ctx.base.set_state(DynAgentHook::new(session.clone()));
+        // One process-session capability per conversation; nested agents inherit it.
+        ctx.base.set_state(ShellSessionScope::new());
+        ctx.base
+            .set_state(ShellCommandToolHook::new(session.clone()));
         ctx.base.set_state(ShellToolHook::new(session.clone()));
         self.insert_session(session.clone());
 
@@ -1523,7 +1530,7 @@ mod tests {
         let available_tools = vec![
             "shell".to_string(),
             "read_file".to_string(),
-            "todo".to_string(),
+            "write_file".to_string(),
             "search".to_string(),
         ];
         let base_tools = vec!["shell".to_string()];
@@ -1536,7 +1543,7 @@ mod tests {
                 },
             ),
             (
-                "todo".to_string(),
+                "write_file".to_string(),
                 Usage {
                     requests: 8,
                     ..Default::default()
@@ -1560,7 +1567,10 @@ mod tests {
 
         let selected = select_most_used_tools(&available_tools, &base_tools, &tools_usage, 2);
 
-        assert_eq!(selected, vec!["read_file".to_string(), "todo".to_string()]);
+        assert_eq!(
+            selected,
+            vec!["read_file".to_string(), "write_file".to_string()]
+        );
     }
 
     use crate::engine::ACTIVE_MODEL_LABEL;
@@ -1741,17 +1751,19 @@ mod tests {
             .unwrap()
             .register_tool(Arc::new(FakeShellTool))
             .unwrap()
+            .register_tool(Arc::new(
+                anda_engine::extension::shell::ShellSessionTool::new(Arc::new(
+                    anda_engine::extension::shell::NativeRuntime::new(home.clone()),
+                )),
+            ))
+            .unwrap()
             .register_tool(Arc::new(crate::engine::ActionsTool::new(
                 bot.action_runtime(),
             )))
             .unwrap()
             .register_tool(Arc::new(AskUserChoiceTool))
             .unwrap()
-            .register_tool(Arc::new(NoteTool::new()))
-            .unwrap()
             .register_tool(Arc::new(GoalTool::new()))
-            .unwrap()
-            .register_tool(Arc::new(TodoTool::new()))
             .unwrap()
             .register_tool(Arc::new(ReadFileTool::with_workspaces(vec![])))
             .unwrap()
@@ -1760,6 +1772,10 @@ mod tests {
             .register_tool(Arc::new(EditFileTool::with_workspaces(vec![])))
             .unwrap()
             .register_tool(Arc::new(WriteFileTool::with_workspaces(vec![])))
+            .unwrap()
+            .register_tool(Arc::new(
+                anda_engine::extension::fs::ApplyPatchTool::with_workspaces(vec![]),
+            ))
             .unwrap()
             .register_tool(Arc::new(cron::CreateCronTool::new(
                 cron_runtime.store.clone(),
@@ -1790,6 +1806,10 @@ mod tests {
             .register_tool(Arc::new(ChromeBrowserTool::script(bridge.clone())))
             .unwrap()
             .register_tool(skills.skill_manager())
+            .unwrap()
+            .register_tool(Arc::new(SkillsListTool::new(skills.skill_manager())))
+            .unwrap()
+            .register_tool(Arc::new(SkillsReadTool::new(skills.skill_manager())))
             .unwrap()
             .register_tool(skills.clone())
             .unwrap()

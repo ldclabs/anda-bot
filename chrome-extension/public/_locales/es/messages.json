@@ -1461,7 +1461,7 @@
     "message": "Versión de política desconocida"
   },
   "memoryModeScope": {
-    "message": "Limita el acceso automático a Brain y Notes. Se conservan chats, archivos, registros y procesamiento del proveedor. Los modos restringidos desactivan subagentes, marcadores y cambios de cron."
+    "message": "Limita el acceso automático a Brain. Se conservan chats, archivos, registros y procesamiento del proveedor. Los modos restringidos desactivan subagentes, marcadores y cambios de cron."
   },
   "memoryModeFirstMessage": {
     "message": "Envía un mensaje normal para iniciar una conversación nueva en este modo, sin copiar el contexto anterior."

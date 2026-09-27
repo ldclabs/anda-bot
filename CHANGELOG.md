@@ -4,7 +4,16 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- **Skill catalog tools**: `skills_list` pages through the skill catalog and `skills_read` reads a skill's `SKILL.md` or a bundled reference file in pages, as the `skills_manager` description now directs. Delegated skills get `skills_read` by default, so they can read their own references outside the workspaces.
+- **Supervised shell sessions**: `shell` waits for a command for 10 seconds by default (the agent may ask for up to 30); a command still running then keeps going in the background for up to 24 hours, reports its output to the conversation, and can be polled, stopped or have its log read with the new `shell_session` tool. Commands in a registered CLI or desktop directory stay reachable the same way. Session stdin and PTYs stay disabled. Approval cards show a working directory the command asks for, and one outside the active workspace always needs approval.
+- **`apply_patch`**: a multi-file patch tool over the same workspaces as the file tools. It validates every change before writing, supports dry runs and expected SHA-256 versions, preserves encodings and line endings, and never overwrites a file when adding or moving one.
+
 ### Changed
+
+- **Subagent turns**: when a background subagent finishes a turn, the main agent is told at once that the session is idle and receives the artifacts the turn produced, instead of waiting for the session to close after its idle timeout. Closing a session whose turn was already reported no longer repeats its result.
+- **Core/Engine from the sibling checkout**: until the release after anda_engine 0.16.2 is published, `anda_core` and `anda_engine` are patched from `../anda` for the shell session fixes (the legacy approval gate, `NativeRuntime::for_workspace`, console-free Windows sessions); building needs that checkout.
 
 - **Brain 0.13.2 from crates.io**: the embedded Brain moves to 0.13.2 on Cognitive Nexus 0.14.2, AndaDB 0.14.1 and Core/Engine 0.16.2; the sibling-checkout patch is commented out. Formation and Maintenance read a bounded index of saved notes (ids and short excerpts) instead of every note, and a note store that cannot be read fails the pass, which is retried. The Recall tokenizer identity is `o200k_base@tiktoken-rs-0.12` and `recall_memory`'s schema follows it; budgets that name the earlier `o200k_base@tiktoken-rs-0.12.0` are still accepted.
 - **MCP servers use Engine 0.16.2's bounds**: tool catalogs, descriptions and results are size-limited (32 KiB of text per result), connection setup, requests and whole calls have deadlines (90 s, 180 s and 10 minutes), and calls to one server run one at a time. Bot does not expose these settings yet. Stdio servers still inherit the daemon's environment, with `env` entries as overrides.
@@ -15,8 +24,12 @@ All notable changes to Anda Bot.
 - **Memory search after a restart**: Nexus 0.14.0 opened the Concept collection without its index setup whenever the database was reopened, so Concepts written after the first restart were indexed with the default tokenizer and a word inside a Chinese name was not searchable. Concepts written from now on are indexed with the Chinese word segmenter again.
 - **Browser tokens from earlier versions**: tokens exported before Brain audience support keep working without a re-export. The embedded Brain accepts a trusted user's token that names no audience as addressed to its one Space, and still verifies its signature, expiry, subject and scope.
 - **Daemon stack overflow during agent turns**: browser WebSocket requests, nested agent runs, system-instruction building (memory sync, Brain reads and the session briefing) and side commands are polled behind type-erased future boxes, so the optimizer cannot merge them into one oversized poll frame. A browser turn that opened a session briefing aborted a development build's daemon on the default 2 MiB worker stack (about 2.0 MiB along that path); with the matching Brain fix the same path uses about 137 KiB in the release build and about 1.05 MiB in a development build.
-- **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work. Completed recording repairs explicitly clear Bot Notes even when Brain's product epoch is unchanged.
+- **Memory change confirmation**: semantic deletion revalidates the preview's revision and complete deletion scope before admission; expired or discarded deletion/repair previews cannot start work.
 - **Formation replay timestamps**: observed windows retain their original source time and input digest across retries, so a fresh runner timestamp does not create a second Formation for unchanged messages.
+
+### Removed
+
+- **`note` and `todo` tools**: Brain is the Bot's long-term memory, so the Bot no longer keeps a second free-form note store. Notes are no longer injected into the system context, memory modes constrain Brain only, and confirmed memory changes no longer have a Bot Notes cleanup step; Brain still resets its own processing Notes. The session task list is gone too: the compaction handoff already carries the remaining steps, and `/goal` supervises long work. Notes saved by earlier versions stay on disk but are not read.
 
 ### Upgrade notes
 

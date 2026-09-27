@@ -21,7 +21,6 @@ impl AndaBot {
         let names = tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>();
         let mut instructions = render_system_instructions(SystemInstructionSections {
             self_knowledge: "Anda Bot",
-            notes: "",
             available_tools: &names,
             home_dir: "unavailable",
             workspace: "runner-managed task environment",

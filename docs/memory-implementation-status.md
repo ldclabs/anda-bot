@@ -29,7 +29,7 @@
 | G1 | 在支持范围内可用 | 原生 Evidence client_key + payload digest 对接 Bot journal 和原消息摘要；来源不完整、混合归属或超大结果不开放精确操作 |
 | G2 | 可用 | caller/operation 幂等意图、原生 idempotency key、固定预览与修订、两个已准备预览的冲突、取消等待者后的原生完成、按 ID 对账 |
 | G3 | 在声明范围内可用 | 原生 epoch/来源排除先于变更；停用归档、删除清除有界闭包；旧来源重放/旧处理写入被拒；冷启动恢复、保留约束和 Notes 清理夹具通过 |
-| G4 | 在明确受限路径中可用 | no_store/off 实际运行 fixture 的禁止写入为零，off 自动读取为零；Note 通过实际模型工具分发仍被拦截；未支持的派生工作不降级为 standard |
+| G4 | 在明确受限路径中可用 | no_store/off 实际运行 fixture 的禁止写入为零，off 自动读取为零；受限写入工具（如 cron 创建）通过实际模型工具分发仍被拦截；未支持的派生工作不降级为 standard |
 | G5 | 记录变化订阅可用 | 真实创建、原生归档取消、重试不重新启用、跨 recipient 拒绝、问题回答同键去重；控制器取消授权仅限该 Watch |
 | G6 | 部分计量档 | 固定协议/时间/局部 token 边界，成本保留每 run 最后一份累计快照；未知费用非零，硬金额上限不支持，没有运行付费评测 |
 | G7 | 合同和机制夹具可用 | 原生 workflow_http_v1 对独立服务、身份/摘要、校准与开关的验证继续生效；产品 ready 仅指隔离学习流程，不授予业务应用权限 |
@@ -42,7 +42,7 @@
 
 产品前缀为 `/daemon/memory/v1`，使用 Bot `ToolResponse`。WS `memory_*` 接口与 HTTP 复用服务；请求上限 64 KiB，搜索文本上限 8 KiB UTF-8。普通列表默认 20、最大 50。新产品 ID 为字符串。来源引用明确标注截短，不切割 Recall 包。搜索的服务端传输显式关闭重放，即使收到 503/504 也不会暗中再调用模型。
 
-宿主 journal 保留 `bot-brain/v1/`：Formation/Recall 来源、changes、inbox-setup、record-watch 意图和 Notes epoch。`bot_memory_activity_v1` 只是可重建索引，不是任务真相。ObjectStore 不保证列举顺序，因此恢复按有界批次重扫与幂等修补，checkpoint 只记录完整扫描结果。终端回答保存在 home 下的私有 `memory-inbox-outbox`；不写入 bearer。
+宿主 journal 保留 `bot-brain/v1/`：Formation/Recall 来源、changes、inbox-setup 和 record-watch 意图（旧版本留下的 `notes-epoch/v1` 已不再读取）。`bot_memory_activity_v1` 只是可重建索引，不是任务真相。ObjectStore 不保证列举顺序，因此恢复按有界批次重扫与幂等修补，checkpoint 只记录完整扫描结果。终端回答保存在 home 下的私有 `memory-inbox-outbox`；不写入 bearer。
 
 原生 `memory-product/v1` 保存条件操作、已接受状态、source exclusions 和 epoch。原生任务由 DurableTasks 管理，宿主变更由 TaskTracker 管理；客户端断线不取消已接受写入。关闭等待持久操作完成或保留可对账状态。
 

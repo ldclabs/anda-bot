@@ -13,7 +13,7 @@ Its primary differentiator is [Anda Brain](https://github.com/ldclabs/anda-brain
 - **Graph-based Long-term Memory:** Remembers through a knowledge graph (Anda Brain), rather than a disjointed pile of chat logs.
 - **Autonomous Learning:** Discovers and distills key insights from past work, recalling them contextually when needed.
 - **Long-Horizon Execution:** Capable of running reasoning tasks that persist and continue across compacted conversations.
-- **Rich Tool Integration:** Out-of-the-box support for external tools (e.g., Claude Code, Codex), shell commands, files, notes, tasks, skills, and cron jobs.
+- **Rich Tool Integration:** Out-of-the-box support for external tools (e.g., Claude Code, Codex), shell commands, files, skills, and cron jobs.
 - **Subagents Coordination:** A robust system for delegating, auditing, and coordinating specialized tasks among subagents.
 - **Rust & Local-First:** Written in Rust, fully open-source, and optimized to run locally in the terminal.
 - **Multi-Channel Runtime:** Operates in the terminal and can be optionally connected to Telegram, WeChat, Discord, and Lark/Feishu.
@@ -32,7 +32,7 @@ Start with `anda memory guide` (offline), then tell Anda a preference in an ordi
 
 Memory activity is listed by submission time. Record lists and active subscriptions continue across pages; cancelled subscriptions do not consume the active list limit. Recall requests are not automatically replayed after an HTTP error.
 
-Use `anda agent run --memory-mode no-store --prompt '…'` or `--memory-mode off` to start a fresh conversation with enforced Brain/Notes restrictions. Chat history, files and provider processing remain. Persistent questions are optional: `anda memory inbox setup` previews the configuration before an explicit apply and restart. See [the memory guide and scope](docs/brain-integration.md#start-with-ordinary-memory).
+Use `anda agent run --memory-mode no-store --prompt '…'` or `--memory-mode off` to start a fresh conversation with enforced Brain restrictions. Chat history, files and provider processing remain. Persistent questions are optional: `anda memory inbox setup` previews the configuration before an explicit apply and restart. See [the memory guide and scope](docs/brain-integration.md#start-with-ordinary-memory).
 
 Anda Brain is designed for agents that need memory to grow instead of merely accumulate. Its core loop has three parts:
 
@@ -186,7 +186,7 @@ Risky shell commands and MCP server connections raise an approval card before th
 - If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
 - Approval cards expire after 10 minutes, and the tool call then fails.
 
-Approval cards show the full command, details and choices, wrapping to the terminal width. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
+Approval cards show the full command, details and choices, wrapping to the terminal width. A command that asks for its own working directory shows it on the card, and one outside the active workspace always needs approval. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
 
 Start the terminal UI with `anda --full-access` to skip the cards for that session; the status line shows `full-access` while it is on.
 
@@ -398,7 +398,7 @@ See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.ya
 
 ## Files, Skills, And Automations
 
-The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension likewise registers a directory-backed channel when you enter it, so its shell commands start in that directory. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces. Attachment understanding can also read the owner's registered directories while their grants remain valid; request metadata alone cannot authorize a new directory.
+The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. A shell command still running after a short foreground wait (10 seconds by default, up to 30) keeps running in the background for up to 24 hours: its output is reported to the conversation, the agent can poll or stop it with `shell_session`, and `/stop` cancels it. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension likewise registers a directory-backed channel when you enter it, so its shell commands start in that directory. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces. Attachment understanding can also read the owner's registered directories while their grants remain valid; request metadata alone cannot authorize a new directory.
 
 Custom runtime skills can be added under `~/.anda/skills`. Release-managed skills are installed in `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into the personal library via the Dashboard. Integrated cron capabilities enable scheduling shell commands or automated agent prompts, with execution histories stored locally. Cron runs remain active until the agent or shell command finishes, and schedule edits preserve paused state. Cron tools are available only to trusted users. CLI-created jobs retain the working-directory authorization validated at creation, including across daemon restarts.
 

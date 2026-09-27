@@ -1,4 +1,4 @@
-//! Owner-confirmed changes. Native writes and Bot Notes cleanup outlive HTTP waiters.
+//! Owner-confirmed changes. Native writes outlive HTTP waiters.
 use super::{Journal, MemoryAccess, catalog::MemoryRecordView};
 use anda_core::{BoxError, Principal};
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,6 @@ pub struct ChangeView {
     #[serde(default)]
     pub affected_records: Vec<ChangeRecordSummary>,
     pub excluded_source_count: usize,
-    pub resets_notes: bool,
     pub replacement_record: Option<String>,
     pub error: Option<String>,
     /// The Memory Interface receipt a misrecording repair or a deletion's
@@ -83,6 +82,16 @@ fn confirmed_and_clean(record: &StoredChange) -> bool {
         && record.view.error.is_none()
         && (record.input.kind != anda_brain::product::ChangeKind::Delete
             || record.view.before.is_none())
+}
+
+/// A confirmed change is complete once its error is cleared and a deletion's
+/// preview no longer carries the deleted text.
+fn settle_confirmed(record: &mut StoredChange) {
+    record.view.error = None;
+    if record.input.kind == anda_brain::product::ChangeKind::Delete {
+        record.view.before = None;
+        record.view.affected_records.clear();
+    }
 }
 
 pub struct MutationService {
@@ -188,7 +197,7 @@ impl MutationService {
                 operation_id: input.operation_id.clone(),
                 state: "prepared".into(),
                 preview_digest: anda_cognitive_nexus::content_digest(
-                    &json!({"kind":"misrecorded","bot_scope":"memory-change-v1-with-notes-reset","before":before,"report":input.new_value}),
+                    &json!({"kind":"misrecorded","bot_scope":"memory-change-v1","before":before,"report":input.new_value}),
                 )?,
                 expires_at: anda_engine::unix_ms() + MISRECORDED_PREVIEW_MS,
                 kind: input.kind.clone(),
@@ -197,7 +206,6 @@ impl MutationService {
                 new_value: input.new_value.clone(),
                 affected_records: vec![],
                 excluded_source_count: 0,
-                resets_notes: true,
                 replacement_record: None,
                 error: None,
                 memory: None,
@@ -260,7 +268,7 @@ impl MutationService {
             operation_id: input.operation_id.clone(),
             state: "prepared".into(),
             preview_digest: anda_cognitive_nexus::content_digest(
-                &json!({"native":native.preview_digest,"bot_scope":"memory-change-v1-with-notes-reset","before":before,"affected_records":affected_records}),
+                &json!({"native":native.preview_digest,"bot_scope":"memory-change-v1","before":before,"affected_records":affected_records}),
             )?,
             expires_at: native.expires_at,
             kind: input.kind.clone(),
@@ -274,7 +282,6 @@ impl MutationService {
                 .collect(),
             excluded_source_count: native.preview.excluded_sources.len(),
             affected_records,
-            resets_notes: true,
             replacement_record: None,
             error: None,
             memory: None,
@@ -403,13 +410,14 @@ impl MutationService {
         key: &str,
     ) -> Result<ChangeView, BoxError> {
         let _gate = self.access.gate.lock().await;
-        let _engine = self.access.keep_engine_alive()?;
         let mut record = self.read(caller, id).await?;
         if confirmed_and_clean(&record)
             || matches!(record.view.state.as_str(), "failed" | "blocked")
         {
             return Ok(record.view);
         }
+        // `cleanup_pending` is only left by versions that reset Bot Notes
+        // after confirmation; reconciling it completes the change.
         if !matches!(
             record.view.state.as_str(),
             "prepared" | "committing" | "reconciling" | "cleanup_pending" | "confirmed"
@@ -469,19 +477,8 @@ impl MutationService {
         record.native = Some(native);
         if record.view.state == "confirmed" {
             // A native commit may persist its receipt and then fail while
-            // returning it. Confirmation is only complete after Bot Notes are
-            // coherent and a deleted preview has been cleared.
-            if let Err(error) = self.access.synchronize_locked().await {
-                log::debug!("Memory change {id}: Notes cleanup pending: {error}");
-                record.view.state = "cleanup_pending".into();
-                record.view.error = Some("notes_reset_pending".into());
-            } else {
-                record.view.error = None;
-                if record.input.kind == anda_brain::product::ChangeKind::Delete {
-                    record.view.before = None;
-                    record.view.affected_records.clear();
-                }
-            }
+            // returning it; the reconciled receipt settles it here.
+            settle_confirmed(&mut record);
         } else if let Some(error) = &admission_error {
             record.view.error = Some(if record.view.state == "prepared" {
                 match error.to_string().as_str() {
@@ -712,36 +709,15 @@ impl MutationService {
         self.finish_memory_change(key, record).await
     }
 
-    /// Saves a Memory Interface change; a confirmed one then resets Notes
-    /// and clears a deleted preview, as a native one does.
+    /// Saves a Memory Interface change, settling a confirmed one as a
+    /// native one is.
     async fn finish_memory_change(
         &self,
         key: &str,
         mut record: StoredChange,
     ) -> Result<ChangeView, BoxError> {
         if record.view.state == "confirmed" {
-            let cleanup = async {
-                self.access.synchronize_locked().await?;
-                if record.input.kind == anda_brain::product::ChangeKind::Misrecorded {
-                    self.access.reset_notes_locked().await?;
-                }
-                Ok::<_, BoxError>(())
-            }
-            .await;
-            if let Err(error) = cleanup {
-                log::debug!(
-                    "Memory change {}: Notes cleanup pending: {error}",
-                    record.input.operation_id
-                );
-                record.view.state = "cleanup_pending".into();
-                record.view.error = Some("notes_reset_pending".into());
-            } else {
-                record.view.error = None;
-                if record.input.kind == anda_brain::product::ChangeKind::Delete {
-                    record.view.before = None;
-                    record.view.affected_records.clear();
-                }
-            }
+            settle_confirmed(&mut record);
         }
         self.journal
             .write(&format!("changes/{key}"), &record)
@@ -809,9 +785,6 @@ impl MutationService {
                 .commit(caller, id.clone(), record.view.preview_digest)
                 .await
                 .map_err(|error| format!("operation {id}, reconcile: {error}"))?;
-            if view.state == "cleanup_pending" {
-                return Err(format!("operation {id}, Notes cleanup: notes_reset_pending").into());
-            }
             return Ok(matches!(view.state.as_str(), "committing" | "reconciling"));
         }
         if record.view.state == "prepared" {

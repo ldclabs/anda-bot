@@ -11,14 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
-pub struct MemoryPolicyTool<T>(Arc<T>, Option<Arc<crate::brain::MemoryAccess>>);
+pub struct MemoryPolicyTool<T>(Arc<T>);
 impl<T> MemoryPolicyTool<T> {
     pub fn new(inner: Arc<T>) -> Self {
-        Self(inner, None)
-    }
-    pub fn with_access(mut self, access: Arc<crate::brain::MemoryAccess>) -> Self {
-        self.1 = Some(access);
-        self
+        Self(inner)
     }
 }
 impl<T: anda_core::Tool<BaseCtx>> anda_core::Tool<BaseCtx> for MemoryPolicyTool<T> {
@@ -53,13 +49,6 @@ impl<T: anda_core::Tool<BaseCtx>> anda_core::Tool<BaseCtx> for MemoryPolicyTool<
                 "This tool is disabled by the conversation's persistent memory policy.".into(),
             );
         }
-        let _guard = if let Some(access) = &self.1 {
-            let guard = access.gate.lock().await;
-            access.check_locked(&ctx).await?;
-            Some(guard)
-        } else {
-            None
-        };
         self.0.call(ctx, args, resources).await
     }
 }
@@ -189,8 +178,7 @@ impl MemoryPolicy {
         }
         if matches!(
             name,
-            "note"
-                | "brain_respond"
+            "brain_respond"
                 | "brain_attention"
                 | "brain_runtime_status"
                 | "brain_feedback"
@@ -230,26 +218,30 @@ mod tests {
     use anda_core::{AgentContext, ToolInput};
 
     #[tokio::test]
-    async fn memory_policy_blocks_notes_through_the_actual_model_tool_dispatch_path() {
+    async fn memory_policy_blocks_cron_creation_through_the_actual_model_tool_dispatch_path() {
+        let db = crate::test_support::memory_db("memory_policy_dispatch").await;
+        let cron =
+            crate::cron::CronRuntime::connect(Arc::new(anda_engine::engine::EngineRef::new()), db)
+                .await
+                .unwrap();
         let ctx = anda_engine::engine::EngineBuilder::new()
             .register_tool(Arc::new(MemoryPolicyTool::new(Arc::new(
-                anda_engine::extension::note::NoteTool::new(),
+                crate::cron::CreateCronTool::new(cron.store.clone()),
             ))))
             .unwrap()
             .mock_ctx();
         ctx.base.set_state(MemoryPolicy::new(MemoryMode::NoStore));
         let input = ToolInput::new(
-            "note".into(),
-            serde_json::json!({"op":"upsert","items":[{"id":"test","content":"must not persist"}]}),
+            crate::cron::CreateCronTool::NAME.into(),
+            serde_json::json!({
+                "job_kind": "shell",
+                "job": "echo must not persist",
+                "schedule_kind": "every",
+                "schedule": "60",
+            }),
         );
         assert!(ctx.tool_call(input).await.is_err());
-        assert!(
-            anda_engine::extension::note::load_notes(&ctx)
-                .await
-                .unwrap()
-                .items
-                .is_empty()
-        );
+        assert!(cron.store.list_jobs(None, None).await.unwrap().0.is_empty());
     }
     #[test]
     fn memory_policy_persistence_is_versioned_and_legacy_defaults_do_not_override_restrictions() {
@@ -276,7 +268,7 @@ mod tests {
         ctx.base.set_state(MemoryPolicy::new(MemoryMode::Off));
         let child = ctx.child("child", "").unwrap();
         assert!(!MemoryPolicy::current(&child.base).may_read());
-        for tool in ["recall_memory", "note", "brain_respond", "create_cron_job"] {
+        for tool in ["recall_memory", "brain_respond", "create_cron_job"] {
             assert!(
                 MemoryPolicyHook
                     .on_tool_start(&child.base, tool)

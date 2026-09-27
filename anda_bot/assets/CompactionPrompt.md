@@ -10,7 +10,7 @@ Record actual state, not intent:
 - Summarize completed work, key decisions, files or artifacts touched, tools/subagents/skills used, commands run, and important outputs.
 - Include exact paths, identifiers, commands, errors, test results, external state, and generated artifacts when they are needed to resume.
 - Use absolute filesystem paths when continuity depends on an artifact. Avoid `~` or other shorthand that later tools may resolve differently.
-- Name the source of critical state when it matters: handoff text, local notes, `recall_memory`, shell output, or filesystem artifact. Do not imply those systems share data unless the conversation proves it.
+- Name the source of critical state when it matters: handoff text, `recall_memory`, shell output, or filesystem artifact. Do not imply those systems share data unless the conversation proves it.
 - Identify user-owned or pre-existing changes that must not be reverted.
 - State unknowns clearly. Do not invent progress, results, or evidence.
 

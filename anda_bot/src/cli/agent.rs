@@ -25,7 +25,7 @@ pub enum AgentCommand {
 #[derive(Args)]
 #[command(group(ArgGroup::new("prompt_source").required(true).args(["prompt", "prompt_file"])))]
 pub struct AgentRunCommand {
-    /// Start a fresh conversation with this Brain/Notes policy (not incognito).
+    /// Start a fresh conversation with this Brain policy (not incognito).
     #[arg(long, value_enum)]
     memory_mode: Option<crate::engine::MemoryMode>,
     /// Agent name. Empty value uses the default agent.

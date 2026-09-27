@@ -8,7 +8,7 @@
 //! [`shell_approval_decision_with_model`] and the launcher UI language hint.
 
 use anda_core::{BoxError, CompletionRequest, ContentPart, ModelEffort, RequestMeta};
-use anda_engine::{extension::shell::ExecArgs, model::Models};
+use anda_engine::{extension::shell::CommandArgs, model::Models};
 use rust_i18n::t;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -55,7 +55,7 @@ pub(super) enum ApprovalDecision {
 }
 
 pub(super) async fn shell_approval_decision_with_model(
-    args: &ExecArgs,
+    args: &CommandArgs,
     mode: ApprovalMode,
     workspace: &str,
     models: &Models,
@@ -100,7 +100,7 @@ pub(super) async fn shell_approval_decision_with_model(
 }
 
 async fn model_shell_approval_decision(
-    args: &ExecArgs,
+    args: &CommandArgs,
     workspace: &str,
     models: &Models,
     language_hint: Option<&str>,
@@ -112,6 +112,7 @@ async fn model_shell_approval_decision(
     let request = json!({
         "command": args.command,
         "workspace": workspace,
+        "cwd": args.cwd,
         "background": args.background,
         "env_keys": args.env_keys,
         "user_language_hint": language_hint.unwrap_or("unknown"),
@@ -303,7 +304,7 @@ fn extract_json_object(content: &str) -> Option<&str> {
 }
 
 fn shell_approval_decision(
-    args: &ExecArgs,
+    args: &CommandArgs,
     mode: ApprovalMode,
     workspace: &str,
 ) -> ApprovalDecision {
@@ -330,7 +331,12 @@ fn shell_approval_decision(
     if references_sensitive_path(command) {
         return ApprovalDecision::Ask("sensitive path or secret-like argument".to_string());
     }
-    if references_external_path(command, workspace) {
+    if references_external_path(command, workspace)
+        || args
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| cwd_is_external(cwd, workspace))
+    {
         return ApprovalDecision::Ask("path outside the active workspace".to_string());
     }
 
@@ -499,6 +505,18 @@ fn references_external_path(command: &str, workspace: &str) -> bool {
         }
     }
     false
+}
+
+/// A requested working directory counts as external unless it stays inside the
+/// active workspace: relative without `..`, or absolute under the workspace.
+fn cwd_is_external(cwd: &str, workspace: &str) -> bool {
+    let cwd = cwd.trim();
+    let path = normalize_path_separators(cwd);
+    if path.split('/').any(|part| part == "..") || path.starts_with('~') || path.starts_with('%') {
+        return true;
+    }
+    is_absolute_path(cwd)
+        && (workspace.trim().is_empty() || !path_is_within_workspace(cwd, workspace))
 }
 
 fn is_windows_switch_token(token: &str) -> bool {
@@ -998,7 +1016,7 @@ mod tests {
                 name: "lite-recorder",
             })),
         );
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "pwd && rg approval anda_bot/src".to_string(),
             ..Default::default()
         };
@@ -1059,7 +1077,7 @@ mod tests {
                 name: "lite-recorder",
             })),
         );
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "rm -rf anda_bot/src/engine".to_string(),
             ..Default::default()
         };
@@ -1089,7 +1107,7 @@ mod tests {
                 name: "lite-recorder",
             })),
         );
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "git add anda_bot/src/engine/action.rs".to_string(),
             ..Default::default()
         };
@@ -1118,7 +1136,7 @@ mod tests {
                 name: "lite-recorder",
             })),
         );
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "pwd && rg approval anda_bot/src".to_string(),
             ..Default::default()
         };
@@ -1140,8 +1158,31 @@ mod tests {
     }
 
     #[test]
+    fn shell_policy_asks_when_the_working_directory_leaves_the_workspace() {
+        let read = |cwd: &str| CommandArgs {
+            command: "rg approval".to_string(),
+            cwd: Some(cwd.to_string()),
+            ..Default::default()
+        };
+        for cwd in ["src", "/tmp/workspace/src"] {
+            assert_eq!(
+                shell_approval_decision(&read(cwd), ApprovalMode::OnRisk, "/tmp/workspace"),
+                ApprovalDecision::Allow,
+                "{cwd}"
+            );
+        }
+        for cwd in ["..", "src/../../other", "/etc", "~/secrets"] {
+            assert_eq!(
+                shell_approval_decision(&read(cwd), ApprovalMode::OnRisk, "/tmp/workspace"),
+                ApprovalDecision::Ask("path outside the active workspace".to_string()),
+                "{cwd}"
+            );
+        }
+    }
+
+    #[test]
     fn shell_policy_allows_low_risk_read_commands() {
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "rg approval anda_bot/src".to_string(),
             ..Default::default()
         };
@@ -1150,7 +1191,7 @@ mod tests {
             ApprovalDecision::Allow
         );
 
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "git diff --stat".to_string(),
             ..Default::default()
         };
@@ -1165,7 +1206,7 @@ mod tests {
             r#"powershell -NoProfile -Command "Get-ChildItem C:\workspace""#,
             r#"pwsh -Command "Select-String TODO C:\workspace\README.md""#,
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1189,7 +1230,7 @@ mod tests {
             r"type C:\Windows\Temp\cbor2-commit-msg.txt",
             r"type C:\Users\Alice\AppData\Local\Temp\cbor2-commit-msg.txt",
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1210,7 +1251,7 @@ mod tests {
             "cat /opt/workspace2/file",
             "git push",
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1220,7 +1261,7 @@ mod tests {
             ));
         }
 
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "rg todo".to_string(),
             background: true,
             ..Default::default()
@@ -1230,7 +1271,7 @@ mod tests {
             ApprovalDecision::Ask(_)
         ));
 
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "cat /tmp/workspace/file".to_string(),
             ..Default::default()
         };
@@ -1278,7 +1319,7 @@ mod tests {
             "sed -f script.sed file",
             "sed -e 's/a/b/' -e 'w out.txt' file",
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1306,7 +1347,7 @@ mod tests {
             "awk '{print $1}' file.txt",
             "awk -F: '{print $1}' file.txt",
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1330,7 +1371,7 @@ mod tests {
             r"type %USERPROFILE%\.ssh\id_rsa",
             r"type C:\Users\Alice\AppData\Roaming\secret.txt",
         ] {
-            let args = ExecArgs {
+            let args = CommandArgs {
                 command: command.to_string(),
                 ..Default::default()
             };
@@ -1346,7 +1387,7 @@ mod tests {
 
     #[test]
     fn shell_policy_modes_override_risk_classifier() {
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "rm -rf target".to_string(),
             ..Default::default()
         };

@@ -381,10 +381,11 @@ impl SkillLibrary {
         let shared_dir = home_dir.join("shared-skills");
         let default_skill_tools = vec![
             "shell".to_string(),
+            "shell_session".to_string(),
             "read_file".to_string(),
             "search_file".to_string(),
-            "note".to_string(),
             "tools_select".to_string(),
+            "skills_read".to_string(),
         ];
         let raw = Arc::new(
             SkillManager::new_with_dirs(

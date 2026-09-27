@@ -1761,6 +1761,44 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_calls_wait_for_the_session_approval_gate() {
+        use anda_core::AgentContext;
+        use anda_engine::extension::shell::{
+            NativeRuntime, ShellCommandTool, ShellCommandToolHook, ShellSessionScope, ShellToolHook,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (session, _rx, mut action_rx) = build_session();
+        let ctx = anda_engine::engine::EngineBuilder::new()
+            .register_tool(Arc::new(ShellCommandTool::new(
+                Arc::new(NativeRuntime::new(dir.path().into())),
+                Vec::new(),
+            )))
+            .unwrap()
+            .mock_ctx();
+        ctx.base.set_state(ShellSessionScope::new());
+        ctx.base
+            .set_state(ShellCommandToolHook::new(session.clone()));
+        ctx.base.set_state(ShellToolHook::new(session));
+        let call = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                ctx.tool_call(anda_core::ToolInput::new(
+                    "shell".into(),
+                    serde_json::json!({"command": "touch marker"}),
+                ))
+                .await
+            }
+        });
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), action_rx.recv())
+            .await
+            .expect("the shell call must ask for approval");
+        assert!(matches!(event, Some(ActionEvent::Add(_))));
+        assert!(!dir.path().join("marker").exists());
+        call.abort();
+    }
+
     #[tokio::test]
     async fn session_runner_plain_input_submits_formation_and_checks_goal() {
         let brain_url = spawn_runner_brain_mock().await;
@@ -2474,7 +2512,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         let mut snapshot = HashMap::new();
@@ -2590,7 +2628,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         let mut snapshot = HashMap::new();
@@ -2629,7 +2667,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         let mut snapshot = HashMap::new();
@@ -2668,7 +2706,7 @@ mod tests {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         let mut snapshot = HashMap::new();
@@ -3396,7 +3434,7 @@ mod tests {
         });
         let approval = actions.request_shell_approval(
             &ctx,
-            anda_engine::extension::shell::ExecArgs {
+            anda_engine::extension::shell::CommandArgs {
                 command: "echo approval".into(),
                 ..Default::default()
             },

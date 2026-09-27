@@ -1461,7 +1461,7 @@
     "message": "Unknown policy version"
   },
   "memoryModeScope": {
-    "message": "Applies to automatic Brain and Notes access. Chat history, files, logs and provider processing remain. Restricted modes also disable nested agents, bookmarks and cron changes."
+    "message": "Applies to automatic Brain access. Chat history, files, logs and provider processing remain. Restricted modes also disable nested agents, bookmarks and cron changes."
   },
   "memoryModeFirstMessage": {
     "message": "Send a regular text message to start a fresh conversation in this mode. Previous context is not copied."

@@ -6,7 +6,7 @@ use anda_db::{database::AndaDB, unix_ms};
 use anda_engine::{
     context::BaseCtx,
     engine::{Engine, EngineRef},
-    extension::shell::{ExecArgs, ExecOutput, ShellTool},
+    extension::shell::{CommandArgs, CommandState, ExecOutput, ShellSessionScope, ShellTool},
     hook::{BackgroundHandle, DynToolJsonHook, ToolBackgroundHook},
 };
 use async_trait::async_trait;
@@ -319,6 +319,7 @@ async fn run_shell(
     let context_cancel = ctx.base.cancellation_token();
     let _cancel_on_drop = context_cancel.clone().drop_guard();
     install_workspace_grant(&ctx.base, job, caller);
+    ctx.base.set_state(ShellSessionScope::new());
     let (sender, receiver) = oneshot::channel();
     let hook = Arc::new(ShellCompletion {
         started: AtomicBool::new(false),
@@ -328,7 +329,7 @@ async fn run_shell(
     let (output, _) = ctx
         .tool_call(ToolInput {
             name: ShellTool::NAME.into(),
-            args: json!(ExecArgs {
+            args: json!(CommandArgs {
                 command: job.job.clone(),
                 background: true,
                 ..Default::default()
@@ -336,7 +337,10 @@ async fn run_shell(
             ..Default::default()
         })
         .await?;
-    if hook.started.load(Ordering::SeqCst) {
+    // The session supervisor reports the start from its own task, so a command
+    // can come back running before the start hook has fired; its end still comes.
+    let running = output.output.get("state") == Some(&json!(CommandState::Running));
+    if running || hook.started.load(Ordering::SeqCst) {
         wait_for_completion(receiver, cancel, || context_cancel.cancel()).await
     } else {
         Ok(output)
@@ -873,13 +877,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cron_shell_waits_for_background_exit_and_records_failures() {
-        use anda_engine::extension::shell::NativeRuntime;
+        use anda_engine::extension::shell::{NativeRuntime, ShellCommandTool};
         let dir = tempfile::tempdir().unwrap();
-        let tool = ShellTool::new(
-            Arc::new(NativeRuntime::new(dir.path().into())),
-            Default::default(),
-            None,
-        );
+        let tool =
+            ShellCommandTool::new(Arc::new(NativeRuntime::new(dir.path().into())), Vec::new());
         let engine = engine_with(EchoAgent, tool).await;
         let runtime = test_runtime().await;
         for (command, fails) in [
@@ -922,13 +923,10 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cron_cancels_and_drains_a_running_shell_process() {
-        use anda_engine::extension::shell::NativeRuntime;
+        use anda_engine::extension::shell::{NativeRuntime, ShellCommandTool};
         let dir = tempfile::tempdir().unwrap();
-        let tool = ShellTool::new(
-            Arc::new(NativeRuntime::new(dir.path().into())),
-            Default::default(),
-            None,
-        );
+        let tool =
+            ShellCommandTool::new(Arc::new(NativeRuntime::new(dir.path().into())), Vec::new());
         let engine = engine_with(EchoAgent, tool).await;
         let runtime = test_runtime().await;
         let job = runtime

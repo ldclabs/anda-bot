@@ -3,7 +3,7 @@ use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
     engine::{Engine, EngineRef},
-    extension::{fs, mcp, note, shell, skill, todo},
+    extension::{fs, mcp, shell, skill},
     management::{BaseManagement, Visibility},
     memory::Conversations,
     model::{Model, Models, reqwest},
@@ -279,11 +279,12 @@ fn build_skill_registry(
     additional_skills_dirs.extend(shared_skills_dirs.clone());
     let default_skill_tools = vec![
         "shell".to_string(),
+        agent::SHELL_SESSION_NAME.to_string(),
         "read_file".to_string(),
         "search_file".to_string(),
-        "note".to_string(),
         "tools_groups".to_string(),
         "tools_select".to_string(),
+        skill::SkillsReadTool::NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
     ];
     let skills_tool = Arc::new(
@@ -295,13 +296,12 @@ fn build_skill_registry(
     known_skill_tools.extend(
         [
             brain::Client::NAME,
-            note::NoteTool::NAME,
             GoalTool::NAME,
-            todo::TodoTool::NAME,
             fs::ReadFileTool::NAME,
             fs::SearchFileTool::NAME,
             fs::EditFileTool::NAME,
             fs::WriteFileTool::NAME,
+            agent::APPLY_PATCH_NAME,
             cron::CreateCronTool::NAME,
             cron::ListCronJobsTool::NAME,
             cron::UpdateCronJobTool::NAME,
@@ -312,6 +312,7 @@ fn build_skill_registry(
             ChromeBrowserTool::INPUT_NAME,
             ChromeBrowserTool::SCRIPT_NAME,
             skill::SkillManager::NAME,
+            skill::SkillsListTool::NAME,
             SkillLibrary::NAME,
             McpServerTool::NAME,
             McpConnectTool::NAME,
@@ -341,26 +342,36 @@ fn build_skill_registry(
     (skills_tool, skill_library)
 }
 
-/// The agent's shell tool, pre-seeded with the environment a command inherits.
+/// The agent's `shell` and `shell_session` tools over one runtime, so a
+/// command that outlives the foreground wait stays reachable for polling, and
+/// the environment a command inherits.
 ///
 /// Deliberately unsandboxed: commands run with the daemon user's full
 /// privileges. The safety gate is the approval flow in `engine/action.rs`
 /// (static policy + risk model + human approval outside FullAccess mode),
-/// documented in README.md "Shell Command Execution and Security".
+/// installed per session as the `shell` tool's hook and documented in README.md
+/// "Shell Command Execution and Security". Session stdin and PTYs stay disabled,
+/// so `shell_session` cannot feed a running process new commands.
 ///
 /// `ANDA_HOME` is always exported; the proxy variables only when the daemon
 /// itself was configured with one, so a command inherits the same egress path
 /// the daemon uses.
-fn build_shell_tool(
+fn build_shell_tools(
     home_dir: &Path,
     https_proxy: Option<&str>,
     default_workspace: &Path,
     cli_workspaces: shell_runtime::CliWorkspaceGrants,
-) -> shell::ShellTool {
-    let runtime = Arc::new(
+) -> (shell::ShellCommandTool, shell::ShellSessionTool) {
+    let runtime: Arc<dyn shell::Executor> = Arc::new(
         shell_runtime::NativeShellRuntime::new(default_workspace.to_path_buf())
             .with_cli_workspaces(cli_workspaces)
-            .insecure(),
+            .insecure()
+            .session_limits(shell::SessionLimits {
+                // Long agent CLIs and builds keep running in the background,
+                // as they did before sessions; `/stop_task` still ends them.
+                max_runtime: SHELL_MAX_RUNTIME,
+                ..Default::default()
+            }),
     );
     let mut envs = vec![shell::CustomEnv {
         key: "ANDA_HOME".to_string(),
@@ -390,8 +401,15 @@ fn build_shell_tool(
             description: "Comma-separated list of hosts that should bypass the proxy.".to_string(),
         });
     }
-    shell::ShellTool::new_with_custom_envs(runtime, envs, None)
+    (
+        shell::ShellCommandTool::new(runtime.clone(), envs),
+        shell::ShellSessionTool::new(runtime),
+    )
 }
+
+/// The longest a shell command may run, including in the background: the
+/// engine's ceiling.
+const SHELL_MAX_RUNTIME: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 
 fn model_setup_issues(config: &config::Config) -> Vec<String> {
     config
@@ -497,12 +515,7 @@ impl Engines {
             BookmarkStore::connect(db.clone()).await?,
             cfg.models.clone(),
         ));
-        let memory_access = Arc::new(brain::MemoryAccess::new(
-            brain_host.clone(),
-            brain_journal.clone(),
-            engine_ref.clone(),
-            cfg.owner,
-        ));
+        let memory_access = Arc::new(brain::MemoryAccess::new(brain_host.clone()));
         let memory_activity = brain::activity::ActivityStore::connect(
             db.clone(),
             conversations_tool.clone(),
@@ -551,7 +564,7 @@ impl Engines {
             manager.is_enabled().then_some(manager)
         };
 
-        let shell_tool = build_shell_tool(
+        let (shell_tool, shell_session_tool) = build_shell_tools(
             &cfg.home_dir,
             cfg.https_proxy.as_deref(),
             &default_workspace,
@@ -661,16 +674,12 @@ impl Engines {
             .with_subagent_conversations(subagent_conversations)
             .register_tool(record_artifacts(Arc::new(brain_client.clone())))?
             .register_tool(record_artifacts(Arc::new(shell_tool)))?
+            .register_tool(record_artifacts(Arc::new(shell_session_tool)))?
             .register_tool(record_artifacts(Arc::new(ActionsTool::new(
                 bot.action_runtime(),
             ))))?
             .register_tool(record_artifacts(Arc::new(AskUserChoiceTool)))?
-            .register_tool(record_artifacts(Arc::new(
-                MemoryPolicyTool::new(Arc::new(note::NoteTool::new()))
-                    .with_access(memory_access.clone()),
-            )))?
             .register_tool(record_artifacts(Arc::new(GoalTool::new())))?
-            .register_tool(record_artifacts(Arc::new(todo::TodoTool::new())))?
             .register_tool(record_artifacts(Arc::new(
                 fs::ReadFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?
@@ -682,6 +691,9 @@ impl Engines {
             )))?
             .register_tool(record_artifacts(Arc::new(
                 fs::WriteFileTool::with_workspaces(cfg.workspaces.clone()),
+            )))?
+            .register_tool(record_artifacts(Arc::new(
+                fs::ApplyPatchTool::with_workspaces(cfg.workspaces.clone()),
             )))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
                 cron::CreateCronTool::new(cron_runtime.store.clone())
@@ -705,6 +717,12 @@ impl Engines {
             .register_tool(record_artifacts(browser_input_tool))?
             .register_tool(record_artifacts(browser_script_tool))?
             .register_tool(record_artifacts(skills_tool.clone()))?
+            .register_tool(record_artifacts(Arc::new(skill::SkillsListTool::new(
+                skills_tool.clone(),
+            ))))?
+            .register_tool(record_artifacts(Arc::new(skill::SkillsReadTool::new(
+                skills_tool.clone(),
+            ))))?
             .register_tool(record_artifacts(skill_library.clone()))?
             .register_tool(record_artifacts(add_mcp_server_tool))?
             .register_tool(record_artifacts(connect_mcp_server_tool))?
@@ -778,7 +796,6 @@ impl Engines {
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
         let engine = Arc::new(engine);
         engine_ref.bind(Arc::downgrade(&engine));
-        memory_access.synchronize().await?;
         // A failure scanning the skills directories (e.g. permissions on the
         // shared ~/.agents/skills) should not prevent the daemon from starting.
         // The reload also installs the library's disabled set on `skills_tool`,

@@ -121,7 +121,6 @@ export interface ChangeView {
   targets: string[]
   affected_records: Array<{ id: string; text: string; state: string }>
   excluded_source_count: number
-  resets_notes: boolean
   replacement_record: string | null
   error: string | null
   memory?: MemoryChange | null

@@ -2,7 +2,6 @@ use anda_engine::{
     context::TOOLS_SELECT_NAME,
     extension::{
         fs::{ReadFileTool, SearchFileTool},
-        note::NoteTool,
         shell::ShellTool,
     },
     subagent::SubAgent,
@@ -21,9 +20,9 @@ pub fn side_agent(instructions: String) -> SubAgent {
         instructions: format!("{instructions}\n\n{SIDE_INSTRUCTIONS}"),
         tools: vec![
             brain::Client::NAME.to_string(),
-            NoteTool::NAME.to_string(),
             TOOLS_SELECT_NAME.to_string(),
             ShellTool::NAME.to_string(),
+            crate::engine::agent::SHELL_SESSION_NAME.to_string(),
             ReadFileTool::NAME.to_string(),
             SearchFileTool::NAME.to_string(),
             cron::ListCronJobsTool::NAME.to_string(),

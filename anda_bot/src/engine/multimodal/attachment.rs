@@ -8,7 +8,7 @@ use anda_engine::{
     extension::{
         fs::{ReadFileTool, SearchFileTool},
         shell::ShellTool,
-        skill::SkillManager,
+        skill::{SkillManager, SkillsListTool, SkillsReadTool},
     },
     grapheme_safe_cutoff,
     subagent::SubAgentManager,
@@ -406,8 +406,11 @@ pub(super) fn other_understanding_tool_names() -> Vec<String> {
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         SkillManager::NAME.to_string(),
+        SkillsListTool::NAME.to_string(),
+        SkillsReadTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         ShellTool::NAME.to_string(),
+        crate::engine::agent::SHELL_SESSION_NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
     ]

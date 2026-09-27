@@ -3,7 +3,7 @@ use anda_core::{
 };
 use anda_engine::{
     context::BaseCtx,
-    extension::shell::{ExecArgs, ShellTool},
+    extension::shell::{CommandArgs, ShellTool},
     model::Models,
     unix_ms,
 };
@@ -239,8 +239,8 @@ impl ActionSession {
     pub(crate) async fn request_shell_approval(
         &self,
         ctx: &BaseCtx,
-        args: ExecArgs,
-    ) -> Result<ExecArgs, BoxError> {
+        args: CommandArgs,
+    ) -> Result<CommandArgs, BoxError> {
         let conversation = self
             .conversation_id
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -267,6 +267,9 @@ impl ActionSession {
         let mut details = Vec::new();
         if !workspace.is_empty() {
             details.push(approval_detail("Workspace", workspace, "text"));
+        }
+        if let Some(cwd) = &args.cwd {
+            details.push(approval_detail("Working directory", cwd, "text"));
         }
         let approval_reason_label = t!(
             "shell_approval.detail.approval_reason",
@@ -308,6 +311,7 @@ impl ActionSession {
             approval: Some(ApprovalLabels::approve_deny()),
             metadata: Some(json!({
                 "command": &args.command,
+                "cwd": &args.cwd,
                 "env_keys": &args.env_keys,
                 "background": args.background,
                 "approval_mode": approval_mode.as_str(),
@@ -1051,7 +1055,7 @@ mod tests {
             Arc::new(Models::default()),
             home.path().to_path_buf(),
         );
-        let args = ExecArgs {
+        let args = CommandArgs {
             command: "rm -rf target".to_string(),
             ..Default::default()
         };

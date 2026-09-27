@@ -1461,7 +1461,7 @@
     "message": "Version de politique inconnue"
   },
   "memoryModeScope": {
-    "message": "Limite l’accès automatique à Brain et Notes. Les conversations, fichiers, journaux et traitements du fournisseur restent. Les modes restreints désactivent sous-agents, favoris et modifications cron."
+    "message": "Limite l’accès automatique à Brain. Les conversations, fichiers, journaux et traitements du fournisseur restent. Les modes restreints désactivent sous-agents, favoris et modifications cron."
   },
   "memoryModeFirstMessage": {
     "message": "Envoyez un message normal pour ouvrir une nouvelle conversation dans ce mode, sans recopier le contexte précédent."

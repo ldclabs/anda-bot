@@ -8,7 +8,7 @@ use anda_core::{
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
-    extension::shell::{ExecArgs, ExecOutput, ShellTool},
+    extension::shell::{CommandArgs, CommandOutput, ExecArgs, ExecOutput, ShellTool},
     hook::{AgentHook, BackgroundHandle, BackgroundTaskControls, ToolHook},
 };
 use async_trait::async_trait;
@@ -298,6 +298,32 @@ impl Session {
         }
     }
 
+    /// Keeps the artifacts of a subagent session's cumulative list that were
+    /// not forwarded yet, and marks the whole list as forwarded.
+    fn unreported_agent_artifacts(
+        &self,
+        session_id: &str,
+        artifacts: Vec<Resource>,
+    ) -> Vec<Resource> {
+        let mut tasks = self.background_tasks.write();
+        let Some(task) = tasks.get_mut(session_id) else {
+            return artifacts;
+        };
+        let total = artifacts.len();
+        let fresh = artifacts
+            .into_iter()
+            .skip(task.reported_artifacts)
+            .collect();
+        task.reported_artifacts = task.reported_artifacts.max(total);
+        fresh
+    }
+
+    fn set_turn_result_delivered(&self, session_id: &str, delivered: bool) {
+        if let Some(task) = self.background_tasks.write().get_mut(session_id) {
+            task.turn_result_delivered = delivered;
+        }
+    }
+
     fn background_agent_usage(&self, task_id: &str, current: &Usage, ended: bool) -> Option<Usage> {
         let mut tasks = self.background_tasks.write();
         let task = tasks.get_mut(task_id)?;
@@ -402,7 +428,7 @@ impl AgentHook for Session {
                 tool_name: None,
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         self.background_progress_outputs
@@ -420,6 +446,11 @@ impl AgentHook for Session {
         if self.is_background_task_stopped(&session_id) {
             return;
         }
+        // A new step belongs to an open turn; an interrupted one carries the
+        // session's cumulative artifacts.
+        self.set_turn_result_delivered(&session_id, false);
+        output.artifacts =
+            self.unreported_agent_artifacts(&session_id, std::mem::take(&mut output.artifacts));
         Self::record_agent_artifacts(ctx, &mut output).await;
         let prompt = if !output.content.is_empty() {
             self.background_progress_outputs.write().insert(
@@ -459,8 +490,54 @@ impl AgentHook for Session {
             .ok();
     }
 
+    /// A completed work turn: its result was the latest progress output, so
+    /// this only tells the main agent the session is idle and forwards the
+    /// artifacts the turn produced.
+    async fn on_background_turn_end(
+        &self,
+        ctx: &AgentCtx,
+        session_id: String,
+        _turn: u64,
+        mut output: AgentOutput,
+    ) {
+        if self.is_background_task_stopped(&session_id) {
+            return;
+        }
+        output.artifacts =
+            self.unreported_agent_artifacts(&session_id, std::mem::take(&mut output.artifacts));
+        let Some(usage) = self.background_agent_usage(&session_id, &output.usage, false) else {
+            return;
+        };
+        self.set_turn_result_delivered(&session_id, true);
+        Self::record_agent_artifacts(ctx, &mut output).await;
+        self.sender
+            .send(ConversationInput {
+                cron_receipt: None,
+                command: PromptCommand::Plain {
+                    prompt: system_runtime_prompt(
+                        "subagent turn completed",
+                        format!(
+                            "Subagent session {session_id} completed its turn: its latest intermediate output is the turn result, and the session is idle for follow-up work."
+                        ),
+                    ),
+                },
+                resources: output.artifacts,
+                extra: ctx.meta().extra.clone(),
+                usage,
+            })
+            .await
+            .ok();
+    }
+
     async fn on_background_end(&self, ctx: &AgentCtx, session_id: String, mut output: AgentOutput) {
         self.background_controls.finish(&session_id);
+        output.artifacts =
+            self.unreported_agent_artifacts(&session_id, std::mem::take(&mut output.artifacts));
+        let turn_result_delivered = self
+            .background_tasks
+            .read()
+            .get(&session_id)
+            .is_some_and(|task| task.turn_result_delivered);
         let usage = self.background_agent_usage(&session_id, &output.usage, true);
         let last_progress_content = self
             .background_progress_outputs
@@ -469,6 +546,18 @@ impl AgentHook for Session {
         let Some(usage) = usage else {
             return;
         };
+        // Closing an idle session whose completed turn was already reported
+        // brings nothing new.
+        if turn_result_delivered
+            && output.failed_reason.is_none()
+            && output.artifacts.is_empty()
+            && usage.input_tokens == 0
+            && usage.output_tokens == 0
+            && usage.requests == 0
+        {
+            self.background_tasks.write().remove(&session_id);
+            return;
+        }
         Self::record_agent_artifacts(ctx, &mut output).await;
 
         let prompt =
@@ -487,12 +576,22 @@ impl AgentHook for Session {
     }
 }
 
+/// The approval gate for `shell`: it sees every argument, including `cwd`.
 #[async_trait]
-impl ToolHook<ExecArgs, ExecOutput> for Session {
-    async fn before_tool_call(&self, ctx: &BaseCtx, args: ExecArgs) -> Result<ExecArgs, BoxError> {
+impl ToolHook<CommandArgs, CommandOutput> for Session {
+    async fn before_tool_call(
+        &self,
+        ctx: &BaseCtx,
+        args: CommandArgs,
+    ) -> Result<CommandArgs, BoxError> {
         self.actions.request_shell_approval(ctx, args).await
     }
+}
 
+/// The engine reports shell commands still running after the foreground wait
+/// through the legacy hook's background events.
+#[async_trait]
+impl ToolHook<ExecArgs, ExecOutput> for Session {
     async fn on_background_start(&self, ctx: &BaseCtx, handle: BackgroundHandle, _args: &ExecArgs) {
         let task_id = handle.task_id();
         self.background_tasks.write().insert(
@@ -502,7 +601,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 tool_name: Some(ShellTool::NAME.to_string()),
                 progress_message: None,
                 stopped: false,
-                reported_usage: Usage::default(),
+                ..Default::default()
             },
         );
         self.background_progress_outputs
@@ -592,6 +691,13 @@ pub struct BackgroundTaskInfo {
     pub stopped: bool,
     #[serde(default)]
     pub reported_usage: Usage,
+    /// How many artifacts of a subagent session were already forwarded: its
+    /// idle snapshots and closing output repeat every artifact it produced.
+    #[serde(skip)]
+    pub reported_artifacts: usize,
+    /// Whether the subagent session's current turn was reported as completed.
+    #[serde(skip)]
+    pub turn_result_delivered: bool,
 }
 
 #[derive(Default)]
@@ -883,6 +989,72 @@ mod tests {
             PromptCommand::Plain { prompt } => assert!(prompt.contains("final body")),
             other => panic!("unexpected command: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn agent_hook_turn_end_reports_idle_and_forwards_only_new_artifacts() {
+        let (session, mut rx) = test_session();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let artifact = |name: &str| Resource {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        let turn_end = |turn: u64, artifacts: Vec<Resource>| {
+            AgentHook::on_background_turn_end(
+                &session,
+                &ctx,
+                "sub-1".to_string(),
+                turn,
+                AgentOutput {
+                    artifacts,
+                    ..Default::default()
+                },
+            )
+        };
+        AgentHook::on_background_start(
+            &session,
+            &ctx,
+            BackgroundHandle::new("sub-1", anda_core::CancellationToken::new()),
+            &CompletionRequest::default(),
+        )
+        .await;
+
+        turn_end(1, vec![artifact("a")]).await;
+        let msg = rx.try_recv().expect("turn completion should be queued");
+        match &msg.command {
+            PromptCommand::Plain { prompt } => {
+                assert!(prompt.contains("completed its turn"), "{prompt}");
+                assert!(prompt.contains("idle for follow-up work"), "{prompt}");
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+        assert_eq!(msg.resources.len(), 1);
+
+        // Idle snapshots are cumulative: only the second turn's artifact is new.
+        turn_end(2, vec![artifact("a"), artifact("b")]).await;
+        let msg = rx.try_recv().expect("turn completion should be queued");
+        assert_eq!(
+            msg.resources
+                .iter()
+                .map(|r| r.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+
+        // Closing the idle session repeats what was already reported.
+        AgentHook::on_background_end(
+            &session,
+            &ctx,
+            "sub-1".to_string(),
+            AgentOutput {
+                content: "turn two result".to_string(),
+                artifacts: vec![artifact("a"), artifact("b")],
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(rx.try_recv().is_err());
+        assert!(!session.background_tasks.read().contains_key("sub-1"));
     }
 
     #[tokio::test]

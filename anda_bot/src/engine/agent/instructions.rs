@@ -1,12 +1,9 @@
 //! System instruction rendering: the static self instructions plus the
-//! runtime context (self knowledge, notes, available tools, environment,
-//! user profile, local time) assembled per request.
+//! runtime context (self knowledge, available tools, environment, user
+//! profile, local time) assembled per request.
 
 use anda_core::{AgentContext, BoxError, Principal, StateFeatures};
-use anda_engine::{
-    context::AgentCtx,
-    extension::note::{load_notes, load_notes_from_legacy},
-};
+use anda_engine::context::AgentCtx;
 use chrono::{DateTime, Local, Utc};
 
 use crate::engine::ActionsTool;
@@ -17,7 +14,6 @@ static SELF_INSTRUCTIONS: &str = include_str!("../../../assets/SelfInstructions.
 
 pub(super) struct SystemInstructionSections<'a> {
     pub(super) self_knowledge: &'a str,
-    pub(super) notes: &'a str,
     pub(super) available_tools: &'a [String],
     pub(super) home_dir: &'a str,
     pub(super) workspace: &'a str,
@@ -27,10 +23,9 @@ pub(super) struct SystemInstructionSections<'a> {
 
 pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
-        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Notes\n{notes}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
+        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
         ins = SELF_INSTRUCTIONS.trim(),
         knowledge = sections.self_knowledge,
-        notes = sections.notes,
         tools = format_available_tools(sections.available_tools),
         home = sections.home_dir,
         workspace = sections.workspace,
@@ -101,11 +96,7 @@ impl AndaBot {
             && let Some(access) = &self.inner.memory_access
         {
             let guard = access.gate.lock().await;
-            let epoch = if policy.may_write() {
-                crate::util::boxed(access.synchronize_locked()).await?
-            } else {
-                crate::util::boxed(access.coherent_epoch_locked()).await?
-            };
+            let epoch = crate::util::boxed(access.epoch_locked()).await?;
             if ctx
                 .base
                 .get_state::<crate::brain::MemoryEpoch>()
@@ -130,18 +121,9 @@ impl AndaBot {
         } else {
             serde_json::json!({})
         };
-        let notes = if !policy.may_read() {
-            Default::default()
-        } else {
-            match load_notes(ctx).await {
-                Some(notes) => notes,
-                None => load_notes_from_legacy(ctx).await.unwrap_or_default(),
-            }
-        };
         let local_date = format_local_date(now_ms);
         let self_knowledge =
             serde_json::to_string(primer.get("cognitive_identity").unwrap_or(&primer))?;
-        let notes = serde_json::to_string(&notes.items)?;
         let user_profile = serde_json::to_string(&user_profile)?;
         if policy.may_read()
             && let Some(access) = &self.inner.memory_access
@@ -165,7 +147,6 @@ impl AndaBot {
 
         let mut instructions = render_system_instructions(SystemInstructionSections {
             self_knowledge: &self_knowledge,
-            notes: &notes,
             available_tools,
             home_dir,
             workspace,
@@ -193,7 +174,7 @@ impl AndaBot {
             }
         }
         if !policy.may_write() {
-            instructions.push_str(&format!("\n\n# Host memory policy\nMode: {:?}. This conversation must not write Brain or Notes. {} Nested agents, memory actions, bookmarks and cron creation/modification are unavailable in this mode. Chat history, files and provider processing are not an incognito session.",policy.mode,if policy.may_read() {"Existing memory may be recalled."}else{"Do not read Brain or Notes."}));
+            instructions.push_str(&format!("\n\n# Host memory policy\nMode: {:?}. This conversation must not write Brain. {} Nested agents, memory actions, bookmarks and cron creation/modification are unavailable in this mode. Chat history, files and provider processing are not an incognito session.",policy.mode,if policy.may_read() {"Existing memory may be recalled."}else{"Do not read Brain."}));
         }
         Ok(instructions)
     }
@@ -233,7 +214,6 @@ mod tests {
         ];
         let prompt = render_system_instructions(SystemInstructionSections {
             self_knowledge: "{}",
-            notes: "[]",
             available_tools: &tools,
             home_dir: "/home/anda",
             workspace: "/workspace/current",

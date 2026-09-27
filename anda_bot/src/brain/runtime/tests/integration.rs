@@ -738,7 +738,6 @@ struct MemoryProductFixture {
     other: anda_core::Principal,
     id: String,
     journal: crate::brain::Journal,
-    engine: Arc<anda_engine::engine::Engine>,
     mutations: Arc<crate::brain::mutation::MutationService>,
 }
 
@@ -754,30 +753,8 @@ async fn memory_product_fixture_with_models(
         FormationProvenance, FormationState, FormationSubmission, Journal, MemoryAccess,
         MemoryService, SourceMessageRef, activity::ActivityStore, mutation::MutationService,
     };
-    use anda_core::{Agent, AgentOutput, Message};
-    use anda_engine::{
-        context::AgentCtx,
-        engine::{EngineBuilder, EngineRef},
-        extension::note::NoteTool,
-        memory::{Conversation, ConversationRef},
-    };
-    struct Stub;
-    impl Agent<AgentCtx> for Stub {
-        fn name(&self) -> String {
-            crate::engine::AndaBot::NAME.into()
-        }
-        fn description(&self) -> String {
-            "Fixture without model work".into()
-        }
-        async fn run(
-            &self,
-            _ctx: AgentCtx,
-            _prompt: String,
-            _resources: Vec<anda_core::Resource>,
-        ) -> Result<AgentOutput, BoxError> {
-            Ok(AgentOutput::default())
-        }
-    }
+    use anda_core::Message;
+    use anda_engine::memory::{Conversation, ConversationRef};
     let keys = [
         Ed25519Key::new([91; 32]),
         Ed25519Key::new([92; 32]),
@@ -888,24 +865,7 @@ async fn memory_product_fixture_with_models(
         .await
         .unwrap();
     activity.reconcile().await.unwrap();
-    let engine = Arc::new(
-        EngineBuilder::new()
-            .with_management(Arc::new(anda_engine::management::BaseManagement {
-                controller: owner,
-                managers: Default::default(),
-                visibility: anda_engine::management::Visibility::Public,
-            }))
-            .register_tool(Arc::new(NoteTool::new()))
-            .unwrap()
-            .register_agent(Arc::new(Stub), None)
-            .unwrap()
-            .build(crate::engine::AndaBot::NAME.into())
-            .await
-            .unwrap(),
-    );
-    let engine_ref = Arc::new(EngineRef::new());
-    engine_ref.bind(Arc::downgrade(&engine));
-    let access = Arc::new(MemoryAccess::new(host, journal.clone(), engine_ref, owner));
+    let access = Arc::new(MemoryAccess::new(host));
     let mutations = MutationService::new(access.clone(), journal.clone(), activity.clone());
     let service = MemoryService::new(client)
         .with_activity(activity)
@@ -917,15 +877,13 @@ async fn memory_product_fixture_with_models(
         other: keys[1].id(),
         id: id.to_string(),
         journal,
-        engine,
         mutations,
     }
 }
 
 #[tokio::test]
-async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_notes() {
+async fn memory_product_mutations_authorize_sources_and_keep_intents() {
     use crate::brain::mutation::{ChangeRequest, CommitRequest};
-    use anda_engine::extension::note::{NoteArgs, NoteTool, load_notes};
     let MemoryProductFixture {
         service,
         space,
@@ -933,7 +891,6 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         other,
         id,
         journal,
-        engine,
         ..
     } = memory_product_fixture("Keep release notes short").await;
     let id = id.as_str();
@@ -952,22 +909,6 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         new_value: Some("Risks first".into()),
     };
     let preview = service.prepare_change(owner, input.clone()).await.unwrap();
-    let ctx = engine
-        .ctx_with(
-            owner,
-            crate::engine::AndaBot::NAME,
-            "",
-            RequestMeta::default(),
-        )
-        .unwrap();
-    let notes: NoteArgs = serde_json::from_value(
-        json!({"op":"set","items":[{"id":"old","content":"Old processing context"}]}),
-    )
-    .unwrap();
-    NoteTool::new()
-        .call(ctx.child_base(NoteTool::NAME).unwrap(), notes, vec![])
-        .await
-        .unwrap();
     let confirmed = service
         .commit_change(
             owner,
@@ -979,7 +920,6 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
         .await
         .unwrap();
     assert_eq!(confirmed.state, "confirmed");
-    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
     assert_eq!(
         service
             .prepare_change(owner, input.clone())
@@ -1022,16 +962,8 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
             .state,
         "confirmed"
     );
-    let notes: NoteArgs = serde_json::from_value(
-        json!({"op":"set","items":[{"id":"stale","content":"Must be cleared after deletion"}]}),
-    )
-    .unwrap();
-    NoteTool::new()
-        .call(ctx.child_base(NoteTool::NAME).unwrap(), notes, vec![])
-        .await
-        .unwrap();
     // Simulate a Bot receipt from the old error path: native confirmed, while
-    // the Bot still retained its preview and had not reset Notes.
+    // the Bot still retained its preview.
     let key = anda_cognitive_nexus::content_digest(
         &json!({"caller":owner.to_string(),"operation_id":remove.operation_id}),
     )
@@ -1054,7 +986,6 @@ async fn memory_product_mutations_authorize_sources_keep_intents_and_clear_bot_n
     assert_eq!(confirmed.state, "confirmed");
     assert!(confirmed.before.is_none());
     assert!(confirmed.error.is_none());
-    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
     assert!(service.record(owner, &replacement.id).await.is_err());
     // Preparing the same logical operation after deletion returns its receipt,
     // without requiring a record that has intentionally ceased to exist.
@@ -1372,13 +1303,10 @@ async fn memory_deletion_rejects_new_dependents_outside_its_preview() {
 }
 
 #[tokio::test]
-async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
+async fn memory_completed_repair_confirms_without_a_product_epoch_change() {
     use crate::brain::mutation::{ChangeRequest, CommitRequest};
     use anda_core::{AgentOutput, BoxPinFut, CompletionRequest};
-    use anda_engine::{
-        extension::note::{NoteArgs, NoteTool, load_notes},
-        model::{CompletionFeaturesDyn, Model},
-    };
+    use anda_engine::model::{CompletionFeaturesDyn, Model};
     #[derive(Debug)]
     struct Done;
     impl CompletionFeaturesDyn for Done {
@@ -1400,20 +1328,6 @@ async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
     let models = Arc::new(Models::default());
     models.set_model(Model::new(Arc::new(Done)));
     let fixture = memory_product_fixture_with_models("Keep release notes short", models).await;
-    let ctx = fixture
-        .engine
-        .ctx_with(
-            fixture.owner,
-            crate::engine::AndaBot::NAME,
-            "",
-            RequestMeta::default(),
-        )
-        .unwrap();
-    let set_notes = || async {
-        NoteTool::new().call(ctx.child_base(NoteTool::NAME).unwrap(),
-            serde_json::from_value::<NoteArgs>(json!({"op":"set","items":[{"id":"preference","content":"Old, incorrect preference"}]})).unwrap(), vec![]).await.unwrap();
-    };
-    set_notes().await;
     let before = fixture
         .service
         .record(fixture.owner, &fixture.id)
@@ -1425,7 +1339,7 @@ async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
         .prepare_change(
             fixture.owner,
             ChangeRequest {
-                operation_id: "repair-notes".into(),
+                operation_id: "repair-record".into(),
                 record_id: fixture.id.clone(),
                 expected_revision: before.revision,
                 kind: anda_brain::product::ChangeKind::Misrecorded,
@@ -1437,7 +1351,7 @@ async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
     let commit = || {
         fixture.service.commit_change(
             fixture.owner,
-            "repair-notes".into(),
+            "repair-record".into(),
             CommitRequest {
                 preview_digest: preview.preview_digest.clone(),
             },
@@ -1456,11 +1370,8 @@ async fn memory_completed_repair_clears_notes_without_a_product_epoch_change() {
     .await
     .expect("recording repair completes");
     assert_eq!(fixture.space.product_epoch(), epoch);
-    assert!(load_notes(&ctx).await.unwrap().items.is_empty());
-    // A settled replay must not erase Notes written after the repair.
-    set_notes().await;
+    // A settled replay keeps its confirmation.
     assert_eq!(commit().await.unwrap().state, "confirmed");
-    assert_eq!(load_notes(&ctx).await.unwrap().items.len(), 1);
     fixture.space.close().await.unwrap();
 }
 
@@ -1790,13 +1701,11 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
 #[tokio::test]
 async fn memory_product_misrecordings_repair_and_deletions_report_their_erasure() {
     use crate::brain::mutation::{ChangeRequest, CommitRequest};
-    // The engine stays alive: confirmed changes reset its Notes.
     let MemoryProductFixture {
         service,
         space,
         owner,
         id,
-        engine: _engine,
         ..
     } = memory_product_fixture("Keep release notes short").await;
     let before = service.record(owner, &id).await.unwrap();
