@@ -171,7 +171,19 @@ printf 'MP3DATA'
     #[tokio::test]
     async fn timeout_and_cancellation_terminate_child() {
         for cancel in [false, true] {
-            let (dir, provider) = fake_cli("printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 5");
+            let (dir, provider) = fake_cli(
+                "[ \"$1\" = --warm-up ] && exit 0\nprintf '%s' \"$$\" > \"$0.pid\"\nexec sleep 5",
+            );
+            // A new executable's first launch can exceed the 1s budget (macOS
+            // assesses it), killing the child before it records its pid.
+            assert!(
+                tokio::process::Command::new(&provider.binary_path)
+                    .arg("--warm-up")
+                    .status()
+                    .await
+                    .unwrap()
+                    .success()
+            );
             let task = tokio::spawn(async move {
                 provider
                     .synthesize_with_timeout("hi", Duration::from_secs(1))

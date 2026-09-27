@@ -597,10 +597,7 @@ async fn handle_tool_call(
     engine_id: Principal,
 ) -> Result<Value, String> {
     let (input,): (ToolInput<Json>,) = params_from_value(params)?;
-    let _permit = if matches!(
-        input.name.as_str(),
-        "actions_api" | "conversations_api" | "resources_api"
-    ) {
+    let _permit = if crate::runtime_admission::MAINTENANCE_TOOLS.contains(&input.name.as_str()) {
         None
     } else {
         Some(state.admission.enter().map_err(str::to_string)?)

@@ -32,6 +32,7 @@ export class DaemonClient extends EventEmitter {
   private appTransport = false
   private credentialAt = 0
   private configWrites: Promise<unknown> = Promise.resolve()
+  private runtimeVerified = false
   constructor(
     readonly home: string,
     private resources: string,
@@ -48,19 +49,18 @@ export class DaemonClient extends EventEmitter {
       managed: false
     }
   }
+  private get bundled(): string {
+    return join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
+  }
   async discover(): Promise<string> {
+    const bundled = this.bundled
     const candidates = [
       this.store.state.binary,
-      join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda'),
+      bundled,
       join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'anda.exe' : 'anda'),
       '/opt/homebrew/bin/anda',
       '/usr/local/bin/anda'
     ]
-    const bundled = join(
-      this.resources,
-      'runtime',
-      process.platform === 'win32' ? 'anda.exe' : 'anda'
-    )
     for (const candidate of candidates) {
       if (!candidate) continue
       try {
@@ -69,7 +69,8 @@ export class DaemonClient extends EventEmitter {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
         throw error
       }
-      if (candidate === bundled) {
+      // The packaged runtime cannot change while this process runs; hash it once.
+      if (candidate === bundled && !this.runtimeVerified) {
         try {
           const manifest = JSON.parse(
             await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
@@ -88,6 +89,7 @@ export class DaemonClient extends EventEmitter {
             'Bundled runtime verification failed. Reinstall a complete desktop package.'
           )
         }
+        this.runtimeVerified = true
       }
       return candidate
     }
@@ -103,11 +105,7 @@ export class DaemonClient extends EventEmitter {
         windowsHide: true,
         env: {
           ...process.env,
-          ANDA_DESKTOP_MANAGED_RUNTIME:
-            binary ===
-            join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
-              ? '1'
-              : undefined
+          ANDA_DESKTOP_MANAGED_RUNTIME: binary === this.bundled ? '1' : undefined
         }
       })
       if (input !== undefined) {
@@ -167,9 +165,7 @@ export class DaemonClient extends EventEmitter {
         }
         if (status.state === 'not_running') {
           await this.command(['start'])
-          this.view.managed =
-            this.view.binary ===
-            join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
+          this.view.managed = this.view.binary === this.bundled
         } else if (!['running', 'gateway_running', 'process_unresponsive'].includes(status.state))
           throw new Error(
             'The existing daemon is unresponsive. Restart it explicitly before reconnecting.'
@@ -198,12 +194,9 @@ export class DaemonClient extends EventEmitter {
       this.view.desktopProtocol = capabilities.desktop?.protocol || 0
       this.view.version = capabilities.desktop?.runtime_version
       const runtimePath = capabilities.desktop?.runtime_path
-      const bundled = join(
-        this.resources,
-        'runtime',
-        process.platform === 'win32' ? 'anda.exe' : 'anda'
+      this.view.managed = Boolean(
+        capabilities.desktop?.managed_runtime && runtimePath === this.bundled
       )
-      this.view.managed = Boolean(capabilities.desktop?.managed_runtime && runtimePath === bundled)
       this.view.runtimeOwnership =
         capabilities.desktop?.managed_runtime && !runtimePath
           ? 'unknown'
@@ -472,10 +465,17 @@ export class DaemonClient extends EventEmitter {
     let changed = false
     for (const pending of [...this.store.state.pending]) {
       if (!pending.receipt || pending.state !== 'unknown') continue
-      const receipt = (await this.request('submission/read', {
-        source: pending.source,
-        requestId: pending.id
-      })) as SubmissionReceipt | null
+      let receipt: SubmissionReceipt | null
+      try {
+        receipt = (await this.request('submission/read', {
+          source: pending.source,
+          requestId: pending.id
+        })) as SubmissionReceipt | null
+      } catch {
+        // An unreadable receipt stays unknown for the user to review; it must
+        // not keep the whole connection down.
+        continue
+      }
       if (receipt && ['completed', 'failed'].includes(receipt.state)) {
         this.store.state.pending = this.store.state.pending.map((p) =>
           p.id === pending.id ? { ...p, state: receipt.state as 'completed' | 'failed' } : p

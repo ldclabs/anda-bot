@@ -25,6 +25,9 @@ pub struct Status {
     pub active: usize,
 }
 const LEASE_TIME: Duration = Duration::from_secs(90);
+/// Approvals and chat reads let admitted work finish, so every transport keeps
+/// these tools available while maintenance is pending.
+pub const MAINTENANCE_TOOLS: [&str; 3] = ["actions_api", "conversations_api", "resources_api"];
 impl Admission {
     /// Continue authenticated nested work or cancellation while draining.
     /// Never use this path for ordinary new-task admission.

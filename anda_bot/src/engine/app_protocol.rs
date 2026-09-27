@@ -126,7 +126,8 @@ pub struct Submissions {
     active: tokio::sync::Mutex<HashMap<String, watch::Receiver<SubmissionReceipt>>>,
 }
 
-fn hash(bytes: &[u8]) -> String {
+/// URL-safe SHA3-384 digest; Anda Desktop recomputes it for offline configs.
+pub(super) fn hash(bytes: &[u8]) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(Sha3_384::digest(bytes))
 }

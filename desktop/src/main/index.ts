@@ -1,5 +1,6 @@
 import {
   app,
+  autoUpdater,
   BrowserWindow,
   Menu,
   Tray,
@@ -158,6 +159,11 @@ app.on('before-quit', (event) => {
 })
 app.on('window-all-closed', () => {
   /* Tray owns the UI lifetime until explicit Quit. */
+})
+// quitAndInstall closes every window before `before-quit`; a hidden window
+// would keep the update (and the stopped runtime) waiting indefinitely.
+autoUpdater.on('before-quit-for-update', () => {
+  quitting = true
 })
 
 function createWindow(): void {

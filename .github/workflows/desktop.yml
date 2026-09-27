@@ -33,15 +33,6 @@ jobs:
       RUST_MIN_STACK: "16777216"
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/checkout@v6
-        with:
-          repository: ldclabs/anda-brain
-          ref: b5c0ee0788f52efba936e4422897601305968dff
-          path: .ci/anda-brain
-          persist-credentials: false
-      - name: Place Brain source dependency
-        shell: bash
-        run: mv .ci/anda-brain ../anda-brain
       - uses: actions/setup-node@v6
         with:
           node-version: "24"

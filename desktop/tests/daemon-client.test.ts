@@ -12,7 +12,12 @@ afterEach(async () => {
   for (const f of cleanup.splice(0).reverse()) await f()
 })
 
-async function fixture(dropSubmission = false, appTransport = false, failSubmission = false) {
+async function fixture(
+  dropSubmission = false,
+  appTransport = false,
+  failSubmission = false,
+  failRead = false
+) {
   const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-test-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const store = new DesktopStore(join(directory, 'desktop.json'))
@@ -49,6 +54,12 @@ async function fixture(dropSubmission = false, appTransport = false, failSubmiss
           ws.terminate()
           return
         }
+      }
+      if (failRead && message.method === 'submission/read') {
+        ws.send(
+          JSON.stringify({ id: message.id, error: { code: -32000, message: 'Unreadable receipt' } })
+        )
+        return
       }
       const reply = () =>
         ws.send(
@@ -155,6 +166,16 @@ describe('daemon transport and recovery', () => {
     const restored = new DesktopStore(join(f.directory, 'desktop.json'))
     await restored.load()
     expect(restored.state.pending[0]?.id).toBe(f.store.state.pending[0]?.id)
+    expect(f.submissions()).toBe(1)
+  })
+  it('connects while an unreadable receipt stays unknown for review', async () => {
+    const f = await fixture(true, true, false, true)
+    await expect(
+      f.client.rpc('agent_run', [{ name: '', prompt: 'hello', meta: { source: 'desktop:one' } }])
+    ).rejects.toThrow('SUBMISSION_UNKNOWN')
+    await f.client.connect()
+    expect(f.client.view.connected).toBe(true)
+    expect(f.store.state.pending).toMatchObject([{ state: 'unknown' }])
     expect(f.submissions()).toBe(1)
   })
   it('allows a new foreground message while a side request is awaiting its reply', async () => {

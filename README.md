@@ -119,6 +119,8 @@ Source builds track the KIP 2.0 stack: Brain 0.13 with its Memory Interface bind
 
 Development and test builds use basic optimization for dependencies to keep macOS unwind tables below the linker's 16 MiB limit. `anda_bot` itself remains unoptimized, with debug information and panic unwinding preserved. The first dependency build takes longer; subsequent builds reuse those artifacts.
 
+Run `make test` for the full Rust suite with all features. It defaults to `RUST_MIN_STACK=16777216` (16 MiB per test thread), matching CI, because the embedded Brain's unoptimized async frames can overflow the default test-thread stack. An explicitly supplied `RUST_MIN_STACK` overrides this default. When invoking Cargo directly, use `RUST_MIN_STACK=16777216 cargo test --workspace --all-features`.
+
 The first start with a KIP 1.x database migrates stored memory before the gateway becomes ready and can take several minutes. Commands starting a new daemon wait up to ten minutes and report an exited child promptly. Back up the database before upgrading; original task statuses and results remain available in `LegacyRecord` after migration.
 
 The optional `mib` feature adds a loopback-only evaluation host: `anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`. It starts before production home/daemon initialization and uses isolated Brain runs. The agent protocol executes Bot's runner-managed business profile with MIB-owned task tools; a separate memory-backend protocol supports MIB's evaluator-owned same-model agent. See [MIB integration](docs/mib-integration.md) for lifecycle guarantees, memory controls and incomplete cost accounting.

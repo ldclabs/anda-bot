@@ -43,6 +43,9 @@ it('stages literal paths, preserves files when unstaging unborn HEAD and rejects
   const path = '--[中文] file.txt'
   await writeFile(join(f.root, path), 'first')
   const initial = await f.service.status(f.root)
+  expect(await f.service.request({ action: 'diff', workspace: f.root, path, staged: false })).toBe(
+    'first'
+  )
   await writeFile(join(f.root, path), 'changed content')
   await expect(
     f.service.request({

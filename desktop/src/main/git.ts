@@ -181,7 +181,17 @@ export class GitService {
     const root = await this.root(request.workspace)
     if (request.action === 'diff') {
       this.paths([request.path])
-      const files = parseStatus((await this.fingerprint(root)).raw)
+      // A preview only needs this path's status, not the whole-repository fingerprint.
+      const files = parseStatus(
+        await this.git(root, [
+          'status',
+          '--porcelain=v1',
+          '-z',
+          '--untracked-files=all',
+          '--',
+          request.path
+        ])
+      )
       if (files.some((f) => f.path === request.path && f.index === '?')) {
         const path = join(root, request.path)
         const stat = await lstat(path)

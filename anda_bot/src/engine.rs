@@ -913,7 +913,7 @@ impl Engines {
                     .into_router()
                     .layer(axum::middleware::from_fn_with_state(
                         self.bot.admission(),
-                        engine_admission,
+                        admission_gate,
                     )),
             )
             .merge(auto_update_router)
@@ -923,7 +923,7 @@ impl Engines {
     }
 }
 
-pub(crate) async fn engine_admission(
+pub(crate) async fn admission_gate(
     State(admission): State<Arc<crate::runtime_admission::Admission>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -933,6 +933,59 @@ pub(crate) async fn engine_admission(
         Err(error) => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
     };
     next.run(request).await
+}
+
+/// Engine RPC follows the WebSocket policy: while maintenance is pending,
+/// stop/cancel, approvals and chat reads stay available so admitted work can
+/// finish. Only then is the body decoded.
+pub(crate) async fn engine_admission(
+    State(admission): State<Arc<crate::runtime_admission::Admission>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let (_permit, request) = match admission.enter() {
+        Ok(permit) => (permit, request),
+        Err(error) => {
+            let (parts, body) = request.into_parts();
+            // Requests that stay available are small; new work is refused anyway.
+            match axum::body::to_bytes(body, 1024 * 1024).await {
+                Ok(body) if admitted_while_paused(&parts.headers, &body) => (
+                    admission.enter_existing(),
+                    axum::extract::Request::from_parts(parts, body.into()),
+                ),
+                _ => return (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+            }
+        }
+    };
+    next.run(request).await
+}
+
+fn admitted_while_paused(headers: &HeaderMap, body: &[u8]) -> bool {
+    fn decode<T: serde::de::DeserializeOwned>(cbor: bool, bytes: &[u8]) -> Option<T> {
+        if cbor {
+            cbor2::from_slice(bytes).ok()
+        } else {
+            serde_json::from_slice(bytes).ok()
+        }
+    }
+    let cbor = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("cbor"));
+    let Some(request) = decode::<anda_core::http::RPCRequest>(cbor, body) else {
+        return false;
+    };
+    match request.method.as_str() {
+        // AndaBot::run itself admits only stop and cancel while paused.
+        "agent_run" | "information" => true,
+        "tool_call" => {
+            decode::<(anda_core::ToolInput<serde_json::Value>,)>(cbor, request.params.as_slice())
+                .is_some_and(|(input,)| {
+                    crate::runtime_admission::MAINTENANCE_TOOLS.contains(&input.name.as_str())
+                })
+        }
+        _ => false,
+    }
 }
 
 pub(crate) async fn brain_admission(
@@ -1261,10 +1314,7 @@ fn daemon_config_response(
 }
 
 fn daemon_config_revision(content: &str) -> String {
-    base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        Sha3_384::digest(content.as_bytes()),
-    )
+    app_protocol::hash(content.as_bytes())
 }
 
 fn normalize_config_file_content(mut content: String) -> String {
@@ -1705,6 +1755,56 @@ model:
             .unwrap();
         assert_eq!(accepted.status().as_u16(), 200);
         assert_eq!(accepted.text().await.unwrap(), "original service caller");
+        assert_eq!(gate.status().active, 0);
+    }
+
+    #[tokio::test]
+    async fn maintenance_keeps_engine_rpc_cancellation_approvals_and_reads() {
+        let gate = Arc::new(crate::runtime_admission::Admission::default());
+        let app = Router::new()
+            .route("/", routing::post(|| async { "admitted" }))
+            .layer(axum::middleware::from_fn_with_state(
+                gate.clone(),
+                engine_admission,
+            ));
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let rpc = |method: &str, params: Vec<u8>| {
+            serde_json::to_vec(&anda_core::http::RPCRequest {
+                method: method.to_string(),
+                params: params.into(),
+            })
+            .unwrap()
+        };
+        let tool = |name: &str| {
+            serde_json::to_vec(&(anda_core::ToolInput::new(name.to_string(), json!({})),)).unwrap()
+        };
+        let client = reqwest::Client::new();
+        let post = |body: Vec<u8>| {
+            client
+                .post(&url)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .send()
+        };
+        assert_eq!(
+            post(rpc("tool_call", tool("skills_api")))
+                .await
+                .unwrap()
+                .status()
+                .as_u16(),
+            200
+        );
+        let _lease = gate.begin().unwrap();
+        for (body, status) in [
+            // AndaBot::run decides: stop/cancel continue, new work is refused.
+            (rpc("agent_run", b"[]".to_vec()), 200),
+            (rpc("tool_call", tool("actions_api")), 200),
+            (rpc("tool_call", tool("conversations_api")), 200),
+            (rpc("tool_call", tool("skills_api")), 503),
+            (b"not an rpc".to_vec(), 503),
+        ] {
+            assert_eq!(post(body).await.unwrap().status().as_u16(), status);
+        }
         assert_eq!(gate.status().active, 0);
     }
 

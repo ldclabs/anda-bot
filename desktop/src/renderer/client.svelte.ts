@@ -100,6 +100,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   private seenStatuses = new Map<string, string>()
   private receiptRecovery: Promise<void> = Promise.resolve()
   private activeSubmissions = new Set<string>()
+  private speechEpoch = 0
   private ephemeralWorkspace?: string
   private draftTimer?: ReturnType<typeof setTimeout>
   private drafts = new Map<string, { text: string; attachments: ChatAttachment[] }>()
@@ -350,7 +351,10 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const workspace =
       this.preferences.chats.find((c) => c.source === source)?.workspace ||
       workspaceFromCliSource(source)
-    if (workspace && this.authorized) await this.rpc('register_workspace', [workspace])
+    // A moved folder or a paused runtime must not hide the chat's history;
+    // sending registers the workspace again and reports that error there.
+    if (workspace && this.authorized)
+      await this.rpc('register_workspace', [workspace]).catch((error) => this.fail(error))
     await this.savePreferences({ activeSource: source })
     if (this.authorized) {
       await this.activeChannel.init()
@@ -435,9 +439,12 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       const text = memoryMode ? `/new ${prompt}` : prompt
       const poll = await channel.sendPrompt(text, attachments, memoryMode)
       if (speak && poll) {
+        const epoch = this.speechEpoch
         for await (const message of poll) {
           if (message.role === 'assistant' && message.text.trim()) {
             const played = await this.voice.speak(message.text, 'anda')
+            // Stop ends this turn's playback; it is not a playback failure.
+            if (epoch !== this.speechEpoch) break
             if (!played)
               this.fail(
                 'Speech playback is unavailable. Configure a daemon TTS provider in Settings.'
@@ -448,8 +455,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       await this.updateChat(channel.source, { updatedAt: Date.now() })
     } catch (error) {
       this.fail(error)
+      // Main has already pushed the unknown submission in a `submissions` event.
       if (String(error).includes('SUBMISSION_UNKNOWN')) {
-        this.pending = (await window.anda.bootstrap()).pending
         channel.clearConversation()
         await channel.init()
       }
@@ -459,6 +466,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     }
   }
   async stopActiveTask(): Promise<void> {
+    this.speechEpoch++
     this.voice.stopSpeaking()
     if (
       this.sending ||

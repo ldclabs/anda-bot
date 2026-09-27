@@ -107,6 +107,8 @@ launcher 会将该目录传给 daemon 命令，并保留在登录自启和重启
 
 开发和测试构建对依赖包启用基础优化，将 macOS 展开表控制在链接器的 16 MiB 限制以内。`anda_bot` 自身仍不启用优化，并保留调试信息和 panic 展开。首次编译依赖会稍慢，后续构建会复用这些产物。
 
+运行 `make test` 可执行启用全部 feature 的完整 Rust 测试。它默认设置 `RUST_MIN_STACK=16777216`（每个测试线程 16 MiB），与 CI 保持一致，因为内嵌 Brain 未优化的异步栈帧可能超出默认测试线程栈。显式指定的 `RUST_MIN_STACK` 可覆盖此默认值。直接调用 Cargo 时，请使用 `RUST_MIN_STACK=16777216 cargo test --workspace --all-features`。
+
 首次使用 KIP 1.x 数据库启动时，会先迁移记忆再开放网关，可能需要数分钟。启动新 daemon 时最多等待十分钟；子进程若退出会及时报错。升级前请备份数据库；迁移后旧任务的原始状态和结果仍保存在 `LegacyRecord` 中。
 
 可选 `mib` feature 提供仅监听本机的评测宿主：`anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`。入口在生产 home/daemon 初始化之前分流，使用隔离的 Brain 运行。Agent 协议执行 Bot 的 runner-managed 业务模式和 MIB 管理的任务工具；独立的记忆后端协议供 MIB 自有同模型 Agent 使用。生命周期、记忆开关和仍不完整的成本计量见 [MIB 接入](docs/mib-integration_cn.md)。

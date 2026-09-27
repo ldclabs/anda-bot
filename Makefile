@@ -1,5 +1,8 @@
 BUILD_ENV := rust
 
+# Match CI: embedded Brain's unoptimized async frames need a larger test stack.
+RUST_MIN_STACK ?= 16777216
+
 .PHONY: lint fix test
 
 lint:
@@ -11,4 +14,4 @@ fix:
 	@cargo clippy --fix --workspace --tests
 
 test:
-	@cargo test --workspace --all-features -- --nocapture
+	@RUST_MIN_STACK=$(RUST_MIN_STACK) cargo test --workspace --all-features -- --nocapture
