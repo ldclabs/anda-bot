@@ -1568,6 +1568,14 @@ mod tests {
                     ws.send(Message::Text(serde_json::json!({"op":0,"t":"MESSAGE_CREATE","s":3,"d":{"id":"missed-message","channel_id":"c1","author":{"id":"111"},"content":"missed during disconnect","attachments":[]}}).to_string().into())).await.unwrap();
                     ws.send(Message::Text("{\"op\":7}".into())).await.unwrap();
                 }
+                // Close only after the client disconnects on op 7. Dropping a
+                // socket with unread heartbeats resets it, and Windows then
+                // discards frames the client has not read yet.
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while let Some(Ok(_)) = ws.next().await {}
+                })
+                .await
+                .unwrap();
             }
         });
         let (tx, mut rx) = mpsc::channel(4);
