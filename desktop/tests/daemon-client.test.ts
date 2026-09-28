@@ -226,6 +226,8 @@ describe('daemon transport and recovery', () => {
   })
   it('preserves the latest serialized settings when several writes overlap', async () => {
     const f = await fixture()
+    f.store.state.preferences.activeSource = 'one'
+    f.store.state.preferences.drafts = { unsent: 'never reopened', empty: '' }
     const writes = []
     for (let i = 0; i < 10; i++) {
       f.store.state.preferences.drafts.one = `draft ${i}`
@@ -234,6 +236,7 @@ describe('daemon transport and recovery', () => {
     await Promise.all(writes)
     const restored = new DesktopStore(join(f.directory, 'desktop.json'))
     await restored.load()
-    expect(restored.state.preferences.drafts.one).toBe('draft 9')
+    // Only drafts of chats that can still be opened survive a restart.
+    expect(restored.state.preferences.drafts).toEqual({ one: 'draft 9' })
   })
 })

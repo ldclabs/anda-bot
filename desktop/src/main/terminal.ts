@@ -1,7 +1,13 @@
 import { utilityProcess, type UtilityProcess } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { join, basename } from 'node:path'
-import type { TerminalEvent, TerminalRequest, TerminalSession } from '../shared/workbench'
+import {
+  SCROLLBACK,
+  appendScrollback,
+  type TerminalEvent,
+  type TerminalRequest,
+  type TerminalSession
+} from '../shared/workbench'
 
 interface Session extends TerminalSession {
   child: UtilityProcess
@@ -25,7 +31,7 @@ export class TerminalService {
       workspace: session.workspace,
       title: session.title,
       exited: session.exited,
-      output: session.output,
+      output: session.output.slice(-SCROLLBACK),
       sequence: session.sequence
     }
   }
@@ -63,8 +69,7 @@ export class TerminalService {
       const workspace = await this.authorize(request.workspace)
       if (!this.canCreate())
         throw new Error('Wait for the update to finish before opening a terminal.')
-      if (this.sessions.size >= 12)
-        throw new Error('Close an existing terminal before opening another.')
+      if (this.running >= 12) throw new Error('Close an existing terminal before opening another.')
       const child = utilityProcess.fork(join(__dirname, 'pty-host.js'), [], {
         serviceName: 'Anda Terminal',
         stdio: 'ignore'
@@ -99,7 +104,7 @@ export class TerminalService {
             })
           } else if (message.type === 'data') {
             const data = String(message.data)
-            session.output = (session.output + data).slice(-512 * 1024)
+            session.output = appendScrollback(session.output, data)
             session.pending += data
             if (session.pending.length > 512 * 1024)
               session.pending =

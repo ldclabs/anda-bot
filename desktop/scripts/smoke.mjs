@@ -289,7 +289,8 @@ wsServer.on('connection', (ws, request) => {
             {
               name: 'test.wav',
               mime_type: 'audio/wav',
-              blob: Buffer.from(testTone()).toString('base64')
+              // The daemon's ByteBufB64 wire form.
+              blob: `b64:${Buffer.from(testTone()).toString('base64url')}`
             }
           ]
         }

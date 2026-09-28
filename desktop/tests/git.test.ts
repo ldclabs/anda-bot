@@ -3,9 +3,9 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, access } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import { GitService, parseStatus } from '../src/main/git'
-import { workbenchMessages } from '../src/renderer/workbench-labels'
 
 const run = promisify(execFile)
 const directories: string[] = []
@@ -29,14 +29,47 @@ async function fixture() {
   return { root, git, service }
 }
 it('parses rename and literal newline paths without quoting ambiguities', () => {
-  expect(parseStatus('R  new\nfile\0old file\0?? --flag\0')).toEqual([
-    { index: 'R', worktree: ' ', path: 'new\nfile', previousPath: 'old file' },
-    { index: '?', worktree: '?', path: '--flag' }
-  ])
+  const hash = '0'.repeat(40)
+  expect(
+    parseStatus(
+      [
+        '# branch.oid (initial)',
+        '# branch.head main',
+        `2 R. N... 100644 100644 100644 ${hash} ${hash} R100 new\nfile  two`,
+        'old file',
+        `1 .M N... 100644 100644 100644 ${hash} ${hash} a b`,
+        '? --flag',
+        ''
+      ].join('\0')
+    )
+  ).toEqual({
+    head: '',
+    branch: 'main',
+    files: [
+      { index: 'R', worktree: ' ', path: 'new\nfile  two', previousPath: 'old file' },
+      { index: ' ', worktree: 'M', path: 'a b' },
+      { index: '?', worktree: '?', path: '--flag' }
+    ]
+  })
 })
-it('keeps six workbench dictionaries aligned', () => {
-  for (const locale of Object.values(workbenchMessages))
-    expect(Object.keys(locale)).toEqual(Object.keys(workbenchMessages.en))
+it('fingerprints large changes, repeated edits and restaged content without full diffs', async () => {
+  const f = await fixture()
+  await writeFile(join(f.root, 'asset.bin'), randomBytes(1024))
+  await writeFile(join(f.root, 'staged.txt'), 'one')
+  await f.git(['add', '.'])
+  await f.git(['commit', '-m', 'init'])
+  await writeFile(join(f.root, 'asset.bin'), randomBytes(9 * 1024 * 1024))
+  const large = await f.service.status(f.root)
+  expect(large.files).toEqual([{ index: ' ', worktree: 'M', path: 'asset.bin' }])
+  await writeFile(join(f.root, 'asset.bin'), randomBytes(9 * 1024 * 1024))
+  const edited = await f.service.status(f.root)
+  expect(edited.revision).not.toBe(large.revision)
+  await writeFile(join(f.root, 'staged.txt'), 'two')
+  await f.git(['add', 'staged.txt'])
+  const staged = await f.service.status(f.root)
+  await writeFile(join(f.root, 'staged.txt'), 'six')
+  await f.git(['add', 'staged.txt'])
+  expect((await f.service.status(f.root)).revision).not.toBe(staged.revision)
 })
 it('stages literal paths, preserves files when unstaging unborn HEAD and rejects stale writes', async () => {
   const f = await fixture()

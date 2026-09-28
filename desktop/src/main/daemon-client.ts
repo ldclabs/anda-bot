@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { createReadStream } from 'node:fs'
 import { access, readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -8,7 +9,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import { parse as parseYaml } from 'yaml'
 import WebSocket from 'ws'
 import type { AppInitialize, AppSubmit, SubmissionReceipt } from '../shared/app-protocol'
-import type { DaemonView } from '../shared/contract'
+import type { DaemonView, PendingSubmission } from '../shared/contract'
 import { loopbackBaseUrl, validateRpc } from './policy'
 import { DesktopStore } from './store'
 
@@ -33,6 +34,7 @@ export class DaemonClient extends EventEmitter {
   private credentialAt = 0
   private configWrites: Promise<unknown> = Promise.resolve()
   private runtimeVerified = false
+  private browserSessions = new Set<string>()
   constructor(
     readonly home: string,
     private resources: string,
@@ -75,15 +77,12 @@ export class DaemonClient extends EventEmitter {
           const manifest = JSON.parse(
             await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
           )
-          if (
-            manifest.platform !== process.platform ||
-            manifest.arch !== process.arch ||
-            manifest.sha256 !==
-              createHash('sha256')
-                .update(await readFile(candidate))
-                .digest('hex')
-          )
+          if (manifest.platform !== process.platform || manifest.arch !== process.arch)
             throw new Error('mismatch')
+          // Stream the digest instead of holding the whole runtime in memory.
+          const hash = createHash('sha256')
+          for await (const chunk of createReadStream(candidate)) hash.update(chunk)
+          if (manifest.sha256 !== hash.digest('hex')) throw new Error('mismatch')
         } catch {
           throw new Error(
             'Bundled runtime verification failed. Reinstall a complete desktop package.'
@@ -165,7 +164,6 @@ export class DaemonClient extends EventEmitter {
         }
         if (status.state === 'not_running') {
           await this.command(['start'])
-          this.view.managed = this.view.binary === this.bundled
         } else if (!['running', 'gateway_running', 'process_unresponsive'].includes(status.state))
           throw new Error(
             'The existing daemon is unresponsive. Restart it explicitly before reconnecting.'
@@ -373,19 +371,14 @@ export class DaemonClient extends EventEmitter {
           requestId: submission.id,
           input
         } satisfies AppSubmit)) as SubmissionReceipt
-        if (receipt.state === 'completed' || receipt.state === 'failed') {
-          this.store.state.pending = this.store.state.pending.map((p) =>
-            p.id === submission.id ? { ...p, state: receipt.state as 'completed' | 'failed' } : p
-          )
-          // Main surviving a renderer reload is not proof that the UI received
-          // the result. Keep its durable reference until the renderer ACKs it.
-          await this.store.save()
-        }
+        // Main surviving a renderer reload is not proof that the UI received
+        // the result. Keep its durable reference until the renderer ACKs it.
+        if (receipt.state === 'completed' || receipt.state === 'failed')
+          await this.settlePending(submission.id, receipt.state)
         return this.receiptResult(receipt)
       }
       const result = await this.request(method, params)
-      this.store.state.pending = this.store.state.pending.filter((p) => p.id !== submission.id)
-      await this.store.save()
+      await this.settlePending(submission.id, null)
       return result
     } catch (error) {
       if (
@@ -396,18 +389,21 @@ export class DaemonClient extends EventEmitter {
         throw error
       const text = error instanceof Error ? error.message : String(error)
       if (/WebSocket|SUBMISSION_UNKNOWN|outcome unknown/.test(text)) {
-        this.store.state.pending = this.store.state.pending.map((p) =>
-          p.id === submission.id ? { ...p, state: 'unknown' } : p
-        )
-        await this.store.save()
+        await this.settlePending(submission.id, 'unknown')
         throw new Error(
           '[SUBMISSION_UNKNOWN] The connection was lost. Check the conversation before submitting again.'
         )
       }
-      this.store.state.pending = this.store.state.pending.filter((p) => p.id !== submission.id)
-      await this.store.save()
+      await this.settlePending(submission.id, null)
       throw error
     }
+  }
+  /** Records a submission's new state, or forgets it with `null`, then persists. */
+  private async settlePending(id: string, state: PendingSubmission['state'] | null): Promise<void> {
+    this.store.state.pending = state
+      ? this.store.state.pending.map((p) => (p.id === id ? { ...p, state } : p))
+      : this.store.state.pending.filter((p) => p.id !== id)
+    await this.store.save()
   }
   private receiptResult(value: unknown): unknown {
     const receipt = value as SubmissionReceipt
@@ -424,7 +420,11 @@ export class DaemonClient extends EventEmitter {
       throw new Error(
         'Restart the daemon with the current desktop runtime to use its browser tools.'
       )
+    // The daemon keeps a registration until this socket closes.
+    const socket = this.socket
+    if (this.browserSessions.has(session)) return
     await this.request('browser_register', [{ session, title: 'Anda Desktop' }])
+    if (this.socket === socket) this.browserSessions.add(session)
   }
   async maintenance(
     action: 'begin' | 'renew' | 'release' | 'shutdown',
@@ -476,15 +476,12 @@ export class DaemonClient extends EventEmitter {
         // not keep the whole connection down.
         continue
       }
-      if (receipt && ['completed', 'failed'].includes(receipt.state)) {
-        this.store.state.pending = this.store.state.pending.map((p) =>
-          p.id === pending.id ? { ...p, state: receipt.state as 'completed' | 'failed' } : p
-        )
+      if (receipt?.state === 'completed' || receipt?.state === 'failed') {
+        await this.settlePending(pending.id, receipt.state)
         changed = true
       }
     }
     if (changed) {
-      await this.store.save()
       this.emit('submissions', this.store.state.pending)
       this.emit('state', { recovered: true })
     }
@@ -501,8 +498,7 @@ export class DaemonClient extends EventEmitter {
   }
   async acknowledgeSubmission(id: string): Promise<void> {
     if (typeof id !== 'string') throw new Error('Invalid submission')
-    this.store.state.pending = this.store.state.pending.filter((p) => p.id !== id)
-    await this.store.save()
+    await this.settlePending(id, null)
     this.emit('submissions', this.store.state.pending)
   }
   async config(
@@ -613,6 +609,7 @@ export class DaemonClient extends EventEmitter {
     clearInterval(this.heartbeat)
     const ws = this.socket
     this.socket = null
+    this.browserSessions.clear()
     ws?.close()
     this.failPending(new Error('WebSocket disconnected'))
     this.view.connected = false

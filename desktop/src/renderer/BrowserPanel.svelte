@@ -2,9 +2,9 @@
   import { onMount } from 'svelte'
   import { ArrowLeft, ArrowRight, RotateCw, Plus, X, Download } from '@lucide/svelte'
   import type { BrowserState, BrowserRequest } from '../shared/browser'
-  import { wb } from './workbench-labels'
+  import { label, type Label } from './labels'
   let { source, language }: { source: string; language: string } = $props()
-  const t = (key: Parameters<typeof wb>[1]) => wb(language, key)
+  const t = (key: Label) => label(language, key)
   let browserState = $state<BrowserState>({
     source: '',
     session: '',
@@ -33,6 +33,7 @@
       error = String(e)
     }
   }
+  let placed = ''
   function position() {
     cancelAnimationFrame(frame)
     frame = requestAnimationFrame(() => {
@@ -41,17 +42,22 @@
       const obscured = Boolean(
         document.querySelector('.modal-backdrop, [role="dialog"], [role="menu"]')
       )
-      void window.anda
-        .browser({
-          action: 'bounds',
-          source,
-          visible: !obscured && !document.hidden,
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height
-        })
-        .catch(() => {})
+      const bounds = {
+        action: 'bounds' as const,
+        source,
+        visible: !obscured && !document.hidden,
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height
+      }
+      // Any DOM mutation (e.g. a streaming reply) lands here; only a real move reaches Main.
+      const key = JSON.stringify(bounds)
+      if (key === placed) return
+      placed = key
+      void window.anda.browser(bounds).catch(() => {
+        placed = ''
+      })
     })
   }
   onMount(() => {
@@ -161,8 +167,8 @@
     </div>{/if}
   {#if active}<div class="browser-find">
       <input
-        aria-label={t('search')}
-        placeholder={t('search')}
+        aria-label={t('find')}
+        placeholder={t('find')}
         bind:value={find}
         onkeydown={(event) => {
           if (event.key === 'Enter')

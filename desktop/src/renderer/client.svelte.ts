@@ -25,7 +25,13 @@ import type {
   DaemonModelState,
   VoiceRecordingInput
 } from '$lib/anda/client/types'
-import type { Preferences, DaemonView, PendingSubmission, ChatEntry } from '../shared/contract'
+import {
+  defaultPreferences,
+  type Preferences,
+  type DaemonView,
+  type PendingSubmission,
+  type ChatEntry
+} from '../shared/contract'
 import en from '../../../chrome-extension/public/_locales/en/messages.json'
 import zh from '../../../chrome-extension/public/_locales/zh_CN/messages.json'
 import fr from '../../../chrome-extension/public/_locales/fr/messages.json'
@@ -34,20 +40,9 @@ import ru from '../../../chrome-extension/public/_locales/ru/messages.json'
 import ar from '../../../chrome-extension/public/_locales/ar/messages.json'
 
 const translations = { en, zh_CN: zh, fr, es, ru, ar }
-const initialPreferences: Preferences = {
-  theme: 'system',
-  language: 'en',
-  approvalMode: 'on_risk',
-  submitKeyMode: 'enter',
-  notifications: true,
-  launchAtLogin: false,
-  chats: [],
-  projects: [],
-  drafts: {}
-}
 
 export class DesktopClient extends EventTarget implements DaemonApi {
-  preferences = $state<Preferences>(structuredClone(initialPreferences))
+  preferences = $state<Preferences>(structuredClone(defaultPreferences))
   connection = $state<DaemonView>({
     connected: false,
     home: '',
@@ -116,7 +111,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const previous = this.drafts.get(source)
     if (previous?.text === draft.text && previous.attachments === draft.attachments) return
     this.drafts.set(source, draft)
-    this.preferences.drafts[source] = draft.text
+    if (draft.text) this.preferences.drafts[source] = draft.text
+    else delete this.preferences.drafts[source]
     clearTimeout(this.draftTimer)
     this.draftTimer = setTimeout(() => {
       void this.savePreferences({

@@ -50,6 +50,7 @@ export class BrowserService {
   private attached = new Set<WebContentsView>()
   private browsing = session.fromPartition('persist:anda-browser')
   private grants = new Set<string>()
+  private worlds = new Map<number, number>()
   constructor(
     private window: () => BrowserWindow | null,
     private emit: (state: BrowserState) => void,
@@ -147,7 +148,7 @@ export class BrowserService {
     return context.session
   }
   async reconnect(): Promise<void> {
-    for (const context of this.contexts.values()) await this.register(context.session)
+    await Promise.all([...this.contexts.values()].map((context) => this.register(context.session)))
   }
   private findContents(id: number): Context | undefined {
     return [...this.contexts.values()].find((c) => c.tabs.has(id))
@@ -235,7 +236,10 @@ export class BrowserService {
     wc.on('did-start-loading', () => this.changed(context))
     wc.on('did-stop-loading', () => this.changed(context))
     wc.on('page-title-updated', () => this.changed(context))
-    wc.on('did-navigate', () => this.changed(context))
+    wc.on('did-navigate', () => {
+      this.worlds.delete(id)
+      this.changed(context)
+    })
     wc.on('did-navigate-in-page', () => this.changed(context))
     wc.on('did-fail-load', (_event, code, description, _url, main) => {
       if (main && code !== -3) {
@@ -244,10 +248,12 @@ export class BrowserService {
       }
     })
     wc.on('render-process-gone', () => {
+      this.worlds.delete(id)
       tab.error = 'Page process stopped. Reload the tab.'
       this.changed(context)
     })
     wc.on('destroyed', () => {
+      this.worlds.delete(id)
       context.tabs.delete(id)
       const parent = this.window()
       if (this.attached.has(view) && parent && !parent.isDestroyed())
@@ -386,29 +392,45 @@ export class BrowserService {
       wc.once('destroyed', closed)
     })
   }
+  /** One isolated world per document; a navigation discards it (see newTab). */
+  private async isolatedWorld(wc: WebContents): Promise<number> {
+    let id = this.worlds.get(wc.id)
+    if (id === undefined) {
+      const tree = await this.cdp(wc, 'Page.getFrameTree')
+      id = (
+        await this.cdp(wc, 'Page.createIsolatedWorld', {
+          frameId: tree.frameTree.frame.id,
+          worldName: 'Anda page tools'
+        })
+      ).executionContextId as number
+      this.worlds.set(wc.id, id)
+    }
+    return id
+  }
   private async evaluate(wc: WebContents, code: string, args: BrowserActionArgs): Promise<any> {
-    let contextId: number | undefined
     if (args.frame_id && args.frame_id !== 0) {
       const frame = wc.mainFrame.framesInSubtree.find((f) => f.routingId === args.frame_id)
       if (!frame) throw new Error('Frame no longer exists')
       return frame.executeJavaScript(code, true)
     }
-    if (args.world?.trim().toUpperCase() !== 'MAIN') {
-      const tree = await this.cdp(wc, 'Page.getFrameTree')
-      contextId = (
-        await this.cdp(wc, 'Page.createIsolatedWorld', {
-          frameId: tree.frameTree.frame.id,
-          worldName: 'Anda page tools'
-        })
-      ).executionContextId
+    const isolated = args.world?.trim().toUpperCase() !== 'MAIN'
+    const run = async () =>
+      this.cdp(wc, 'Runtime.evaluate', {
+        expression: code,
+        contextId: isolated ? await this.isolatedWorld(wc) : undefined,
+        awaitPromise: true,
+        returnByValue: true,
+        userGesture: true
+      })
+    let result
+    try {
+      result = await run()
+    } catch (error) {
+      // A navigation the tab events have not reported yet destroyed the cached world.
+      if (!isolated || !/Cannot find context/i.test(String(error))) throw error
+      this.worlds.delete(wc.id)
+      result = await run()
     }
-    const result = await this.cdp(wc, 'Runtime.evaluate', {
-      expression: code,
-      contextId,
-      awaitPromise: true,
-      returnByValue: true,
-      userGesture: true
-    })
     if (result.exceptionDetails)
       throw new Error(
         result.exceptionDetails.exception?.description || result.exceptionDetails.text
@@ -730,10 +752,6 @@ export class BrowserService {
       }
     }
     return this.evaluate(wc, `(${pageActionDispatcher.toString()})(${JSON.stringify(args)})`, args)
-  }
-  hide(): void {
-    for (const context of this.contexts.values()) context.visible = false
-    this.layout()
   }
   destroy(): void {
     for (const context of this.contexts.values())

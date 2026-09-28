@@ -318,22 +318,6 @@ textarea:focus-visible {
   justify-content: center;
   padding: 50px 25px 70px;
 }
-.anda-mark {
-  position: relative;
-  font-size: 55px;
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: -5px;
-  margin-bottom: 20px;
-}
-.anda-mark span {
-  font-size: 20px;
-  letter-spacing: 0;
-  position: absolute;
-  top: -1px;
-  right: -15px;
-  color: #7e8d73;
-}
 .welcome h1 {
   font-size: 29px;
   letter-spacing: -0.9px;

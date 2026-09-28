@@ -4,9 +4,9 @@
   import type { VoiceRecordingInput, TtsToolOutput } from '$lib/anda/client/types'
   import { bytesToBase64, base64ToBytes } from '$lib/utils/base64'
   import { testTone } from './audio-test'
-  import { wb } from './workbench-labels'
+  import { label, type Label } from './labels'
   let { client }: { client: DesktopClient } = $props()
-  const t = (key: Parameters<typeof wb>[1]) => wb(client.preferences.language, key)
+  const t = (key: Label) => label(client.preferences.language, key)
   let devices = $state<MediaDeviceInfo[]>([])
   let input = $state('default'),
     output = $state('default'),

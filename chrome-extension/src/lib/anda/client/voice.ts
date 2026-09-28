@@ -268,7 +268,9 @@ export async function playAudioArtifact(resource: Resource, signal?: AbortSignal
     throw new Error('Audio artifact is missing inline data.')
   }
   const mimeType = resource.mime_type || audioMimeFromName(resource.name) || 'audio/mpeg'
-  const audio = new Audio(`data:${mimeType};base64,${resource.blob}`)
+  // The daemon sends `b64:`-prefixed base64url, which a data: URL cannot carry.
+  const url = URL.createObjectURL(new Blob([base64ToUint8Array(resource.blob)], { type: mimeType }))
+  const audio = new Audio(url)
   await new Promise<void>((resolve, reject) => {
     let settled = false
     const settle = (error?: unknown) => {
@@ -276,6 +278,7 @@ export async function playAudioArtifact(resource: Resource, signal?: AbortSignal
         return
       }
       settled = true
+      URL.revokeObjectURL(url)
       signal?.removeEventListener('abort', abort)
       audio.onended = null
       audio.onerror = null

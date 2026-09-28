@@ -23,6 +23,12 @@ export type GitRequest =
   | { action: 'worktree-create'; workspace: string; branch: string; base: string; revision: string }
   | { action: 'worktree-archive'; workspace: string; path: string; revision: string }
   | { action: 'worktree-restore'; workspace: string; id: string; revision: string }
+export const SCROLLBACK = 512 * 1024
+/** Appends terminal output, trimming in bulk so each chunk costs O(chunk), not a scrollback copy. */
+export function appendScrollback(output: string, data: string): string {
+  output += data
+  return output.length > 2 * SCROLLBACK ? output.slice(-SCROLLBACK) : output
+}
 export interface TerminalSession {
   id: string
   workspace: string

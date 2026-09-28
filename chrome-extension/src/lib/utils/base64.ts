@@ -1,7 +1,9 @@
+/** Accepts standard base64, base64url, data URLs and the daemon's `b64:` JSON form. */
 export function normalizeBase64(value: string): string {
   const normalized = value
     .trim()
     .replace(/^data:[^,]*,/i, '')
+    .replace(/^b64:/, '')
     .replace(/\s/g, '')
     .replace(/-/g, '+')
     .replace(/_/g, '/')

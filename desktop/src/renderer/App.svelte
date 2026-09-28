@@ -3,6 +3,7 @@
   import { onDestroy, tick, untrack } from 'svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   import { applyAppearanceTheme } from '$lib/anda/theme'
+  import { base64ToBytes } from '$lib/utils/base64'
   import pandaLogo from '../../../anda_bot/assets/logo.png'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
@@ -43,7 +44,6 @@
   import GitPanel from './GitPanel.svelte'
   import BrowserPanel from './BrowserPanel.svelte'
   import AudioPanel from './AudioPanel.svelte'
-  import { wb } from './workbench-labels'
   let { client }: { client: DesktopClient } = $props()
   provideAndaClient(untrack(() => client))
   const t = (key: Label) => label(client.preferences.language, key)
@@ -242,7 +242,7 @@
         previewError = 'This resource has no downloadable content.'
         return
       }
-      const bytes = Uint8Array.from(atob(resource.blob), (c) => c.charCodeAt(0))
+      const bytes = base64ToBytes(resource.blob)
       const mime = resource.mime_type || 'application/octet-stream'
       if (mime.startsWith('image/') || mime === 'application/pdf' || mime.startsWith('audio/'))
         previewUrl = URL.createObjectURL(new Blob([bytes], { type: mime }))
@@ -421,11 +421,9 @@
       </div>
     {:else if client.view === 'chat'}
       {#if client.readOnly}<div class="status-banner">
-          <span
-            >{client.preferences.language === 'zh_CN'
-              ? '通道聊天仅供查看，避免改变原有发送者和回复路由。'
-              : 'Channel history is read-only to preserve its original sender and reply route.'}</span
-          ><button onclick={() => client.newChat()}>{t('newChat')}</button>
+          <span>{t('readOnly')}</span><button onclick={() => client.newChat()}
+            >{t('newChat')}</button
+          >
         </div>{/if}
       {#if !client.authorized}<div class="status-banner">
           <span>{client.connection.error || t('disconnected')}</span><button
@@ -465,9 +463,7 @@
                 onclick={() =>
                   (client.incomingDraft = {
                     id: crypto.randomUUID(),
-                    text: client.preferences.language.startsWith('zh')
-                      ? '帮我整理一下这些想法：'
-                      : 'Help me organize these thoughts: ',
+                    text: t('organizePrompt'),
                     createdAt: Date.now()
                   })}><Sparkles size={17} />{t('suggestion2')}</button
               ><button onclick={() => (client.view = 'memory')}
@@ -491,9 +487,7 @@
                 </div>{/each}{/each}{#each channel?.sideMessages || [] as message (message.id)}<ChatMessageItem
                 {message}
               />{/each}{#if working}<div class="working-indicator">
-                <span class="working-dot"></span>{client.preferences.language.startsWith('zh')
-                  ? 'Anda 正在处理…'
-                  : 'Anda is working…'}
+                <span class="working-dot"></span>{t('working')}
               </div>{/if}
           </div>{/if}
       </div>
@@ -571,7 +565,7 @@
           >{t('config')}</button
         >
         <button class:active={settingsTab === 'audio'} onclick={() => (settingsTab = 'audio')}
-          >{wb(client.preferences.language, 'audio')}</button
+          >{t('audio')}</button
         >
       </div>
       {#if settingsTab === 'audio'}<AudioPanel {client} />{:else if settingsTab === 'config'}<div
@@ -624,8 +618,12 @@
           <div class="settings-buttons">
             <button
               onclick={async () => {
-                client.connection = await window.anda.chooseBinary()
-                await client.refresh()
+                try {
+                  client.connection = await window.anda.chooseBinary()
+                  if (client.authorized) await client.refresh()
+                } catch (error) {
+                  client.fail(error)
+                }
               }}>{t('chooseBinary')}</button
             ><button onclick={() => void window.anda.showLogs()}>{t('logs')}</button>
             <button
@@ -636,7 +634,7 @@
                 } catch (error) {
                   client.fail(error)
                 }
-              }}>{client.preferences.language === 'zh_CN' ? '重启服务' : 'Restart daemon'}</button
+              }}>{t('restartDaemon')}</button
             >
             <button
               onclick={async () => {
@@ -645,10 +643,14 @@
                 } catch (error) {
                   client.fail(error)
                 }
-              }}>{client.preferences.language === 'zh_CN' ? '停止服务' : 'Stop daemon'}</button
+              }}>{t('stopDaemon')}</button
             ><button
               onclick={async () => {
-                client.systemMessage = { kind: 'info', text: await window.anda.checkUpdate() }
+                try {
+                  client.systemMessage = { kind: 'info', text: await window.anda.checkUpdate() }
+                } catch (error) {
+                  client.fail(error)
+                }
                 client.view = 'chat'
               }}>{t('update')}</button
             >
@@ -658,21 +660,17 @@
   </section>
   {#if rightOpen && client.view === 'chat'}<aside class="resource-panel">
       <header>
-        <span
-          >{rightTab === 'resources'
-            ? t('resources')
-            : wb(client.preferences.language, rightTab as 'changes' | 'terminal' | 'browser')}</span
-        ><button class="icon-button" aria-label={t('close')} onclick={() => (rightOpen = false)}
-          ><X size={16} /></button
+        <span>{rightTab === 'resources' ? t('resources') : t(rightTab as Label)}</span><button
+          class="icon-button"
+          aria-label={t('close')}
+          onclick={() => (rightOpen = false)}><X size={16} /></button
         >
       </header>
       <nav class="workbench-tabs" aria-label="Workbench">
         {#each ['resources', 'changes', 'terminal', 'browser'] as tab}<button
             class:active={rightTab === tab}
             onclick={() => (rightTab = tab)}
-            >{tab === 'resources'
-              ? t('resources')
-              : wb(client.preferences.language, tab as 'changes' | 'terminal' | 'browser')}</button
+            >{tab === 'resources' ? t('resources') : t(tab as Label)}</button
           >{/each}
       </nav>
       {#if rightTab === 'browser'}
@@ -687,7 +685,7 @@
                 language={client.preferences.language}
               />{:else}<GitPanel {client} workspace={client.workspace} />{/if}
           {/key}{:else}<p class="workbench-empty">
-            {wb(client.preferences.language, 'chooseProject')}
+            {t('chooseProject')}
           </p>{/if}
       {:else}
         {#if resources.length}<div class="resource-list">

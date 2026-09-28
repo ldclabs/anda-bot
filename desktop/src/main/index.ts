@@ -25,7 +25,7 @@ import { GitService } from './git'
 import { TerminalService } from './terminal'
 import { BrowserService } from './browser'
 import { DesktopUpdater } from './updater'
-import type { Bootstrap, NativeEvent, Preferences } from '../shared/contract'
+import type { Bootstrap, DaemonView, NativeEvent, Preferences } from '../shared/contract'
 import { DesktopStore } from './store'
 import { DaemonClient } from './daemon-client'
 import { appPermissionAllowed, externalUrl, navigationSource, rendererAssetPath } from './policy'
@@ -83,13 +83,38 @@ let updater: DesktopUpdater
 let quitPrompt = false
 let pendingNavigation: string | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
+const firstReconnectDelay = 10_000
+let reconnectDelay = firstReconnectDelay
 const notificationTimes = new Map<string, number>()
-const rendererPath = join(__dirname, '../renderer/index.html')
 const applicationUrl = 'anda-app://app/index.html'
 const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
 function emit(event: NativeEvent): void {
   window?.webContents.send('anda:event', event)
+}
+/** Explicit reconnects and wake-ups retry promptly again after a backoff. */
+function connectNow(): Promise<DaemonView> {
+  reconnectDelay = firstReconnectDelay
+  return daemon.connect()
+}
+function openExternal(url: unknown): void {
+  try {
+    void shell.openExternal(externalUrl(url)).catch(() => {})
+  } catch {
+    /* Non-web schemes never launch. */
+  }
+}
+function menuAction(value: 'new-chat' | 'settings'): void {
+  show()
+  emit({ type: 'menu', value })
+}
+function showLogs(): Promise<string> {
+  return shell.openPath(join(home, 'logs'))
+}
+function titleBarOverlay(): Electron.TitleBarOverlayOptions {
+  return nativeTheme.shouldUseDarkColors
+    ? { color: '#1b1b1a', symbolColor: '#e8e8e2', height: 42 }
+    : { color: '#f4f4f3', symbolColor: '#252525', height: 42 }
 }
 function show(): void {
   if (!stateLoaded) return
@@ -196,13 +221,7 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     ...(process.platform === 'darwin'
       ? { trafficLightPosition: { x: 18, y: 20 } }
-      : {
-          titleBarOverlay: {
-            color: '#f4f4f3',
-            symbolColor: '#252525',
-            height: 42
-          }
-        }),
+      : { titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -224,21 +243,14 @@ function createWindow(): void {
   window.on('move', rememberBounds)
   const contents = window.webContents
   contents.setWindowOpenHandler(({ url }) => {
-    try {
-      void shell.openExternal(externalUrl(url)).catch(() => {})
-    } catch {
-      /* Non-web schemes never launch. */
-    }
+    openExternal(url)
     return { action: 'deny' }
   })
   contents.on('will-navigate', (event, url) => {
     if (url === contents.getURL()) return
+    // Local/arbitrary navigation is blocked; only web links leave the app.
     event.preventDefault()
-    try {
-      void shell.openExternal(externalUrl(url)).catch(() => {})
-    } catch {
-      /* Block local/arbitrary navigation. */
-    }
+    openExternal(url)
   })
   contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (webContents.id === contents.id && details.isMainFrame && permission === 'speaker-selection')
@@ -407,10 +419,12 @@ async function setup(): Promise<void> {
     emit({ type: 'connection', value: state })
     if (state.connected && state.liveEvents) void browser?.reconnect().catch(() => {})
     clearTimeout(reconnectTimer)
-    if (!state.connected && !quitting && !daemon.manuallyStopped)
-      reconnectTimer = setTimeout(() => {
-        void daemon.connect()
-      }, 10_000)
+    if (state.connected) reconnectDelay = firstReconnectDelay
+    else if (!quitting && !daemon.manuallyStopped) {
+      // Each attempt runs the CLI (and may start the daemon); back off up to 5 minutes.
+      reconnectTimer = setTimeout(() => void daemon.connect(), reconnectDelay)
+      reconnectDelay = Math.min(reconnectDelay * 2, 5 * 60_000)
+    }
   })
   nativeTheme.themeSource = store.state.preferences.theme
   daemon.on('state', (value) => emit({ type: 'state', value }))
@@ -418,12 +432,12 @@ async function setup(): Promise<void> {
   const authorizeWorkspace = async (path: string): Promise<string> => {
     if (typeof path !== 'string' || !path || path.length > 8192)
       throw new Error('Choose a workspace first.')
-    const allowed = [
+    const allowed = new Set([
       ...store.state.preferences.projects.map((p) => p.path),
       ...store.state.preferences.chats.flatMap((c) => (c.workspace ? [c.workspace] : []))
-    ]
+    ])
     const resolved = await realpath(path)
-    const matches = await Promise.all(allowed.map((p) => realpath(p).catch(() => '')))
+    const matches = await Promise.all([...allowed].map((p) => realpath(p).catch(() => '')))
     if (!matches.includes(resolved) || !(await stat(resolved)).isDirectory())
       throw new Error('Select this folder as a project before using the workbench.')
     return resolved
@@ -450,25 +464,15 @@ async function setup(): Promise<void> {
   handle('anda:browser', (request) => browser.request(request))
   daemon.on('browser-action', async (message) => {
     const command = message.params
-    try {
-      daemon.browserReply(
-        message.id,
-        command.session,
-        { ok: true, value: await browser.execute(command) },
-        message.connectionId
-      )
-    } catch (error) {
-      daemon.browserReply(
-        message.id,
-        command.session,
-        {
-          ok: false,
-          value: null,
-          error: error instanceof Error ? error.message : 'Browser action failed'
-        },
-        message.connectionId
-      )
-    }
+    const result = await browser.execute(command).then(
+      (value) => ({ ok: true, value }),
+      (error) => ({
+        ok: false,
+        value: null,
+        error: error instanceof Error ? error.message : 'Browser action failed'
+      })
+    )
+    daemon.browserReply(message.id, command.session, result, message.connectionId)
   })
   handle('anda:terminal', (request) => terminals.request(request))
   handle('anda:git', async (request) => {
@@ -524,7 +528,7 @@ async function setup(): Promise<void> {
     return git.request(request)
   })
   handle('anda:bootstrap', bootstrap)
-  handle('anda:connect', () => daemon.connect())
+  handle('anda:connect', connectNow)
   handle('anda:control', async (action) => {
     if (!['stop', 'restart'].includes(action)) throw new Error('Invalid daemon action')
     const result = await dialog.showMessageBox(window!, {
@@ -574,7 +578,6 @@ async function setup(): Promise<void> {
         openAtLogin: patch.launchAtLogin,
         args: ['--hidden']
       })
-    return store.state.preferences
   })
   handle('anda:storage:get', (keys: string[]) => {
     if (
@@ -607,7 +610,10 @@ async function setup(): Promise<void> {
       title: 'Choose a workspace'
     })
     const path = result.canceled ? null : result.filePaths[0]
-    if (path) await daemon.rpc('register_workspace', [path])
+    // Sending or opening a chat registers its workspace again, so a stopped
+    // daemon must not prevent adding the project.
+    if (path && daemon.view.connected)
+      await daemon.rpc('register_workspace', [path]).catch(() => {})
     return path || null
   })
   handle('anda:binary', async () => {
@@ -620,7 +626,7 @@ async function setup(): Promise<void> {
       await store.save()
       daemon.disconnect()
     }
-    return daemon.connect()
+    return connectNow()
   })
   handle('anda:notify', (source: string, title: string, body: string) => {
     if (
@@ -677,29 +683,15 @@ async function setup(): Promise<void> {
       preview.destroy()
     }
   })
-  handle('anda:logs', () => shell.openPath(join(home, 'logs')))
+  handle('anda:logs', showLogs)
   handle('anda:update', () => updater.check())
   const menu: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {
       label: 'File',
       submenu: [
-        {
-          label: 'New Chat',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            show()
-            emit({ type: 'menu', value: 'new-chat' })
-          }
-        },
-        {
-          label: 'Settings',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => {
-            show()
-            emit({ type: 'menu', value: 'settings' })
-          }
-        },
+        { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: () => menuAction('new-chat') },
+        { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => menuAction('settings') },
         { type: 'separator' },
         { role: 'close' },
         ...(process.platform !== 'darwin' ? [{ role: 'quit' as const }] : [])
@@ -717,12 +709,7 @@ async function setup(): Promise<void> {
             void shell.openExternal('https://anda.bot')
           }
         },
-        {
-          label: 'Open Logs',
-          click: () => {
-            void shell.openPath(join(home, 'logs'))
-          }
-        }
+        { label: 'Open Logs', click: () => void showLogs() }
       ]
     }
   ]
@@ -738,13 +725,7 @@ async function setup(): Promise<void> {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Open Anda', click: show },
-      {
-        label: 'New Chat',
-        click: () => {
-          show()
-          emit({ type: 'menu', value: 'new-chat' })
-        }
-      },
+      { label: 'New Chat', click: () => menuAction('new-chat') },
       { type: 'separator' },
       {
         label: 'Quit Anda Desktop (keep daemon running)',
@@ -754,8 +735,10 @@ async function setup(): Promise<void> {
   )
   tray.on('click', show)
   powerMonitor.on('resume', () => {
-    if (!daemon.manuallyStopped) void daemon.connect()
+    if (!daemon.manuallyStopped) void connectNow()
   })
+  if (process.platform !== 'darwin')
+    nativeTheme.on('updated', () => window?.setTitleBarOverlay(titleBarOverlay()))
 }
 
 if (hasLock)

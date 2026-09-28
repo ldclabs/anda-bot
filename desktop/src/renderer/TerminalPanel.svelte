@@ -4,10 +4,15 @@
   import { FitAddon } from '@xterm/addon-fit'
   import { SearchAddon } from '@xterm/addon-search'
   import '@xterm/xterm/css/xterm.css'
-  import type { TerminalSession, TerminalEvent } from '../shared/workbench'
-  import { wb } from './workbench-labels'
+  import {
+    SCROLLBACK,
+    appendScrollback,
+    type TerminalSession,
+    type TerminalEvent
+  } from '../shared/workbench'
+  import { label, type Label } from './labels'
   let { workspace, language }: { workspace: string; language: string } = $props()
-  const t = (key: Parameters<typeof wb>[1]) => wb(language, key)
+  const t = (key: Label) => label(language, key)
   let host: HTMLDivElement
   let terminal: Terminal
   let fit: FitAddon
@@ -23,7 +28,7 @@
   function select(session: TerminalSession) {
     active = session.id
     terminal.reset()
-    terminal.write(session.output)
+    terminal.write(session.output.slice(-SCROLLBACK))
     void window.anda
       .terminal({ action: 'ack', id: session.id, sequence: session.sequence })
       .catch(() => {})
@@ -97,7 +102,7 @@
       if (!session || message.sequence <= session.sequence) return
       session.sequence = message.sequence
       if (message.data) {
-        session.output = (session.output + message.data).slice(-512 * 1024)
+        session.output = appendScrollback(session.output, message.data)
         if (active === session.id)
           terminal.write(message.data, () => {
             void window.anda
@@ -135,8 +140,8 @@
 <div class="terminal-panel">
   <div class="workbench-toolbar">
     <button onclick={create}>{t('newTerminal')}</button><input
-      aria-label={t('search')}
-      placeholder={t('search')}
+      aria-label={t('find')}
+      placeholder={t('find')}
       bind:value={query}
       onkeydown={(event) => {
         if (event.key === 'Enter') search.findNext(query)

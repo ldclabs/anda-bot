@@ -22,17 +22,33 @@ interface Registry {
   archives: Archive[]
 }
 
-export function parseStatus(raw: string): GitFile[] {
+const STATUS = ['status', '--porcelain=v2', '-z', '--untracked-files=all']
+
+/** Parses `git status --porcelain=v2 -z [--branch]`, reporting v1 status codes (` ` for unchanged). */
+export function parseStatus(raw: string): { head: string; branch: string; files: GitFile[] } {
   const parts = raw.split('\0')
-  const files: GitFile[] = []
+  const status = { head: '', branch: '', files: [] as GitFile[] }
+  // Fields before the path: `1 XY sub mH mI mW hH hI`, `2 … Xscore`, `u … h1 h2 h3`.
+  const pathAfter = { '1': 8, '2': 9, u: 10 } as Record<string, number>
   for (let i = 0; i < parts.length; i++) {
     const entry = parts[i]
-    if (!entry) continue
-    const file: GitFile = { index: entry[0], worktree: entry[1], path: entry.slice(3) }
-    if (/[RC]/.test(file.index + file.worktree)) file.previousPath = parts[++i]
-    files.push(file)
+    const kind = entry.slice(0, entry.indexOf(' '))
+    if (entry.startsWith('# branch.oid ')) {
+      const oid = entry.slice(13)
+      status.head = oid === '(initial)' ? '' : oid
+    } else if (entry.startsWith('# branch.head ')) status.branch = entry.slice(14)
+    else if (kind === '?') status.files.push({ index: '?', worktree: '?', path: entry.slice(2) })
+    else if (kind in pathAfter) {
+      const file: GitFile = {
+        index: entry[2].replace('.', ' '),
+        worktree: entry[3].replace('.', ' '),
+        path: entry.split(' ').slice(pathAfter[kind]).join(' ')
+      }
+      if (kind === '2') file.previousPath = parts[++i]
+      status.files.push(file)
+    }
   }
-  return files
+  return status
 }
 
 /** Fixed Git operations over user-selected repositories. Never interpolates a shell command. */
@@ -102,37 +118,25 @@ export class GitService {
     this.registryWrites = write
     return write
   }
-  private async fingerprint(
+  /**
+   * Status plus a revision that changes with HEAD, the branch, staged content
+   * (porcelain v2 carries index object IDs) and any edit to a changed or
+   * untracked file (status alone cannot see a second edit to a modified file).
+   */
+  private async scan(
     root: string
-  ): Promise<{ head: string; raw: string; revision: string }> {
-    const head = await this.git(root, ['rev-parse', '--verify', 'HEAD'])
-      .then((x) => x.trim())
-      .catch(() => '')
-    const raw = await this.git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-    const reference = await this.git(root, ['symbolic-ref', '--quiet', 'HEAD']).catch(
-      () => '(detached)'
+  ): Promise<{ head: string; branch: string; files: GitFile[]; revision: string }> {
+    const raw = await this.git(root, [...STATUS, '--branch', '--no-ahead-behind'])
+    const status = parseStatus(raw)
+    const hash = createHash('sha256').update(raw)
+    const stats = await Promise.all(
+      status.files
+        .filter((f) => f.worktree !== ' ')
+        .map((f) => lstat(join(root, f.path)).catch(() => null))
     )
-    const index = await this.git(root, [
-      'diff',
-      '--cached',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--binary'
-    ])
-    const worktree = await this.git(root, ['diff', '--no-ext-diff', '--no-textconv', '--binary'])
-    const hash = createHash('sha256')
-      .update(head)
-      .update(reference)
-      .update(raw)
-      .update(index)
-      .update(worktree)
-    // Status alone cannot detect an edited untracked file between preview and stage.
-    for (const file of parseStatus(raw).filter((f) => f.index === '?')) {
-      const path = join(root, file.path)
-      const stat = await lstat(path)
-      hash.update(file.path).update(`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}`)
-    }
-    return { head, raw, revision: hash.digest('hex') }
+    for (const stat of stats)
+      hash.update(stat ? `\0${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}` : '\0-')
+    return { ...status, revision: hash.digest('hex') }
   }
   private async common(root: string): Promise<string> {
     return realpath(
@@ -141,11 +145,11 @@ export class GitService {
   }
   async status(workspace: string): Promise<GitSnapshot> {
     const root = await this.root(workspace)
-    const { head, raw, revision } = await this.fingerprint(root)
-    const [branch, branches, log, worktrees, registry, repository] = await Promise.all([
-      this.git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => '(detached)'),
+    const [scan, branches, log, worktrees, registry, repository] = await Promise.all([
+      this.scan(root),
       this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
-      head ? this.git(root, ['log', '-30', '--format=%h%x00%s%x00']) : '',
+      // An unborn HEAD has no log.
+      this.git(root, ['log', '-30', '--format=%h%x00%s%x00']).catch(() => ''),
       this.git(root, ['worktree', 'list', '--porcelain', '-z']),
       this.registry(),
       this.common(root)
@@ -160,10 +164,10 @@ export class GitService {
     }
     return {
       root,
-      head,
-      branch: branch.trim(),
-      revision,
-      files: parseStatus(raw),
+      head: scan.head,
+      branch: scan.branch,
+      revision: scan.revision,
+      files: scan.files,
       branches: branches.trim().split('\n').filter(Boolean),
       log: Array.from({ length: Math.floor(logs.length / 2) }, (_, i) => ({
         hash: logs[i * 2].trim(),
@@ -182,16 +186,7 @@ export class GitService {
     if (request.action === 'diff') {
       this.paths([request.path])
       // A preview only needs this path's status, not the whole-repository fingerprint.
-      const files = parseStatus(
-        await this.git(root, [
-          'status',
-          '--porcelain=v1',
-          '-z',
-          '--untracked-files=all',
-          '--',
-          request.path
-        ])
-      )
+      const { files } = parseStatus(await this.git(root, [...STATUS, '--', request.path]))
       if (files.some((f) => f.path === request.path && f.index === '?')) {
         const path = join(root, request.path)
         const stat = await lstat(path)
@@ -213,7 +208,7 @@ export class GitService {
     const pending = (this.writes.get(repository) || Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        const current = await this.fingerprint(root)
+        const current = await this.scan(root)
         if (request.revision !== current.revision)
           throw new Error(
             'The repository changed. Refresh and review before applying this operation.'
@@ -317,16 +312,14 @@ export class GitService {
         .length
     )
       throw new Error('This worktree has ignored files. Move them to a backup before archiving.')
-    const status = await this.git(path, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])
-    const before = (await this.fingerprint(path)).revision
+    const before = await this.scan(path)
     if (
       (await this.git(path, ['ls-files', '--stage']))
         .split('\n')
         .some((s) => s.startsWith('160000 '))
     )
       throw new Error('Submodule worktrees cannot be archived.')
-    const untracked = parseStatus(status).filter((f) => f.index === '?')
-    for (const file of untracked) {
+    for (const file of before.files.filter((f) => f.index === '?')) {
       if ((await lstat(join(path, file.path))).isDirectory())
         throw new Error('Nested repositories cannot be archived.')
     }
@@ -362,7 +355,7 @@ export class GitService {
       await this.updateRegistry((r) => {
         r.archives.push(entry)
       })
-      if (before !== (await this.fingerprint(path)).revision)
+      if (before.revision !== (await this.scan(path)).revision)
         throw new Error('Worktree changed during archive; snapshot kept, checkout preserved.')
       await this.git(root, ['worktree', 'remove', '--force', path])
       await this.updateRegistry((r) => {

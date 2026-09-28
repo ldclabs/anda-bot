@@ -29,6 +29,18 @@ export interface Preferences {
   activeSource?: string
   drafts: Record<string, string>
 }
+/** An empty profile; `language: ''` follows the system locale. */
+export const defaultPreferences: Preferences = {
+  theme: 'system',
+  language: '',
+  submitKeyMode: 'enter',
+  approvalMode: 'on_risk',
+  notifications: true,
+  launchAtLogin: false,
+  chats: [],
+  projects: [],
+  drafts: {}
+}
 export interface DaemonView {
   connected: boolean
   home: string
@@ -81,7 +93,7 @@ export interface DesktopBridge {
     content?: string,
     expectedRevision?: string
   ): Promise<Result>
-  preferences(patch: Partial<Preferences>): Promise<Preferences>
+  preferences(patch: Partial<Preferences>): Promise<void>
   storageGet(keys: string[]): Promise<Record<string, unknown>>
   storageSet(items: Record<string, unknown>): Promise<void>
   chooseWorkspace(): Promise<string | null>

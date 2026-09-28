@@ -2,9 +2,9 @@
   import { onMount } from 'svelte'
   import type { DesktopClient } from './client.svelte'
   import type { GitSnapshot, GitRequest } from '../shared/workbench'
-  import { wb } from './workbench-labels'
+  import { label, type Label } from './labels'
   let { client, workspace }: { client: DesktopClient; workspace: string } = $props()
-  const t = (key: Parameters<typeof wb>[1]) => wb(client.preferences.language, key)
+  const t = (key: Label) => label(client.preferences.language, key)
   let snapshot = $state<GitSnapshot | null>(null)
   let error = $state('')
   let busy = $state(false)
@@ -13,7 +13,8 @@
   let message = $state('')
   let branch = $state('')
   let base = $state('HEAD')
-  let tab = $state('changes')
+  const tabs = ['changes', 'gitHistory', 'worktrees'] as const
+  let tab = $state<(typeof tabs)[number]>('changes')
   let generation = 0
   let disposed = false
   async function refresh() {
@@ -89,9 +90,8 @@
     >
   </div>
   <div class="workbench-tabs">
-    {#each ['changes', 'history', 'worktrees'] as key}<button
-        class:active={tab === key}
-        onclick={() => (tab = key)}>{t(key as 'changes' | 'history' | 'worktrees')}</button
+    {#each tabs as key}<button class:active={tab === key} onclick={() => (tab = key)}
+        >{t(key)}</button
       >{/each}
   </div>
   {#if error}<p class="workbench-error" role="alert">{error}</p>{/if}
@@ -133,7 +133,7 @@
         >
       </div>
       {#if selected}<pre class="git-diff">{diff}</pre>{/if}
-    {:else if tab === 'history'}
+    {:else if tab === 'gitHistory'}
       <div class="git-history">
         {#each snapshot.log as entry}<p>
             <code>{entry.hash}</code><span>{entry.subject}</span>
