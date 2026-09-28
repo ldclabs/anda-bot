@@ -1,14 +1,10 @@
 import { getMessage } from '$lib/i18n'
 import {
   cancelDownload,
-  clearBrowserCache,
-  deleteCookie,
   downloadFile,
-  getCookies,
   listDownloads,
   listTabs,
-  openDownload,
-  setCookie
+  openDownload
 } from './browser-state'
 import {
   actionTimeoutMs,
@@ -45,7 +41,6 @@ import {
   withTopLevelTab,
   type TabLoadWatcher
 } from './browser-navigation'
-import { scriptExecutionMode, scriptExecutionWorld } from './browser-script'
 import { pageActionDispatcher } from './page-scripts'
 import type {
   BrowserActionArgs,
@@ -141,10 +136,6 @@ const browserStateActions: Record<string, BrowserStateAction> = Object.assign(
     list_downloads: listDownloads,
     cancel_download: cancelDownload,
     open_download: openDownload,
-    get_cookies: getCookies,
-    set_cookie: setCookie,
-    delete_cookie: deleteCookie,
-    clear_browser_cache: clearBrowserCache,
     get_frames: getNavigationFrames,
     get_current_tab: async (chromeApi: ChromeApi) => ({
       tab: tabSummary(await activeTab(chromeApi))
@@ -170,6 +161,8 @@ const browserStateActions: Record<string, BrowserStateAction> = Object.assign(
  *    still-loading page first (best effort), performs the action through the
  *    debugger where one is attachable and through `scripting.executeScript`
  *    otherwise, then reports the page-ready state it settled into.
+ *    `execute_javascript` always evaluates through the debugger, which runs in
+ *    the page's own world and is not stopped by its CSP.
  *
  * Every result for groups 2 and 3 carries the tab summary and, when the action
  * could navigate, a `page_ready` block describing what the page settled to.
@@ -363,7 +356,7 @@ async function executePageAction(
         return settle(typed)
       }
     }
-    if (args.action === 'execute_javascript' && scriptExecutionMode(args) === 'debugger') {
+    if (args.action === 'execute_javascript') {
       return settle(await executeJavaScriptWithDebugger(chromeApi, tabId, args))
     }
 
@@ -408,7 +401,7 @@ async function runPageScript(
     BrowserActionArgs
   >({
     target: scriptTarget(tabId, args),
-    world: args.action === 'execute_javascript' ? scriptExecutionWorld(args) : 'ISOLATED',
+    world: 'ISOLATED',
     func: pageActionDispatcher,
     args: [args]
   })

@@ -120,6 +120,11 @@
   const thinkingText = $derived((message.thinkingText || '').trim())
   const hasMainText = $derived(Boolean(mainText))
   const hasAttachments = $derived(Boolean(message.attachments?.length))
+  const hasImageAttachments = $derived(
+    Boolean(
+      message.attachments?.some((attachment) => attachmentMimeType(attachment).startsWith('image/'))
+    )
+  )
   const hasActions = $derived(Boolean(message.actions?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
   // Only settled assistant messages with a stable server id can be bookmarked
@@ -507,7 +512,10 @@
     if (visible) loadImageAttachmentResources()
   })
 
-  onMount(() => {
+  // Only image previews load lazily, so only messages with images watch for
+  // visibility instead of every message in a long transcript.
+  $effect(() => {
+    if (visible || !hasImageAttachments) return
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
         visible = true
@@ -515,10 +523,13 @@
       }
     })
     observer.observe(articleElement)
+    return () => observer.disconnect()
+  })
+
+  onMount(() => {
     if (expandedDetailMessageIds.has(message.id)) {
       detailsExpanded = true
     }
-    return () => observer.disconnect()
   })
 
   onDestroy(() => {

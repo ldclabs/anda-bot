@@ -9,6 +9,12 @@ import type {
   PageSpeechResult
 } from './types'
 
+// Capture runs in the extension's isolated world: the recorder, its audio
+// chunks and the transcript stay invisible to the page's own scripts, which
+// also cannot patch the MediaRecorder or SpeechRecognition used here. The
+// microphone prompt still belongs to the page's origin.
+const captureWorld = 'ISOLATED'
+
 const captureTabs = new WeakMap<ChromeApi, Map<string, number>>()
 
 async function captureTab(
@@ -55,7 +61,7 @@ export async function handlePageSpeechRecognition(
   try {
     const [execution] = await chromeApi.scripting.executeScript<PageSpeechResult, PageSpeechArgs>({
       target: { tabId },
-      world: 'MAIN',
+      world: captureWorld,
       func: pageSpeechRecognitionDispatcher,
       args: [args]
     })
@@ -76,7 +82,7 @@ export async function handlePageAudioCapture(
   try {
     const [execution] = await chromeApi.scripting.executeScript<PageAudioResult, PageAudioArgs>({
       target: { tabId },
-      world: 'MAIN',
+      world: captureWorld,
       func: pageAudioCaptureDispatcher,
       args: [args]
     })

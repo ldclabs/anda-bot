@@ -11,6 +11,7 @@ import type { BrowserActionArgs, BrowserActionResult } from './types'
  *
  * For the same reason these cannot import from `browser-actions.ts`; only the
  * `BrowserActionArgs` / `BrowserActionResult` types cross, and types are erased.
+ * Anda Desktop evaluates the same functions in its own browser through CDP.
  */
 
 export function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
@@ -144,6 +145,10 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
     ).slice(0, 240)
   }
 
+  // Touch-first pages need touch events for a native tap.
+  const mobileLike =
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1
+
   let element: Element | null = null
   if (args.selector) {
     element = deepQuerySelector(document, args.selector)
@@ -197,11 +202,12 @@ export function resolveInputTarget(args: BrowserActionArgs): Record<string, unkn
       y,
       selector: args.selector || null,
       label: label(element),
-      bounding_box: box(element)
+      bounding_box: box(element),
+      mobile_like: mobileLike
     }
   }
 
-  return { x, y, label: label(element), bounding_box: box(element) }
+  return { x, y, label: label(element), bounding_box: box(element), mobile_like: mobileLike }
 }
 
 export function pageActionDispatcher(
@@ -374,7 +380,10 @@ export function pageActionDispatcher(
   }
 
   function elementAttributes(element: Element): Record<string, string> {
-    return Object.fromEntries(Array.from(element.attributes).map((attr) => [attr.name, attr.value]))
+    // Inline `data:` URLs and generated styles can be megabytes long.
+    return Object.fromEntries(
+      Array.from(element.attributes).map((attr) => [attr.name, truncate(attr.value, 500)])
+    )
   }
 
   function elementBox(element: Element): Record<string, number> {
@@ -560,24 +569,36 @@ export function pageActionDispatcher(
     if (!query) {
       throw new Error('find_in_page requires query')
     }
-    const matches = Array.from(document.body?.querySelectorAll('*') || [])
-      .filter(
-        (element) => visible(element) && (element.textContent || '').toLowerCase().includes(query)
-      )
-      .slice(0, 80)
-      .map((element) => {
-        if (args.highlight && element instanceof HTMLElement) {
-          element.dataset.andaFindHighlight = 'true'
-          element.style.outline = '2px solid #f59e0b'
-          element.style.outlineOffset = '2px'
-        }
-        return {
-          selector: cssPath(element),
-          label: elementLabel(element),
-          text: truncate(element.textContent, 800),
-          bounding_box: elementBox(element)
-        }
+    // Walk text nodes rather than elements: every ancestor's textContent
+    // contains the match, so element order would report html/body/wrappers
+    // first, and reading each element's full text is quadratic in depth.
+    // A match therefore has to sit within one text node.
+    const found = new Set<Element>()
+    const matches: Array<Record<string, unknown>> = []
+    const walker = document.createTreeWalker(document.body || document, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node && matches.length < 80; node = walker.nextNode()) {
+      const element = node.parentElement
+      if (
+        !element ||
+        found.has(element) ||
+        !(node.nodeValue || '').toLowerCase().includes(query) ||
+        !visible(element)
+      ) {
+        continue
+      }
+      found.add(element)
+      if (args.highlight && element instanceof HTMLElement) {
+        element.dataset.andaFindHighlight = 'true'
+        element.style.outline = '2px solid #f59e0b'
+        element.style.outlineOffset = '2px'
+      }
+      matches.push({
+        selector: cssPath(element),
+        label: elementLabel(element),
+        text: truncate(element.textContent, 800),
+        bounding_box: elementBox(element)
       })
+    }
     return {
       query: args.query,
       count: matches.length,
@@ -953,16 +974,27 @@ export function pageActionDispatcher(
         return { found: true, selector, element: elementInfo(existing) }
       }
       return new Promise((resolve, reject) => {
-        const observer = new MutationObserver(() => {
+        // Mutations can arrive every frame on animated pages; coalesce them so
+        // the deep query (and its layout reads) runs at most every 100 ms.
+        let pending: ReturnType<typeof setTimeout> | null = null
+        const stop = () => {
+          clearTimeout(timer)
+          if (pending) clearTimeout(pending)
+          observer.disconnect()
+        }
+        const check = () => {
+          pending = null
           const element = deepQuerySelector(document, selector)
           if (element && visible(element)) {
-            clearTimeout(timer)
-            observer.disconnect()
+            stop()
             resolve({ found: true, selector, element: elementInfo(element) })
           }
+        }
+        const observer = new MutationObserver(() => {
+          pending ||= setTimeout(check, 100)
         })
         const timer = setTimeout(() => {
-          observer.disconnect()
+          stop()
           reject(new Error(`selector not found before timeout: ${selector}`))
         }, timeout)
         observer.observe(document.documentElement, {

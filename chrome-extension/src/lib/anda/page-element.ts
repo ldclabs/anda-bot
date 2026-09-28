@@ -2,13 +2,12 @@ import { bytesToBase64 } from '$lib/utils/base64'
 import type { ChatAttachment, Resource } from './client/types'
 
 export const pageElementContextMenuId = 'anda-send-page-element-to-chat'
-export const pageElementMemoryKey = '__andaLastRightClickedElement'
+// Keys the content script sets on its isolated-world `globalThis`.
+export const pageElementSerializerKey = '__andaSerializeLastRightClickedElement'
 export const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 export const pageElementListenerKey = '__andaPageElementContentScriptContextMenuListener'
-export const pageElementStorageKey = 'andaLastRightClickedElement'
 export const pageElementAttachmentRequestStorageKey = 'andaPageElementAttachmentRequest'
 export const pageElementAttachmentMessageType = 'anda_page_element_attachment_request'
-export const pageElementCaptureMessageType = 'anda_page_element_captured'
 
 const maxAttachmentTextChars = 100_000
 const maxSemanticAttributes = 12
@@ -28,25 +27,11 @@ const semanticAttributeNames = new Set([
   'value'
 ])
 
-export interface PageElementRect {
-  x: number
-  y: number
-  width: number
-  height: number
-  top: number
-  right: number
-  bottom: number
-  left: number
-}
-
 export interface PageElementInfo {
   tagName: string
   id?: string | null
-  className?: string | null
   role?: string | null
   innerText: string
-  textContent: string
-  outerHTML: string
   attributes: Record<string, string>
   xpath: string
   cssPath: string
@@ -54,7 +39,6 @@ export interface PageElementInfo {
   pageTitle: string
   frameUrl: string
   selectedText?: string
-  rect?: PageElementRect | null
   capturedAt: number
 }
 
@@ -72,8 +56,6 @@ export function isPageElementInfo(value: unknown): value is PageElementInfo {
   return (
     typeof item.tagName === 'string' &&
     typeof item.innerText === 'string' &&
-    typeof item.textContent === 'string' &&
-    typeof item.outerHTML === 'string' &&
     typeof item.xpath === 'string' &&
     typeof item.cssPath === 'string' &&
     typeof item.pageUrl === 'string' &&
@@ -161,10 +143,7 @@ function pageElementDescription(element: PageElementInfo): string {
 }
 
 function pageElementText(element: PageElementInfo): string {
-  return trimString(
-    cleanPageElementText(element.innerText || element.textContent),
-    maxAttachmentTextChars
-  )
+  return trimString(cleanPageElementText(element.innerText), maxAttachmentTextChars)
 }
 
 function cleanPageElementText(value: string): string {

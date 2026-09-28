@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   pageElementDomMemoryKey,
   pageElementListenerKey as listenerKey,
-  pageElementMemoryKey
+  pageElementSerializerKey
 } from '$lib/anda/page-element'
 
 type ContextMenuListener = (event: MouseEvent) => void
@@ -17,10 +17,12 @@ class TestNode {
 class TestElement extends TestNode {
   tagName = 'BUTTON'
   id = 'submit'
-  className = 'primary'
-  innerText = 'Submit'
+  textReads = 0
+  get innerText() {
+    this.textReads += 1
+    return 'Submit'
+  }
   textContent = 'Submit'
-  outerHTML = '<button id="submit">Submit</button>'
   attributes = [{ name: 'id', value: 'submit' }]
   previousElementSibling: TestElement | null = null
   classList = { length: 0 }
@@ -48,12 +50,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.resetModules()
   delete (globalThis as Record<string, unknown>)[listenerKey]
-  delete (globalThis as Record<string, unknown>)[pageElementMemoryKey]
+  delete (globalThis as Record<string, unknown>)[pageElementSerializerKey]
   delete (globalThis as Record<string, unknown>)[pageElementDomMemoryKey]
 })
 
 describe('page element content script', () => {
-  it('captures the right-clicked element without touching extension APIs', async () => {
+  it('remembers the right-clicked element and serializes it only on request', async () => {
     const chromeApi = new Proxy(
       {},
       {
@@ -67,13 +69,28 @@ describe('page element content script', () => {
     const element = new TestElement()
     contextMenu(contextMenuEvent(element))
 
-    expect((globalThis as Record<string, unknown>)[pageElementMemoryKey]).toMatchObject({
+    expect((globalThis as Record<string, unknown>)[pageElementDomMemoryKey]).toBe(element)
+    expect(element.textReads).toBe(0)
+
+    const serialize = (globalThis as Record<string, unknown>)[pageElementSerializerKey] as () => {
+      capturedAt: number
+    }
+    const captured = serialize()
+    expect(captured).toMatchObject({
       tagName: 'BUTTON',
       innerText: 'Submit',
-      outerHTML: '',
       pageUrl: 'https://example.com/form'
     })
-    expect((globalThis as Record<string, unknown>)[pageElementDomMemoryKey]).toBe(element)
+    expect(captured.capturedAt).toBeGreaterThan(0)
+    expect(element.textReads).toBe(1)
+  })
+
+  it('has nothing to serialize before a right-click', async () => {
+    await importContentScript({})
+    const serialize = (globalThis as Record<string, unknown>)[
+      pageElementSerializerKey
+    ] as () => unknown
+    expect(serialize()).toBeNull()
   })
 
   it('replaces the previous listener when the script is injected again', async () => {

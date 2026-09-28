@@ -56,7 +56,7 @@
     },
     {
       id: 'config',
-      label: 'Config',
+      label: getMessage('dashboardConfigTitle'),
       detail: getMessage('dashboardConfigDetail'),
       icon: Settings
     }

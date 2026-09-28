@@ -812,6 +812,9 @@
   "dashboardConfigDetail": {
     "message": "守护进程配置"
   },
+  "dashboardConfigTitle": {
+    "message": "配置"
+  },
   "dashboardNoConnection": {
     "message": "未连接"
   },

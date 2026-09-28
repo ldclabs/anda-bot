@@ -2,7 +2,6 @@ import { getClientPlatform } from '../client/platform'
 import { getMessage } from '$lib/i18n'
 import {
   connectionKey,
-  defaultSettings,
   errorToMessage,
   normalizeSettings,
   loadSettingsFromStorage
@@ -27,17 +26,6 @@ export interface DaemonConfigResponse {
   config: Json
 }
 
-type ConfigStorageState = Partial<SettingsState>
-
-type ConfigChromeApi = {
-  storage?: {
-    local?: {
-      get(keys: string[]): Promise<ConfigStorageState>
-      set(items: ConfigStorageState): Promise<void>
-    }
-  }
-}
-
 export class DaemonConfigApi {
   readonly settings: SettingsState
 
@@ -51,7 +39,7 @@ export class DaemonConfigApi {
 
   async save(content: string, expectedRevision?: string): Promise<DaemonConfigResponse> {
     if (
-      getConfigChromeApi()?.storage?.local &&
+      !getClientPlatform() &&
       connectionKey(await loadConfigSettings()) !== connectionKey(this.settings)
     ) {
       throw new Error(
@@ -106,43 +94,12 @@ export class DaemonConfigApi {
 export async function loadConfigSettings(): Promise<SettingsState> {
   const native = getClientPlatform()
   if (native) return native.settings()
-  const chromeApi = getConfigChromeApi()
-  if (chromeApi?.storage?.local) {
-    return loadSettingsFromStorage(chromeApi.storage.local)
-  }
-
-  return normalizeSettings({ ...defaultSettings, ...safeReadLocalStorage() })
+  return loadSettingsFromStorage(chrome.storage.local)
 }
 
 export async function saveConfigSettings(settings: SettingsState): Promise<void> {
   const native = getClientPlatform()
   if (native) return native.saveSettings(settings)
   const normalized = normalizeSettings(settings)
-  const chromeApi = getConfigChromeApi()
-  if (chromeApi?.storage?.local) {
-    await chromeApi.storage.local.set({ baseUrl: normalized.baseUrl, token: normalized.token })
-    return
-  }
-  safeWriteLocalStorage(normalized)
-}
-
-function getConfigChromeApi(): ConfigChromeApi | null {
-  return (globalThis as typeof globalThis & { chrome?: ConfigChromeApi }).chrome || null
-}
-
-function safeReadLocalStorage(): Partial<SettingsState> {
-  try {
-    const raw = globalThis.localStorage?.getItem('andaConfigSettings')
-    return raw ? (JSON.parse(raw) as Partial<SettingsState>) : {}
-  } catch {
-    return {}
-  }
-}
-
-function safeWriteLocalStorage(settings: SettingsState): void {
-  try {
-    globalThis.localStorage?.setItem('andaConfigSettings', JSON.stringify(settings))
-  } catch {
-    // Local storage is a best-effort dev fallback only.
-  }
+  await chrome.storage.local.set({ baseUrl: normalized.baseUrl, token: normalized.token })
 }

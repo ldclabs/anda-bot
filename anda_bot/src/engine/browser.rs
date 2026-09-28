@@ -117,10 +117,6 @@ pub enum BrowserAction {
     ListDownloads,
     CancelDownload,
     OpenDownload,
-    GetCookies,
-    SetCookie,
-    DeleteCookie,
-    ClearBrowserCache,
     ListTabs,
     SwitchTab,
     OpenTab,
@@ -240,34 +236,7 @@ pub struct ChromeBrowserToolArgs {
     pub files: Option<Vec<String>>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub origins: Option<Vec<String>>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub domain: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub secure: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub http_only: Option<bool>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub same_site: Option<String>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expiration_date: Option<f64>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since_ms: Option<u64>,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_id: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept: Option<bool>,
@@ -1203,12 +1172,6 @@ fn validate_browser_action_for_tool(
         }
         BrowserAction::FindInPage => require_field(&args.query, "query", "find_in_page"),
         BrowserAction::CopyToClipboard => require_field(&args.text, "text", "copy_to_clipboard"),
-        BrowserAction::SetCookie => {
-            require_field(&args.name, "name", "set_cookie")?;
-            require_present(&args.value, "value", "set_cookie")?;
-            validate_same_site(&args.same_site)
-        }
-        BrowserAction::DeleteCookie => require_field(&args.name, "name", "delete_cookie"),
         BrowserAction::ExecuteJavascript => {
             require_field(&args.code, "code", "execute_javascript")?;
             validate_script_world(&args.world)
@@ -1227,8 +1190,6 @@ fn validate_browser_action_for_tool(
         | BrowserAction::ClearAnnotations
         | BrowserAction::ReadSelection
         | BrowserAction::ListDownloads
-        | BrowserAction::GetCookies
-        | BrowserAction::ClearBrowserCache
         | BrowserAction::ListTabs
         | BrowserAction::OpenTab
         | BrowserAction::GetFrames
@@ -1259,10 +1220,6 @@ fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> 
                 | BrowserAction::ListDownloads
                 | BrowserAction::CancelDownload
                 | BrowserAction::OpenDownload
-                | BrowserAction::GetCookies
-                | BrowserAction::SetCookie
-                | BrowserAction::DeleteCookie
-                | BrowserAction::ClearBrowserCache
                 | BrowserAction::LaunchBrowser
         ),
         ChromeBrowserToolKind::Page => matches!(
@@ -1302,14 +1259,6 @@ fn tool_supports_action(kind: ChromeBrowserToolKind, action: &BrowserAction) -> 
 
 fn require_field(value: &Option<String>, field: &str, action: &str) -> Result<(), BoxError> {
     if value.as_ref().is_some_and(|value| !value.trim().is_empty()) {
-        Ok(())
-    } else {
-        Err(format!("browser action {action:?} requires {field}").into())
-    }
-}
-
-fn require_present(value: &Option<String>, field: &str, action: &str) -> Result<(), BoxError> {
-    if value.is_some() {
         Ok(())
     } else {
         Err(format!("browser action {action:?} requires {field}").into())
@@ -1405,19 +1354,6 @@ fn validate_script_world(value: &Option<String>) -> Result<(), BoxError> {
     }
 }
 
-fn validate_same_site(value: &Option<String>) -> Result<(), BoxError> {
-    let Some(value) = value else {
-        return Ok(());
-    };
-    match value.trim().to_ascii_lowercase().as_str() {
-        "" | "no_restriction" | "lax" | "strict" => Ok(()),
-        same_site => Err(format!(
-            "browser action \"set_cookie\" has unsupported same_site {same_site:?}"
-        )
-        .into()),
-    }
-}
-
 fn normalized_action_timeout(timeout_ms: Option<u64>) -> u64 {
     timeout_ms
         .unwrap_or(DEFAULT_BROWSER_ACTION_TIMEOUT_MS)
@@ -1468,16 +1404,7 @@ fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
         save_as: None,
         download_id: None,
         files: None,
-        origins: None,
-        domain: None,
-        name: None,
         path: None,
-        secure: None,
-        http_only: None,
-        same_site: None,
-        expiration_date: None,
-        since_ms: None,
-        store_id: None,
         accept: None,
         prompt_text: None,
         max_chars: None,
@@ -2005,14 +1932,10 @@ mod tests {
         assert!(schema_has_action(tab_actions, "get_frames"));
         assert!(schema_has_action(tab_actions, "list_downloads"));
         assert!(schema_has_action(tab_actions, "open_download"));
-        assert!(!schema_has_action(tab_actions, "get_cookies"));
-        assert!(!schema_has_action(tab_actions, "clear_browser_cache"));
         assert!(tabs_properties.get("path").is_some());
         assert!(tabs_properties.get("window_id").is_some());
         assert!(tabs_properties.get("bypass_cache").is_some());
         assert!(tabs_properties.get("download_id").is_some());
-        assert!(tabs_properties.get("name").is_none());
-        assert!(tabs_properties.get("origins").is_none());
 
         let page = ChromeBrowserTool::page(Arc::new(BrowserBridge::new())).definition();
         let page_properties = page.parameters["properties"].as_object().unwrap();
@@ -2395,9 +2318,6 @@ mod tests {
         assert!(require_field(&Some("  ".to_string()), "f", "a").is_err());
         assert!(require_field(&None, "f", "a").is_err());
 
-        assert!(require_present(&Some(String::new()), "f", "a").is_ok());
-        assert!(require_present(&None, "f", "a").is_err());
-
         assert!(require_files(&Some(vec!["a.txt".to_string()]), "a").is_ok());
         assert!(require_files(&Some(vec![]), "a").is_err());
         assert!(require_files(&Some(vec!["  ".to_string()]), "a").is_err());
@@ -2443,14 +2363,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_script_world_and_same_site() {
+    fn validate_script_world_accepts_known_worlds() {
         assert!(validate_script_world(&None).is_ok());
         assert!(validate_script_world(&Some("MAIN".to_string())).is_ok());
         assert!(validate_script_world(&Some("bogus".to_string())).is_err());
-
-        assert!(validate_same_site(&None).is_ok());
-        assert!(validate_same_site(&Some("Lax".to_string())).is_ok());
-        assert!(validate_same_site(&Some("nope".to_string())).is_err());
     }
 
     #[test]
@@ -2477,11 +2393,6 @@ mod tests {
         );
         type_text.text = Some("hi".to_string());
         assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Input, &type_text).is_ok());
-
-        let mut set_cookie = browser_args(BrowserAction::SetCookie);
-        set_cookie.name = Some("c".to_string());
-        set_cookie.value = Some("v".to_string());
-        assert!(validate_browser_action_for_tool(ChromeBrowserToolKind::Tabs, &set_cookie).is_ok());
 
         let mut drag = browser_args(BrowserAction::DragAndDrop);
         drag.from_selector = Some("#a".to_string());

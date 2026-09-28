@@ -444,10 +444,6 @@ export class BrowserService {
       })
       return { ok: true }
     }
-    if (action === 'clear_browser_cache') {
-      await this.browsing.clearCache()
-      return { cleared: true }
-    }
     const tab = this.tab(context, args.tab_id)
     const wc = tab.view.webContents
     if (action === 'handle_dialog') return this.pageAction(context, wc, args)
@@ -603,29 +599,6 @@ export class BrowserService {
           data_url: `data:application/pdf;base64,${pdf.toString('base64')}`
         }
       }
-      case 'get_cookies':
-        return {
-          cookies: await this.browsing.cookies.get({
-            url: browserUrl(args.url || wc.getURL()),
-            ...(args.name ? { name: args.name } : {})
-          })
-        }
-      case 'set_cookie':
-        await this.browsing.cookies.set({
-          url: browserUrl(args.url || wc.getURL()),
-          name: args.name!,
-          value: args.value || '',
-          path: args.path,
-          domain: args.domain,
-          secure: args.secure,
-          httpOnly: args.http_only,
-          sameSite: args.same_site,
-          expirationDate: args.expiration_date
-        })
-        return { set: true }
-      case 'delete_cookie':
-        await this.browsing.cookies.remove(browserUrl(args.url || wc.getURL()), args.name!)
-        return { deleted: true }
       case 'copy_to_clipboard':
         clipboard.writeText(args.text || '')
         return { copied: true }

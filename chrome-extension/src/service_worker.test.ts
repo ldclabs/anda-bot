@@ -4,7 +4,7 @@ import {
   pageElementAttachmentRequestStorageKey,
   pageElementContextMenuId,
   pageElementDomMemoryKey,
-  pageElementMemoryKey,
+  pageElementSerializerKey,
   type PageElementInfo
 } from '$lib/anda/page-element'
 import type {
@@ -23,9 +23,18 @@ type ContextMenuClickListener = (
 ) => void
 type MessageListener = (
   message: ExtensionMessage,
-  sender: unknown,
+  sender: { url?: string },
   sendResponse: (response: ExtensionResponse) => void
 ) => boolean | void
+type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void
+type TabUpdatedListener = (
+  tabId: number,
+  changeInfo: { title?: string; url?: string },
+  tab: ChromeTabInfo
+) => void
+
+const extensionOrigin = 'chrome-extension://anda/'
+const extensionPage = { url: `${extensionOrigin}index.html` }
 
 function createChromeEvent<Listener extends (...args: any[]) => void>() {
   const listeners: Listener[] = []
@@ -43,17 +52,13 @@ function createChromeEvent<Listener extends (...args: any[]) => void>() {
   }
 }
 
-function createChromeApi(options: { development?: boolean } = {}) {
+function createChromeApi(options: { development?: boolean; token?: string } = {}) {
   const onInstalled = createChromeEvent<InstalledListener>()
   const onStartup = createChromeEvent<() => void>()
   const onActionClicked = createChromeEvent<(tab: { id?: number; windowId?: number }) => void>()
   const onContextMenuClicked = createChromeEvent<ContextMenuClickListener>()
-  const onTabActivated =
-    createChromeEvent<(activeInfo: { tabId: number; windowId: number }) => void>()
-  const onTabUpdated =
-    createChromeEvent<
-      (tabId: number, changeInfo: { title?: string; url?: string }, tab: { id?: number }) => void
-    >()
+  const onTabActivated = createChromeEvent<TabActivatedListener>()
+  const onTabUpdated = createChromeEvent<TabUpdatedListener>()
   const onMessageListeners: MessageListener[] = []
   const sessionState: Record<string, unknown> = {}
 
@@ -72,6 +77,7 @@ function createChromeApi(options: { development?: boolean } = {}) {
     runtime: {
       onInstalled,
       onStartup,
+      getURL: vi.fn((path: string) => `${extensionOrigin}${path}`),
       sendMessage: vi.fn(async () => ({ ok: true })),
       onMessage: {
         addListener: vi.fn((listener: MessageListener) => {
@@ -103,7 +109,7 @@ function createChromeApi(options: { development?: boolean } = {}) {
       local: {
         get: vi.fn(async () => ({
           baseUrl: 'http://127.0.0.1:8042',
-          token: '',
+          token: options.token || '',
           submitKeyMode: 'enter',
           appearanceTheme: 'system'
         })),
@@ -136,11 +142,17 @@ function createChromeApi(options: { development?: boolean } = {}) {
       executeScript: vi.fn(async () => [])
     },
     __onInstalledListeners: onInstalled.listeners,
+    __onStartupListeners: onStartup.listeners,
+    __onTabActivatedListeners: onTabActivated.listeners,
+    __onTabUpdatedListeners: onTabUpdated.listeners,
     __contextMenuClickedListeners: onContextMenuClicked.listeners,
     __sessionState: sessionState,
     __onMessageListeners: onMessageListeners
   } as unknown as ChromeApi & {
     __onInstalledListeners: InstalledListener[]
+    __onStartupListeners: Array<() => void>
+    __onTabActivatedListeners: TabActivatedListener[]
+    __onTabUpdatedListeners: TabUpdatedListener[]
     __contextMenuClickedListeners: ContextMenuClickListener[]
     __sessionState: Record<string, unknown>
     __onMessageListeners: MessageListener[]
@@ -206,11 +218,8 @@ describe('service worker page element context menu', () => {
     const element: PageElementInfo = {
       tagName: 'BUTTON',
       id: 'submit',
-      className: 'primary',
       role: 'button',
       innerText: 'Submit',
-      textContent: 'Submit',
-      outerHTML: '<button id="submit">Submit</button>',
       attributes: { id: 'submit', type: 'button' },
       xpath: '//*[@id="submit"]',
       cssPath: '#submit',
@@ -218,7 +227,6 @@ describe('service worker page element context menu', () => {
       pageTitle: 'Example form',
       frameUrl: 'https://example.com/form',
       selectedText: '',
-      rect: null,
       capturedAt: Date.now()
     }
     const openSidePanel = vi.mocked(chromeApi.sidePanel?.open)
@@ -239,7 +247,7 @@ describe('service worker page element context menu', () => {
       expect(chromeApi.__sessionState[pageElementAttachmentRequestStorageKey]).toMatchObject({
         element: {
           tagName: 'BUTTON',
-          outerHTML: '<button id="submit">Submit</button>'
+          innerText: 'Submit'
         }
       })
     )
@@ -249,7 +257,7 @@ describe('service worker page element context menu', () => {
       1,
       expect.objectContaining({
         target: { tabId: 7, frameIds: [0] },
-        args: [{ key: pageElementMemoryKey }]
+        args: [{ key: pageElementSerializerKey }]
       })
     )
     expect(chromeApi.scripting.executeScript).toHaveBeenNthCalledWith(
@@ -289,7 +297,7 @@ describe('service worker development logging', () => {
           appearanceTheme: 'system'
         }
       },
-      {},
+      extensionPage,
       sendResponse
     )
     await vi.waitFor(() =>
@@ -320,7 +328,7 @@ describe('service worker development logging', () => {
         },
         text: 'private prompt'
       },
-      {},
+      extensionPage,
       sendResponse
     )
 
@@ -331,5 +339,108 @@ describe('service worker development logging', () => {
     expect(serializedLog).toContain('<redacted>')
     expect(serializedLog).not.toContain('secret-token')
     expect(serializedLog).not.toContain('private prompt')
+  })
+})
+
+describe('service worker lifecycle and routing', () => {
+  it('does not inject content scripts into every tab at browser startup', async () => {
+    const chromeApi = createChromeApi()
+    await importServiceWorker(chromeApi)
+
+    chromeApi.__onStartupListeners[0]()
+
+    expect(chromeApi.tabs.query).not.toHaveBeenCalledWith({})
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled()
+  })
+
+  it('ignores messages from content scripts', async () => {
+    const chromeApi = createChromeApi()
+    await importServiceWorker(chromeApi)
+    const sendResponse = vi.fn()
+
+    const handled = chromeApi.__onMessageListeners[0](
+      { type: 'anda_status' },
+      { url: 'https://example.com/page' },
+      sendResponse
+    )
+
+    expect(handled).toBe(false)
+    expect(sendResponse).not.toHaveBeenCalled()
+  })
+
+  it('keeps the focused tab when another window updates its active tab', async () => {
+    const chromeApi = createChromeApi()
+    chromeApi.tabs.get = vi.fn(async (tabId: number) => ({
+      id: tabId,
+      active: true,
+      windowId: tabId === 5 ? 1 : 2
+    }))
+    await importServiceWorker(chromeApi)
+    const { activeTab } = await import('$lib/service-worker/browser-tabs')
+
+    chromeApi.__onTabActivatedListeners[0]({ tabId: 5, windowId: 1 })
+    chromeApi.__onTabUpdatedListeners[0](
+      9,
+      { title: 'Background video' },
+      { id: 9, active: true, windowId: 2 }
+    )
+
+    await expect(activeTab(chromeApi)).resolves.toMatchObject({ id: 5 })
+  })
+
+  it('registers the browser session again only when its tab metadata changes', async () => {
+    const sockets: FakeWebSocket[] = []
+    class FakeWebSocket {
+      static OPEN = 1
+      readyState = 0
+      sent: Array<{ id?: number; method?: string; params?: unknown[] }> = []
+      onopen: (() => void) | null = null
+      onclose: (() => void) | null = null
+      onerror: (() => void) | null = null
+      onmessage: ((event: { data: string }) => void) | null = null
+
+      constructor(readonly url: string) {
+        sockets.push(this)
+        setTimeout(() => {
+          this.readyState = FakeWebSocket.OPEN
+          this.onopen?.()
+        })
+      }
+
+      send(data: string) {
+        const message = JSON.parse(data)
+        this.sent.push(message)
+        if (typeof message.id === 'number') {
+          setTimeout(() => this.onmessage?.({ data: JSON.stringify({ id: message.id }) }))
+        }
+      }
+
+      close() {
+        this.readyState = 3
+        this.onclose?.()
+      }
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+
+    const tab = { id: 5, active: true, windowId: 1, url: 'https://a.example/', title: 'A' }
+    const chromeApi = createChromeApi({ token: 'secret' })
+    chromeApi.tabs.query = vi.fn(async () => [tab])
+    chromeApi.tabs.get = vi.fn(async () => ({ ...tab }))
+    await importServiceWorker(chromeApi)
+
+    const registrations = () =>
+      sockets.flatMap((socket) => socket.sent).filter((m) => m.method === 'browser_register')
+    await vi.waitFor(() => expect(registrations()).toHaveLength(1))
+
+    chromeApi.__onTabUpdatedListeners[0](5, { title: 'A' }, tab)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(registrations()).toHaveLength(1)
+
+    tab.title = 'B'
+    chromeApi.__onTabUpdatedListeners[0](5, { title: 'B' }, tab)
+    await vi.waitFor(() => expect(registrations()).toHaveLength(2))
+    expect(registrations()[1].params).toEqual([
+      expect.objectContaining({ tab_id: 5, title: 'B', url: 'https://a.example/' })
+    ])
   })
 })

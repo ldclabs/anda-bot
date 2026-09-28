@@ -24,9 +24,9 @@ Chrome 116 or newer is required because the extension keeps its Manifest V3 serv
 
 ## Browser Actions
 
-When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, title, and language hint are sent as metadata. The service worker refreshes that metadata as tabs are activated, updated, or navigated through `webNavigation` events.
+When a request starts from this Side Panel, Anda receives request metadata with a stable `browser_session`. The session stays the same as you switch tabs, while the current tab id, URL, title, and language hint are sent as metadata. The service worker registers that metadata again when you activate another tab or window, or when the active tab's URL or title changes, and skips registrations that would not change anything. Updates in other windows never change which tab Anda targets.
 
-The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `browser_tabs.switch_tab` first when another tab is needed. The public schemas expose the common browser actions while keeping lower-level browser-state handlers such as cookies and cache internal for compatibility.
+The agent can use the split browser tools below. Page, input, and script tools intentionally target the active tab; use `browser_tabs.switch_tab` first when another tab is needed. The extension does not read or change cookies or clear site data.
 
 `browser_tabs` actions:
 
@@ -82,7 +82,7 @@ The agent can use the split browser tools below. Page, input, and script tools i
 
 - `execute_javascript`
 
-`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. By default it uses a CSP-resistant debugger bridge so it can evaluate in the page context even on sites with strict CSP.
+`execute_javascript` accepts either a JavaScript expression or a function body. Bare expressions such as `document.title` return automatically; multi-statement code should use `return`. It evaluates in the page context through the debugger, so it also works on sites with a strict CSP.
 
 Chrome blocks extension scripts on some protected pages such as `chrome://` URLs and the Chrome Web Store.
 
@@ -97,8 +97,12 @@ the background. Chat renders Markdown and math with bundled styles; raw HTML is
 shown as text. Image previews load when their messages become visible.
 
 Voice capture stays attached to the tab where it started, including when another
-tab becomes active. Choosing a memory policy for a new conversation temporarily
+tab becomes active. It runs in the extension's isolated world, so the page's own
+scripts cannot read the recording or the transcript. Choosing a memory policy for a new conversation temporarily
 disables voice input until the first text message starts that conversation.
+
+"Send this content to Anda" reads the right-clicked element only after you choose
+the menu item; ordinary right-clicks do not read page text.
 
 `open_download` reveals the downloaded file in its folder. Opening the file itself
 requires a user click, which Chrome does not allow a WebSocket command to supply.

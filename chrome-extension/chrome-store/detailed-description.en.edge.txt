@@ -44,7 +44,7 @@ Privacy and permissions in plain language
 
 The extension stores your Gateway URL, Bearer token, and browser session id in Edge local storage. It sends prompts, selected attachments, browser session metadata, and relevant tab information to the local Anda daemon you connect. It can access tabs, the active page, screenshots, page scripts, text-to-speech, and optional voice recording features so the agent can help with browser tasks. The local Anda runtime and the model providers you configure may process your prompts and task data. Review the privacy policy before publishing or using the extension in sensitive environments.
 
-It also uses downloads permission for browser-initiated file handling, cookies permission for user-requested session inspection and cookie updates, browsingData permission to clear cache and related site data when resetting page state, debugger permission for reliable page automation and outputs such as screenshots or PDF export, and webNavigation permission to observe page navigation and load completion so the agent can wait for tabs to become ready.
+It also uses downloads permission for browser-initiated file handling, debugger permission for reliable page automation and outputs such as screenshots or PDF export, and webNavigation permission to observe page navigation and load completion so the agent can wait for tabs to become ready.
 
 Who it is for
 

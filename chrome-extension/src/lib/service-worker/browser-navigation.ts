@@ -30,9 +30,6 @@ import type {
 const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
 const SCRIPT_NAVIGATION_SETTLE_NO_LOAD_TIMEOUT_MS = 2_500
 
-/** How far into a load an action is willing to wait before answering. */
-export type NavigationWaitUntil = 'committed' | 'domcontentloaded' | 'complete' | 'history_change'
-
 export type NavigationEventName =
   | 'before_navigate'
   | 'committed'
@@ -146,12 +143,7 @@ export function createTabLoadWatcher(
   args: BrowserActionArgs = {}
 ): TabLoadWatcher {
   if (hasWebNavigationWaitSupport(chromeApi)) {
-    return createWebNavigationWaiter(
-      chromeApi,
-      tabId,
-      { ...args, timeout_ms: timeout },
-      { waitUntil: 'complete', allowAlreadyComplete: true }
-    )
+    return createWebNavigationWaiter(chromeApi, tabId, { ...args, timeout_ms: timeout })
   }
   return createTabsLoadWatcher(chromeApi, tabId, timeout)
 }
@@ -168,8 +160,7 @@ function hasWebNavigationWaitSupport(chromeApi: ChromeApi): boolean {
 function createWebNavigationWaiter(
   chromeApi: ChromeApi,
   tabId: number,
-  args: BrowserActionArgs,
-  options: { waitUntil: NavigationWaitUntil; allowAlreadyComplete?: boolean }
+  args: BrowserActionArgs
 ): TabLoadWatcher {
   const webNavigation = chromeApi.webNavigation
   if (!webNavigation) {
@@ -240,7 +231,7 @@ function createWebNavigationWaiter(
           loaded: extra.loaded ?? true,
           source: 'web_navigation',
           event,
-          wait_until: options.waitUntil,
+          wait_until: 'complete',
           saw_loading: sawLoading,
           saw_committed: sawCommitted,
           saw_dom_content_loaded: sawDomContentLoaded,
@@ -286,7 +277,7 @@ function createWebNavigationWaiter(
     if (!record(details, event)) {
       return
     }
-    if (navigationEventSatisfiesWait(event, options.waitUntil)) {
+    if (settlesLoad(event)) {
       finish(details, event, {
         same_document: event === 'history_state_updated' || event === 'reference_fragment_updated'
       })
@@ -324,7 +315,7 @@ function createWebNavigationWaiter(
   }
 
   const timer = setTimeout(() => {
-    fail(lastDetails, `navigation did not reach ${options.waitUntil} before timeout: ${timeout}ms`)
+    fail(lastDetails, `navigation did not reach complete before timeout: ${timeout}ms`)
   }, timeout)
 
   webNavigation.onBeforeNavigate?.addListener(onBeforeNavigate)
@@ -346,11 +337,7 @@ function createWebNavigationWaiter(
         sawCommitted ||
         args.action === 'open_tab' ||
         urlMatchesExpected(current?.url || '', expectedUrl)
-      if (
-        options.allowAlreadyComplete &&
-        currentMatches &&
-        (current?.status === 'complete' || isInstantLoadUrl(current?.url))
-      ) {
+      if (currentMatches && (current?.status === 'complete' || isInstantLoadUrl(current?.url))) {
         finish(navigationDetailsFromTab(current, tabId, frameId), 'already_complete')
       }
       if (done) {
@@ -377,21 +364,6 @@ function createWebNavigationWaiter(
     cancel() {
       cleanup()
     }
-  }
-}
-
-async function waitForWebNavigation(
-  chromeApi: ChromeApi,
-  tabId: number,
-  args: BrowserActionArgs,
-  options: { waitUntil: NavigationWaitUntil; allowAlreadyComplete?: boolean }
-): Promise<Record<string, unknown>> {
-  const watcher = createWebNavigationWaiter(chromeApi, tabId, args, options)
-  try {
-    return await watcher.wait()
-  } catch (error) {
-    watcher.cancel()
-    throw error
   }
 }
 
@@ -534,14 +506,9 @@ function navigationExpectedUrl(args: BrowserActionArgs): string | undefined {
 function matchesNavigation(
   details: ChromeWebNavigationDetails,
   tabId: number,
-  frameId: number,
-  expectedUrl?: string
+  frameId: number
 ): boolean {
-  return (
-    details.tabId === tabId &&
-    details.frameId === frameId &&
-    urlMatchesExpected(details.url || '', expectedUrl)
-  )
+  return details.tabId === tabId && details.frameId === frameId
 }
 
 function urlMatchesExpected(actualUrl: string, expectedUrl?: string): boolean {
@@ -559,20 +526,13 @@ function urlMatchesExpected(actualUrl: string, expectedUrl?: string): boolean {
   return actualUrl === expected || actualUrl.startsWith(expected) || actualUrl.includes(expected)
 }
 
-function navigationEventSatisfiesWait(
-  event: NavigationEventName,
-  waitUntil: NavigationWaitUntil
-): boolean {
-  if (event === 'history_state_updated' || event === 'reference_fragment_updated') {
-    return waitUntil === 'history_change' || waitUntil === 'complete'
-  }
-  if (waitUntil === 'committed') {
-    return event === 'committed' || event === 'dom_content_loaded' || event === 'completed'
-  }
-  if (waitUntil === 'domcontentloaded') {
-    return event === 'dom_content_loaded' || event === 'completed'
-  }
-  return waitUntil === 'complete' && event === 'completed'
+// A same-document history change settles an action as fully as a completed load.
+function settlesLoad(event: NavigationEventName): boolean {
+  return (
+    event === 'completed' ||
+    event === 'history_state_updated' ||
+    event === 'reference_fragment_updated'
+  )
 }
 
 function navigationDetailsSummary(

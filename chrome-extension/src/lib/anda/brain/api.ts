@@ -1,39 +1,8 @@
-import { getClientPlatform } from '../client/platform'
-import {
-  defaultSettings,
-  normalizeSettings,
-  loadSettingsFromStorage
-} from '$lib/service-worker/settings'
+import { daemonRpc, getClientPlatform } from '../client/platform'
+import { normalizeSettings, loadSettingsFromStorage } from '$lib/service-worker/settings'
 import type { SettingsState } from '$lib/service-worker/types'
 
 export const ANDA_BOT_SPACE_ID = 'anda_bot'
-
-type BrainChromeApi = {
-  runtime?: {
-    sendMessage<Result>(message: BrainRpcMessage): Promise<BrainRpcResponse<Result>>
-  }
-  storage?: {
-    local?: {
-      get(keys: string[]): Promise<BrainStorageState>
-      set(items: BrainStorageState): Promise<void>
-    }
-  }
-}
-
-type BrainStorageState = Partial<SettingsState> & {
-  brainSpaceId?: unknown
-}
-
-type BrainRpcMessage = {
-  type: 'anda_rpc'
-  settings: SettingsState
-  method: string
-  params: unknown[]
-}
-
-type BrainRpcResponse<Result> =
-  | { ok: true; result?: Result; status?: string }
-  | { ok: false; error: string; status?: string }
 
 export type Json =
   | string
@@ -251,31 +220,15 @@ export class BrainApi {
     )
   }
 
+  /**
+   * The daemon serves the Anda Bot space over RPC under the caller's identity;
+   * other spaces answer null and use Brain's own HTTP API instead.
+   */
   private async extensionRpc<T>(method: string, params: unknown[]): Promise<T | null> {
     if (this.settings.spaceId !== ANDA_BOT_SPACE_ID) {
       return null
     }
-
-    const native = getClientPlatform()
-    if (native) return native.rpc<T>(method, params)
-    const chromeApi = getBrainChromeApi()
-    if (!chromeApi?.runtime?.sendMessage) {
-      return null
-    }
-    if (!this.settings.token) {
-      throw new Error('missing bearer token')
-    }
-
-    const response = await chromeApi.runtime.sendMessage<T>({
-      type: 'anda_rpc',
-      settings: normalizeSettings(this.settings),
-      method,
-      params
-    })
-    if (!response?.ok) {
-      throw new Error(response?.error || `Brain RPC ${method} failed`)
-    }
-    return response.result as T
+    return daemonRpc<T>(method, params, this.settings)
   }
 
   private async request<T>(path: string, init: RequestInit): Promise<T> {
@@ -313,43 +266,23 @@ export class BrainApi {
 export async function loadBrainGraphSettings(): Promise<BrainGraphSettings> {
   const native = getClientPlatform()
   if (native) return { ...(await native.settings()), spaceId: ANDA_BOT_SPACE_ID }
-  const chromeApi = getBrainChromeApi()
-  if (chromeApi?.storage?.local) {
-    const [settings, saved] = await Promise.all([
-      loadSettingsFromStorage(chromeApi.storage.local),
-      chromeApi.storage.local.get(['brainSpaceId'])
-    ])
-    return { ...settings, spaceId: normalizeSpaceId(saved.brainSpaceId) }
-  }
-
-  const saved = safeReadLocalStorage()
-  return {
-    ...normalizeSettings({
-      ...defaultSettings,
-      ...saved
-    }),
-    spaceId: normalizeSpaceId(saved.brainSpaceId)
-  }
+  const [settings, saved] = await Promise.all([
+    loadSettingsFromStorage(chrome.storage.local),
+    chrome.storage.local.get(['brainSpaceId'])
+  ])
+  return { ...settings, spaceId: normalizeSpaceId(saved.brainSpaceId) }
 }
 
 export async function saveBrainGraphSettings(settings: BrainGraphSettings): Promise<void> {
   const native = getClientPlatform()
   if (native) return native.saveSettings(settings)
-  const normalized = {
-    ...normalizeSettings(settings),
+  const normalized = normalizeSettings(settings)
+  await chrome.storage.local.set({
+    baseUrl: normalized.baseUrl,
+    token: normalized.token,
+    appearanceTheme: normalized.appearanceTheme,
     brainSpaceId: normalizeSpaceId(settings.spaceId)
-  }
-  const chromeApi = getBrainChromeApi()
-  if (chromeApi?.storage?.local) {
-    await chromeApi.storage.local.set({
-      baseUrl: normalized.baseUrl,
-      token: normalized.token,
-      appearanceTheme: normalized.appearanceTheme,
-      brainSpaceId: normalized.brainSpaceId
-    })
-    return
-  }
-  localStorage.setItem('andaBrainGraphSettings', JSON.stringify(normalized))
+  })
 }
 
 interface BrainResult<T> {
@@ -360,10 +293,6 @@ interface BrainResult<T> {
 export function normalizeSpaceId(value: unknown): string {
   const spaceId = String(value || '').trim()
   return spaceId || ANDA_BOT_SPACE_ID
-}
-
-function getBrainChromeApi(): BrainChromeApi | undefined {
-  return (globalThis as typeof globalThis & { chrome?: BrainChromeApi }).chrome
 }
 
 export function formatKipError(error: KipError): string {
@@ -388,13 +317,4 @@ function unwrapBrainResult<T>(response: BrainResult<T>, label: string): T {
     throw new Error(`${label} returned no result`)
   }
   return response.result
-}
-
-function safeReadLocalStorage(): Record<string, unknown> {
-  try {
-    const raw = localStorage.getItem('andaBrainGraphSettings')
-    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-  } catch (_error) {
-    return {}
-  }
 }

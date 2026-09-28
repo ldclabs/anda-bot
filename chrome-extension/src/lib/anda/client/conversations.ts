@@ -385,60 +385,38 @@ function contentToMessageContent(
   const runtimeToolParts: string[] = []
   const actions: ChatAction[] = []
   let externalUser: ExternalUserMessageInfo | undefined
-  for (const part of content) {
-    if (typeof part === 'string') {
-      const text = part as string
-      const externalUserMessage = parseExternalUserPrompt(text)
-      if (externalUserMessage) {
-        externalUser ||= externalUserMessage.externalUser
-        if (externalUserMessage.body) {
-          textParts.push(externalUserMessage.body)
-        }
-        continue
+  const addTextPart = (text: string) => {
+    const externalUserMessage = parseExternalUserPrompt(text)
+    if (externalUserMessage) {
+      externalUser ||= externalUserMessage.externalUser
+      if (externalUserMessage.body) {
+        textParts.push(externalUserMessage.body)
       }
-      if (shouldHideTextPart(text, options)) {
-        continue
-      }
-      if (isSystemRuntimeText(text)) {
-        runtimeToolParts.push(text.trim())
-        continue
-      }
-      const split = splitLegacyThoughtText(text)
-      if (split.text) {
-        textParts.push(split.text)
-      }
-      if (split.thinkingText) {
-        thinkingParts.push(split.thinkingText)
-      }
+      return
+    }
+    if (shouldHideTextPart(text, options)) {
+      return
+    }
+    if (isSystemRuntimeText(text)) {
+      runtimeToolParts.push(text.trim())
+      return
+    }
+    const split = splitLegacyThoughtText(text)
+    if (split.text) {
+      textParts.push(split.text)
+    }
+    if (split.thinkingText) {
+      thinkingParts.push(split.thinkingText)
+    }
+  }
+  // Older history can hold bare strings where a Text part is expected.
+  for (const part of content as Array<ContentPart | string>) {
+    if (typeof part === 'string' || part.type === 'Text') {
+      addTextPart(typeof part === 'string' ? part : part.text)
       continue
     }
 
     switch (part.type) {
-      case 'Text':
-        const externalUserMessage = parseExternalUserPrompt(part.text)
-        if (externalUserMessage) {
-          externalUser ||= externalUserMessage.externalUser
-          if (externalUserMessage.body) {
-            textParts.push(externalUserMessage.body)
-          }
-          continue
-        }
-        if (shouldHideTextPart(part.text, options)) {
-          continue
-        }
-        if (isSystemRuntimeText(part.text)) {
-          runtimeToolParts.push(part.text.trim())
-          continue
-        }
-        const split = splitLegacyThoughtText(part.text)
-        if (split.text) {
-          textParts.push(split.text)
-        }
-        if (split.thinkingText) {
-          thinkingParts.push(split.thinkingText)
-        }
-
-        continue
       case 'Reasoning':
         thinkingParts.push(part.text)
         continue

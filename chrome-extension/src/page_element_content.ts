@@ -4,40 +4,47 @@
 // the service worker reads back. `page_element_content.test.ts` imports the
 // exported constants and asserts against the values written here, so the two
 // copies cannot drift apart unnoticed.
-const pageElementMemoryKey = '__andaLastRightClickedElement'
+const pageElementSerializerKey = '__andaSerializeLastRightClickedElement'
 const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 const pageElementListenerKey = '__andaPageElementContentScriptContextMenuListener'
 const maxTextChars = 200_000
 const maxAttributeValueChars = 2_000
 const maxAttributes = 80
 
+// Right-clicks only remember the element; the service worker calls the
+// serializer when the Anda menu item is chosen, so an ordinary context menu
+// never pays for reading the element's text.
+let lastCapturedAt = 0
+
 installContextMenuListener()
 
-function capturePageElement(event: MouseEvent) {
-  const element = eventTargetElement(event)
-  if (!element) {
-    return
-  }
+function rememberPageElement(event: MouseEvent) {
+  const registry = globalThis as Record<string, unknown>
+  registry[pageElementDomMemoryKey] = eventTargetElement(event)
+  lastCapturedAt = Date.now()
+}
 
+function serializeLastPageElement() {
+  const element = (globalThis as Record<string, unknown>)[pageElementDomMemoryKey]
+  if (!(element instanceof Element) || !lastCapturedAt) {
+    return null
+  }
   try {
-    const registry = globalThis as Record<string, unknown>
-    registry[pageElementDomMemoryKey] = element
-    registry[pageElementMemoryKey] = serializeElement(element)
+    return serializeElement(element, lastCapturedAt)
   } catch (_error) {
-    const registry = globalThis as Record<string, unknown>
-    registry[pageElementDomMemoryKey] = null
-    registry[pageElementMemoryKey] = null
+    return null
   }
 }
 
 function installContextMenuListener() {
-  const registry = globalThis as unknown as Record<string, EventListener | undefined>
-  const listener = capturePageElement as EventListener
+  const registry = globalThis as unknown as Record<string, unknown>
   const previousListener = registry[pageElementListenerKey]
-  if (previousListener) {
-    document.removeEventListener('contextmenu', previousListener, true)
+  if (typeof previousListener === 'function') {
+    document.removeEventListener('contextmenu', previousListener as EventListener, true)
   }
+  const listener = rememberPageElement as EventListener
   registry[pageElementListenerKey] = listener
+  registry[pageElementSerializerKey] = serializeLastPageElement
   document.addEventListener('contextmenu', listener, true)
 }
 
@@ -52,18 +59,14 @@ function eventTargetElement(event: MouseEvent): Element | null {
   return null
 }
 
-function serializeElement(element: Element) {
+function serializeElement(element: Element, capturedAt: number) {
   const htmlElement = element as HTMLElement
   const text = trimString(htmlElement.innerText || element.textContent || '', maxTextChars)
   return {
     tagName: element.tagName,
     id: element.id || null,
-    className: stringValue((element as HTMLElement).className) || null,
     role: element.getAttribute('role'),
     innerText: text,
-    textContent: '',
-    // Kept for the capture wire shape; semantic attachments never use HTML.
-    outerHTML: '',
     attributes: elementAttributes(element),
     xpath: elementXPath(element),
     cssPath: elementCssPath(element),
@@ -71,7 +74,7 @@ function serializeElement(element: Element) {
     pageTitle: document.title || '',
     frameUrl: location.href,
     selectedText: trimString(getSelection()?.toString() || '', maxTextChars),
-    capturedAt: Date.now()
+    capturedAt
   }
 }
 
@@ -149,15 +152,4 @@ function cssEscape(value: string): string {
 
 function trimString(value: string, maxChars: number): string {
   return value.length > maxChars ? `${value.slice(0, maxChars)}...` : value
-}
-
-function stringValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return value
-  }
-  if (value && typeof value === 'object' && 'baseVal' in value) {
-    const baseVal = (value as { baseVal?: unknown }).baseVal
-    return typeof baseVal === 'string' ? baseVal : ''
-  }
-  return ''
 }

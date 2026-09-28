@@ -185,9 +185,7 @@ async function executeJavaScriptWithAttachedDebugger(
     throw new Error('execute_javascript requires code')
   }
   if (args.frame_id !== undefined && args.frame_id !== null) {
-    throw new Error(
-      'execute_javascript frame_id is only supported when use_bridge is false and world is isolated or main'
-    )
+    throw new Error('execute_javascript runs in the top frame and does not accept frame_id')
   }
 
   return withAttachedDebugger(chromeApi, tabId, async (target) => {
@@ -647,9 +645,9 @@ export async function uploadFile(
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
       await target.sendCommand('DOM.enable').catch(() => undefined)
+      // Only the root node id is needed; DOM.querySelector resolves from it.
       const documentResult = await target.sendCommand<DomGetDocumentResult>('DOM.getDocument', {
-        depth: -1,
-        pierce: true
+        depth: 0
       })
       const rootNodeId = documentResult.root?.nodeId
       if (!rootNodeId) {
@@ -694,12 +692,7 @@ export async function dispatchNativePointerAction(
     withAttachedDebugger(chromeApi, tabId, async (debuggerTarget) => {
       await dispatchNativeMouseMove(debuggerTarget, x, y)
       if (args.action === 'click') {
-        await dispatchNativePrimaryClick(
-          debuggerTarget,
-          x,
-          y,
-          await isMobileLikeTarget(debuggerTarget)
-        )
+        await dispatchNativePrimaryClick(debuggerTarget, x, y, target.mobile_like === true)
       }
     })
   )
@@ -743,9 +736,8 @@ export async function dispatchNativeTextInput(
   let verified: boolean | null = null
   await runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      const useTouch = await isMobileLikeTarget(target)
       await dispatchNativeMouseMove(target, x, y)
-      await dispatchNativePrimaryClick(target, x, y, useTouch)
+      await dispatchNativePrimaryClick(target, x, y, inputTarget.mobile_like === true)
       await delay(50)
       await dispatchSelectAll(target)
       await dispatchKeyDefinition(target, keyDefinition('Backspace'))
@@ -800,15 +792,6 @@ async function verifyNativeTextInput(
   } catch (_error) {
     return null
   }
-}
-
-async function isMobileLikeTarget(target: AttachedDebuggerTarget): Promise<boolean> {
-  const result = await target.sendCommand<RuntimeEvaluateResult>('Runtime.evaluate', {
-    expression:
-      '(/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1)',
-    returnByValue: true
-  })
-  return Boolean(result.result?.value)
 }
 
 async function dispatchNativeMouseMove(

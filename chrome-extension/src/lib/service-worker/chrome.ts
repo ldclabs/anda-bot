@@ -13,9 +13,7 @@ type NavigatorBrand = {
 
 type NavigatorWithBrowserHints = Navigator & {
   userAgentData?: {
-    getHighEntropyValues(hints: string[]): Promise<{
-      brands?: NavigatorBrand[]
-    }>
+    brands?: NavigatorBrand[]
   }
   brave?: {
     isBrave(): Promise<boolean>
@@ -59,45 +57,34 @@ export async function isDevelopmentMode(
 }
 
 /**
- * 增强版浏览器检测（异步）
- * 返回值示例：'Chrome' | 'Edge' | 'Brave' | 'Opera' | 'Vivaldi' | 'Arc' | 'Other Chromium'
+ * Names the Chromium browser this extension runs in, e.g. 'chrome', 'edge' or
+ * 'brave'. The value is part of the browser session id, so the detection
+ * order must stay stable.
  */
-export async function getCurrentBrowser() {
+export async function getCurrentBrowser(): Promise<string> {
   const browserNavigator = navigator as NavigatorWithBrowserHints
   const ua = browserNavigator.userAgent
 
-  // === 1. 优先使用 User-Agent Client Hints（最现代、最可靠）===
-  if (browserNavigator.userAgentData) {
-    try {
-      const uaData = await browserNavigator.userAgentData.getHighEntropyValues(['brands'])
-      const brands = uaData.brands || []
-
-      // 遍历 brands 数组，匹配已知品牌
-      for (const { brand } of brands) {
-        if (brand.includes('Brave')) return 'brave'
-        if (brand.includes('Microsoft') || brand.includes('Edge')) return 'edge'
-        if (brand.includes('Opera') || brand === 'OPR') return 'opera'
-        if (brand.includes('Google Chrome') || brand === 'Google Chrome') return 'chrome'
-      }
-    } catch (e) {
-      console.warn('userAgentData 获取失败，降级使用 UA')
-    }
+  // Brand hints are low-entropy, so they are available without a request.
+  for (const { brand } of browserNavigator.userAgentData?.brands || []) {
+    if (brand.includes('Brave')) return 'brave'
+    if (brand.includes('Microsoft') || brand.includes('Edge')) return 'edge'
+    if (brand.includes('Opera') || brand === 'OPR') return 'opera'
+    if (brand.includes('Google Chrome')) return 'chrome'
   }
 
-  // === 2. 特定浏览器独有属性（高优先级）===
-  // Brave 官方推荐方式
+  // Brave hides itself from the user agent but exposes this probe.
   if (typeof browserNavigator.brave !== 'undefined') {
     try {
       if (await browserNavigator.brave.isBrave()) return 'brave'
-    } catch (e) {}
+    } catch (_error) {}
   }
 
-  // === 3. UA 字符串精准匹配（兼容性最强）===
   if (ua.includes('Edg')) return 'edge'
   if (ua.includes('OPR') || ua.includes('Opera')) return 'opera'
   if (ua.includes('Brave')) return 'brave'
   if (ua.includes('Vivaldi')) return 'vivaldi'
-  if (ua.includes('Arc')) return 'arc' // Arc 部分版本会带 Arc 标识
+  if (ua.includes('Arc')) return 'arc'
 
   if (ua.includes('Chrome')) return 'chrome'
 

@@ -1,6 +1,5 @@
-import { getClientPlatform } from '../client/platform'
+import { daemonRpc, getClientPlatform } from '../client/platform'
 import type { BrainGraphSettings } from '../brain/api'
-import { normalizeSettings } from '$lib/service-worker/settings'
 
 export type ReadState =
   | 'reachable'
@@ -188,34 +187,16 @@ export function unwrap<T extends { schema_version: number }>(envelope: Envelope<
 export class MemoryApi {
   constructor(private settings: BrainGraphSettings) {}
   async overview(signal?: AbortSignal): Promise<Overview> {
-    return unwrap(await this.read<Overview>('memory_overview', [], '/overview', signal))
+    return unwrap(await this.read<Overview>('memory_overview', [], signal))
   }
   async setupPreview(): Promise<SetupPreview> {
-    return unwrap(
-      await this.read<SetupPreview>(
-        'memory_inbox_setup_prepare',
-        [],
-        '/inbox/setup/prepare',
-        undefined,
-        {}
-      )
-    )
+    return unwrap(await this.read<SetupPreview>('memory_inbox_setup_prepare', []))
   }
   async setupCommit(preview_digest: string): Promise<SetupPreview> {
-    return unwrap(
-      await this.read<SetupPreview>(
-        'memory_inbox_setup_commit',
-        [{ preview_digest }],
-        '/inbox/setup/commit',
-        undefined,
-        { preview_digest }
-      )
-    )
+    return unwrap(await this.read<SetupPreview>('memory_inbox_setup_commit', [{ preview_digest }]))
   }
   async search(query: string): Promise<SearchResult> {
-    return unwrap(
-      await this.read<SearchResult>('memory_search', [{ query }], '/search', undefined, { query })
-    )
+    return unwrap(await this.read<SearchResult>('memory_search', [{ query }]))
   }
   async watches(signal?: AbortSignal): Promise<WatchPage> {
     const items = new Map<string, RecordWatch>()
@@ -223,13 +204,9 @@ export class MemoryApi {
     let cursor: string | null = null
     let partial: string | null = null
     while (true) {
-      signal?.throwIfAborted()
-      const query = { cursor, limit: 50 }
-      const path = cursor ? `/watches?${new URLSearchParams({ cursor, limit: '50' })}` : '/watches'
       const envelope: Envelope<WatchPage> = await this.read<WatchPage>(
         'memory_watches',
-        cursor ? [query] : [],
-        path,
+        cursor ? [{ cursor, limit: 50 }] : [],
         signal
       )
       const page = unwrap(envelope)
@@ -251,87 +228,38 @@ export class MemoryApi {
   }
   async watch(operation_id: string, record_id: string): Promise<RecordWatch> {
     return unwrap(
-      await this.read<{ schema_version: number; watch: RecordWatch }>(
-        'memory_watch',
-        [{ operation_id, record_id }],
-        '/watches',
-        undefined,
+      await this.read<{ schema_version: number; watch: RecordWatch }>('memory_watch', [
         { operation_id, record_id }
-      )
+      ])
     ).watch
   }
   async cancelWatch(id: string): Promise<RecordWatch> {
     return unwrap(
-      await this.read<{ schema_version: number; watch: RecordWatch }>(
-        'memory_watch_cancel',
-        [id],
-        `/watches/${encodeURIComponent(id)}/cancel`,
-        undefined,
-        {}
-      )
+      await this.read<{ schema_version: number; watch: RecordWatch }>('memory_watch_cancel', [id])
     ).watch
   }
   async prepareChange(input: ChangeInput): Promise<ChangeView> {
-    return unwrap(
-      await this.read<ChangeView>(
-        'memory_change_prepare',
-        [input],
-        '/changes/prepare',
-        undefined,
-        input
-      )
-    )
+    return unwrap(await this.read<ChangeView>('memory_change_prepare', [input]))
   }
   async commitChange(id: string, preview_digest: string): Promise<ChangeView> {
-    return unwrap(
-      await this.read<ChangeView>(
-        'memory_change_commit',
-        [id, { preview_digest }],
-        `/changes/${encodeURIComponent(id)}/commit`,
-        undefined,
-        { preview_digest }
-      )
-    )
+    return unwrap(await this.read<ChangeView>('memory_change_commit', [id, { preview_digest }]))
   }
   async changeStatus(id: string): Promise<ChangeView> {
-    return unwrap(
-      await this.read<ChangeView>(
-        'memory_change_status',
-        [id],
-        `/changes/${encodeURIComponent(id)}`
-      )
-    )
+    return unwrap(await this.read<ChangeView>('memory_change_status', [id]))
   }
   async discardChange(id: string): Promise<void> {
     unwrap(
-      await this.read<{ schema_version: number; discarded: boolean }>(
-        'memory_change_discard',
-        [id],
-        `/changes/${encodeURIComponent(id)}/discard`,
-        undefined,
-        {}
-      )
+      await this.read<{ schema_version: number; discarded: boolean }>('memory_change_discard', [id])
     )
   }
 
   async record(id: string): Promise<MemoryRecord> {
     return unwrap(
-      await this.read<{ schema_version: number; record: MemoryRecord }>(
-        'memory_record',
-        [id],
-        `/records/${encodeURIComponent(id)}`
-      )
+      await this.read<{ schema_version: number; record: MemoryRecord }>('memory_record', [id])
     ).record
   }
   async records(cursor: string | null = null, signal?: AbortSignal): Promise<RecordPage> {
-    const params = new URLSearchParams({ limit: '20' })
-    if (cursor) params.set('cursor', cursor)
-    const envelope = await this.read<RecordPage>(
-      'memory_records',
-      [{ cursor, limit: 20 }],
-      `/records?${params}`,
-      signal
-    )
+    const envelope = await this.read<RecordPage>('memory_records', [{ cursor, limit: 20 }], signal)
     return { ...unwrap(envelope), next_cursor: envelope.next_cursor ?? null }
   }
   async activity(
@@ -339,66 +267,25 @@ export class MemoryApi {
     signal?: AbortSignal,
     conversation: string | null = null
   ): Promise<ActivityPage> {
-    const query = { conversation, cursor, limit: 20 }
-    const params = new URLSearchParams({ limit: '20' })
-    if (cursor) params.set('cursor', cursor)
-    if (conversation) params.set('conversation', conversation)
     const envelope = await this.read<ActivityPage>(
       'memory_activity',
-      [query],
-      `/activity?${params}`,
+      [{ conversation, cursor, limit: 20 }],
       signal
     )
     return { ...unwrap(envelope), next_cursor: envelope.next_cursor ?? null }
   }
+  /**
+   * One daemon RPC under the caller's own identity. A failed call is never
+   * retried over another transport, and a cancelled read is not sent.
+   */
   private async read<T>(
     method: string,
     params: unknown[],
-    path: string,
-    signal?: AbortSignal,
-    body?: unknown
+    signal?: AbortSignal
   ): Promise<Envelope<T>> {
     if (this.settings.spaceId !== 'anda_bot') throw new Error('unsupported_memory_space')
-    const native = getClientPlatform()
-    if (native) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-      return native.rpc<Envelope<T>>(method, params)
-    }
-    if (!this.settings.token) throw new Error('unauthorized')
-    const extension = typeof chrome !== 'undefined' && chrome.runtime?.sendMessage
-    if (extension) {
-      // A failed RPC is never retried over HTTP with a different identity.
-      const response = await chrome.runtime.sendMessage({
-        type: 'anda_rpc',
-        settings: normalizeSettings(this.settings),
-        method,
-        params
-      })
-      if (!response?.ok) throw new Error(response?.error || 'memory_transport_unavailable')
-      return response.result as Envelope<T>
-    }
-    const response = await fetch(
-      `${this.settings.baseUrl.replace(/\/$/, '')}/daemon/memory/v1${path}`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.settings.token}`,
-          Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' })
-        },
-        signal,
-        method: body === undefined ? 'GET' : 'POST',
-        ...(body === undefined ? {} : { body: JSON.stringify(body) })
-      }
-    )
-    let envelope: Envelope<T>
-    try {
-      envelope = (await response.json()) as Envelope<T>
-    } catch {
-      throw new Error(
-        response.status === 404 ? 'unsupported_memory_api' : 'memory_transport_unavailable'
-      )
-    }
-    if (!response.ok && !envelope.error) throw new Error(`memory_api_${response.status}`)
-    return envelope
+    if (!getClientPlatform() && !this.settings.token) throw new Error('unauthorized')
+    signal?.throwIfAborted()
+    return daemonRpc<Envelope<T>>(method, params, this.settings)
   }
 }

@@ -96,6 +96,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     if (!document.hidden) for (const channel of this.channels.values()) channel.wakePolling()
   }
   #localChannelSource = ''
+  // Language changes reload every extension page, so one read per page lasts.
+  #requestLanguage: Promise<string> | null = null
   #workspaceChannelSources = new Set<string>()
   #channelSwitchEpoch = 0
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
@@ -131,6 +133,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     this.syncServiceWorker().catch(() => undefined)
     this.syncUiLanguage().catch(() => undefined)
     this.#uiLanguageTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
       this.syncUiLanguage().catch(() => undefined)
     }, uiLanguageSyncIntervalMs)
   }
@@ -634,13 +637,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       if (!this.#chatEnabled) return
       this.refreshActiveTab().catch(() => undefined)
     }
+    // The service worker re-registers the browser session on the same events;
+    // the panel only keeps its request metadata current.
     this.#tabUpdatedListener = (tabId, changeInfo, tab) => {
       if (!this.tab || tabId !== this.tab.id || (!changeInfo.title && !changeInfo.url)) {
         return
       }
 
       this.tab = { ...this.tab, ...tab }
-      this.registerBrowserSession().catch(() => undefined)
     }
     this.chrome.tabs.onActivated.addListener(this.#tabActivatedListener)
     this.chrome.tabs.onUpdated.addListener(this.#tabUpdatedListener)
@@ -779,33 +783,31 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     return response
   }
 
-  private async registerBrowserSession(): Promise<void> {
-    if (!this.settings.token) {
-      return
-    }
-
-    await this.serviceWorkerMessage<{ session?: string }>('anda_register')
-  }
-
+  /**
+   * Metadata for every daemon request, including each conversation poll. It
+   * uses the tab the listeners keep current instead of querying Chrome per
+   * request; sending a prompt refreshes the tab first.
+   */
   async requestExtra(): Promise<Record<string, unknown>> {
-    await this.refreshActiveTab()
+    const tab = this.tab || (await this.refreshActiveTab())
     const extra: Record<string, unknown> = {
       conversation: 0,
       browser_client: 'chrome_extension',
       approval_mode: this.settings.approvalMode || defaultSettings.approvalMode
     }
-    const language = await this.requestLanguage()
+    this.#requestLanguage ||= this.requestLanguage()
+    const language = await this.#requestLanguage
     if (language) {
       extra.language = language
     }
 
-    if (this.tab) {
+    if (tab) {
       extra.tab = {
-        id: this.tab.id,
-        url: this.tab.url,
-        title: this.tab.title,
-        incognito: this.tab.incognito,
-        window: this.tab.windowId
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        incognito: tab.incognito,
+        window: tab.windowId
       }
     }
 

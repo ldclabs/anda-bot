@@ -142,7 +142,8 @@ describe('BrainApi', () => {
       parameters: { shared: 1 },
       dry_run: true
     }
-    await new BrainApi(settings()).executeKipReadonly(request)
+    await new BrainApi(settings('custom')).executeKipReadonly(request)
+    expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:8042/v1/custom/execute_kip_readonly')
     const init = fetch.mock.calls[0][1] as RequestInit
     expect(JSON.parse(init.body as string)).toEqual(request)
     expect(new Headers(init.headers).get('Authorization')).toBe('Bearer browser-token')

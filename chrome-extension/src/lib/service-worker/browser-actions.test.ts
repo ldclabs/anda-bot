@@ -415,21 +415,32 @@ describe('executeBrowserAction waited browser actions', () => {
     }
     const nextTab = { ...startTab, url: 'https://app.example/dashboard' }
     let currentTab = startTab
-    const chromeApi = createChromeApi(undefined, startTab)
-    const navigationEvents = attachWebNavigationApi(chromeApi)
-    chromeApi.tabs.get = vi.fn(async () => currentTab)
-    chromeApi.scripting.executeScript = vi.fn(async () => {
+    let navigationEvents: ReturnType<typeof attachWebNavigationApi> | null = null
+    const sendCommand = vi.fn(async (_target: DebuggerTarget, method: string) => {
+      if (method !== 'Runtime.evaluate') {
+        return {}
+      }
       queueMicrotask(() => {
         currentTab = nextTab
-        navigationEvents.onHistoryStateUpdated.emit({
+        navigationEvents?.onHistoryStateUpdated.emit({
           tabId: 123,
           frameId: 0,
           url: nextTab.url,
           timeStamp: 40
         })
       })
-      return [{ result: { executed: true, result: { pushed: true } } }]
-    }) as ChromeApi['scripting']['executeScript']
+      return { result: { type: 'object', value: { pushed: true } } }
+    })
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      startTab
+    )
+    navigationEvents = attachWebNavigationApi(chromeApi)
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
 
     const result = (await executeBrowserAction(
       {
@@ -437,8 +448,7 @@ describe('executeBrowserAction waited browser actions', () => {
         request_id: 1,
         args: {
           action: 'execute_javascript',
-          code: "history.pushState({}, '', '/dashboard')",
-          use_bridge: false
+          code: "history.pushState({}, '', '/dashboard')"
         }
       },
       { chromeApi }
@@ -925,12 +935,7 @@ describe('executeBrowserAction native input', () => {
   it('dispatches touch events for clicks on mobile-like pages', async () => {
     const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
     const sendCommand = vi.fn(
-      async (_target: DebuggerTarget, method: string, _params?: Record<string, unknown>) => {
-        if (method === 'Runtime.evaluate') {
-          return { result: { type: 'boolean', value: true } }
-        }
-        return {}
-      }
+      async (_target: DebuggerTarget, _method: string, _params?: Record<string, unknown>) => ({})
     )
     const chromeApi = createChromeApi(
       {
@@ -947,7 +952,8 @@ describe('executeBrowserAction native input', () => {
           x: 12,
           y: 34,
           label: 'Tap me',
-          bounding_box: { x: 0, y: 0, width: 24, height: 68 }
+          bounding_box: { x: 0, y: 0, width: 24, height: 68 },
+          mobile_like: true
         }
       }
     ]) as ChromeApi['scripting']['executeScript']
@@ -971,6 +977,8 @@ describe('executeBrowserAction native input', () => {
       ['Input.dispatchTouchEvent', 'touchStart'],
       ['Input.dispatchTouchEvent', 'touchEnd']
     ])
+    // The page-side target lookup reports touch support; no extra evaluation.
+    expect(sendCommand.mock.calls.map((call) => call[1])).not.toContain('Runtime.evaluate')
   })
 
   it('uses native CDP text insertion for editable text targets', async () => {

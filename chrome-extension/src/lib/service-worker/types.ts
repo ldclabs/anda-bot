@@ -53,8 +53,6 @@ export type ChromeContextMenuClickInfo = {
   frameId?: number
 }
 
-export type ChromeCookieSameSite = 'no_restriction' | 'lax' | 'strict'
-
 export type ChromeDownloadItem = {
   id?: number
   url?: string
@@ -68,19 +66,6 @@ export type ChromeDownloadItem = {
   startTime?: string
   endTime?: string
   exists?: boolean
-}
-
-export type ChromeCookieInfo = {
-  name?: string
-  value?: string
-  domain?: string
-  path?: string
-  secure?: boolean
-  httpOnly?: boolean
-  sameSite?: ChromeCookieSameSite
-  expirationDate?: number
-  session?: boolean
-  storeId?: string
 }
 
 export type BrowserActionArgs = {
@@ -119,16 +104,7 @@ export type BrowserActionArgs = {
   save_as?: boolean
   download_id?: number
   files?: string[]
-  origins?: string[]
-  domain?: string
-  name?: string
   path?: string
-  secure?: boolean
-  http_only?: boolean
-  same_site?: ChromeCookieSameSite
-  expiration_date?: number
-  since_ms?: number
-  store_id?: string
   accept?: boolean
   prompt_text?: string
   max_chars?: number
@@ -153,7 +129,13 @@ export type ExtensionMessage = {
   language?: string
   mimeType?: string
   pageElementRequest?: unknown
-  pageElementInfo?: unknown
+}
+
+export type ChromeMessageSender = {
+  id?: string
+  url?: string
+  tab?: ChromeTabInfo
+  frameId?: number
 }
 
 export type ExtensionResponse<Result = unknown> =
@@ -197,12 +179,6 @@ export type ChromeWebNavigationTabReplacedDetails = {
   timeStamp?: number
 }
 
-export type ChromeWebNavigationTargetDetails = ChromeWebNavigationDetails & {
-  sourceTabId?: number
-  sourceFrameId?: number
-  targetTabId?: number
-}
-
 export type ChromeWebNavigationFrame = {
   frameId: number
   parentFrameId?: number
@@ -216,12 +192,13 @@ export interface ChromeApi {
     lastError?: { message?: string }
     onInstalled: ChromeEvent<(details: ChromeRuntimeOnInstalledDetails) => void>
     onStartup: ChromeEvent<() => void>
+    getURL(path: string): string
     sendMessage<Result>(message: ExtensionMessage): Promise<ExtensionResponse<Result>>
     onMessage: {
       addListener(
         listener: (
           message: ExtensionMessage,
-          sender: unknown,
+          sender: ChromeMessageSender,
           sendResponse: (response: ExtensionResponse) => void
         ) => boolean | void
       ): void
@@ -287,6 +264,7 @@ export interface ChromeApi {
   contextMenus?: {
     create(properties: { id: string; title: string; contexts: string[] }): void | Promise<void>
     remove?(menuItemId: string): void | Promise<void>
+    update?(menuItemId: string, properties: { title?: string }): void | Promise<void>
     onClicked: ChromeEvent<
       (info: ChromeContextMenuClickInfo, tab?: ChromeTabInfo | undefined) => void
     >
@@ -338,43 +316,6 @@ export interface ChromeApi {
     cancel(downloadId: number): Promise<void>
     show?(downloadId: number): void | Promise<void>
   }
-  cookies?: {
-    getAll(details: {
-      url?: string
-      domain?: string
-      name?: string
-      storeId?: string
-    }): Promise<ChromeCookieInfo[]>
-    set(details: {
-      url: string
-      name: string
-      value: string
-      domain?: string
-      path?: string
-      secure?: boolean
-      httpOnly?: boolean
-      sameSite?: ChromeCookieSameSite
-      expirationDate?: number
-      storeId?: string
-    }): Promise<ChromeCookieInfo | null>
-    remove(details: {
-      url: string
-      name: string
-      storeId?: string
-    }): Promise<{ url?: string; name?: string; storeId?: string } | null>
-  }
-  browsingData?: {
-    remove(
-      options: { since?: number; origins?: string[] },
-      dataToRemove: {
-        cache?: boolean
-        cacheStorage?: boolean
-        indexedDB?: boolean
-        localStorage?: boolean
-        serviceWorkers?: boolean
-      }
-    ): Promise<void>
-  }
   webNavigation?: {
     onBeforeNavigate?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
     onCommitted?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
@@ -384,7 +325,6 @@ export interface ChromeApi {
     onReferenceFragmentUpdated?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
     onHistoryStateUpdated?: ChromeEvent<(details: ChromeWebNavigationDetails) => void>
     onTabReplaced?: ChromeEvent<(details: ChromeWebNavigationTabReplacedDetails) => void>
-    onCreatedNavigationTarget?: ChromeEvent<(details: ChromeWebNavigationTargetDetails) => void>
     getFrame?(details: {
       tabId: number
       frameId: number

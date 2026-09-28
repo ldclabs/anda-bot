@@ -3,8 +3,9 @@ import {
   executeBrowserAction,
   rememberActiveTab
 } from '$lib/service-worker/browser-actions'
+import { forgetActiveTab } from '$lib/service-worker/browser-tabs'
 import { getChromeApi, isDevelopmentMode } from '$lib/service-worker/chrome'
-import { applyUiLanguage, initI18n, uiLanguageStorageKey } from '$lib/i18n'
+import { applyUiLanguage, getMessage, initI18n, uiLanguageStorageKey } from '$lib/i18n'
 import { handlePageAudioCapture, handlePageSpeechRecognition } from '$lib/service-worker/page-voice'
 import {
   browserSession,
@@ -22,21 +23,17 @@ import {
   isPageElementInfo,
   pageElementAttachmentMessageType,
   pageElementAttachmentRequestStorageKey,
-  pageElementCaptureMessageType,
   pageElementContextMenuId,
   pageElementDomMemoryKey,
-  pageElementMemoryKey,
-  pageElementStorageKey,
+  pageElementSerializerKey,
   type PageElementAttachmentRequest,
   type PageElementInfo
 } from '$lib/anda/page-element'
 import type {
   BrowserCommand,
   ChromeContextMenuClickInfo,
+  ChromeMessageSender,
   ChromeTabInfo,
-  ChromeWebNavigationDetails,
-  ChromeWebNavigationTabReplacedDetails,
-  ChromeWebNavigationTargetDetails,
   ExtensionMessage,
   ExtensionResponse,
   PendingRpc,
@@ -67,9 +64,11 @@ const settingsReady = loadSettings(chromeApi).then((settings) => {
 })
 const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+// The last `browser_register` payload the current connection accepted.
+let lastRegistration = ''
 let browserActionQueue: Promise<void> = Promise.resolve()
 
-void initI18n()
+const i18nReady = initI18n()
 chromeApi.storage?.onChanged?.addListener?.((changes, areaName) => {
   if (areaName !== 'local') return
   if (settingsKeys.some((key) => key in changes)) {
@@ -77,6 +76,12 @@ chromeApi.storage?.onChanged?.addListener?.((changes, areaName) => {
   }
   if (changes[uiLanguageStorageKey]) {
     void applyUiLanguage(changes[uiLanguageStorageKey].newValue)
+      .then(() =>
+        chromeApi.contextMenus?.update?.(pageElementContextMenuId, {
+          title: pageElementContextMenuTitle()
+        })
+      )
+      .catch(() => undefined)
   }
 })
 
@@ -85,8 +90,8 @@ chromeApi.runtime.onInstalled.addListener((details) => {
     chromeApi.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {})
   }
   createPageElementContextMenu().catch(() => undefined)
+  // Tabs that were already open never received the manifest content script.
   injectPageElementContentScriptIntoOpenTabs().catch(() => undefined)
-  loadSettingsAndConnect()
   if (details.reason === 'install') {
     chromeApi.tabs.create({
       url: 'index.html'
@@ -94,10 +99,9 @@ chromeApi.runtime.onInstalled.addListener((details) => {
   }
 })
 
-chromeApi.runtime.onStartup.addListener(() => {
-  injectPageElementContentScriptIntoOpenTabs().catch(() => undefined)
-  loadSettingsAndConnect()
-})
+// Listening for startup wakes the worker when the browser launches; the module
+// body then connects. Restored tabs get the manifest content script on load.
+chromeApi.runtime.onStartup.addListener(() => undefined)
 
 chromeApi.action.onClicked.addListener((tab) => {
   rememberActiveTab(tab)
@@ -110,10 +114,10 @@ chromeApi.tabs.onActivated.addListener((activeInfo) => {
 })
 
 chromeApi.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
-  if (tab.active || changeInfo.title || changeInfo.url) {
-    if (tab.active) {
-      rememberActiveTab(tab)
-    }
+  // `active` only means active within its own window, so an update never
+  // changes which tab Anda targets; activation is tracked by onActivated and
+  // onFocusChanged. Unchanged registrations are skipped when sent.
+  if (tab.active && (changeInfo.title || changeInfo.url)) {
     scheduleBrowserSessionRefresh()
   }
 })
@@ -131,10 +135,20 @@ chromeApi.windows?.onFocusChanged?.addListener((windowId) => {
     .catch(() => undefined)
 })
 
-registerWebNavigationSessionRefreshListeners()
+// A prerendered page can swap in under a new tab id without an activation.
+chromeApi.webNavigation?.onTabReplaced?.addListener((details) => {
+  forgetActiveTab(details.replacedTabId)
+  scheduleBrowserSessionRefresh()
+})
+
 registerPageElementContextMenuListener()
 
-chromeApi.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // `anda_rpc` carries the daemon credential, so only the extension's own
+  // pages may call the worker; content scripts run inside arbitrary sites.
+  if (!isExtensionPageSender(sender)) {
+    return false
+  }
   handleExtensionMessage(message)
     .then((res) => {
       sendResponse(res)
@@ -165,7 +179,7 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
     return { ok: true, status }
   }
   if (
-    (message.type === 'anda_rpc' || message.type === 'anda_register') &&
+    message.type === 'anda_rpc' &&
     message.settings &&
     connectionKey(normalizeSettings(message.settings)) !== connectionKey(currentSettings)
   ) {
@@ -179,10 +193,6 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
       }
       const result = await sendRpc(message.method, message.params || [], currentSettings)
       return { ok: true, result, status }
-    }
-    case 'anda_register': {
-      const session = await registerBrowserSession(currentSettings)
-      return { ok: true, result: { session }, status }
     }
     case 'anda_status': {
       return { ok: true, result: { status }, status }
@@ -235,10 +245,6 @@ async function handleExtensionMessage(message: ExtensionMessage): Promise<Extens
     case 'anda_page_audio_cancel': {
       const result = await handlePageAudioCapture(chromeApi, { action: 'cancel' })
       return { ok: true, result, status }
-    }
-    case pageElementCaptureMessageType: {
-      await storeCapturedPageElement(message.pageElementInfo)
-      return { ok: true, status }
     }
     default:
       throw new Error(`unsupported extension message: ${message.type || 'unknown'}`)
@@ -295,9 +301,13 @@ function extensionMessageLogSummary(message: ExtensionMessage): Record<string, u
     has_text: typeof message.text === 'string' ? message.text.length > 0 : undefined,
     language: message.language,
     mime_type: message.mimeType,
-    has_page_element_request: Boolean(message.pageElementRequest),
-    has_page_element_info: Boolean(message.pageElementInfo)
+    has_page_element_request: Boolean(message.pageElementRequest)
   }
+}
+
+function isExtensionPageSender(sender: ChromeMessageSender): boolean {
+  const origin = chromeApi.runtime.getURL('')
+  return Boolean(origin && sender.url?.startsWith(origin))
 }
 
 function registerPageElementContextMenuListener(): void {
@@ -345,21 +355,26 @@ async function createPageElementContextMenu(): Promise<void> {
     return
   }
 
+  await i18nReady
   await Promise.resolve(contextMenus.remove?.(pageElementContextMenuId)).catch(() => undefined)
   await Promise.resolve(
     contextMenus.create({
       id: pageElementContextMenuId,
-      title: chromeApi.i18n.getMessage('sendPageElementToChat') || 'Send this content to Anda',
+      title: pageElementContextMenuTitle(),
       contexts: ['all']
     })
   )
+}
+
+function pageElementContextMenuTitle(): string {
+  return getMessage('sendPageElementToChat') || 'Send this content to Anda'
 }
 
 async function handlePageElementContextMenuClick(
   info: ChromeContextMenuClickInfo,
   tab?: ChromeTabInfo
 ): Promise<void> {
-  const element = await loadLastRightClickedElement(info, tab)
+  const element = await readLastRightClickedElementFromTab(info, tab)
   if (!element) {
     console.warn('No recent page element was captured for the context menu click.')
     return
@@ -383,28 +398,11 @@ async function handlePageElementContextMenuClick(
     .catch(() => ({ ok: false, error: 'side panel unavailable' }))
 }
 
-async function loadLastRightClickedElement(
-  clickInfo: ChromeContextMenuClickInfo,
-  tab?: ChromeTabInfo
-): Promise<PageElementInfo | null> {
-  const injectedElement = await readLastRightClickedElementFromTab(clickInfo, tab)
-  if (injectedElement) {
-    return injectedElement
-  }
-
-  const storage = chromeApi.storage.session
-  if (!storage) {
-    return null
-  }
-
-  const saved = await storage.get(pageElementStorageKey)
-  const element = saved[pageElementStorageKey]
-  if (!isPageElementInfo(element) || !isFreshPageElementForClick(element, clickInfo)) {
-    return null
-  }
-  return element
-}
-
+/**
+ * Asks the content script to serialize the element it remembered at the last
+ * right-click. Serialization waits for the menu click so an ordinary context
+ * menu never pays for reading the element's text.
+ */
 async function readLastRightClickedElementFromTab(
   clickInfo: ChromeContextMenuClickInfo,
   tab?: ChromeTabInfo
@@ -419,21 +417,29 @@ async function readLastRightClickedElementFromTab(
       (await Promise.resolve(
         chromeApi.scripting.executeScript<unknown, { key: string }>({
           target: pageElementScriptTarget(tab.id, clickInfo),
-          func: ({ key }) => (globalThis as Record<string, unknown>)[key] || null,
-          args: [{ key: pageElementMemoryKey }]
+          func: ({ key }) => {
+            const serialize = (globalThis as Record<string, unknown>)[key]
+            return typeof serialize === 'function' ? serialize() : null
+          },
+          args: [{ key: pageElementSerializerKey }]
         })
       ).catch(() => [])) || []
   } catch (_error) {
     results = []
   }
 
+  let latest: PageElementInfo | null = null
   for (const result of results) {
     const element = result.result
-    if (isPageElementInfo(element) && isFreshPageElementForClick(element, clickInfo)) {
-      return element
+    if (
+      isPageElementInfo(element) &&
+      isFreshPageElementForClick(element, clickInfo) &&
+      (!latest || element.capturedAt > latest.capturedAt)
+    ) {
+      latest = element
     }
   }
-  return null
+  return latest
 }
 
 async function flashCapturedPageElement(
@@ -559,15 +565,6 @@ function pageElementScriptTarget(
     : { tabId, allFrames: true }
 }
 
-async function storeCapturedPageElement(value: unknown): Promise<void> {
-  if (!isPageElementInfo(value)) {
-    throw new Error('invalid page element capture')
-  }
-  await chromeApi.storage.session?.set({
-    [pageElementStorageKey]: value
-  })
-}
-
 function isFreshPageElementForClick(
   element: PageElementInfo,
   clickInfo: ChromeContextMenuClickInfo
@@ -686,6 +683,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
       settled = true
       openingReject = null
       opening = null
+      lastRegistration = ''
       status = 'connected'
       startKeepAlive()
       resolve()
@@ -707,6 +705,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
       if (socket === ws) {
         socket = null
         opening = null
+        lastRegistration = ''
         stopKeepAlive()
         rejectPending('WebSocket connection closed')
         status = 'disconnected'
@@ -731,6 +730,7 @@ function closeSocket(reason: string): void {
     openingReject(new Error(reason))
     openingReject = null
   }
+  lastRegistration = ''
   if (socket) {
     const oldSocket = socket
     socket = null
@@ -774,35 +774,6 @@ function stopKeepAlive(): void {
     clearInterval(keepAliveTimer)
     keepAliveTimer = null
   }
-}
-
-function registerWebNavigationSessionRefreshListeners(): void {
-  const webNavigation = chromeApi.webNavigation
-  if (!webNavigation) {
-    return
-  }
-
-  const refreshForMainFrame = (details: ChromeWebNavigationDetails) => {
-    if (details.frameId === 0) {
-      scheduleBrowserSessionRefresh()
-    }
-  }
-  const refreshForTarget = (_details: ChromeWebNavigationTargetDetails) => {
-    scheduleBrowserSessionRefresh()
-  }
-  const refreshForReplacement = (_details: ChromeWebNavigationTabReplacedDetails) => {
-    scheduleBrowserSessionRefresh()
-  }
-
-  webNavigation.onBeforeNavigate?.addListener(refreshForMainFrame)
-  webNavigation.onCommitted?.addListener(refreshForMainFrame)
-  webNavigation.onDOMContentLoaded?.addListener(refreshForMainFrame)
-  webNavigation.onCompleted?.addListener(refreshForMainFrame)
-  webNavigation.onErrorOccurred?.addListener(refreshForMainFrame)
-  webNavigation.onReferenceFragmentUpdated?.addListener(refreshForMainFrame)
-  webNavigation.onHistoryStateUpdated?.addListener(refreshForMainFrame)
-  webNavigation.onCreatedNavigationTarget?.addListener(refreshForTarget)
-  webNavigation.onTabReplaced?.addListener(refreshForReplacement)
 }
 
 function rejectPending(reason: string): void {
@@ -891,20 +862,21 @@ async function registerBrowserSession(settings: SettingsState = currentSettings)
     return session
   }
   const tab = await activeTab(chromeApi)
+  const registration = {
+    session,
+    tab_id: tab?.id,
+    url: tab?.url || '',
+    title: tab?.title || ''
+  }
+  // Tab events fire far more often than the registered metadata changes; a new
+  // connection clears `lastRegistration`, so it always registers once.
+  const key = JSON.stringify(registration)
+  if (key === lastRegistration) {
+    return session
+  }
 
-  await sendRpc(
-    'browser_register',
-    [
-      {
-        session,
-        tab_id: tab?.id,
-        url: tab?.url || '',
-        title: tab?.title || ''
-      }
-    ],
-    settings
-  )
-
+  await sendRpc('browser_register', [registration], settings)
+  lastRegistration = key
   return session
 }
 

@@ -812,6 +812,9 @@
   "dashboardConfigDetail": {
     "message": "تكوين الـ daemon"
   },
+  "dashboardConfigTitle": {
+    "message": "التكوين"
+  },
   "dashboardNoConnection": {
     "message": "No connection"
   },

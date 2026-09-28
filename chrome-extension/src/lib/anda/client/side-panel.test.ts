@@ -309,6 +309,27 @@ describe('AndaSidePanelClient.requestExtra', () => {
 
     expect(extra.language).toBe('fr-FR')
   })
+
+  it('reuses the tab and language across requests instead of querying Chrome each poll', async () => {
+    const chromeApi = createChromeApi({
+      activeTabs: [{ id: 1, url: 'https://example.com', title: 'Example', windowId: 2 }],
+      uiLanguage: 'fr'
+    })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+
+    await client.requestExtra()
+    await client.requestExtra()
+    const extra = await client.requestExtra()
+
+    expect(extra).toMatchObject({ language: 'fr', tab: { id: 1 } })
+    expect(chromeApi.tabs.query).toHaveBeenCalledTimes(1)
+    const languageReads = vi
+      .mocked(chromeApi.storage.local.get)
+      .mock.calls.filter(([keys]) => keys.includes('uiLanguage'))
+    expect(languageReads).toHaveLength(1)
+  })
 })
 
 describe('AndaSidePanelClient.sendPrompt', () => {

@@ -1,17 +1,8 @@
 import katex from 'katex'
 import MarkdownIt from 'markdown-it'
-import Prism from 'prismjs'
-
-let prismLoading: Promise<void> | null = null
-
-function ensurePrismLanguages() {
-  if (typeof window === 'undefined') return
-  if (!prismLoading) {
-    prismLoading = import('./prismjs.js').then(() => {})
-  }
-}
-
-ensurePrismLanguages()
+// Languages load with the renderer: a message rendered before a lazy chunk
+// arrived would keep its unhighlighted code until its text changed.
+import Prism from './prismjs'
 
 // 创建 MarkdownIt 实例
 const md = new MarkdownIt({
@@ -225,7 +216,7 @@ function katexPlugin(md: MarkdownIt) {
       const rightDelim = delimiter.right
 
       // 检查是否匹配左分隔符
-      if (!src.slice(start).startsWith(leftDelim)) continue
+      if (!src.startsWith(leftDelim, start)) continue
 
       // 支持用户写 \$ 或 \\( 等进行转义：此时不当作公式分隔符
       if (start > 0 && src[start - 1] === '\\') continue
@@ -242,7 +233,7 @@ function katexPlugin(md: MarkdownIt) {
         // 行内公式不允许跨行，避免把后续文本吞进去
         if (src[pos] === '\n') break
 
-        if (src.slice(pos).startsWith(rightDelim)) {
+        if (src.startsWith(rightDelim, pos)) {
           // 右分隔符前不能是空白（否则更像是文本中的 $ 号而不是公式闭合）
           const beforeRight = src[pos - 1]
           if (!isWhitespace(beforeRight)) {
@@ -291,7 +282,7 @@ function katexPlugin(md: MarkdownIt) {
       const rightDelim = delimiter.right
 
       // 检查是否匹配左分隔符
-      if (!src.slice(pos).startsWith(leftDelim)) continue
+      if (!src.startsWith(leftDelim, pos)) continue
 
       pos += leftDelim.length
       const firstLine = src.slice(pos, max).trim()

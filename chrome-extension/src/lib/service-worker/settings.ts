@@ -38,7 +38,23 @@ export function loadSettings(chromeApi: Pick<ChromeApi, 'storage'>): Promise<Set
   return loadSettingsFromStorage(chromeApi.storage.local)
 }
 
-export async function browserSession(chromeApi: ChromeApi): Promise<string> {
+const browserSessions = new WeakMap<ChromeApi, Promise<string>>()
+
+/**
+ * The stable id this browser profile registers with the daemon. It never
+ * changes for a context, so it is resolved once and reused by every caller.
+ */
+export function browserSession(chromeApi: ChromeApi): Promise<string> {
+  let session = browserSessions.get(chromeApi)
+  if (!session) {
+    session = loadBrowserSession(chromeApi)
+    browserSessions.set(chromeApi, session)
+    session.catch(() => browserSessions.delete(chromeApi))
+  }
+  return session
+}
+
+async function loadBrowserSession(chromeApi: ChromeApi): Promise<string> {
   const saved = await chromeApi.storage.local.get([browserSessionStorageKey])
   let id = saved.browserSessionId || '0'
   // Regenerate when the stored value is missing, too small, or not numeric (NaN fails the check).
@@ -46,12 +62,12 @@ export async function browserSession(chromeApi: ChromeApi): Promise<string> {
     id = Date.now().toString()
     await chromeApi.storage.local.set({ browserSessionId: id })
   }
-  let scope = await browserSessionScope(chromeApi)
+  const scope = await browserSessionScope(chromeApi)
   return `browser:${scope}:${id}`
 }
 
 async function browserSessionScope(chromeApi: ChromeApi): Promise<string> {
-  let browser = await getCurrentBrowser()
+  const browser = await getCurrentBrowser()
   return chromeApi.extension?.inIncognitoContext ? `incognito_${browser}` : browser
 }
 

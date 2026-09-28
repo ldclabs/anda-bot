@@ -1,42 +1,8 @@
-import type { BrowserActionArgs } from './types'
-
 /**
- * How `execute_javascript` reaches the page, and the source rewriting that lets
- * a bare expression behave like a console entry.
- *
- * Two delivery modes exist because pages differ: the debugger evaluates in the
- * page's own world and is not stopped by a strict CSP, while
- * `scripting.executeScript` is cheaper but bound by the page's policy. The
- * debugger is the default; asking for `world: 'ISOLATED' | 'MAIN'` opts into
- * scripting instead.
+ * The source rewriting that lets a bare expression passed to
+ * `execute_javascript` behave like a console entry: code whose last top-level
+ * statement is an expression returns that expression's value.
  */
-
-export type ScriptExecutionMode = 'debugger' | 'scripting'
-type ScriptExecutionWorld = 'ISOLATED' | 'MAIN'
-type RequestedScriptWorld = ScriptExecutionWorld | 'DEBUGGER'
-
-export function scriptExecutionMode(args: BrowserActionArgs): ScriptExecutionMode {
-  const world = requestedScriptWorld(args.world)
-  if (world === 'DEBUGGER') {
-    return 'debugger'
-  }
-  return args.use_bridge === false ? 'scripting' : 'debugger'
-}
-
-export function scriptExecutionWorld(args: BrowserActionArgs): ScriptExecutionWorld {
-  return requestedScriptWorld(args.world) === 'MAIN' ? 'MAIN' : 'ISOLATED'
-}
-
-function requestedScriptWorld(value: unknown): RequestedScriptWorld {
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : ''
-  if (normalized === 'main') {
-    return 'MAIN'
-  }
-  if (normalized === 'debugger' || normalized === 'bridge') {
-    return 'DEBUGGER'
-  }
-  return 'ISOLATED'
-}
 
 export function scriptWithImplicitReturn(code: string): string | null {
   const body = code.trim().replace(/;+$/, '')

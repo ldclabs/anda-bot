@@ -812,6 +812,9 @@
   "dashboardConfigDetail": {
     "message": "Configuration du démon"
   },
+  "dashboardConfigTitle": {
+    "message": "Configuration"
+  },
   "dashboardNoConnection": {
     "message": "No connection"
   },

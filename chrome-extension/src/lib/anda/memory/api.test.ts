@@ -73,34 +73,23 @@ describe('memory product API', () => {
     expect(page.complete).toBe(false)
     expect(page.partial_reason).toBe('projection_incomplete')
   })
-  it('recognizes old HTTP servers and forwards cancellation', async () => {
-    vi.stubGlobal('chrome', undefined)
-    const fetch = vi.fn(async () => new Response('', { status: 404 }))
-    vi.stubGlobal('fetch', fetch)
+  it('does not send a read that was already cancelled', async () => {
+    const sendMessage = vi.fn()
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
     const controller = new AbortController()
-    await expect(new MemoryApi(settings).overview(controller.signal)).rejects.toThrow(
-      'unsupported_memory_api'
-    )
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8042/daemon/memory/v1/overview',
-      expect.objectContaining({
-        signal: controller.signal,
-        headers: expect.objectContaining({ Authorization: 'Bearer owner-token' })
-      })
-    )
+    controller.abort()
+    await expect(new MemoryApi(settings).overview(controller.signal)).rejects.toThrow()
+    expect(sendMessage).not.toHaveBeenCalled()
   })
   it('preserves a missing draft status so recovery can offer review or discard', async () => {
-    vi.stubGlobal('chrome', undefined)
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ error: { code: 'not_found', message: 'No operation' } }), {
-            status: 404,
-            headers: { 'Content-Type': 'application/json' }
-          })
-      )
-    )
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: vi.fn(async () => ({
+          ok: true,
+          result: { error: { code: 'not_found', message: 'No operation' } }
+        }))
+      }
+    })
     await expect(new MemoryApi(settings).changeStatus('saved-prepare-id')).rejects.toMatchObject({
       code: 'not_found'
     })
@@ -152,36 +141,35 @@ it('loads every watch page, including empty history pages, without clearing part
 })
 
 it('completes a paginated watch list and stops if pagination is cancelled', async () => {
-  vi.stubGlobal('chrome', undefined)
   const controller = new AbortController()
-  const fetch = vi
+  const sendMessage = vi
     .fn()
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          result: { schema_version: 1, items: [], complete: false },
-          next_cursor: 'next'
-        })
-      )
-    )
-    .mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          result: {
-            schema_version: 1,
-            items: [{ operation_id: 'last', state: 'armed' }],
-            complete: true
-          }
-        })
-      )
-    )
-  vi.stubGlobal('fetch', fetch)
+    .mockResolvedValueOnce({
+      ok: true,
+      result: {
+        result: { schema_version: 1, items: [], complete: false },
+        next_cursor: 'next'
+      }
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      result: {
+        result: {
+          schema_version: 1,
+          items: [{ operation_id: 'last', state: 'armed' }],
+          complete: true
+        }
+      }
+    })
+  vi.stubGlobal('chrome', { runtime: { sendMessage } })
   const result = await new MemoryApi(settings).watches(controller.signal)
   expect(result.complete).toBe(true)
   expect(result.items[0]?.operation_id).toBe('last')
-  expect(fetch.mock.calls[1]?.[0]).toContain('/watches?cursor=next&limit=50')
+  expect(sendMessage.mock.calls[1]?.[0]).toMatchObject({
+    params: [{ cursor: 'next', limit: 50 }]
+  })
   const stopped = new AbortController()
   stopped.abort()
   await expect(new MemoryApi(settings).watches(stopped.signal)).rejects.toThrow()
-  expect(fetch).toHaveBeenCalledTimes(2)
+  expect(sendMessage).toHaveBeenCalledTimes(2)
 })

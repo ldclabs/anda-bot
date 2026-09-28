@@ -1320,3 +1320,49 @@ describe('Channel.sendPrompt', () => {
     }
   })
 })
+
+describe('Channel idle polling', () => {
+  it('backs off while an idle conversation stays unchanged and resumes on change', async () => {
+    vi.useFakeTimers()
+    try {
+      const updatedAt = Date.now()
+      const idleConversation = conversation(1, { status: 'idle', updated_at: updatedAt })
+      let deltaCalls = 0
+      let nextDelta: Partial<ConversationDelta> = { status: 'idle', updated_at: updatedAt }
+      const api = createApi({
+        toolCall: async (input) => {
+          const args = toolArgs(input)
+          switch (args.type) {
+            case 'GetSourceState':
+              return toolResult({ conv_id: idleConversation._id })
+            case 'GetConversation':
+              return toolResult(idleConversation)
+            case 'GetConversationDelta':
+              deltaCalls += 1
+              return toolResult(conversationDelta(idleConversation._id, nextDelta))
+            default:
+              throw new Error(`Unexpected tool call: ${String(args.type)}`)
+          }
+        }
+      })
+      const channel = new Channel('source:test', api)
+      await channel.init()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(deltaCalls).toBe(1)
+
+      // Unchanged idle ticks wait 6 s, 12 s, 24 s, then at most 30 s.
+      await vi.advanceTimersByTimeAsync(42_100)
+      expect(deltaCalls).toBe(4)
+
+      nextDelta = { status: 'idle', updated_at: updatedAt + 1 }
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(deltaCalls).toBe(5)
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(deltaCalls).toBe(6)
+
+      channel.destroy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

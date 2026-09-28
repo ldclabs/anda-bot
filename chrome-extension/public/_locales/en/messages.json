@@ -812,6 +812,9 @@
   "dashboardConfigDetail": {
     "message": "Daemon configuration"
   },
+  "dashboardConfigTitle": {
+    "message": "Config"
+  },
   "dashboardNoConnection": {
     "message": "No connection"
   },

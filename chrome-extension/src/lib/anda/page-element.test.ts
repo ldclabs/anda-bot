@@ -9,11 +9,8 @@ describe('pageElementInfoToAttachment', () => {
       element: {
         tagName: 'ARTICLE',
         id: 'post',
-        className: 'content',
         role: null,
         innerText: 'Visible page content',
-        textContent: 'Visible page content',
-        outerHTML: '<article id="post">Visible page content</article>',
         attributes: { id: 'post' },
         xpath: '//*[@id="post"]',
         cssPath: '#post',
@@ -21,7 +18,6 @@ describe('pageElementInfoToAttachment', () => {
         pageTitle: 'Example Post',
         frameUrl: 'https://example.com/post',
         selectedText: '',
-        rect: null,
         capturedAt: Date.parse('2026-06-22T00:00:00Z')
       }
     }

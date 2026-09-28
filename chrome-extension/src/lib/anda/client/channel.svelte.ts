@@ -32,6 +32,9 @@ import type {
 import { SubmitMessageConversationId } from './types'
 
 const pollingIntervalMs = 3000
+// An idle session only changes on outside events (a scheduled follow-up, a
+// background subagent's result), so unchanged idle ticks back off to this.
+const maxIdlePollingIntervalMs = 30_000
 // A subscriber waiting for a turn that never visibly starts (no working status,
 // no assistant message) is released after this many idle poll ticks.
 const maxIdlePollTicksForTurn = 10
@@ -55,6 +58,7 @@ interface PollSubscriber {
 // was continued in, which the loop follows instead of stopping.
 interface PollTick {
   continue: boolean
+  changed?: boolean
   next?: Conversation
 }
 
@@ -477,6 +481,7 @@ export class Channel extends EventTarget {
     // Conversations this loop already walked. The chain is followed without
     // sleeping, so a cycle would otherwise spin into an unbounded request loop.
     const polled = new Set<number>([conversation._id])
+    let quietIdleTicks = 0
     while (this.#pollingConversation === conversation._id && epoch === this.#sendEpoch) {
       const revision = this.#api.stateRevision?.()
       const tick = await this.pollConversationOnce(conversation, epoch, polled)
@@ -501,12 +506,13 @@ export class Channel extends EventTarget {
         break
       }
       if (revision !== this.#api.stateRevision?.()) continue
+      quietIdleTicks = conversation.status === 'idle' && !tick.changed ? quietIdleTicks + 1 : 0
+      const baseMs =
+        this.#api.activeChannel() === this.source ? pollingIntervalMs : pollingIntervalMs * 10
       const ms =
         revision !== undefined
           ? Infinity
-          : this.#api.activeChannel() === this.source
-            ? pollingIntervalMs
-            : pollingIntervalMs * 10
+          : Math.min(maxIdlePollingIntervalMs, baseMs * 2 ** Math.min(quietIdleTicks, 4))
       await this.pollIdle(ms)
     }
 
@@ -733,6 +739,7 @@ export class Channel extends EventTarget {
       ) {
         return { continue: false }
       }
+      return { continue: true, changed }
     } catch (error) {
       if (epoch !== this.#sendEpoch) return { continue: false }
       if (isTransientWebSocketError(error)) {
@@ -743,8 +750,6 @@ export class Channel extends EventTarget {
       this.#api.updateStatus('poll failed', { kind: 'error', text: errorToMessage(error) })
       return { continue: false }
     }
-
-    return { continue: true }
   }
 
   // The child conversation that continues this session, if any. Runs inside the
