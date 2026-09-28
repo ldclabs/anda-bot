@@ -59,6 +59,7 @@ function createChromeApi(options: { development?: boolean; token?: string } = {}
   const onContextMenuClicked = createChromeEvent<ContextMenuClickListener>()
   const onTabActivated = createChromeEvent<TabActivatedListener>()
   const onTabUpdated = createChromeEvent<TabUpdatedListener>()
+  const onWindowFocusChanged = createChromeEvent<(windowId: number) => void>()
   const onMessageListeners: MessageListener[] = []
   const sessionState: Record<string, unknown> = {}
 
@@ -138,6 +139,9 @@ function createChromeApi(options: { development?: boolean; token?: string } = {}
       onActivated: onTabActivated,
       onUpdated: onTabUpdated
     },
+    windows: {
+      onFocusChanged: onWindowFocusChanged
+    },
     scripting: {
       executeScript: vi.fn(async () => [])
     },
@@ -145,6 +149,7 @@ function createChromeApi(options: { development?: boolean; token?: string } = {}
     __onStartupListeners: onStartup.listeners,
     __onTabActivatedListeners: onTabActivated.listeners,
     __onTabUpdatedListeners: onTabUpdated.listeners,
+    __onWindowFocusChangedListeners: onWindowFocusChanged.listeners,
     __contextMenuClickedListeners: onContextMenuClicked.listeners,
     __sessionState: sessionState,
     __onMessageListeners: onMessageListeners
@@ -153,6 +158,7 @@ function createChromeApi(options: { development?: boolean; token?: string } = {}
     __onStartupListeners: Array<() => void>
     __onTabActivatedListeners: TabActivatedListener[]
     __onTabUpdatedListeners: TabUpdatedListener[]
+    __onWindowFocusChangedListeners: Array<(windowId: number) => void>
     __contextMenuClickedListeners: ContextMenuClickListener[]
     __sessionState: Record<string, unknown>
     __onMessageListeners: MessageListener[]
@@ -388,7 +394,7 @@ describe('service worker lifecycle and routing', () => {
     await expect(activeTab(chromeApi)).resolves.toMatchObject({ id: 5 })
   })
 
-  it('registers the browser session again only when its tab metadata changes', async () => {
+  async function connectedWorker() {
     const sockets: FakeWebSocket[] = []
     class FakeWebSocket {
       static OPEN = 1
@@ -431,6 +437,11 @@ describe('service worker lifecycle and routing', () => {
     const registrations = () =>
       sockets.flatMap((socket) => socket.sent).filter((m) => m.method === 'browser_register')
     await vi.waitFor(() => expect(registrations()).toHaveLength(1))
+    return { chromeApi, tab, registrations }
+  }
+
+  it('skips unchanged tab updates and registers changed metadata', async () => {
+    const { chromeApi, tab, registrations } = await connectedWorker()
 
     chromeApi.__onTabUpdatedListeners[0](5, { title: 'A' }, tab)
     await new Promise((resolve) => setTimeout(resolve, 300))
@@ -442,5 +453,28 @@ describe('service worker lifecycle and routing', () => {
     expect(registrations()[1].params).toEqual([
       expect.objectContaining({ tab_id: 5, title: 'B', url: 'https://a.example/' })
     ])
+  })
+
+  it('refreshes an unchanged session when its window regains focus, even alongside a tab update', async () => {
+    const { chromeApi, tab, registrations } = await connectedWorker()
+
+    // Losing focus must not make this profile the daemon's default browser.
+    chromeApi.__onWindowFocusChangedListeners[0](-1)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(registrations()).toHaveLength(1)
+
+    chromeApi.__onWindowFocusChangedListeners[0](tab.windowId)
+    await vi.waitFor(() =>
+      expect(chromeApi.tabs.query).toHaveBeenCalledWith({ active: true, windowId: tab.windowId })
+    )
+    // A normal tab update may arrive during the same refresh debounce.
+    chromeApi.__onTabUpdatedListeners[0](tab.id, { title: tab.title }, tab)
+    await vi.waitFor(() => expect(registrations()).toHaveLength(2))
+    expect(registrations()[1].params).toEqual(registrations()[0].params)
+
+    // The focus refresh must not disable deduplication for later tab updates.
+    chromeApi.__onTabUpdatedListeners[0](tab.id, { title: tab.title }, tab)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(registrations()).toHaveLength(2)
   })
 })

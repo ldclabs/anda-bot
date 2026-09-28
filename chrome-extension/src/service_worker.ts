@@ -64,6 +64,7 @@ const settingsReady = loadSettings(chromeApi).then((settings) => {
 })
 const pending = new Map<number, PendingRpc>()
 let sessionRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let sessionRefreshForced = false
 // The last `browser_register` payload the current connection accepted.
 let lastRegistration = ''
 let browserActionQueue: Promise<void> = Promise.resolve()
@@ -130,7 +131,9 @@ chromeApi.windows?.onFocusChanged?.addListener((windowId) => {
     .query({ active: true, windowId })
     .then(([tab]) => {
       rememberActiveTab(tab)
-      scheduleBrowserSessionRefresh()
+      // The daemon uses registration activity to choose the default browser
+      // across profiles, even when this window's tab metadata is unchanged.
+      scheduleBrowserSessionRefresh(true)
     })
     .catch(() => undefined)
 })
@@ -856,7 +859,10 @@ async function handleBrowserActionRequest(
   }
 }
 
-async function registerBrowserSession(settings: SettingsState = currentSettings): Promise<string> {
+async function registerBrowserSession(
+  settings: SettingsState = currentSettings,
+  force = false
+): Promise<string> {
   const session = await browserSession(chromeApi)
   if (!settings.token) {
     return session
@@ -871,7 +877,7 @@ async function registerBrowserSession(settings: SettingsState = currentSettings)
   // Tab events fire far more often than the registered metadata changes; a new
   // connection clears `lastRegistration`, so it always registers once.
   const key = JSON.stringify(registration)
-  if (key === lastRegistration) {
+  if (!force && key === lastRegistration) {
     return session
   }
 
@@ -880,16 +886,20 @@ async function registerBrowserSession(settings: SettingsState = currentSettings)
   return session
 }
 
-function scheduleBrowserSessionRefresh(): void {
+function scheduleBrowserSessionRefresh(force = false): void {
   if (!currentSettings.token) {
     return
   }
+  // Preserve a focus refresh when ordinary tab updates share its debounce.
+  sessionRefreshForced ||= force
   if (sessionRefreshTimer) {
     clearTimeout(sessionRefreshTimer)
   }
   sessionRefreshTimer = setTimeout(() => {
     sessionRefreshTimer = null
-    registerBrowserSession(currentSettings).catch(() => undefined)
+    const force = sessionRefreshForced
+    sessionRefreshForced = false
+    registerBrowserSession(currentSettings, force).catch(() => undefined)
   }, 200)
 }
 
