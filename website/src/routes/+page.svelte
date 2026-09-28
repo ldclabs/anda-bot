@@ -1,9 +1,7 @@
 <script lang="ts">
-	import BrowserAppPreview from '$lib/components/landing/BrowserAppPreview.svelte';
 	import NexusCanvas from '$lib/components/landing/NexusCanvas.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	import { Card } from '$lib/components/ui/card';
 	import Github from '$lib/components/ui/icons/github.svelte';
 	import { infoCopy } from '$lib/content/info';
 	import {
@@ -24,21 +22,20 @@
 		Copy,
 		Download,
 		ExternalLink,
-		Eye,
-		KeyRound,
+		FileText,
+		Globe,
 		Languages,
 		LayoutPanelLeft,
 		MessageSquare,
 		Monitor,
 		Network,
-		RefreshCcw,
 		Settings,
 		ShieldCheck,
 		Sparkles,
 		Terminal,
 		Workflow,
 		Wrench,
-		Zap
+		Clock
 	} from '@lucide/svelte';
 	import { onMount } from 'svelte';
 
@@ -102,6 +99,7 @@
 
 	function selectOs(os: OsKey) {
 		activeOs = os;
+		if (copyResetTimer) clearTimeout(copyResetTimer);
 		copyState = 'idle';
 	}
 
@@ -147,21 +145,13 @@
 		return Terminal;
 	}
 
-	function whyIcon(index: number) {
-		return [Terminal, Workflow, Brain][index] ?? Brain;
-	}
-
-	function launcherIcon(index: number) {
-		return [Settings, Monitor, KeyRound, RefreshCcw][index] ?? Settings;
-	}
-
-	function memoryIcon(index: number) {
-		return [Brain, Workflow, Network, Wrench][index] ?? Brain;
-	}
-
-	function surfaceIcon(index: number) {
-		return [LayoutPanelLeft, Settings, Terminal, MessageSquare][index] ?? LayoutPanelLeft;
-	}
+	const pillarTargets = ['memory', 'action', 'control'];
+	const surfaceLinks = [
+		browserDocsUrl,
+		'https://docs.anda.bot/docs/quick-start/terminal',
+		'https://docs.anda.bot/docs/runtime/channels',
+		'https://github.com/ldclabs/anda-bot/tree/main/desktop'
+	];
 
 	onMount(() => {
 		let storedLocale: string | null = null;
@@ -182,39 +172,34 @@
 		const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
 		const platform = nav.userAgentData?.platform ?? navigator.platform ?? '';
 		const detected = detectOs(`${platform} ${navigator.userAgent}`);
-		if (!detected) return;
-
-		detectedOs = detected;
-		activeOs = detected;
+		if (detected) {
+			detectedOs = detected;
+			activeOs = detected;
+		}
+		return () => {
+			if (copyResetTimer) clearTimeout(copyResetTimer);
+		};
 	});
 </script>
 
 <svelte:head>
 	<title>{copy.meta.title}</title>
 	<meta name="description" content={copy.meta.description} />
-	<meta property="og:title" content={copy.meta.ogTitle} />
-	<meta property="og:description" content={copy.meta.ogDescription} />
-	<meta content="website" property="og:type" />
-	<meta content="https://anda.bot" property="og:url" />
-	<meta content="https://anda.bot/_assets/images/anda-extension-marquee.png" property="og:image" />
-	<meta content="summary_large_image" name="twitter:card" />
-	<meta content="@ICPandaDAO" name="twitter:creator" />
+	<meta property="og:title" content={copy.meta.title} />
+	<meta property="og:description" content={copy.meta.description} />
+	<meta property="og:type" content="website" />
+	<meta property="og:url" content="https://anda.bot" />
+	<meta property="og:image" content="https://anda.bot/_assets/logo.png" />
+	<meta name="twitter:card" content="summary" />
+	<meta name="twitter:creator" content="@ICPandaDAO" />
 </svelte:head>
 
-<main
-	dir={activeDirection}
-	class="landing-shell min-h-[100dvh] overflow-x-clip text-(--anda-parchment)"
->
-	<section
-		class="hero-stage relative isolate min-h-[88dvh] overflow-hidden border-b border-white/10"
-	>
+<main dir={activeDirection} class="landing-shell min-h-screen text-(--anda-parchment)">
+	<section class="hero-stage relative isolate overflow-hidden border-b border-white/10">
 		<NexusCanvas />
-		<BrowserAppPreview variant="hero" />
-		<div class="hero-vignette absolute inset-0"></div>
-		<div class="memory-strata absolute inset-0 opacity-55"></div>
-
+		<div class="hero-vignette pointer-events-none absolute inset-0"></div>
 		<header
-			class="relative z-20 mx-auto flex h-[72px] w-full max-w-7xl items-center justify-between gap-4 px-5 sm:px-6 lg:px-8"
+			class="relative z-20 mx-auto flex min-h-20 py-4 w-full max-w-7xl items-center justify-between gap-4 px-5 sm:px-6 lg:px-8"
 		>
 			<a
 				href="/"
@@ -224,12 +209,15 @@
 				<span class="truncate text-xl sm:text-2xl">Anda Bot</span>
 			</a>
 
-			<nav class="hidden items-center gap-1 text-sm font-semibold text-white/70 lg:flex">
-				<a href="#install" class="nav-link">{copy.nav.install}</a>
-				<a href="#why" class="nav-link">{copy.nav.why}</a>
-				<a href="#browser" class="nav-link">{copy.nav.browser}</a>
-				<a href="#launcher" class="nav-link">{copy.nav.launcher}</a>
+			<nav
+				aria-label={info.common.navigationLabel}
+				class="hidden items-center gap-1 text-sm font-semibold text-white/80 xl:flex"
+			>
 				<a href="#memory" class="nav-link">{copy.nav.memory}</a>
+				<a href="#action" class="nav-link">{copy.nav.action}</a>
+				<a href="#control" class="nav-link">{copy.nav.control}</a>
+				<a href="#surfaces" class="nav-link">{copy.nav.surfaces}</a>
+				<a href="#install" class="nav-link">{copy.nav.install}</a>
 				<a href="https://docs.anda.bot" target="_blank" rel="noreferrer" class="nav-link"
 					>{copy.nav.docs}</a
 				>
@@ -264,89 +252,165 @@
 				</Button>
 			</div>
 		</header>
-
-		<div
-			class="relative z-10 mx-auto grid w-full max-w-7xl px-5 pt-8 pb-14 sm:px-6 sm:pt-12 lg:min-h-[calc(88dvh-72px)] lg:grid-cols-[minmax(0,0.76fr)_minmax(280px,0.24fr)] lg:items-center lg:px-8 lg:pt-0 lg:pb-20"
-		>
-			<div class="hero-copy max-w-4xl">
-				<Badge tone="warm" class="mb-5 gap-2">
-					<Sparkles class="size-3.5" />
-					{copy.hero.badge}
-				</Badge>
-				<h1
-					class="anda-display max-w-4xl text-4xl leading-[1.04] font-semibold text-white sm:text-5xl lg:text-7xl"
-				>
-					{copy.hero.title}
+		<div class="hero-intro page-width">
+			<div class="relative">
+				<Badge tone="warm" class="mb-7 gap-2"><Sparkles class="size-3.5" />{copy.hero.badge}</Badge>
+				<h1 class="anda-display hero-title">
+					{#each copy.hero.title as line, index}<span class:accent={index === 2}>{line}</span
+						>{/each}
 				</h1>
-				<p
-					class="mt-6 max-w-[32ch] text-base leading-7 text-white/76 sm:max-w-2xl sm:text-xl sm:leading-8"
-				>
-					{copy.hero.body}
-				</p>
-
-				<div
-					class="mt-8 flex max-w-[32ch] flex-col gap-3 sm:max-w-none sm:flex-row text-shadow-none"
-				>
-					<Button href="#install" size="lg" class="min-w-36">
-						<Download class="size-4" />
-						{copy.hero.primary}
-					</Button>
-					<Button href="#browser" variant="secondary" size="lg" class="min-w-36">
-						<LayoutPanelLeft class="size-4" />
-						{copy.hero.secondary}
-					</Button>
+			</div>
+			<div class="hero-description">
+				<p>{copy.hero.body}</p>
+				<div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+					<Button href="#install" size="lg"><Download class="size-4" />{copy.hero.primary}</Button>
+					<Button href="#overview" variant="secondary" size="lg"
+						>{copy.hero.secondary}<ArrowRight class="direction-arrow size-4" /></Button
+					>
 				</div>
+				<ul class="hero-facts">
+					{#each copy.hero.facts as fact}<li>
+							<CheckCircle aria-hidden="true" class="size-3.5" />{fact}
+						</li>{/each}
+				</ul>
 			</div>
 		</div>
-	</section>
-
-	<section class="proof-band border-b border-white/10 px-5 py-6 sm:px-6 lg:px-8">
-		<div class="mx-auto grid max-w-7xl gap-3 md:grid-cols-3">
-			{#each copy.proof as item}
-				<div class="proof-item">
-					<strong>{item.value}</strong>
-					<span>{item.label}</span>
-				</div>
+		<nav id="overview" class="pillar-links page-width" aria-label={copy.hero.secondary}>
+			{#each copy.pillars as pillar, index}
+				{@const Icon = [Brain, Workflow, ShieldCheck][index]}
+				<a href={`#${pillarTargets[index]}`} class="pillar-link">
+					<div class="flex items-center justify-between gap-3">
+						<Icon class="size-6" /><ArrowRight class="direction-arrow size-4" />
+					</div>
+					<h2>{pillar.title}</h2>
+					<p>{pillar.detail}</p>
+				</a>
 			{/each}
-		</div>
+		</nav>
 	</section>
 
-	<section
-		id="why"
-		class="why-section relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
-	>
-		<div class="mx-auto max-w-7xl">
-			<div class="why-shell">
-				<div class="why-manifesto">
-					<Badge tone="cool" class="gap-2">
-						<Brain class="size-3.5" />
-						{copy.why.badge}
-					</Badge>
-					<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
-						{copy.why.title}
-					</h2>
-					<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.why.body}</p>
-				</div>
-
-				<div class="why-routes">
-					{#each copy.why.routes as route, index}
-						{@const Icon = whyIcon(index)}
-						<article class={`why-route ${route.primary ? 'why-route-primary' : ''}`}>
-							<div class="why-route-heading">
-								<Icon class="size-5" />
-								<div>
-									<h3>{route.name}</h3>
-									<span>{route.role}</span>
-								</div>
+	<section id="memory" class="narrative-section memory-section">
+		<div class="page-width narrative-split">
+			<div class="section-copy">
+				<p class="section-eyebrow">{copy.memory.badge}</p>
+				<h2>{copy.memory.title}</h2>
+				<p class="section-body">{copy.memory.body}</p>
+				<a
+					class="text-link mt-7"
+					href="https://docs.anda.bot/docs/memory/brain"
+					target="_blank"
+					rel="noreferrer">{copy.memoryLink}<ArrowRight class="direction-arrow size-4" /></a
+				>
+			</div>
+			<div>
+				<div class="feature-list">
+					{#each copy.memory.features as feature, index}
+						{@const Icon = [Settings, Network, Clock][index]}
+						<article>
+							<Icon class="size-5" />
+							<div>
+								<h3>{feature.title}</h3>
+								<p>{feature.detail}</p>
 							</div>
-							<p>{route.fit}</p>
 						</article>
 					{/each}
 				</div>
+				<aside class="release-note">
+					<span>{copy.previewLabel}</span>
+					<p>{copy.memoryPreview}</p>
+				</aside>
 			</div>
 		</div>
 	</section>
 
+	<section id="action" class="narrative-section">
+		<div class="page-width">
+			<div class="section-copy max-w-3xl">
+				<p class="section-eyebrow">{copy.action.badge}</p>
+				<h2>{copy.action.title}</h2>
+				<p class="section-body">{copy.action.body}</p>
+			</div>
+			<div class="action-grid">
+				{#each copy.action.features as feature, index}
+					{@const Icon = [Globe, FileText, Workflow, Clock][index]}
+					<article>
+						<Icon class="size-7" />
+						<h3>{feature.title}</h3>
+						<p>{feature.detail}</p>
+					</article>
+				{/each}
+			</div>
+		</div>
+	</section>
+
+	<section id="control" class="narrative-section control-section">
+		<div class="page-width">
+			<div class="section-copy max-w-3xl">
+				<p class="section-eyebrow">{copy.control.badge}</p>
+				<h2>{copy.control.title}</h2>
+				<p class="section-body">{copy.control.body}</p>
+			</div>
+			<div class="control-grid">
+				{#each copy.control.features as feature, index}
+					{@const Icon = [Monitor, Settings, Wrench][index]}
+					<article>
+						<Icon class="size-6" />
+						<h3>{feature.title}</h3>
+						<p>{feature.detail}</p>
+					</article>
+				{/each}
+			</div>
+			<div class="data-note">
+				<ShieldCheck class="size-5 shrink-0" />
+				<p>{copy.dataNote}</p>
+			</div>
+			<div class="mt-6 flex flex-wrap gap-x-8 gap-y-4">
+				<a class="text-link" href="/privacy"
+					>{copy.privacyLink}<ArrowRight class="direction-arrow size-4" /></a
+				>
+				<a
+					class="text-link"
+					href="https://github.com/ldclabs/anda-bot"
+					target="_blank"
+					rel="noreferrer">{copy.sourceLink}<Github class="size-4" /></a
+				>
+			</div>
+		</div>
+	</section>
+
+	<section id="surfaces" class="narrative-section">
+		<div class="page-width narrative-split">
+			<div class="section-copy">
+				<p class="section-eyebrow">{copy.surfaces.badge}</p>
+				<h2>{copy.surfaces.title}</h2>
+				<p class="section-body">{copy.surfaces.body}</p>
+				<div class="mt-7 flex flex-wrap gap-x-6 gap-y-4">
+					<a class="text-link" href={chromeExtensionStoreUrl} target="_blank" rel="noreferrer"
+						>Chrome<ExternalLink class="size-3.5" /></a
+					>
+					<a class="text-link" href={edgeExtensionStoreUrl} target="_blank" rel="noreferrer"
+						>Edge<ExternalLink class="size-3.5" /></a
+					>
+				</div>
+			</div>
+			<div class="surface-list">
+				{#each copy.surfaces.items as surface, index}
+					{@const Icon = [LayoutPanelLeft, Terminal, MessageSquare, Monitor][index]}
+					<article>
+						<div class="flex items-center gap-3">
+							<Icon class="size-5" />
+							<h3>{surface.title}</h3>
+						</div>
+						{#if surface.status}<span class="surface-status">{surface.status}</span>{/if}
+						<p>{surface.detail}</p>
+						<a class="text-link" href={surfaceLinks[index]} target="_blank" rel="noreferrer"
+							>{surface.linkLabel}<ArrowRight class="direction-arrow size-4" /></a
+						>
+					</article>
+				{/each}
+			</div>
+		</div>
+	</section>
 	<section
 		id="install"
 		class="relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
@@ -360,23 +424,19 @@
 				<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
 					{copy.install.title}
 				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">
+				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/75">
 					{copy.install.body}
 				</p>
+				<p class="install-requirements">{copy.install.requirements}</p>
 			</div>
 
 			<div class="install-panel">
-				<div
-					class="flex flex-col gap-3 sm:flex-row"
-					role="tablist"
-					aria-label={copy.install.tabAria}
-				>
+				<div class="flex flex-col gap-3 sm:flex-row" role="group" aria-label={copy.install.osLabel}>
 					{#each installOrder as os}
 						{@const Icon = installIcon(os)}
 						<button
 							type="button"
-							role="tab"
-							aria-selected={activeOs === os}
+							aria-pressed={activeOs === os}
 							class={`os-tab ${activeOs === os ? 'os-tab-active' : ''}`}
 							onclick={() => selectOs(os)}
 						>
@@ -390,6 +450,13 @@
 				</div>
 
 				<div class="install-route mt-5">
+					<span class="sr-only" role="status"
+						>{copyState === 'copied'
+							? copy.install.copied
+							: copyState === 'failed'
+								? copy.install.copyFailed
+								: ''}</span
+					>
 					<div class="flex items-start justify-between gap-4">
 						<div>
 							<h3>{activeInstall.title}</h3>
@@ -399,9 +466,9 @@
 					</div>
 
 					<div class="mt-6 grid gap-3 sm:grid-cols-3">
-						{#each activeInstall.steps as step}
+						{#each activeInstall.steps as step, index}
 							<div class="setup-step">
-								<CheckCircle class="size-4" />
+								<span class="step-number" aria-hidden="true">{index + 1}</span>
 								<span>{step}</span>
 							</div>
 						{/each}
@@ -434,14 +501,7 @@
 									{/if}
 								</button>
 							</div>
-							<button
-								type="button"
-								class="install-command"
-								aria-label={copy.install.commandAria}
-								onclick={() => void copyInstallCommand()}
-							>
-								<code>{activeInstall.command}</code>
-							</button>
+							<pre class="install-command" dir="ltr"><code>{activeInstall.command}</code></pre>
 						</div>
 					{/if}
 
@@ -460,231 +520,49 @@
 						{:else}
 							<Button type="button" size="lg" onclick={() => void copyInstallCommand()}>
 								<Copy class="size-4" />
-								{activeInstall.primaryLabel}
+								{copyState === 'copied'
+									? copy.install.copied
+									: copyState === 'failed'
+										? copy.install.copyFailed
+										: activeInstall.primaryLabel}
 							</Button>
 						{/if}
-						<p class="text-sm leading-6 text-white/56">{activeInstall.note}</p>
+						<p class="text-sm leading-6 text-white/70">{activeInstall.note}</p>
 					</div>
 				</div>
 			</div>
 		</div>
 	</section>
 
-	<section
-		id="browser"
-		class="browser-section relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
-	>
-		<div class="memory-strata absolute inset-0 opacity-20"></div>
-		<div
-			class="relative mx-auto grid max-w-7xl gap-10 lg:grid-cols-[1.08fr_0.92fr] lg:items-center"
-		>
-			<div class="browser-visual">
-				<div class="browser-marquee-card">
-					<div class="browser-marquee-toolbar">
-						<span>Chrome Web Store / Edge Add-ons</span>
-						<ExternalLink class="size-4" />
-					</div>
-					<img
-						src="/_assets/images/anda-extension-marquee.png"
-						alt="Anda Bot graph-memory agent browser extension promo"
-						loading="lazy"
-					/>
-				</div>
-			</div>
-
-			<div class="section-copy">
-				<Badge tone="cool" class="gap-2">
-					<LayoutPanelLeft class="size-3.5" />
-					{copy.browser.badge}
-				</Badge>
-				<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
-					{copy.browser.title}
-				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.browser.body}</p>
-				<div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-					<Button href={chromeExtensionStoreUrl} target="_blank" rel="noreferrer" size="lg">
-						<ExternalLink class="size-4" />
-						{copy.browser.chromeStore}
-					</Button>
-					<Button href={edgeExtensionStoreUrl} target="_blank" rel="noreferrer" size="lg">
-						<ExternalLink class="size-4" />
-						{copy.browser.edgeStore}
-					</Button>
-					<Button
-						href={browserDocsUrl}
-						target="_blank"
-						rel="noreferrer"
-						variant="secondary"
-						size="lg"
-					>
-						<BookOpen class="size-4" />
-						{copy.browser.docs}
-					</Button>
-				</div>
-
-				<div class="mt-8 grid gap-3">
-					{#each copy.browser.features as feature, index}
-						{@const Icon = [Eye, Zap, ShieldCheck][index] ?? Eye}
-						<article class="browser-feature">
-							<Icon class="size-5 text-(--anda-amber-soft)" />
-							<div>
-								<h3>{feature.title}</h3>
-								<p>{feature.detail}</p>
-							</div>
-						</article>
-					{/each}
-				</div>
+	<section class="narrative-section" aria-labelledby="faq-title">
+		<div class="page-width narrative-split">
+			<h2 id="faq-title" class="faq-title">{copy.faqTitle}</h2>
+			<div class="faq-list">
+				{#each copy.faq as item}<details>
+						<summary>{item.title}</summary>
+						<p>{item.detail}</p>
+					</details>{/each}
 			</div>
 		</div>
 	</section>
-
-	<section
-		id="launcher"
-		class="relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
-	>
-		<div class="mx-auto max-w-7xl">
+	<section class="final-cta narrative-section">
+		<div class="page-width flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
 			<div class="section-copy max-w-3xl">
-				<Badge tone="warm" class="gap-2">
-					<Settings class="size-3.5" />
-					{copy.launcher.badge}
-				</Badge>
-				<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
-					{copy.launcher.title}
-				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.launcher.body}</p>
+				<h2>{copy.final.title}</h2>
+				<p class="section-body">{copy.final.body}</p>
 			</div>
-
-			<div class="launcher-grid mt-10">
-				<div class="launcher-device">
-					<img src="/_assets/logo.hdr.png" alt="Anda Bot" class="hdr-img size-16 rounded-2xl" />
-					<div>
-						<strong>Anda Bot</strong>
-						<span>local daemon ready</span>
-					</div>
-					<div class="launcher-menu">
-						<span>Open Anda</span>
-						<span>Status</span>
-						<span>Browser token</span>
-						<span>Check updates</span>
-						<span>Logs</span>
-					</div>
-				</div>
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					{#each copy.launcher.features as feature, index}
-						{@const Icon = launcherIcon(index)}
-						<Card class="feature-card p-6">
-							<h3 class="flex items-center gap-4">
-								<Icon class="size-6 text-(--anda-amber-soft)" />
-								<span>{feature.title}</span>
-							</h3>
-							<p>{feature.detail}</p>
-						</Card>
-					{/each}
-				</div>
-			</div>
-		</div>
-	</section>
-
-	<section
-		id="memory"
-		class="memory-section relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
-	>
-		<div class="mx-auto max-w-7xl">
-			<div class="section-copy max-w-3xl">
-				<Badge tone="cool" class="gap-2">
-					<Brain class="size-3.5" />
-					{copy.memory.badge}
-				</Badge>
-				<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
-					{copy.memory.title}
-				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.memory.body}</p>
-			</div>
-
-			<div class="memory-bento mt-10">
-				{#each copy.memory.features as feature, index}
-					{@const Icon = memoryIcon(index)}
-					<Card class={`memory-cell memory-cell-${index} p-6`}>
-						<Icon class="size-6 text-(--anda-teal)" />
-						<h3>{feature.title}</h3>
-						<p>{feature.detail}</p>
-					</Card>
-				{/each}
-			</div>
-		</div>
-	</section>
-
-	<section
-		id="work"
-		class="relative z-10 border-b border-white/10 px-5 py-16 sm:px-6 lg:px-8 lg:py-24"
-	>
-		<div class="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[0.78fr_1.22fr] lg:items-center">
-			<div class="section-copy">
-				<Badge tone="ink" class="gap-2">
-					<Workflow class="size-3.5" />
-					{copy.work.badge}
-				</Badge>
-				<h2 class="anda-display mt-5 text-4xl leading-tight font-semibold text-white sm:text-5xl">
-					{copy.work.title}
-				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.work.body}</p>
-			</div>
-
-			<div class="surface-map">
-				{#each copy.work.surfaces as surface, index}
-					{@const Icon = surfaceIcon(index)}
-					<article class="surface-item">
-						<h3 class="flex items-center gap-4">
-							<Icon class="size-5 text-(--anda-amber-soft)" />
-							<span>{surface.label}</span>
-						</h3>
-						<p>{surface.detail}</p>
-					</article>
-				{/each}
-			</div>
-		</div>
-	</section>
-
-	<section id="start" class="final-cta px-5 py-16 sm:px-6 lg:px-8 lg:py-24">
-		<div class="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1fr_auto] lg:items-end">
-			<div>
-				<h2
-					class="anda-display max-w-3xl text-4xl leading-tight font-semibold text-white sm:text-5xl"
-				>
-					{copy.final.title}
-				</h2>
-				<p class="mt-5 max-w-2xl text-lg leading-8 text-white/68">{copy.final.body}</p>
-			</div>
-			<div class="flex flex-col gap-3 sm:flex-row lg:justify-end">
-				<Button href="#install" size="lg">
-					<Download class="size-4" />
-					{copy.final.install}
-				</Button>
+			<div class="flex shrink-0 flex-col gap-3 sm:flex-row">
+				<Button href="#install" size="lg"><Download class="size-4" />{copy.final.install}</Button>
 				<Button
 					href="https://docs.anda.bot"
 					target="_blank"
 					rel="noreferrer"
 					variant="secondary"
-					size="lg"
+					size="lg"><BookOpen class="size-4" />{copy.final.docs}</Button
 				>
-					<BookOpen class="size-4" />
-					{copy.final.docs}
-				</Button>
-				<Button
-					href="https://github.com/ldclabs/anda-bot"
-					target="_blank"
-					rel="noreferrer"
-					variant="ghost"
-					size="lg"
-				>
-					<Github class="size-5" />
-					{copy.final.github}
-				</Button>
 			</div>
 		</div>
 	</section>
-
 	<footer class="border-t border-white/10 px-5 py-8 sm:px-6 lg:px-8">
 		<div
 			class="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between"
@@ -705,3 +583,371 @@
 		</div>
 	</footer>
 </main>
+
+<style>
+	.page-width {
+		width: 100%;
+		max-width: 80rem;
+		margin-inline: auto;
+		padding-inline: 2rem;
+	}
+	.hero-intro {
+		position: relative;
+		display: grid;
+		grid-template-columns: 1.08fr 0.92fr;
+		gap: 4rem;
+		align-items: end;
+		padding-block: 6rem 5rem;
+	}
+	.hero-title {
+		font-size: clamp(3rem, 5.6vw, 5.4rem);
+		font-weight: 650;
+		line-height: 1.12;
+		letter-spacing: -0.04em;
+		color: white;
+	}
+	.hero-title span {
+		display: block;
+	}
+	.hero-title .accent {
+		color: var(--anda-amber-soft);
+	}
+	.hero-description {
+		padding-bottom: 0.5rem;
+		max-width: 34rem;
+	}
+	.hero-description > p {
+		color: rgba(255, 255, 255, 0.83);
+		font-size: 1.15rem;
+		line-height: 1.85;
+	}
+	.hero-facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem 1.1rem;
+		margin-top: 2rem;
+		font-size: 0.8rem;
+		color: var(--anda-muted);
+	}
+	.hero-facts li {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.hero-facts :global(svg) {
+		color: var(--anda-lichen);
+		flex-shrink: 0;
+	}
+	.pillar-links {
+		position: relative;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		padding-bottom: 2rem;
+	}
+	.pillar-link {
+		padding: 1.5rem 2rem;
+		border-top: 1px solid #ffffff30;
+		background: #07110f70;
+		transition: background 150ms;
+	}
+	.pillar-link + .pillar-link {
+		border-inline-start: 1px solid #ffffff20;
+	}
+	.pillar-link:hover {
+		background: #ffffff0b;
+	}
+	.pillar-link :global(svg) {
+		color: var(--anda-amber-soft);
+	}
+	.pillar-link h2 {
+		margin-top: 1rem;
+		font-size: 1.2rem;
+		font-weight: 650;
+		color: white;
+	}
+	.pillar-link p {
+		margin-top: 0.6rem;
+		font-size: 0.95rem;
+		line-height: 1.7;
+		color: var(--anda-muted);
+	}
+	.narrative-section {
+		padding-block: 6rem;
+		border-bottom: 1px solid #ffffff18;
+		scroll-margin-top: 1rem;
+	}
+	.narrative-split {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+		gap: 5rem;
+		align-items: start;
+	}
+	.section-eyebrow {
+		color: var(--anda-amber-soft);
+		font-size: 0.85rem;
+		font-weight: 600;
+		margin-bottom: 1.25rem;
+	}
+	.section-copy h2,
+	.faq-title {
+		white-space: pre-line;
+		font-size: clamp(2rem, 3.25vw, 3rem);
+		line-height: 1.25;
+		font-weight: 600;
+		letter-spacing: -0.025em;
+		color: white;
+		text-wrap: balance;
+	}
+	.section-body {
+		margin-top: 1.5rem;
+		font-size: 1.06rem;
+		line-height: 1.85;
+		color: var(--anda-muted);
+	}
+	.text-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.65rem;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--anda-amber-soft);
+		text-underline-offset: 5px;
+	}
+	.text-link:hover {
+		text-decoration: underline;
+	}
+	:global(.landing-shell a:focus-visible),
+	:global(.landing-shell button:focus-visible),
+	:global(.landing-shell select:focus-visible),
+	summary:focus-visible {
+		outline: 2px solid var(--anda-amber-soft);
+		outline-offset: 5px;
+	}
+	:global(.landing-shell[dir='rtl'] .direction-arrow) {
+		transform: scaleX(-1);
+	}
+	.feature-list article {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 1.25rem;
+		padding-block: 1.5rem;
+		border-bottom: 1px solid #ffffff20;
+	}
+	.feature-list article:first-child {
+		padding-top: 0;
+	}
+	.feature-list :global(svg) {
+		color: var(--anda-teal);
+		margin-top: 0.2rem;
+	}
+	article h3 {
+		font-size: 1.15rem;
+		line-height: 1.45;
+		font-weight: 650;
+		color: white;
+	}
+	article p {
+		margin-top: 0.7rem;
+		line-height: 1.8;
+		color: var(--anda-muted);
+	}
+	.release-note {
+		margin-top: 1.5rem;
+		padding-inline-start: 1rem;
+		border-inline-start: 2px solid var(--anda-teal);
+	}
+	.release-note span,
+	.surface-status {
+		display: inline-block;
+		color: var(--anda-lichen);
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+	.release-note p {
+		color: var(--anda-muted);
+		font-size: 0.85rem;
+		line-height: 1.7;
+		margin-top: 0.4rem;
+	}
+	.action-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		margin-top: 3rem;
+		border-top: 1px solid #ffffff20;
+	}
+	.action-grid article {
+		padding-block: 2rem;
+		padding-inline: 0 2.5rem;
+		border-bottom: 1px solid #ffffff20;
+	}
+	.action-grid article:nth-child(even) {
+		padding-inline: 2.5rem 0;
+		border-inline-start: 1px solid #ffffff20;
+	}
+	.action-grid :global(svg),
+	.control-grid :global(svg) {
+		color: var(--anda-amber-soft);
+		margin-bottom: 1.2rem;
+	}
+	.control-section {
+		background: #ffffff04;
+	}
+	.control-grid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 2.5rem;
+		margin-top: 3rem;
+	}
+	.data-note {
+		display: flex;
+		align-items: start;
+		gap: 1rem;
+		padding-top: 2rem;
+		margin-top: 2.5rem;
+		border-top: 1px solid #ffffff20;
+		color: var(--anda-muted);
+		font-size: 0.9rem;
+		line-height: 1.8;
+	}
+	.data-note :global(svg) {
+		margin-top: 0.2rem;
+		color: var(--anda-lichen);
+	}
+	.surface-list {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 2rem;
+	}
+	.surface-list article {
+		display: flex;
+		flex-direction: column;
+		align-items: start;
+		padding-top: 1.25rem;
+		border-top: 1px solid #ffffff25;
+	}
+	.surface-list :global(svg) {
+		color: var(--anda-amber-soft);
+		flex-shrink: 0;
+	}
+	.surface-list .text-link {
+		padding-top: 1.25rem;
+		margin-top: auto;
+	}
+	.surface-status {
+		margin-top: 0.7rem;
+	}
+	.install-requirements {
+		margin-top: 1.5rem;
+		padding-inline-start: 1rem;
+		border-inline-start: 2px solid var(--anda-amber);
+		font-size: 0.95rem;
+		line-height: 1.8;
+		color: var(--anda-muted);
+	}
+	.install-panel,
+	.install-route {
+		min-width: 0;
+	}
+	.install-route {
+		overflow-wrap: anywhere;
+	}
+	.install-panel :global([data-slot='button']) {
+		height: auto;
+		min-height: 2.75rem;
+		white-space: normal;
+	}
+	.step-number {
+		color: var(--anda-amber-soft);
+		font-variant-numeric: tabular-nums;
+	}
+	pre.install-command {
+		cursor: text;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		text-align: start;
+	}
+	.faq-list details {
+		border-bottom: 1px solid #ffffff25;
+		padding-block: 1.25rem;
+	}
+	.faq-list details:first-child {
+		padding-top: 0;
+	}
+	summary {
+		cursor: pointer;
+		color: white;
+		font-weight: 600;
+		line-height: 1.6;
+		padding-inline-end: 1rem;
+	}
+	.faq-list p {
+		margin-top: 1rem;
+		line-height: 1.85;
+		color: var(--anda-muted);
+	}
+	@media (max-width: 1023px) {
+		.hero-intro {
+			gap: 2rem;
+			padding-block: 4rem;
+		}
+		.hero-title {
+			font-size: clamp(2.7rem, 6.8vw, 4.8rem);
+		}
+		.narrative-split {
+			gap: 2.5rem;
+			grid-template-columns: 1fr 1.2fr;
+		}
+		.surface-list {
+			grid-template-columns: 1fr;
+		}
+		.pillar-link {
+			padding: 1.5rem 1rem;
+		}
+	}
+	@media (max-width: 767px) {
+		.page-width {
+			padding-inline: 1.25rem;
+		}
+		.hero-intro,
+		.narrative-split {
+			grid-template-columns: 1fr;
+		}
+		.hero-intro {
+			padding-block: 3.5rem 2.5rem;
+			gap: 2rem;
+		}
+		.hero-title {
+			font-size: clamp(2.6rem, 11vw, 4.5rem);
+		}
+		.hero-description > p {
+			font-size: 1rem;
+		}
+		.pillar-links {
+			grid-template-columns: 1fr;
+		}
+		.pillar-link {
+			padding: 1.25rem 0;
+		}
+		.pillar-link + .pillar-link {
+			border-inline-start: 0;
+		}
+		.pillar-link h2 {
+			margin-top: 0.75rem;
+		}
+		.narrative-section {
+			padding-block: 3.5rem;
+		}
+		.action-grid,
+		.control-grid {
+			grid-template-columns: 1fr;
+		}
+		.action-grid article,
+		.action-grid article:nth-child(even) {
+			padding: 1.5rem 0;
+			border-inline-start: 0;
+		}
+		.control-grid {
+			gap: 2rem;
+		}
+	}
+</style>
