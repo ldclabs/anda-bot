@@ -65,7 +65,7 @@ impl SendMessage {
     }
 
     /// Create a new message with content, recipient, and subject
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn with_subject(
         content: impl Into<String>,
         recipient: impl Into<String>,

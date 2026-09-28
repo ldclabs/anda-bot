@@ -726,10 +726,7 @@ impl Agent<AgentCtx> for AndaBot {
         let this = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-            if let Err(err) = this.startup_self_check(ctx).await {
-                log::error!("startup self-check failed: {err}");
-            }
+            this.startup_self_check(ctx).await;
         });
         Ok(())
     }
@@ -779,110 +776,47 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         let now_ms = unix_ms();
-        use memory_policy::{MODE_KEY, MemoryMode, MemoryPolicy, POLICY_KEY};
-        if (ctx.meta().extra.contains_key(POLICY_KEY)
-            || ctx.meta().extra.contains_key("memory_source_parents"))
-            && ctx.base.get_state::<MemoryPolicy>().is_none()
-        {
-            return Err(
-                "memory_policy is host-owned; select memory_mode for a new conversation".into(),
-            );
-        }
-        let requested = ctx
-            .meta()
-            .extra
-            .get(MODE_KEY)
-            .map(|value| serde_json::from_value::<MemoryMode>(value.clone()))
-            .transpose()?;
-        if requested.is_some()
-            && request_meta_extra_as::<bool>(ctx.meta(), keys::EXTERNAL_USER).unwrap_or(false)
-        {
-            return Err("External channel senders cannot select owner memory policies".into());
-        }
-        let state = self.inner.conversations.state_from_meta(ctx.meta());
-        let existing_id = if state.conversation > 0 {
-            state.conversation
-        } else {
-            state.source_state.conv_id
-        };
-        let inherited = ctx.base.get_state::<MemoryPolicy>();
-        let mut inherited_sources = ctx
-            .base
-            .get_state::<anda_brain::product::SourceIdentity>()
-            .map(|source| {
-                let mut keys = source.parents;
-                keys.push(source.key);
-                keys
-            })
-            .unwrap_or_default();
-        let policy = if !matches!(command, PromptCommand::New { .. }) && existing_id > 0 {
-            let conversation = self
-                .latest_conversation_in_chain(existing_id, Some(*caller))
-                .await?;
-            let policy = MemoryPolicy::from_conversation(&conversation)?;
-            if let Some(parents) = conversation
-                .extra
-                .as_ref()
-                .and_then(|v| v.get("memory_source_parents"))
+        let requested = requested_memory_mode(&ctx)?;
+        let RequestState {
+            workspace,
+            source_key,
+            source_state,
+            conversation: requested_conversation,
+            ..
+        } = self.inner.conversations.state_from_meta(ctx.meta());
+        let is_new = matches!(command, PromptCommand::New { .. });
+        // One chain walk serves the memory policy, a side command and the
+        // session lookup. Only `/new` may start over when the saved chain
+        // cannot be read.
+        let mut current_conversation = if requested_conversation > 0 {
+            match self
+                .latest_conversation_in_chain(requested_conversation, Some(*caller))
+                .await
             {
-                inherited_sources.extend(serde_json::from_value::<Vec<String>>(parents.clone())?);
+                Ok(conversation) => Some(conversation),
+                Err(err) if !is_new => return Err(err),
+                Err(_) => None,
             }
-            if requested.is_some_and(|mode| mode != policy.mode) {
-                return Err("Change memory mode in a new conversation with /new".into());
-            }
-            policy
         } else {
-            MemoryPolicy::new(
-                requested
-                    .unwrap_or_else(|| inherited.as_ref().map_or(MemoryMode::Standard, |p| p.mode)),
-            )
+            None
         };
-        if inherited.as_ref().is_some_and(|p| policy.mode < p.mode) {
-            return Err("A child conversation cannot relax its parent's memory policy".into());
-        }
-        if inherited
-            .as_ref()
-            .is_some_and(|parent| parent.mode != policy.mode)
-        {
-            return Err("Nested calls cannot change their inherited memory mode".into());
-        }
-        if !policy.may_write() && matches!(command, PromptCommand::Side { .. }) {
-            return Err("Side tasks are unavailable in restricted memory mode".into());
-        }
-        ctx.base.set_state(policy.clone());
-        inherited_sources.sort();
-        inherited_sources.dedup();
-        if inherited_sources.len() > 15 {
-            return Err("Memory source ancestry exceeds the supported nesting limit".into());
-        }
-        ctx.base.set_state(memory_policy::InheritedMemorySources(
-            inherited_sources.clone(),
-        ));
+        let (policy, inherited_sources) = install_memory_policy(
+            &ctx,
+            &command,
+            requested,
+            current_conversation.as_ref().filter(|_| !is_new),
+        )?;
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let mut available_tools = Vec::new();
 
-        ctx.base.set_state(AgentInfo {
-            name: Self::NAME.to_string(),
-        });
+        ctx.base.set_state(AgentInfo);
 
         if let PromptCommand::Side { prompt } = &command {
             let available_tools = available_tool_names(&ctx).await;
-            let RequestState {
-                workspace,
-                conversation: maybe_conv_id,
-                ..
-            } = self.inner.conversations.state_from_meta(ctx.meta());
             let instructions = self
                 .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
                 .await?;
-            let side_conversation_id = if maybe_conv_id > 0 {
-                self.latest_conversation_in_chain(maybe_conv_id, Some(*caller))
-                    .await
-                    .ok()
-                    .map(|conv| conv._id)
-            } else {
-                None
-            };
+            let side_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
             return crate::util::boxed(self.run_side_command(
                 &ctx,
                 instructions,
@@ -893,31 +827,7 @@ impl Agent<AgentCtx> for AndaBot {
             .await;
         }
 
-        let RequestState {
-            workspace,
-            source_key,
-            source_state,
-            conversation: maybe_conv_id,
-            ..
-        } = self.inner.conversations.state_from_meta(ctx.meta());
-
-        let mut ancestors: Option<Vec<u64>> = None;
-        let mut current_conversation = if maybe_conv_id > 0 {
-            self.latest_conversation_in_chain(maybe_conv_id, Some(*caller))
-                .await
-                .ok()
-        } else {
-            None
-        };
-
-        if let Some(conv) = &current_conversation {
-            let mut ids = conv.ancestors.clone().unwrap_or_default();
-            ids.push(conv._id);
-            if ids.len() > 10 {
-                ids.drain(0..ids.len() - 10);
-            }
-            ancestors = Some(ids);
-        }
+        let mut ancestors = current_conversation.as_ref().map(recent_ancestors);
 
         let mut input = ConversationInput {
             cron_receipt: ctx
@@ -962,12 +872,10 @@ impl Agent<AgentCtx> for AndaBot {
                 .or_else(|| self.get_session_by_source(&source_key))
                 .filter(|session| session.caller == caller.to_string());
             if let Some(session) = active_session {
-                if !matches!(input.command, PromptCommand::New { .. })
-                    && requested.is_some_and(|mode| mode != session.memory_policy.mode)
-                {
+                if !is_new && requested.is_some_and(|mode| mode != session.memory_policy.mode) {
                     return Err("Change memory mode in a new conversation with /new".into());
                 }
-                if matches!(input.command, PromptCommand::New { .. }) {
+                if is_new {
                     detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
                     if let Some(session) = self.detach_session(&session.id) {
                         session.finish_when_idle.store(true, Ordering::SeqCst);
@@ -983,12 +891,7 @@ impl Agent<AgentCtx> for AndaBot {
                             .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
                             .await
                         {
-                            let mut ids = conv.ancestors.clone().unwrap_or_default();
-                            ids.push(conv._id);
-                            if ids.len() > 10 {
-                                ids.drain(0..ids.len() - 10);
-                            }
-                            ancestors = Some(ids);
+                            ancestors = Some(recent_ancestors(&conv));
                         }
                         continue;
                     }
@@ -1031,7 +934,7 @@ impl Agent<AgentCtx> for AndaBot {
                         Err(err) => {
                             log::warn!(
                                 "Failed to enqueue prompt for processing conversation {}",
-                                maybe_conv_id,
+                                response_conversation_id,
                             );
                             self.detach_session(&session.id);
                             input = err.0;
@@ -1126,6 +1029,7 @@ impl Agent<AgentCtx> for AndaBot {
                                     conv_id: detached_conversation_id,
                                     status: ConversationStatus::Cancelled,
                                     timestamp: now_ms,
+                                    user: Some(*caller),
                                 },
                             )
                             .await
@@ -1263,6 +1167,7 @@ impl Agent<AgentCtx> for AndaBot {
                         conv_id: conversation._id,
                         status: conversation.status.clone(),
                         timestamp: now_ms,
+                        user: Some(conversation.user),
                     },
                 )
                 .await
@@ -1401,6 +1306,102 @@ fn merge_discovered_tools_model_key(model_name: &str) -> Option<String> {
     } else {
         Some(model_name)
     }
+}
+
+/// The memory mode a request asks for. The persisted policy is host-owned and
+/// never accepted from request metadata.
+fn requested_memory_mode(ctx: &AgentCtx) -> Result<Option<memory_policy::MemoryMode>, BoxError> {
+    use memory_policy::{MODE_KEY, MemoryPolicy, POLICY_KEY};
+    let extra = &ctx.meta().extra;
+    if (extra.contains_key(POLICY_KEY) || extra.contains_key("memory_source_parents"))
+        && ctx.base.get_state::<MemoryPolicy>().is_none()
+    {
+        return Err(
+            "memory_policy is host-owned; select memory_mode for a new conversation".into(),
+        );
+    }
+    let requested = extra
+        .get(MODE_KEY)
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()?;
+    if requested.is_some()
+        && request_meta_extra_as::<bool>(ctx.meta(), keys::EXTERNAL_USER).unwrap_or(false)
+    {
+        return Err("External channel senders cannot select owner memory policies".into());
+    }
+    Ok(requested)
+}
+
+/// Resolves the memory policy and source ancestry of the conversation a
+/// request continues (`None` for `/new` or a fresh source), and installs both
+/// on the context for tools and nested agents.
+fn install_memory_policy(
+    ctx: &AgentCtx,
+    command: &PromptCommand,
+    requested: Option<memory_policy::MemoryMode>,
+    continued: Option<&Conversation>,
+) -> Result<(memory_policy::MemoryPolicy, Vec<String>), BoxError> {
+    use memory_policy::{InheritedMemorySources, MemoryMode, MemoryPolicy};
+    let inherited = ctx.base.get_state::<MemoryPolicy>();
+    let mut sources = ctx
+        .base
+        .get_state::<anda_brain::product::SourceIdentity>()
+        .map(|source| {
+            let mut keys = source.parents;
+            keys.push(source.key);
+            keys
+        })
+        .unwrap_or_default();
+    let policy = match continued {
+        Some(conversation) => {
+            let policy = MemoryPolicy::from_conversation(conversation)?;
+            if let Some(parents) = conversation
+                .extra
+                .as_ref()
+                .and_then(|v| v.get("memory_source_parents"))
+            {
+                sources.extend(serde_json::from_value::<Vec<String>>(parents.clone())?);
+            }
+            if requested.is_some_and(|mode| mode != policy.mode) {
+                return Err("Change memory mode in a new conversation with /new".into());
+            }
+            policy
+        }
+        None => MemoryPolicy::new(
+            requested
+                .unwrap_or_else(|| inherited.as_ref().map_or(MemoryMode::Standard, |p| p.mode)),
+        ),
+    };
+    if inherited.as_ref().is_some_and(|p| policy.mode < p.mode) {
+        return Err("A child conversation cannot relax its parent's memory policy".into());
+    }
+    if inherited
+        .as_ref()
+        .is_some_and(|parent| parent.mode != policy.mode)
+    {
+        return Err("Nested calls cannot change their inherited memory mode".into());
+    }
+    if !policy.may_write() && matches!(command, PromptCommand::Side { .. }) {
+        return Err("Side tasks are unavailable in restricted memory mode".into());
+    }
+    ctx.base.set_state(policy.clone());
+    sources.sort();
+    sources.dedup();
+    if sources.len() > 15 {
+        return Err("Memory source ancestry exceeds the supported nesting limit".into());
+    }
+    ctx.base.set_state(InheritedMemorySources(sources.clone()));
+    Ok((policy, sources))
+}
+
+/// The latest ten conversation ids of a chain, ending with `conversation`.
+fn recent_ancestors(conversation: &Conversation) -> Vec<u64> {
+    let mut ids = conversation.ancestors.clone().unwrap_or_default();
+    ids.push(conversation._id);
+    if ids.len() > 10 {
+        ids.drain(0..ids.len() - 10);
+    }
+    ids
 }
 
 fn select_most_used_tools(
@@ -2307,12 +2308,13 @@ mod tests {
                     conv_id,
                     status: ConversationStatus::Working,
                     timestamp: now_ms,
+                    user: None,
                 },
             )
             .await
             .unwrap();
 
-        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+        bot.startup_self_check(mock_agent_ctx()).await;
         // Let the spawned session runner settle.
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
@@ -2322,7 +2324,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
         // No source-bound conversations to resume: returns Ok after scanning.
-        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+        bot.startup_self_check(mock_agent_ctx()).await;
     }
 
     #[tokio::test]
@@ -2367,12 +2369,13 @@ mod tests {
                     conv_id,
                     status: ConversationStatus::Working,
                     timestamp: now_ms,
+                    user: None,
                 },
             )
             .await
             .unwrap();
 
-        bot.startup_self_check(mock_agent_ctx()).await.unwrap();
+        bot.startup_self_check(mock_agent_ctx()).await;
     }
 
     #[tokio::test]

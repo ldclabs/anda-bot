@@ -42,7 +42,6 @@ impl Ed25519Key {
         }
     }
 
-    #[allow(unused)]
     pub fn id(&self) -> Principal {
         self.id
     }

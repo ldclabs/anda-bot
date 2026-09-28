@@ -39,6 +39,13 @@ impl Host {
         self
     }
 
+    /// The journal this host records into. Every component of one daemon must
+    /// share it: its per-key write locks and change notifications are
+    /// in-process state.
+    pub fn journal(&self) -> Option<&super::Journal> {
+        self.journal.as_ref()
+    }
+
     pub async fn associate_attention(
         &self,
         page: &AttentionPage,

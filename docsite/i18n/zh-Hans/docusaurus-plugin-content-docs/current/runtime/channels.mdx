@@ -19,7 +19,7 @@ Anda 可以只待在终端里，也可以接入团队频道。频道会把上下
 
 ## 多用户
 
-一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。先创建用户 key，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用操作系统安全凭证库里的本地 owner 身份。
+一个 daemon 可以让多个可信用户通过同一个 Anda agent 接入。先创建用户 key，再在 channel 条目的 `user` 中引用该 id。未配置 `user` 时，该 channel 使用操作系统安全凭证库里的本地 owner 身份。daemon 管理操作（修改配置、重载与切换模型、安装更新、关停）仍只允许本地 owner 执行。
 
 ```bash
 anda user create alice

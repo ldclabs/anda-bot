@@ -20,8 +20,7 @@ use crate::util::request_meta::keys;
 mod shell_policy;
 
 use shell_policy::{
-    ApprovalDecision, ApprovalMode, launcher_ui_language_hint, shell_approval_decision_with_model,
-    shell_risk_language_hint,
+    ApprovalDecision, ApprovalMode, shell_approval_decision_with_model, shell_risk_language_hint,
 };
 
 mod protocol;
@@ -30,8 +29,8 @@ pub(crate) use protocol::{
     ActionApiOutput, ActionDetail, ActionStatus, ApprovalLabels, TOOL_APPROVAL_ACTION,
     USER_CHOICE_ACTION, UserChoiceOption, action_id_from_message, action_id_from_message_value,
     action_message, apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
-    approval_detail, is_action_message, is_action_message_value, payload_action_id,
-    payload_is_pending, payload_responded_at, update_action_payload_resolution,
+    approval_detail, is_action_message_value, payload_action_id, payload_is_pending,
+    payload_responded_at, update_action_payload_resolution,
 };
 use protocol::{ActionPayload, ActionToolRef};
 
@@ -249,8 +248,8 @@ impl ActionSession {
             .get_extra_as::<String>(keys::WORKSPACE)
             .unwrap_or_default();
         let approval_mode = ApprovalMode::from_ctx(ctx);
-        let language_hint =
-            shell_risk_language_hint(&meta).or_else(|| launcher_ui_language_hint(&self.home_dir));
+        let language_hint = shell_risk_language_hint(&meta)
+            .or_else(|| super::browser_ws::launcher_ui_language(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
             &args,
             approval_mode,

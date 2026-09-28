@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::{BTreeSet, HashMap},
     sync::{Arc, Weak},
-    time::{Duration, Instant},
 };
 
 #[derive(Clone)]
@@ -20,10 +19,13 @@ pub struct Journal {
 }
 
 /// An in-process read optimization, not an execution queue. The durable journal
-/// is rescanned on startup and periodically to repair missed notifications.
+/// is scanned once on startup to pick up work a previous process left behind;
+/// afterwards the change notifications of the daemon's one shared [`Journal`]
+/// cover every write, and keys that still need work stay pending. Rescanning
+/// periodically would reread the whole history, which only grows.
 #[derive(Default)]
 pub(super) struct JournalPoll {
-    next_scan: Option<Instant>,
+    scanned: bool,
     pending: BTreeSet<String>,
 }
 
@@ -44,7 +46,7 @@ impl JournalPoll {
                 }
             });
         }
-        if self.next_scan.is_none_or(|next| Instant::now() >= next) {
+        if !self.scanned {
             use futures::TryStreamExt;
             for prefix in prefixes {
                 let path = Path::from(format!("bot-brain/v1/{prefix}"));
@@ -55,7 +57,7 @@ impl JournalPoll {
                     }
                 }
             }
-            self.next_scan = Some(Instant::now() + Duration::from_secs(300));
+            self.scanned = true;
         }
         Ok(self.pending.iter().cloned().collect())
     }

@@ -28,7 +28,7 @@ use crate::engine::{
     apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
     conversation::SourceState,
     goal::{self},
-    is_action_message, is_action_message_value, multimodal,
+    is_action_message_value, multimodal,
     prompt::{PromptCommand, skill_command_directive},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -502,8 +502,8 @@ impl SessionRunner {
         };
         child_conversation._id = child_id;
 
-        self.submit_pending_formation(&output.chat_history, now_ms)
-            .await;
+        mark_special_user_messages(&mut output.chat_history);
+        self.replace_conversation_messages_from_chat_history(output.chat_history);
         let artifacts = match self
             .assistant
             .persist_resources_for_message(&self.conversation.user, output.artifacts)
@@ -513,11 +513,11 @@ impl SessionRunner {
             Err(err) => {
                 self.mark_conversation_failed(format!("Compaction failed: {err}"))
                     .await;
+                self.submit_pending_formation(now_ms).await;
                 return Ok(false);
             }
         };
 
-        self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.status = ConversationStatus::Completed;
         self.conversation.usage = output.usage;
         self.collect_artifacts();
@@ -535,6 +535,7 @@ impl SessionRunner {
         // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
         self.conversation.child = Some(child_id);
         self.persist_conversation_state().await?;
+        self.submit_pending_formation(now_ms).await;
 
         self.session.submit_formation_at.store(0, Ordering::SeqCst);
         self.conversation = child_conversation;
@@ -552,6 +553,7 @@ impl SessionRunner {
                         conv_id: self.conversation._id,
                         status: self.conversation.status.clone(),
                         timestamp: now_ms,
+                        user: Some(self.conversation.user),
                     },
                 )
                 .await
@@ -620,83 +622,55 @@ impl SessionRunner {
         })
     }
 
-    async fn submit_pending_formation(&self, chat_history: &[Message], now_ms: u64) {
+    /// Submits the saved messages the Brain has not seen yet.
+    ///
+    /// The window's source references are indices and digests of
+    /// `self.conversation.messages`, which the memory activity view later
+    /// checks against the stored record, so callers persist the conversation
+    /// before calling this.
+    async fn submit_pending_formation(&self, now_ms: u64) {
+        let saved = &self.conversation.messages;
+        let window_start = self.session.submit_formation_at.load(Ordering::SeqCst) as usize;
         if !self.session.memory_policy.may_write() {
             self.session
                 .submit_formation_at
-                .store(chat_history.len() as u64, Ordering::SeqCst);
+                .store(saved.len() as u64, Ordering::SeqCst);
             return;
         }
-        if now_ms < self.session.formation_backoff_until.load(Ordering::SeqCst) {
+        if now_ms < self.session.formation_backoff_until.load(Ordering::SeqCst)
+            || window_start >= saved.len()
+        {
             return;
         }
 
-        if self.session.submit_formation_at.load(Ordering::SeqCst) as usize >= chat_history.len() {
-            return;
-        }
-
-        // Persist the exact original message indices before filtering/pruning
-        // the Formation input. Update messages only: inbound queues are owned
-        // by the conversation API and must not be overwritten by this snapshot.
-        let messages = chat_history
-            .iter()
-            .map(|message| json!(message))
-            .collect::<Vec<_>>();
-        let persisted = async {
-            let changes = std::collections::BTreeMap::from([(
-                "messages".to_string(),
-                anda_db::schema::Fv::array_from(
-                    cbor2::cbor!(&messages)?,
-                    &[anda_db::schema::Ft::Json],
-                )?,
-            )]);
-            self.assistant
-                .inner
-                .conversations
-                .conversations
-                .update_conversation(self.conversation._id, changes)
-                .await?;
-            Ok::<_, BoxError>(())
-        }
-        .await;
-        if let Err(error) = persisted {
-            self.session.formation_backoff_until.store(
-                now_ms.saturating_add(FORMATION_RETRY_BACKOFF_MS),
-                Ordering::SeqCst,
-            );
-            log::error!(
-                "Cannot persist Formation source conversation {}: {error}",
-                self.conversation._id
-            );
-            return;
-        }
         let mut source_messages = Vec::new();
-        let mut messages = chat_history
-            .iter()
-            .enumerate()
-            .skip(self.session.submit_formation_at.load(Ordering::SeqCst) as usize)
-            .filter(|(_, msg)| !is_action_message(msg))
-            .filter_map(|(index, msg)| {
-                let digest = anda_cognitive_nexus::content_digest(&serde_json::json!(msg)).ok()?;
-                let mut msg = msg.clone();
-                let pruned = msg.prune_content();
-                if msg.content.is_empty() || pruned > 0 && msg.content.len() <= 1 {
-                    None
-                } else {
-                    source_messages.push(crate::brain::SourceMessageRef {
-                        conversation: self.conversation._id.to_string(),
-                        index: index.to_string(),
-                        role: msg.role.clone(),
-                        content_digest: digest,
-                        submitted_digest: None,
-                    });
-                    Some(msg)
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut messages = Vec::new();
+        for (index, value) in saved.iter().enumerate().skip(window_start) {
+            if is_action_message_value(value) {
+                continue;
+            }
+            let Ok(digest) = anda_cognitive_nexus::content_digest(value) else {
+                continue;
+            };
+            let Ok(mut msg) = serde_json::from_value::<Message>(value.clone()) else {
+                continue;
+            };
+            let pruned = msg.prune_content();
+            if msg.content.is_empty() || pruned > 0 && msg.content.len() <= 1 {
+                continue;
+            }
+            source_messages.push(crate::brain::SourceMessageRef {
+                conversation: self.conversation._id.to_string(),
+                index: index.to_string(),
+                role: msg.role.clone(),
+                content_digest: digest,
+                submitted_digest: None,
+            });
+            messages.push(msg);
+        }
         mark_special_user_messages(&mut messages);
 
-        let next_submit_formation_at = chat_history.len();
+        let next_submit_formation_at = saved.len();
         if messages.is_empty() {
             self.session
                 .submit_formation_at
@@ -712,7 +686,7 @@ impl SessionRunner {
             .submit_formation(
                 crate::brain::FormationSubmission {
                     bot_conversation: self.conversation._id,
-                    window_start: self.session.submit_formation_at.load(Ordering::SeqCst) as usize,
+                    window_start,
                     window_end: next_submit_formation_at,
                     submitted_at: now_ms,
                     observed_at: None,
@@ -812,8 +786,7 @@ impl SessionRunner {
                 self.conversation.failed_reason = Some(reason);
                 self.conversation.status = ConversationStatus::Cancelled;
                 self.persist_conversation_state().await?;
-                self.submit_pending_formation(self.runner.chat_history(), now_ms)
-                    .await;
+                self.submit_pending_formation(now_ms).await;
             }
             return Ok(!cancelled);
         }
@@ -1059,8 +1032,7 @@ impl SessionRunner {
 
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
-                self.submit_pending_formation(self.runner.chat_history(), now_ms)
-                    .await;
+                self.submit_pending_formation(now_ms).await;
 
                 // The turn produced no further output, so the runner is idle
                 // here. Reclaim context-window budget by pruning completed tool
@@ -1077,6 +1049,7 @@ impl SessionRunner {
                         None
                     };
                 let mut goal_continue_prompt: Option<String> = None;
+                let mut history_changed = false;
                 if let Some(mut goal) = maybe_goal {
                     let check = tokio::select! {
                         _ = self.session.control.interrupted() => { return Ok(true); }
@@ -1090,8 +1063,13 @@ impl SessionRunner {
                             self.runner.accumulate(&check.usage);
                             match check.action {
                                 goal::GoalAction::Complete(reason) => {
+                                    // The saved record must carry the verdict too:
+                                    // the next save would otherwise drop it after
+                                    // Formation already referenced its index.
                                     let message = goal_completed_message(&reason, now_ms);
-                                    self.runner.append_chat_history(vec![message]);
+                                    self.runner.append_chat_history(vec![message.clone()]);
+                                    self.conversation.append_messages(vec![message]);
+                                    history_changed = true;
                                     log::info!(
                                         turns = self.runner.turns(),
                                         last_usage:serde = self.runner.current_usage(),
@@ -1167,7 +1145,7 @@ impl SessionRunner {
                 } else {
                     ConversationStatus::Idle
                 };
-                if self.conversation.status != next_status {
+                if self.conversation.status != next_status || history_changed {
                     if next_status == ConversationStatus::Working {
                         self.conversation.usage = self.runner.total_usage().clone();
                     }
@@ -1209,9 +1187,8 @@ impl SessionRunner {
                         && !self.session.has_pending_inputs()
                         && self.session.goal.read().is_none());
 
-                let mut terminal_history =
-                    (is_done || res.failed_reason.is_some()).then(|| res.chat_history.clone());
-                if terminal_history.is_some() {
+                let terminal = is_done || res.failed_reason.is_some();
+                if terminal {
                     self.persist_tools_usage(&res.tools_usage, tools_usage_snapshot)
                         .await;
                 }
@@ -1231,10 +1208,7 @@ impl SessionRunner {
                     self.session.stop_background_tasks();
                     *self.session.goal.write() = None;
                     for event in self.session.actions.cancel_pending().await {
-                        apply_action_event_to_conversation(&mut self.conversation, event.clone());
-                        if let Some(history) = terminal_history.as_mut() {
-                            apply_action_event_to_messages(history, event);
-                        }
+                        apply_action_event_to_conversation(&mut self.conversation, event);
                     }
                 }
                 self.persist_conversation_state().await?;
@@ -1242,8 +1216,8 @@ impl SessionRunner {
                     self.cron_receipts.finish();
                 }
 
-                if let Some(history) = terminal_history.as_ref() {
-                    self.submit_pending_formation(history, now_ms).await;
+                if terminal {
+                    self.submit_pending_formation(now_ms).await;
                 }
 
                 if self.conversation.status == ConversationStatus::Cancelled
@@ -1284,17 +1258,21 @@ impl SessionRunner {
                 }
                 self.persist_tools_usage_snapshot(tools_usage_snapshot)
                     .await;
-                self.submit_pending_formation(
-                    self.runner.chat_history(),
-                    self.conversation.updated_at,
-                )
-                .await;
 
                 self.session.stop_background_tasks();
+                // Keep the work done before the failure in the saved record,
+                // which is also what Formation reads.
+                if self.runner.chat_history().len() > self.conversation.messages.len() {
+                    let mut history = self.runner.chat_history().clone();
+                    mark_special_user_messages(&mut history);
+                    self.replace_conversation_messages_from_chat_history(history);
+                }
                 self.conversation.failed_reason = Some(failed_reason.clone());
                 self.conversation.status = ConversationStatus::Failed;
                 self.conversation.updated_at = unix_ms();
                 self.persist_conversation_state().await?;
+                self.submit_pending_formation(self.conversation.updated_at)
+                    .await;
 
                 return Ok(false);
             }
@@ -3366,12 +3344,12 @@ mod tests {
     #[tokio::test]
     async fn formation_without_new_messages_does_not_rewrite_saved_history() {
         let bot = build_runner_bot().await;
-        let (r, _rx) = build_session_runner(&bot).await;
-        let history = vec![Message {
+        let (mut r, _rx) = build_session_runner(&bot).await;
+        r.conversation.append_messages(vec![Message {
             role: "user".into(),
             content: vec!["already submitted".to_string().into()],
             ..Default::default()
-        }];
+        }]);
         r.session.submit_formation_at.store(1, Ordering::SeqCst);
         let mut saved = r.conversation.clone();
         saved.append_messages(vec![Message {
@@ -3380,7 +3358,7 @@ mod tests {
             ..Default::default()
         }]);
         bot.persist_conversation_state(&saved).await.unwrap();
-        r.submit_pending_formation(&history, unix_ms()).await;
+        r.submit_pending_formation(unix_ms()).await;
         let reloaded = bot
             .inner
             .conversations
@@ -3554,15 +3532,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn formation_persists_json_messages_and_advances_the_watermark() {
+    async fn formation_submits_saved_messages_and_advances_the_watermark() {
         let bot = build_runner_bot_with_brain(spawn_runner_brain_mock().await).await;
-        let (r, _rx) = build_session_runner(&bot).await;
+        let (mut r, _rx) = build_session_runner(&bot).await;
         let history = vec![Message {
             role: "user".into(),
             content: vec!["remember this source".to_string().into()],
             ..Default::default()
         }];
-        r.submit_pending_formation(&history, unix_ms()).await;
+        r.conversation.append_messages(history.clone());
+        r.persist_conversation_state().await.unwrap();
+        r.submit_pending_formation(unix_ms()).await;
         assert_eq!(r.session.submit_formation_at.load(Ordering::SeqCst), 1);
         assert_eq!(r.session.formation_backoff_until.load(Ordering::SeqCst), 0);
         let saved = bot
@@ -3573,6 +3553,72 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(saved.messages, vec![json!(history[0])]);
+    }
+
+    #[derive(Clone, Debug)]
+    struct GoalCompletingCompleter;
+
+    impl CompletionFeaturesDyn for GoalCompletingCompleter {
+        fn model_name(&self) -> String {
+            "goal-completing".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let content = if request_text(&req).contains("Evaluate completion with a strict audit")
+            {
+                r#"{"complete":true,"reason":"verified","follow_up":""}"#
+            } else {
+                "work done"
+            };
+            let mut chat_history = pending_request_messages(&req, 42);
+            chat_history.push(Message {
+                role: "assistant".to_string(),
+                content: vec![content.to_string().into()],
+                ..Default::default()
+            });
+            Box::pin(futures::future::ready(Ok(AgentOutput {
+                content: content.to_string(),
+                chat_history,
+                ..Default::default()
+            })))
+        }
+    }
+
+    #[tokio::test]
+    async fn goal_completion_verdict_is_saved_with_the_conversation() {
+        let bot = build_runner_bot().await;
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(GoalCompletingCompleter)))
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        *r.session.goal.write() = Some(crate::engine::goal::GoalState::new("ship it".into()));
+        let mut snapshot = HashMap::new();
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "make progress".into(),
+            })],
+            &mut snapshot,
+        )
+        .await
+        .unwrap();
+        // The idle turn runs the supervisor, which completes the goal.
+        r.run(vec![], &mut snapshot).await.unwrap();
+        assert!(r.session.goal.read().is_none());
+
+        let saved = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(r.conversation._id)
+            .await
+            .unwrap();
+        assert_eq!(saved.messages.len(), r.runner.chat_history().len());
+        assert!(
+            saved
+                .messages
+                .iter()
+                .any(|message| message.to_string().contains("Goal completed."))
+        );
     }
 
     #[tokio::test]

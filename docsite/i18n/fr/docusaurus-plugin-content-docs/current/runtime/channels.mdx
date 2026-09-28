@@ -19,7 +19,7 @@ La configuration des canaux se trouve sous la section `channels` de `~/.anda/con
 
 ## Utilisateurs multiples
 
-Un seul démon peut servir plusieurs utilisateurs de confiance via le même agent Anda. Créez une clé d'utilisateur, puis définissez le champ `user` d'une entrée de canal sur cet identifiant. Si `user` est omis, le canal utilise l'identité du propriétaire local stockée dans le stockage sécurisé des informations d'identification du système opérationnel.
+Un seul démon peut servir plusieurs utilisateurs de confiance via le même agent Anda. Créez une clé d'utilisateur, puis définissez le champ `user` d'une entrée de canal sur cet identifiant. Si `user` est omis, le canal utilise l'identité du propriétaire local stockée dans le stockage sécurisé des informations d'identification du système opérationnel. Le contrôle du démon (configuration, rechargement et changement de modèle, installation des mises à jour, arrêt) reste réservé au propriétaire local.
 
 ```bash
 anda user create alice

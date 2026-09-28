@@ -10,7 +10,11 @@ use std::{
     collections::HashMap,
     future::Future,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, SystemTime},
 };
 use tokio::{io::AsyncWriteExt, sync::watch};
 
@@ -124,7 +128,13 @@ struct Record {
 pub struct Submissions {
     directory: PathBuf,
     active: tokio::sync::Mutex<HashMap<String, watch::Receiver<SubmissionReceipt>>>,
+    pruned: AtomicBool,
 }
+
+/// Receipts answer replays after a reconnect, which happen within minutes of
+/// a submission. Older ones are removed once per process instead of piling up
+/// one file per desktop message.
+const RECEIPT_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// URL-safe SHA3-384 digest; Anda Desktop recomputes it for offline configs.
 pub(super) fn hash(bytes: &[u8]) -> String {
@@ -146,7 +156,30 @@ impl Submissions {
         Arc::new(Self {
             directory: home.join("desktop-submissions"),
             active: Default::default(),
+            pruned: AtomicBool::new(false),
         })
+    }
+
+    async fn prune_expired_receipts(&self) {
+        if self.pruned.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let Some(cutoff) = SystemTime::now().checked_sub(RECEIPT_RETENTION) else {
+            return;
+        };
+        let Ok(mut entries) = tokio::fs::read_dir(&self.directory).await else {
+            return;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let expired = entry
+                .metadata()
+                .await
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| modified < cutoff);
+            if expired && entry.path().extension().is_some_and(|ext| ext == "json") {
+                let _ = tokio::fs::remove_file(entry.path()).await;
+            }
+        }
     }
 
     async fn record(&self, key: &str) -> Result<Option<Record>, String> {
@@ -195,6 +228,7 @@ impl Submissions {
         F: Future<Output = Result<Value, String>> + Send + 'static,
     {
         let key = key(caller, &source, &id)?;
+        self.prune_expired_receipts().await;
         let mut canonical = input.clone();
         canonical.sort_all_objects();
         let digest = hash(&serde_json::to_vec(&canonical).map_err(|e| e.to_string())?);
@@ -443,6 +477,34 @@ mod tests {
                 .is_err()
         );
         assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn expired_receipts_are_pruned_on_the_first_submission() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Submissions::new(home.path());
+        let directory = home.path().join("desktop-submissions");
+        std::fs::create_dir_all(&directory).unwrap();
+        let expired = directory.join("expired.json");
+        let recent = directory.join("recent.json");
+        for path in [&expired, &recent] {
+            std::fs::write(path, b"{}").unwrap();
+        }
+        std::fs::File::options()
+            .write(true)
+            .open(&expired)
+            .unwrap()
+            .set_modified(SystemTime::now() - RECEIPT_RETENTION - Duration::from_secs(60))
+            .unwrap();
+
+        store
+            .submit("a", "chat".into(), "id".into(), &json!({}), async {
+                Ok(json!({}))
+            })
+            .await
+            .unwrap();
+        assert!(!expired.exists());
+        assert!(recent.exists());
     }
 
     #[tokio::test]

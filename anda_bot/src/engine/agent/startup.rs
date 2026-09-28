@@ -1,15 +1,14 @@
 //! Startup self-check: resume interrupted source-bound conversations after a
-//! daemon restart, plus the optional self-exploration bootstrap.
+//! daemon restart.
 
-use anda_core::{AgentContext, BoxError, CompletionRequest, RequestMeta, StateFeatures};
+use anda_core::{AgentContext, BoxError, CompletionRequest};
 use anda_db_utils::UniqueVec;
 use anda_engine::{
     context::AgentCtx,
-    memory::{Conversation, ConversationRef, ConversationStatus},
+    memory::{Conversation, ConversationStatus},
     unix_ms,
 };
 use ic_auth_types::Xid;
-use serde_json::{Map, json};
 use std::collections::HashSet;
 
 use super::{
@@ -22,46 +21,34 @@ use super::{
     session::SessionRequestMeta,
 };
 use crate::engine::{
-    browser::ChromeBrowserTool,
-    conversation::{RequestState, SourceState},
-    system::system_runtime_prompt,
+    browser::ChromeBrowserTool, conversation::RequestState, system::system_runtime_prompt,
 };
-use crate::util::request_meta::keys;
 
-const STARTUP_SELF_SOURCE: &str = "startup:self";
-
-#[derive(Debug, Clone)]
 struct StartupConversation {
     source_key: String,
     conversation: Conversation,
 }
 
 impl AndaBot {
-    pub(super) async fn startup_self_check(&self, ctx: AgentCtx) -> Result<(), BoxError> {
-        let candidates = self.startup_source_candidates(unix_ms()).await;
-        let resume: Vec<&StartupConversation> = candidates
-            .iter()
-            .filter(|candidate| should_auto_resume_conversation(&candidate.conversation.status))
-            .collect();
-
-        if !resume.is_empty() {
-            for candidate in resume {
-                self.continue_startup_conversation(
-                    ctx.with_caller(candidate.conversation.user),
-                    candidate.clone(),
-                    startup_recovery_prompt(&candidate.conversation),
-                )
-                .await?;
+    pub(super) async fn startup_self_check(&self, ctx: AgentCtx) {
+        for candidate in self.startup_source_candidates(unix_ms()).await {
+            if !should_auto_resume_conversation(&candidate.conversation.status) {
+                continue;
             }
-            return Ok(());
+            let conversation = candidate.conversation._id;
+            let prompt = startup_recovery_prompt(&candidate.conversation);
+            // One unrecoverable conversation must not strand the others.
+            if let Err(err) = self
+                .continue_startup_conversation(
+                    ctx.with_caller(candidate.conversation.user),
+                    candidate,
+                    prompt,
+                )
+                .await
+            {
+                log::error!(conversation; "startup self-check could not resume conversation: {err}");
+            }
         }
-
-        Ok(())
-
-        // log::info!(
-        //     "startup self-check found no source-bound conversation; starting self exploration"
-        // );
-        // self.start_startup_exploration(ctx).await
     }
 
     async fn startup_source_candidates(&self, now_ms: u64) -> Vec<StartupConversation> {
@@ -250,62 +237,6 @@ impl AndaBot {
         );
         Ok(())
     }
-
-    #[allow(unused)]
-    async fn start_startup_exploration(&self, ctx: AgentCtx) -> Result<(), BoxError> {
-        let now_ms = unix_ms();
-        let mut extra = Map::new();
-        let workspace = self.inner.home_dir.to_string_lossy().to_string();
-        extra.insert(keys::WORKSPACE.to_string(), workspace.into());
-        extra.insert(keys::SOURCE.to_string(), STARTUP_SELF_SOURCE.into());
-        let meta = RequestMeta {
-            extra,
-            ..Default::default()
-        };
-        let mut conversation = Conversation {
-            user: *ctx.caller(),
-            thread: Some(Xid::new()),
-            messages: Vec::new(),
-            resources: vec![],
-            period: now_ms / 3600 / 1000,
-            created_at: now_ms,
-            updated_at: now_ms,
-            extra: Some(json!(meta.extra)),
-            ..Default::default()
-        };
-        let conv_id = self
-            .inner
-            .conversations
-            .conversations
-            .add_conversation(ConversationRef::from(&conversation))
-            .await?;
-        conversation._id = conv_id;
-        if let Err(err) = self
-            .inner
-            .conversations
-            .update_source_state(
-                STARTUP_SELF_SOURCE.to_string(),
-                SourceState {
-                    conv_id,
-                    status: conversation.status.clone(),
-                    timestamp: now_ms,
-                },
-            )
-            .await
-        {
-            log::warn!(conversation = conv_id; "failed to persist startup self source state: {err}");
-        }
-
-        self.continue_startup_conversation(
-            ctx,
-            StartupConversation {
-                source_key: STARTUP_SELF_SOURCE.to_string(),
-                conversation,
-            },
-            startup_exploration_prompt(),
-        )
-        .await
-    }
 }
 
 fn should_auto_resume_conversation(status: &ConversationStatus) -> bool {
@@ -315,15 +246,6 @@ fn should_auto_resume_conversation(status: &ConversationStatus) -> bool {
     )
 }
 
-#[allow(unused)]
-fn should_startup_greet_conversation(status: &ConversationStatus) -> bool {
-    matches!(
-        status,
-        ConversationStatus::Idle | ConversationStatus::Failed
-    )
-}
-
-#[allow(unused)]
 fn startup_recovery_prompt(conversation: &Conversation) -> String {
     system_runtime_prompt(
         "startup recovery",
@@ -331,25 +253,6 @@ fn startup_recovery_prompt(conversation: &Conversation) -> String {
             "Startup self-check found this conversation in {:?} state after the process restarted. Continue from the latest saved history. If the previous user request is still incomplete, resume it and send the next useful progress update. If it already appears complete, briefly explain that the session was recovered and ask for the next step. Avoid repeating old content unnecessarily.",
             conversation.status
         ),
-    )
-}
-
-#[allow(unused)]
-fn startup_greeting_prompt(conversation: &Conversation) -> String {
-    system_runtime_prompt(
-        "startup greeting",
-        format!(
-            "Startup self-check found no interrupted conversation. This is the most recent active conversation source, currently in {:?} state. Send a concise, natural greeting that says you are online again and offer one concrete way to continue based on the saved context. Do not claim the user just spoke.",
-            conversation.status
-        ),
-    )
-}
-
-#[allow(unused)]
-fn startup_exploration_prompt() -> String {
-    system_runtime_prompt(
-        "startup exploration",
-        "Startup self-check found no source-bound conversation. Do a brief, read-only self exploration: inspect your runtime context, identify one useful capability or maintenance idea worth remembering for future work, and summarize it concisely. Do not contact external users.",
     )
 }
 
@@ -374,20 +277,6 @@ mod tests {
         ));
         assert!(!should_auto_resume_conversation(
             &ConversationStatus::Failed
-        ));
-
-        assert!(should_startup_greet_conversation(&ConversationStatus::Idle));
-        assert!(should_startup_greet_conversation(
-            &ConversationStatus::Failed
-        ));
-        assert!(!should_startup_greet_conversation(
-            &ConversationStatus::Submitted
-        ));
-        assert!(!should_startup_greet_conversation(
-            &ConversationStatus::Working
-        ));
-        assert!(!should_startup_greet_conversation(
-            &ConversationStatus::Cancelled
         ));
     }
 }

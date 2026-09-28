@@ -44,16 +44,8 @@ impl ModelSettings {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct CodexAuth {
-    #[allow(unused)]
-    #[serde(default)]
-    pub auth_mode: String,
-
     #[serde(default)]
     pub tokens: OAuthToken,
-
-    #[allow(unused)]
-    #[serde(default)]
-    pub last_refresh: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

@@ -55,9 +55,9 @@ const REPLY_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(300),
     Duration::from_secs(900),
 ];
-// Upper bound on remembered conversation -> route mappings. Conversation ids
-// are monotonically increasing, so evicting the smallest ids drops only the
-// oldest (long finished) conversations.
+// Upper bound on remembered route <-> conversation mappings, in both
+// directions. Conversation ids are monotonically increasing, so evicting the
+// smallest ids drops only the oldest (long finished) conversations.
 const MAX_CONVERSATION_ROUTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy)]
@@ -353,9 +353,10 @@ impl ChannelRuntime {
                 },
             )
             .await?;
-        let channels_conversation = messages
+        let mut channels_conversation = messages
             .get_extension_as::<ChannelConversationMap>("channels_conversation")
             .unwrap_or_default();
+        prune_route_conversations(&mut channels_conversation);
         let conversation_routes = build_conversation_routes(&channels_conversation);
         for (channel_name, channel) in &channels {
             let path = prepare_channel_workspace(&work_dir, channel_name).await;
@@ -557,7 +558,6 @@ impl ChannelRuntimeInner {
         let mut resources = std::mem::take(&mut message.attachments);
         message.attachments = history_resources(&mut resources);
         let channel_user = self.user_for_channel(&message.channel);
-        extra.insert("channel_user".to_string(), channel_user.to_text().into());
         match engine
             .agent_run(
                 channel_user,
@@ -676,13 +676,13 @@ impl ChannelRuntimeInner {
         conv_id: u64,
     ) -> Option<ChannelConversationMap> {
         let key = route.key();
-        let (_previous, snapshot) = {
+        let snapshot = {
             let mut channels_conversation = self.channels_conversation.write();
-            let previous = channels_conversation.insert(key, conv_id);
-            if previous == Some(conv_id) {
+            if channels_conversation.insert(key, conv_id) == Some(conv_id) {
                 return None; // no change
             }
-            (previous, channels_conversation.clone())
+            prune_route_conversations(&mut channels_conversation);
+            channels_conversation.clone()
         };
 
         let mut conversation_routes = self.conversation_routes.write();
@@ -958,6 +958,21 @@ fn build_conversation_routes(
 fn prune_conversation_routes(conversation_routes: &mut BTreeMap<u64, ChannelRoute>) {
     while conversation_routes.len() > MAX_CONVERSATION_ROUTES {
         conversation_routes.pop_first();
+    }
+}
+
+// The same bound for the route -> conversation map, which is saved whole on
+// every rebinding: every chat and thread the bot ever saw would stay in it.
+fn prune_route_conversations(channels_conversation: &mut ChannelConversationMap) {
+    while channels_conversation.len() > MAX_CONVERSATION_ROUTES {
+        let Some(oldest) = channels_conversation
+            .iter()
+            .min_by_key(|(_, conversation)| **conversation)
+            .map(|(route, _)| route.clone())
+        else {
+            break;
+        };
+        channels_conversation.remove(&oldest);
     }
 }
 
@@ -2019,5 +2034,15 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].attachments.len(), 1);
         assert_eq!(sent[0].thread.as_deref(), Some("topic"));
+    }
+
+    #[test]
+    fn route_conversations_keep_the_newest_bindings() {
+        let mut map: ChannelConversationMap = (0..MAX_CONVERSATION_ROUTES as u64 + 2)
+            .map(|id| (("tg".to_string(), format!("chat-{id}"), None), id))
+            .collect();
+        prune_route_conversations(&mut map);
+        assert_eq!(map.len(), MAX_CONVERSATION_ROUTES);
+        assert!(!map.values().any(|id| *id < 2));
     }
 }

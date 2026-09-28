@@ -293,7 +293,7 @@ impl ChatSession {
         }
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.conv_id = None;
         self.conversation = None;
@@ -380,7 +380,7 @@ impl ChatSession {
         }
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub async fn send(&mut self, text: String) -> Option<String> {
         if self.sending {
             return None;

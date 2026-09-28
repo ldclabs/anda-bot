@@ -247,7 +247,7 @@ impl Client {
     }
 
     /// For independently authenticated instruments only; never registered as a model tool.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn submit_outcome(
         &self,
         input: &anda_brain::consequence::OutcomeInput,
@@ -255,7 +255,6 @@ impl Client {
         rpc_result(self.post("/outcomes", input).await?)
     }
 
-    #[allow(dead_code)]
     pub async fn recall_structured(&self, input: &RecallInput) -> Result<RecallOutput, BoxError> {
         rpc_result(
             self.post_with_timeout("/recall_structured", input, RECALL_TIMEOUT)

@@ -225,7 +225,7 @@ impl TtsManager {
             .unwrap_or_default()
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn audio_mime_type(&self) -> &'static str {
         mime_for_audio_format(self.audio_format())
     }

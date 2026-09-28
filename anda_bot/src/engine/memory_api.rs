@@ -1,14 +1,20 @@
 //! Authenticated control-plane API, separate from model-callable tools.
-use anda_core::Principal;
+//!
+//! The HTTP routes and the WebSocket methods decode into one [`MemoryRequest`]
+//! and share its authorization, execution and response shape.
+use anda_core::{BoxError, Principal};
 use anda_engine_server::handler::AppState;
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{
+        DefaultBodyLimit, Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 use crate::{
@@ -45,6 +51,100 @@ pub(crate) fn error(code: &str, message: &str) -> ToolResponse {
     }
 }
 
+type Reply = (StatusCode, ToolResponse);
+
+/// One memory operation, whichever transport carried it.
+enum MemoryRequest {
+    Overview,
+    Activity(ActivityQuery),
+    Records(RecordQuery),
+    Record(String),
+    Search(SearchRequest),
+    Watches(WatchQuery),
+    Watch(WatchRequest),
+    CancelWatch(String),
+    SetupPrepare,
+    SetupCommit(CommitRequest),
+    ChangePrepare(ChangeRequest),
+    ChangeCommit(String, CommitRequest),
+    ChangeStatus(String),
+    ChangeDiscard(String),
+}
+
+// The WebSocket reply carries the shared ToolResponse error contract.
+#[allow(clippy::result_large_err)]
+impl MemoryRequest {
+    fn from_websocket(method: &str, params: Value) -> Result<Self, ToolResponse> {
+        fn one<T: DeserializeOwned>(params: Value, message: &str) -> Result<T, ToolResponse> {
+            serde_json::from_value::<(T,)>(params)
+                .map(|(value,)| value)
+                .map_err(|_| error("invalid_request", message))
+        }
+        fn none(params: &Value, message: &str) -> Result<(), ToolResponse> {
+            if params == &json!([]) {
+                Ok(())
+            } else {
+                Err(error("invalid_request", message))
+            }
+        }
+        Ok(match method {
+            "memory_overview" => {
+                none(
+                    &params,
+                    "memory_overview requires an empty parameter array.",
+                )?;
+                Self::Overview
+            }
+            "memory_activity" => {
+                Self::Activity(one(params, "memory_activity requires one query object.")?)
+            }
+            "memory_records" => {
+                Self::Records(one(params, "memory_records requires one query object.")?)
+            }
+            "memory_record" => Self::Record(one(params, "memory_record requires one record id.")?),
+            "memory_search" => Self::Search(one(params, "Expected one search request.")?),
+            "memory_watches" if params == json!([]) => Self::Watches(WatchQuery::default()),
+            "memory_watches" => Self::Watches(one(params, "Expected one watch query.")?),
+            "memory_watch" => Self::Watch(one(params, "Expected one record watch request.")?),
+            "memory_watch_cancel" => {
+                Self::CancelWatch(one(params, "Expected one watch operation id.")?)
+            }
+            "memory_inbox_setup_prepare" => {
+                none(&params, "Setup preview accepts no parameters.")?;
+                Self::SetupPrepare
+            }
+            "memory_inbox_setup_commit" => {
+                Self::SetupCommit(one(params, "Expected the setup preview digest.")?)
+            }
+            "memory_change_prepare" => {
+                Self::ChangePrepare(one(params, "Expected one change request.")?)
+            }
+            "memory_change_commit" => {
+                let (id, request) = serde_json::from_value::<(String, CommitRequest)>(params)
+                    .map_err(|_| {
+                        error(
+                            "invalid_request",
+                            "Expected an operation id and preview digest.",
+                        )
+                    })?;
+                Self::ChangeCommit(id, request)
+            }
+            "memory_change_status" => {
+                Self::ChangeStatus(one(params, "Expected one operation id.")?)
+            }
+            "memory_change_discard" => {
+                Self::ChangeDiscard(one(params, "Expected one operation id.")?)
+            }
+            _ => {
+                return Err(error(
+                    "unsupported_capability",
+                    "This memory method is unavailable.",
+                ));
+            }
+        })
+    }
+}
+
 impl MemoryApiState {
     pub async fn websocket_dispatch(
         &self,
@@ -67,232 +167,66 @@ impl MemoryApiState {
         {
             return json!(error);
         }
-        match method {
-            "memory_overview" => self.websocket(token, params).await,
-            "memory_activity" => self.websocket_activity(caller, params).await,
-            "memory_records" => self.websocket_records(params).await,
-            "memory_record" => self.websocket_record(params).await,
-            "memory_search" => self.websocket_search(token, params).await,
-            "memory_watches" => self.websocket_watches(params).await,
-            "memory_watch" | "memory_watch_cancel" => self.websocket_watch(method, params).await,
-            "memory_inbox_setup_prepare" | "memory_inbox_setup_commit" => {
-                self.websocket_setup(method, params).await
-            }
-            "memory_change_prepare"
-            | "memory_change_commit"
-            | "memory_change_status"
-            | "memory_change_discard" => self.websocket_change(method, params).await,
-            _ => json!(error(
-                "unsupported_capability",
-                "This memory method is unavailable."
-            )),
-        }
-    }
-    async fn websocket_watches(&self, params: Value) -> Value {
-        let query = if params == json!([]) {
-            WatchQuery::default()
-        } else {
-            match serde_json::from_value::<(WatchQuery,)>(params) {
-                Ok((query,)) => query,
-                Err(_) => return json!(error("invalid_request", "Expected one watch query.")),
-            }
-        };
-        json!(self.watch_list(query).await.1)
-    }
-    async fn watch_list(&self, query: WatchQuery) -> (StatusCode, ToolResponse) {
-        match self.service.watches(self.owner, query).await {
-            Ok(mut result) => {
-                let next_cursor = result.next_cursor.take();
-                (
-                    StatusCode::OK,
-                    ToolResponse::Ok {
-                        result: json!(result),
-                        next_cursor,
-                    },
-                )
-            }
-            Err(error) => service_error(error),
+        match MemoryRequest::from_websocket(method, params) {
+            Ok(request) => json!(self.execute(caller, token, request).await.1),
+            Err(error) => json!(error),
         }
     }
 
-    async fn search(&self, token: String, request: SearchRequest) -> (StatusCode, ToolResponse) {
-        match self.service.search(self.owner, token, request).await {
-            Ok(result) => (
-                StatusCode::OK,
-                ToolResponse::Ok {
-                    result: json!(result),
-                    next_cursor: None,
-                },
+    /// Runs an authorized request. Activity is scoped to the caller's own
+    /// conversations; every other operation acts for the owner.
+    async fn execute(&self, caller: Principal, token: String, request: MemoryRequest) -> Reply {
+        let owner = self.owner;
+        let service = &self.service;
+        match request {
+            MemoryRequest::Overview => {
+                let mut overview = service.overview(token).await;
+                overview.caller = Some(owner.to_string());
+                ok(json!(overview), None)
+            }
+            MemoryRequest::Activity(query) => self.activity(caller, query).await,
+            MemoryRequest::Records(query) => match service.records(owner, query).await {
+                Ok((page, next_cursor)) => ok(json!(page), next_cursor),
+                Err(error) => service_error(error),
+            },
+            MemoryRequest::Record(id) => respond(
+                service
+                    .record(owner, &id)
+                    .await
+                    .map(|record| json!({"schema_version":1,"record":record})),
             ),
-            Err(error) => service_error(error),
-        }
-    }
-    async fn websocket_search(&self, token: String, params: Value) -> Value {
-        let (request,) = match serde_json::from_value::<(SearchRequest,)>(params) {
-            Ok(request) => request,
-            Err(_) => return json!(error("invalid_request", "Expected one search request.")),
-        };
-        json!(self.search(token, request).await.1)
-    }
-
-    async fn websocket_watch(&self, method: &str, params: Value) -> Value {
-        let result = if method == "memory_watch" {
-            match serde_json::from_value::<(WatchRequest,)>(params) {
-                Ok((request,)) => self.service.watch(self.owner, request).await,
-                Err(_) => {
-                    return json!(error(
-                        "invalid_request",
-                        "Expected one record watch request."
-                    ));
+            MemoryRequest::Search(request) => respond(service.search(owner, token, request).await),
+            MemoryRequest::Watches(query) => match service.watches(owner, query).await {
+                Ok(mut result) => {
+                    let next_cursor = result.next_cursor.take();
+                    ok(json!(result), next_cursor)
                 }
+                Err(error) => service_error(error),
+            },
+            MemoryRequest::Watch(request) => watch_reply(service.watch(owner, request).await),
+            MemoryRequest::CancelWatch(id) => watch_reply(service.cancel_watch(owner, id).await),
+            MemoryRequest::SetupPrepare => respond(service.setup_preview(owner).await),
+            MemoryRequest::SetupCommit(request) => {
+                respond(service.setup_commit(owner, &request.preview_digest).await)
             }
-        } else {
-            match serde_json::from_value::<(String,)>(params) {
-                Ok((id,)) => self.service.cancel_watch(self.owner, id).await,
-                Err(_) => {
-                    return json!(error("invalid_request", "Expected one watch operation id."));
-                }
+            MemoryRequest::ChangePrepare(request) => {
+                respond(service.prepare_change(owner, request).await)
             }
-        };
-        json!(match result {
-            Ok(watch) => ToolResponse::Ok {
-                result: json!({"schema_version":1,"watch":watch}),
-                next_cursor: None
-            },
-            Err(error) => service_error(error).1,
-        })
-    }
-    async fn websocket_setup(&self, method: &str, params: Value) -> Value {
-        let result = if method == "memory_inbox_setup_prepare" {
-            if params != json!([]) {
-                return json!(error(
-                    "invalid_request",
-                    "Setup preview accepts no parameters."
-                ));
+            MemoryRequest::ChangeCommit(id, request) => {
+                respond(service.commit_change(owner, id, request).await)
             }
-            self.service.setup_preview(self.owner).await
-        } else {
-            let (request,) = match serde_json::from_value::<(CommitRequest,)>(params) {
-                Ok(request) => request,
-                Err(_) => {
-                    return json!(error(
-                        "invalid_request",
-                        "Expected the setup preview digest."
-                    ));
-                }
-            };
-            self.service
-                .setup_commit(self.owner, &request.preview_digest)
-                .await
-        };
-        json!(match result {
-            Ok(view) => ToolResponse::Ok {
-                result: json!(view),
-                next_cursor: None
-            },
-            Err(error) => service_error(error).1,
-        })
-    }
-    async fn websocket_change(&self, method: &str, params: Value) -> Value {
-        if method == "memory_change_discard" {
-            let (id,) = match serde_json::from_value::<(String,)>(params) {
-                Ok(id) => id,
-                Err(_) => return json!(error("invalid_request", "Expected one operation id.")),
-            };
-            return json!(match self.service.discard_change(self.owner, &id).await {
-                Ok(()) => ToolResponse::Ok {
-                    result: json!({"schema_version":1,"discarded":true}),
-                    next_cursor: None
-                },
-                Err(error) => service_error(error).1,
-            });
-        }
-        let result = match method {
-            "memory_change_prepare" => match serde_json::from_value::<(ChangeRequest,)>(params) {
-                Ok((request,)) => self.service.prepare_change(self.owner, request).await,
-                Err(_) => return json!(error("invalid_request", "Expected one change request.")),
-            },
-            "memory_change_commit" => {
-                match serde_json::from_value::<(String, CommitRequest)>(params) {
-                    Ok((id, request)) => self.service.commit_change(self.owner, id, request).await,
-                    Err(_) => {
-                        return json!(error(
-                            "invalid_request",
-                            "Expected an operation id and preview digest."
-                        ));
-                    }
-                }
-            }
-            "memory_change_status" => match serde_json::from_value::<(String,)>(params) {
-                Ok((id,)) => self.service.change(self.owner, &id).await,
-                Err(_) => return json!(error("invalid_request", "Expected one operation id.")),
-            },
-            _ => return json!(error("invalid_request", "Unknown memory change operation.")),
-        };
-        json!(match result {
-            Ok(view) => ToolResponse::Ok {
-                result: json!(view),
-                next_cursor: None
-            },
-            Err(err) => service_error(err).1,
-        })
-    }
-    async fn records(&self, query: RecordQuery) -> (StatusCode, ToolResponse) {
-        match self.service.records(self.owner, query).await {
-            Ok((page, next_cursor)) => (
-                StatusCode::OK,
-                ToolResponse::Ok {
-                    result: json!(page),
-                    next_cursor,
-                },
+            MemoryRequest::ChangeStatus(id) => respond(service.change(owner, &id).await),
+            MemoryRequest::ChangeDiscard(id) => respond(
+                service
+                    .discard_change(owner, &id)
+                    .await
+                    .map(|()| json!({"schema_version":1,"discarded":true})),
             ),
-            Err(error) => service_error(error),
         }
     }
 
-    async fn record(&self, id: &str) -> (StatusCode, ToolResponse) {
-        match self.service.record(self.owner, id).await {
-            Ok(record) => (
-                StatusCode::OK,
-                ToolResponse::Ok {
-                    result: json!({"schema_version":1,"record":record}),
-                    next_cursor: None,
-                },
-            ),
-            Err(error) => service_error(error),
-        }
-    }
-
-    async fn websocket_records(&self, params: Value) -> Value {
-        let (query,) = match serde_json::from_value::<(RecordQuery,)>(params) {
-            Ok(query) => query,
-            Err(_) => {
-                return json!(error(
-                    "invalid_request",
-                    "memory_records requires one query object."
-                ));
-            }
-        };
-        json!(self.records(query).await.1)
-    }
-
-    async fn websocket_record(&self, params: Value) -> Value {
-        let (id,) = match serde_json::from_value::<(String,)>(params) {
-            Ok(id) => id,
-            Err(_) => {
-                return json!(error(
-                    "invalid_request",
-                    "memory_record requires one record id."
-                ));
-            }
-        };
-        json!(self.record(&id).await.1)
-    }
     #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
-    fn authenticate(
-        &self,
-        headers: &HeaderMap,
-    ) -> Result<(Principal, String), (StatusCode, ToolResponse)> {
+    fn authenticate(&self, headers: &HeaderMap) -> Result<(Principal, String), Reply> {
         let caller = self
             .app
             .verify_user(headers, anda_engine::unix_ms(), None, None)
@@ -319,14 +253,14 @@ impl MemoryApiState {
     }
 
     #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
-    fn authorize(&self, headers: &HeaderMap) -> Result<String, (StatusCode, ToolResponse)> {
+    fn authorize(&self, headers: &HeaderMap) -> Result<(Principal, String), Reply> {
         let (caller, token) = self.authenticate(headers)?;
         self.authorize_caller(caller)?;
-        Ok(token)
+        Ok((caller, token))
     }
 
     #[allow(clippy::result_large_err)]
-    fn authorize_caller(&self, caller: Principal) -> Result<(), (StatusCode, ToolResponse)> {
+    fn authorize_caller(&self, caller: Principal) -> Result<(), Reply> {
         if caller != self.owner {
             return Err((
                 StatusCode::FORBIDDEN,
@@ -339,11 +273,7 @@ impl MemoryApiState {
         Ok(())
     }
 
-    async fn activity(
-        &self,
-        caller: Principal,
-        query: ActivityQuery,
-    ) -> (StatusCode, ToolResponse) {
+    async fn activity(&self, caller: Principal, query: ActivityQuery) -> Reply {
         if query.conversation.is_none() && caller != self.owner {
             return (
                 StatusCode::FORBIDDEN,
@@ -353,14 +283,9 @@ impl MemoryApiState {
         match self.service.activity(caller, query).await {
             Ok(mut page) => {
                 let cursor = page.next_cursor.take();
-                (
-                    StatusCode::OK,
-                    ToolResponse::Ok {
-                        result: json!(page),
-                        next_cursor: cursor,
-                    },
-                )
+                ok(json!(page), cursor)
             }
+            // Activity reads conversations, so its messages say so.
             Err(err) => match err.to_string().as_str() {
                 "payload_too_large" => (
                     StatusCode::PAYLOAD_TOO_LARGE,
@@ -398,41 +323,6 @@ impl MemoryApiState {
                 ),
             },
         }
-    }
-
-    async fn websocket_activity(&self, caller: Principal, params: Value) -> Value {
-        let (query,) = match serde_json::from_value::<(ActivityQuery,)>(params) {
-            Ok(query) => query,
-            Err(_) => {
-                return json!(error(
-                    "invalid_request",
-                    "memory_activity requires one query object."
-                ));
-            }
-        };
-        json!(self.activity(caller, query).await.1)
-    }
-
-    async fn overview(&self, token: String) -> (StatusCode, ToolResponse) {
-        let mut overview = self.service.overview(token).await;
-        overview.caller = Some(self.owner.to_string());
-        (
-            StatusCode::OK,
-            ToolResponse::Ok {
-                result: json!(overview),
-                next_cursor: None,
-            },
-        )
-    }
-
-    async fn websocket(&self, token: String, params: Value) -> Value {
-        if params != json!([]) {
-            return json!(error(
-                "invalid_request",
-                "memory_overview requires an empty parameter array."
-            ));
-        }
-        json!(self.overview(token).await.1)
     }
 
     pub fn into_router(self) -> Router {
@@ -479,7 +369,28 @@ impl MemoryApiState {
     }
 }
 
-fn service_error(err: anda_core::BoxError) -> (StatusCode, ToolResponse) {
+fn ok(result: Value, next_cursor: Option<String>) -> Reply {
+    (
+        StatusCode::OK,
+        ToolResponse::Ok {
+            result,
+            next_cursor,
+        },
+    )
+}
+
+fn respond<T: Serialize>(result: Result<T, BoxError>) -> Reply {
+    match result {
+        Ok(value) => ok(json!(value), None),
+        Err(error) => service_error(error),
+    }
+}
+
+fn watch_reply(result: Result<anda_brain::runtime_api::RecordWatch, BoxError>) -> Reply {
+    respond(result.map(|watch| json!({"schema_version":1,"watch":watch})))
+}
+
+fn service_error(err: BoxError) -> Reply {
     if let Some(native) = err.downcast_ref::<anda_brain::runtime_api::RuntimeError>() {
         use anda_brain::runtime_api::RuntimeError;
         let (status, code) = match native {
@@ -575,175 +486,93 @@ fn service_error(err: anda_core::BoxError) -> (StatusCode, ToolResponse) {
     }
 }
 
-async fn setup_preview(State(state): State<MemoryApiState>, headers: HeaderMap) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    setup_response(state.service.setup_preview(state.owner).await)
+fn reply((status, body): Reply) -> Response {
+    (status, Json(body)).into_response()
 }
-async fn search(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    request: Result<Json<SearchRequest>, axum::extract::rejection::JsonRejection>,
-) -> Response {
-    let token = match state.authorize(&headers) {
-        Ok(token) => token,
-        Err((status, error)) => return (status, Json(error)).into_response(),
-    };
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(rejection) => return json_rejection(rejection),
-    };
-    let (status, result) = state.search(token, request).await;
-    (status, Json(result)).into_response()
+
+fn invalid(message: &str) -> Response {
+    reply((StatusCode::BAD_REQUEST, error("invalid_request", message)))
 }
-fn json_rejection(rejection: axum::extract::rejection::JsonRejection) -> Response {
+
+fn json_rejection(rejection: JsonRejection) -> Response {
     let (status, reason) = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
         (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large")
     } else {
         (StatusCode::BAD_REQUEST, "invalid_request")
     };
-    (
+    reply((
         status,
-        Json(error(reason, "Invalid or oversized memory request.")),
-    )
-        .into_response()
+        error(reason, "Invalid or oversized memory request."),
+    ))
 }
 
-async fn setup_commit(
+/// Serves one owner-only HTTP route: authorization first, then the input the
+/// route's extractors produced.
+async fn owner_route(
+    state: &MemoryApiState,
+    headers: &HeaderMap,
+    request: Result<MemoryRequest, Response>,
+) -> Response {
+    let (caller, token) = match state.authorize(headers) {
+        Ok(identity) => identity,
+        Err(rejected) => return reply(rejected),
+    };
+    match request {
+        Ok(request) => reply(state.execute(caller, token, request).await),
+        Err(response) => response,
+    }
+}
+
+async fn overview(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<CommitRequest>, axum::extract::rejection::JsonRejection>,
+    query: Result<Query<OverviewQuery>, QueryRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(rejection) => return json_rejection(rejection),
-    };
-    setup_response(
-        state
-            .service
-            .setup_commit(state.owner, &request.preview_digest)
-            .await,
-    )
+    let request = query
+        .map(|_| MemoryRequest::Overview)
+        .map_err(|_| invalid("The overview accepts no query parameters."));
+    owner_route(&state, &headers, request).await
 }
-fn setup_response(
-    result: Result<crate::brain::setup::SetupPreview, anda_core::BoxError>,
+
+async fn search(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    request: Result<Json<SearchRequest>, JsonRejection>,
 ) -> Response {
-    let (status, response) = match result {
-        Ok(view) => (
-            StatusCode::OK,
-            ToolResponse::Ok {
-                result: json!(view),
-                next_cursor: None,
-            },
+    let request = request
+        .map(|Json(request)| MemoryRequest::Search(request))
+        .map_err(json_rejection);
+    owner_route(&state, &headers, request).await
+}
+
+async fn activity(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    query: Result<Query<ActivityQuery>, QueryRejection>,
+) -> Response {
+    let (caller, token) = match state.authenticate(&headers) {
+        Ok(identity) => identity,
+        Err(rejected) => return reply(rejected),
+    };
+    match query {
+        Ok(Query(query)) => reply(
+            state
+                .execute(caller, token, MemoryRequest::Activity(query))
+                .await,
         ),
-        Err(error) => service_error(error),
-    };
-    (status, Json(response)).into_response()
-}
-
-async fn prepare_change(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    request: Result<Json<ChangeRequest>, axum::extract::rejection::JsonRejection>,
-) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
+        Err(_) => invalid("Invalid activity query."),
     }
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(rejection) => return json_rejection(rejection),
-    };
-    change_response(state.service.prepare_change(state.owner, request).await)
-}
-
-async fn commit_change(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    request: Result<Json<CommitRequest>, axum::extract::rejection::JsonRejection>,
-) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(rejection) => return json_rejection(rejection),
-    };
-    change_response(state.service.commit_change(state.owner, id, request).await)
-}
-
-async fn change_status(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    change_response(state.service.change(state.owner, &id).await)
-}
-
-fn change_response(
-    result: Result<crate::brain::mutation::ChangeView, anda_core::BoxError>,
-) -> Response {
-    let (status, response) = match result {
-        Ok(view) => (
-            StatusCode::OK,
-            ToolResponse::Ok {
-                result: json!(view),
-                next_cursor: None,
-            },
-        ),
-        Err(error) => service_error(error),
-    };
-    (status, Json(response)).into_response()
-}
-
-async fn discard_change(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let (status, result) = match state.service.discard_change(state.owner, &id).await {
-        Ok(()) => (
-            StatusCode::OK,
-            ToolResponse::Ok {
-                result: json!({"schema_version":1,"discarded":true}),
-                next_cursor: None,
-            },
-        ),
-        Err(error) => service_error(error),
-    };
-    (status, Json(result)).into_response()
 }
 
 async fn records(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    query: Result<Query<RecordQuery>, axum::extract::rejection::QueryRejection>,
+    query: Result<Query<RecordQuery>, QueryRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(error("invalid_request", "Invalid memory query.")),
-            )
-                .into_response();
-        }
-    };
-    let (status, result) = state.records(query).await;
-    (status, Json(result)).into_response()
+    let request = query
+        .map(|Query(query)| MemoryRequest::Records(query))
+        .map_err(|_| invalid("Invalid memory query."));
+    owner_route(&state, &headers, request).await
 }
 
 async fn record(
@@ -751,125 +580,91 @@ async fn record(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let (status, result) = state.record(&id).await;
-    (status, Json(result)).into_response()
-}
-
-async fn activity(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    query: Result<Query<ActivityQuery>, axum::extract::rejection::QueryRejection>,
-) -> Response {
-    let (caller, _) = match state.authenticate(&headers) {
-        Ok(identity) => identity,
-        Err((status, error)) => return (status, Json(error)).into_response(),
-    };
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(error("invalid_request", "Invalid activity query.")),
-            )
-                .into_response();
-        }
-    };
-    let (status, result) = state.activity(caller, query).await;
-    (status, Json(result)).into_response()
-}
-
-async fn overview(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    query: Result<Query<OverviewQuery>, axum::extract::rejection::QueryRejection>,
-) -> Response {
-    let token = match state.authorize(&headers) {
-        Ok(token) => token,
-        Err((status, error)) => return (status, Json(error)).into_response(),
-    };
-    if query.is_err() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(error(
-                "invalid_request",
-                "The overview accepts no query parameters.",
-            )),
-        )
-            .into_response();
-    }
-    let (status, result) = state.overview(token).await;
-    (status, Json(result)).into_response()
+    owner_route(&state, &headers, Ok(MemoryRequest::Record(id))).await
 }
 
 async fn create_watch(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<WatchRequest>, axum::extract::rejection::JsonRejection>,
+    request: Result<Json<WatchRequest>, JsonRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let request = match request {
-        Ok(Json(request)) => request,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(error("invalid_request", "Invalid record watch request.")),
-            )
-                .into_response();
-        }
-    };
-    watch_response(state.service.watch(state.owner, request).await)
-}
-async fn cancel_watch(
-    State(state): State<MemoryApiState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    watch_response(state.service.cancel_watch(state.owner, id).await)
-}
-fn watch_response(
-    result: Result<anda_brain::runtime_api::RecordWatch, anda_core::BoxError>,
-) -> Response {
-    let (status, response) = match result {
-        Ok(watch) => (
-            StatusCode::OK,
-            ToolResponse::Ok {
-                result: json!({"schema_version":1,"watch":watch}),
-                next_cursor: None,
-            },
-        ),
-        Err(error) => service_error(error),
-    };
-    (status, Json(response)).into_response()
+    let request = request
+        .map(|Json(request)| MemoryRequest::Watch(request))
+        .map_err(|_| invalid("Invalid record watch request."));
+    owner_route(&state, &headers, request).await
 }
 
 async fn list_watches(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    query: Result<Query<WatchQuery>, axum::extract::rejection::QueryRejection>,
+    query: Result<Query<WatchQuery>, QueryRejection>,
 ) -> Response {
-    if let Err((status, error)) = state.authorize(&headers) {
-        return (status, Json(error)).into_response();
-    }
-    let query = match query {
-        Ok(Query(query)) => query,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(error("invalid_request", "Invalid watch query.")),
-            )
-                .into_response();
-        }
-    };
-    let (status, result) = state.watch_list(query).await;
-    (status, Json(result)).into_response()
+    let request = query
+        .map(|Query(query)| MemoryRequest::Watches(query))
+        .map_err(|_| invalid("Invalid watch query."));
+    owner_route(&state, &headers, request).await
+}
+
+async fn cancel_watch(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::CancelWatch(id))).await
+}
+
+async fn setup_preview(State(state): State<MemoryApiState>, headers: HeaderMap) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::SetupPrepare)).await
+}
+
+async fn setup_commit(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    request: Result<Json<CommitRequest>, JsonRejection>,
+) -> Response {
+    let request = request
+        .map(|Json(request)| MemoryRequest::SetupCommit(request))
+        .map_err(json_rejection);
+    owner_route(&state, &headers, request).await
+}
+
+async fn prepare_change(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    request: Result<Json<ChangeRequest>, JsonRejection>,
+) -> Response {
+    let request = request
+        .map(|Json(request)| MemoryRequest::ChangePrepare(request))
+        .map_err(json_rejection);
+    owner_route(&state, &headers, request).await
+}
+
+async fn commit_change(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    request: Result<Json<CommitRequest>, JsonRejection>,
+) -> Response {
+    let request = request
+        .map(|Json(request)| MemoryRequest::ChangeCommit(id, request))
+        .map_err(json_rejection);
+    owner_route(&state, &headers, request).await
+}
+
+async fn change_status(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::ChangeStatus(id))).await
+}
+
+async fn discard_change(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::ChangeDiscard(id))).await
 }
 
 #[cfg(test)]

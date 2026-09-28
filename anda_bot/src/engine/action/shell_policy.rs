@@ -5,14 +5,13 @@
 //! user-facing, localized reason), given the command, the declared
 //! [`ApprovalMode`], and the active workspace. Deterministic and table-driven,
 //! except for the optional model-backed classification in
-//! [`shell_approval_decision_with_model`] and the launcher UI language hint.
+//! [`shell_approval_decision_with_model`], which may clear ordinary asks but
+//! never an empty command or a secret-like target.
 
 use anda_core::{BoxError, CompletionRequest, ContentPart, ModelEffort, RequestMeta};
 use anda_engine::{extension::shell::CommandArgs, model::Models};
 use rust_i18n::t;
-use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::Path;
 
 use crate::util::request_meta::keys;
 
@@ -72,17 +71,14 @@ pub(super) async fn shell_approval_decision_with_model(
         ApprovalMode::OnRisk | ApprovalMode::Custom => {}
     }
 
-    let command = args.command.trim();
-    if command.is_empty() {
-        return localize_shell_approval_decision(
-            ApprovalDecision::Ask("empty command".to_string()),
-            language_hint,
-        );
-    }
-
-    match shell_approval_decision(args, mode, workspace) {
-        ApprovalDecision::Allow => return ApprovalDecision::Allow,
-        ApprovalDecision::Ask(_) => {}
+    let static_decision = shell_approval_decision(args, mode, workspace);
+    let ApprovalDecision::Ask(reason) = &static_decision else {
+        return ApprovalDecision::Allow;
+    };
+    // The command text is written by the agent, which may be steered by the
+    // content it reads, so the classifier never clears a secret-like target.
+    if reason == EMPTY_COMMAND || reason == SENSITIVE_PATH {
+        return localize_shell_approval_decision(static_decision, language_hint);
     }
 
     match model_shell_approval_decision(args, workspace, models, language_hint).await {
@@ -91,13 +87,13 @@ pub(super) async fn shell_approval_decision_with_model(
             log::warn!(
                 "Shell approval risk model unavailable or invalid; falling back to static policy: {err:?}"
             );
-            localize_shell_approval_decision(
-                shell_approval_decision(args, mode, workspace),
-                language_hint,
-            )
+            localize_shell_approval_decision(static_decision, language_hint)
         }
     }
 }
+
+const EMPTY_COMMAND: &str = "empty command";
+const SENSITIVE_PATH: &str = "sensitive path or secret-like argument";
 
 async fn model_shell_approval_decision(
     args: &CommandArgs,
@@ -171,19 +167,6 @@ pub(super) fn shell_risk_language_hint(meta: &RequestMeta) -> Option<String> {
         })
 }
 
-pub(super) fn launcher_ui_language_hint(home_dir: &Path) -> Option<String> {
-    #[derive(Default, Deserialize)]
-    #[serde(default)]
-    struct LauncherUiSettings {
-        language: String,
-    }
-
-    let content = std::fs::read_to_string(home_dir.join("launcher").join("ui.json")).ok()?;
-    let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
-    let language = settings.language.trim();
-    (!language.is_empty()).then(|| language.to_string())
-}
-
 fn localize_shell_approval_decision(
     decision: ApprovalDecision,
     language_hint: Option<&str>,
@@ -202,7 +185,7 @@ fn localize_shell_approval_reason(reason: &str, language_hint: Option<&str>) -> 
         "approval mode requires confirmation" => {
             t!("shell_approval.reason.approval_required", locale = locale).into_owned()
         }
-        "empty command" => t!("shell_approval.reason.empty_command", locale = locale).into_owned(),
+        EMPTY_COMMAND => t!("shell_approval.reason.empty_command", locale = locale).into_owned(),
         "background command" => {
             t!("shell_approval.reason.background_command", locale = locale).into_owned()
         }
@@ -211,7 +194,7 @@ fn localize_shell_approval_reason(reason: &str, language_hint: Option<&str>) -> 
             locale = locale
         )
         .into_owned(),
-        "sensitive path or secret-like argument" => t!(
+        SENSITIVE_PATH => t!(
             "shell_approval.reason.sensitive_path_or_secret",
             locale = locale
         )
@@ -316,20 +299,21 @@ fn shell_approval_decision(
         ApprovalMode::OnRisk | ApprovalMode::Custom => {}
     }
 
+    // Reasons the model may not overrule come first, so another reason
+    // (background, shell syntax) cannot mask them.
+    let command = args.command.trim();
+    if command.is_empty() {
+        return ApprovalDecision::Ask(EMPTY_COMMAND.to_string());
+    }
+    if references_sensitive_path(command) {
+        return ApprovalDecision::Ask(SENSITIVE_PATH.to_string());
+    }
+
     if args.background {
         return ApprovalDecision::Ask("background command".to_string());
     }
-
-    let command = args.command.trim();
-    if command.is_empty() {
-        return ApprovalDecision::Ask("empty command".to_string());
-    }
-
     if has_risky_shell_syntax(command) {
         return ApprovalDecision::Ask("complex shell syntax".to_string());
-    }
-    if references_sensitive_path(command) {
-        return ApprovalDecision::Ask("sensitive path or secret-like argument".to_string());
     }
     if references_external_path(command, workspace)
         || args
@@ -1123,6 +1107,43 @@ mod tests {
             .await,
             ApprovalDecision::Allow
         );
+    }
+
+    #[tokio::test]
+    async fn shell_policy_never_lets_the_model_clear_secret_like_targets() {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let models = Models::default();
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: requests.clone(),
+                response: r#"{"decision":"allow","reason":"looks fine"}"#.to_string(),
+                name: "lite-recorder",
+            })),
+        );
+        for (command, background) in [
+            ("cat .env | head", false),
+            ("cat ~/.ssh/id_ed25519", false),
+            ("tail -f secrets/token.txt", true),
+        ] {
+            let args = CommandArgs {
+                command: command.to_string(),
+                background,
+                ..Default::default()
+            };
+            assert!(matches!(
+                shell_approval_decision_with_model(
+                    &args,
+                    ApprovalMode::OnRisk,
+                    "/tmp/workspace",
+                    &models,
+                    None
+                )
+                .await,
+                ApprovalDecision::Ask(_)
+            ));
+        }
+        assert!(requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

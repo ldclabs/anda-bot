@@ -308,7 +308,7 @@ OAuth 服务可通过 `connect_mcp_server` 完成授权并保存连接。重新�
 - Discord
 - Lark / 飞书
 
-多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以操作系统安全凭证库里的本地 owner 身份运行。
+多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以操作系统安全凭证库里的本地 owner 身份运行。daemon 管理操作（修改配置、重载与切换模型、安装更新、关停）仍只允许本地 owner 执行。
 
 ```bash
 anda user create alice

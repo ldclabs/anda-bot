@@ -8,12 +8,13 @@ use axum::{Router, routing};
 use object_store::ObjectStore;
 use std::sync::Arc;
 
-use crate::{config, identity::Ed25519PubKey, util::http_client::build_http_client};
+use crate::{config, identity::Ed25519PubKey};
 use anda_brain::{agents::SELF_USER_ID, handler::*, space::AppState};
 
 pub struct BrainConfig {
     pub managers: Vec<Ed25519PubKey>,
-    pub https_proxy: Option<String>,
+    /// The daemon's outbound client, shared with the Engine.
+    pub http_client: reqwest::Client,
     pub models: Arc<Models>,
     pub runtime_config: Option<anda_brain::runtime_api::config::RuntimeConfig>,
 }
@@ -35,7 +36,6 @@ impl Brain {
         cfg: BrainConfig,
         resolve_secret: impl FnMut(&str) -> Option<String>,
     ) -> Result<Self, BoxError> {
-        let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
         let management = Arc::new(BaseManagement {
             controller: SELF_USER_ID,
             managers: cfg.managers.iter().map(|k| k.id()).collect(),
@@ -65,7 +65,7 @@ impl Brain {
             object_store,
             Arc::new(db_config),
             management.clone(),
-            http_client.clone(),
+            cfg.http_client,
             cfg.models,
             Arc::new(cfg.managers.into_iter().map(|k| k.into()).collect()),
             config::APP_NAME.to_string(),
@@ -235,7 +235,7 @@ mod tests {
             object_store,
             BrainConfig {
                 managers: vec![manager],
-                https_proxy: None,
+                http_client: new_reqwest_client(),
                 models: brain_models(),
                 runtime_config: None,
             },
@@ -255,7 +255,7 @@ mod tests {
             Arc::new(InMemory::new()),
             BrainConfig {
                 managers: vec![owner.pubkey()],
-                https_proxy: None,
+                http_client: new_reqwest_client(),
                 models: brain_models(),
                 runtime_config: None,
             },
@@ -303,7 +303,7 @@ mod tests {
             Arc::new(InMemory::new()),
             BrainConfig {
                 managers: vec![key.pubkey()],
-                https_proxy: None,
+                http_client: new_reqwest_client(),
                 models: brain_models(),
                 runtime_config: None,
             },
@@ -483,7 +483,7 @@ mod tests {
             object_store,
             BrainConfig {
                 managers: Vec::new(),
-                https_proxy: None,
+                http_client: new_reqwest_client(),
                 models: brain_models(),
                 runtime_config: None,
             },

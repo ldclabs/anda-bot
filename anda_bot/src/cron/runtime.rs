@@ -240,9 +240,10 @@ impl CronRuntime {
                                 Ok(id) => { running_ids.remove(&id); }
                                 Err(err) => { failure = Some(err.into()); break; }
                             }
+                            // A failed flush keeps the changes for the next one;
+                            // it must not take the whole daemon down with it.
                             if let Err(err) = self.store.flush(unix_ms()).await {
-                                failure = Some(err);
-                                break;
+                                log::error!(name = "cron"; "failed to flush cron state: {err}");
                             }
                         }
                     }

@@ -322,7 +322,7 @@ Supported channel families:
 - Discord
 - Lark / Feishu
 
-Multiple trusted users can share one daemon and the same Anda agent. Create a user key, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner identity stored in the OS secure credential store.
+Multiple trusted users can share one daemon and the same Anda agent. Create a user key, then set a channel entry's `user` to the matching id. If `user` is omitted, channel messages run as the local owner identity stored in the OS secure credential store. Daemon controls (configuration, model reload and switching, update installation, shutdown) remain reserved for the local owner.
 
 ```bash
 anda user create alice

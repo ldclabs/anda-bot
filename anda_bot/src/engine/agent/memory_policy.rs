@@ -176,17 +176,15 @@ impl MemoryPolicy {
         if self.may_write() {
             return true;
         }
-        if matches!(
-            name,
-            "brain_respond"
-                | "brain_attention"
-                | "brain_runtime_status"
-                | "brain_feedback"
-                | "create_cron_job"
-                | "update_cron_job"
-                | "manage_cron_job"
-                | "bookmarks_api"
-        ) {
+        // Tools that persist on the owner's behalf, named by their constants so
+        // a rename cannot silently reopen them.
+        let persisting = [
+            crate::cron::CreateCronTool::NAME,
+            crate::cron::UpdateCronJobTool::NAME,
+            crate::cron::ManageCronJobTool::NAME,
+            crate::engine::BookmarksTool::NAME,
+        ];
+        if crate::brain::RuntimeTool::NAMES.contains(&name) || persisting.contains(&name) {
             return false;
         }
         self.may_read() || name != crate::brain::Client::NAME

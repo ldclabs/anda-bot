@@ -7,24 +7,11 @@ pub const BAMBOO_LIGHT: Color = Color::Rgb(198, 244, 170);
 pub const LEAF_MINT: Color = Color::Rgb(226, 252, 208);
 pub const PANDA_WHITE: Color = Color::Rgb(248, 253, 243);
 pub const BAMBOO_DIM: Color = Color::Rgb(168, 192, 150);
-pub const PANDA_INK: Color = Color::Rgb(14, 20, 12);
 pub const WARN_AMBER: Color = Color::Rgb(255, 222, 120);
 pub const ERROR_RED: Color = Color::Rgb(255, 132, 132);
 pub const ACCENT_TEAL: Color = Color::Rgb(130, 232, 214);
 pub const FOOTER_BG: Color = Color::Rgb(10, 28, 24);
 pub const FOOTER_BORDER: Color = Color::Rgb(74, 150, 140);
-
-#[allow(unused)]
-pub fn title_style() -> Style {
-    Style::default()
-        .fg(BAMBOO_LIGHT)
-        .add_modifier(Modifier::BOLD)
-}
-
-#[allow(unused)]
-pub fn heading_style() -> Style {
-    Style::default().fg(LEAF_MINT).add_modifier(Modifier::BOLD)
-}
 
 pub fn body_style() -> Style {
     Style::default().fg(PANDA_WHITE)
@@ -83,23 +70,12 @@ pub fn banner_line_style(index: usize) -> Style {
     }
 }
 
-#[allow(unused)]
-pub fn badge_style() -> Style {
-    Style::default()
-        .fg(PANDA_INK)
-        .bg(LEAF_MINT)
-        .add_modifier(Modifier::BOLD)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn styles_use_palette_colors() {
-        assert_eq!(title_style().fg, Some(BAMBOO_LIGHT));
-        assert!(title_style().add_modifier.contains(Modifier::BOLD));
-        assert_eq!(heading_style().fg, Some(LEAF_MINT));
         assert_eq!(body_style().fg, Some(PANDA_WHITE));
         assert_eq!(dim_style().fg, Some(BAMBOO_DIM));
         assert_eq!(accent_style().fg, Some(ACCENT_TEAL));
@@ -116,12 +92,6 @@ mod tests {
         assert_eq!(footer_border_style().bg, Some(FOOTER_BG));
         assert_eq!(footer_text_style().fg, Some(BAMBOO_LIGHT));
         assert_eq!(footer_text_style().bg, Some(FOOTER_BG));
-    }
-
-    #[test]
-    fn badge_style_inverts_ink_on_mint() {
-        assert_eq!(badge_style().fg, Some(PANDA_INK));
-        assert_eq!(badge_style().bg, Some(LEAF_MINT));
     }
 
     #[test]

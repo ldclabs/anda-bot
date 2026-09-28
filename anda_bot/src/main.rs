@@ -1030,7 +1030,7 @@ mod tests {
             brain::BrainConfig {
                 managers: vec![owner.pubkey()],
                 models: std::sync::Arc::new(anda_engine::model::Models::default()),
-                https_proxy: None,
+                http_client: crate::util::http_client::new_reqwest_client(),
                 runtime_config: None,
             },
         )

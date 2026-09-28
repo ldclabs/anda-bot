@@ -61,7 +61,7 @@ use crate::{
     identity::{Ed25519Key, Ed25519PubKey, iana},
     transcription::TranscriptionManager,
     tts::TtsManager,
-    util::http_client::{NO_PROXY, build_http_client},
+    util::http_client::NO_PROXY,
 };
 use browser_ws::{BrowserVoiceCapabilities, BrowserWebSocketState, browser_websocket};
 use resources::record_artifacts;
@@ -70,9 +70,9 @@ pub(crate) use action::{
     ActionApiOutput, ActionDetail, ActionEvent, ActionRuntime, ActionSession, ActionStatus,
     ActionsTool, ActionsToolArgs, AskUserChoiceTool, action_id_from_message,
     action_id_from_message_value, apply_action_resolution_to_chat_message,
-    apply_action_resolution_to_message, approval_detail, is_action_message,
-    is_action_message_value, payload_action_id, payload_is_pending, payload_responded_at,
-    require_mcp_approval, update_action_payload_resolution,
+    apply_action_resolution_to_message, approval_detail, is_action_message_value,
+    payload_action_id, payload_is_pending, payload_responded_at, require_mcp_approval,
+    update_action_payload_resolution,
 };
 pub(crate) use agent::memory_policy::{MemoryMode, MemoryPolicy};
 pub use agent::{
@@ -129,6 +129,8 @@ pub struct EngineConfig {
     pub transcription: config::TranscriptionConfig,
     pub mcp: config::McpSettings,
     pub https_proxy: Option<String>,
+    /// The daemon's outbound client (model providers, TTS, transcription, Web3).
+    pub http_client: reqwest::Client,
     pub auto_updater: Arc<AutoUpdater>,
     /// Listener address; OAuth loopback redirects use the same IP family and port.
     pub gateway_addr: std::net::SocketAddr,
@@ -137,6 +139,7 @@ pub struct EngineConfig {
 #[derive(Clone)]
 struct AutoUpdateRouteState {
     app: AppState,
+    owner: Principal,
     auto_updater: Arc<AutoUpdater>,
 }
 
@@ -453,7 +456,7 @@ impl Engines {
             hasher.update(cfg.id_key.as_bytes());
             hasher.finalize().into()
         };
-        let outer_http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
+        let outer_http_client = cfg.http_client.clone();
         let runtime_models = RuntimeModels::new(
             cfg.models.clone(),
             cfg.brain_models.clone(),
@@ -490,7 +493,10 @@ impl Engines {
         claims.audience = Some("*".into());
         claims.extra.insert(iana::CWTClaimScope, "*");
         let brain_token = cfg.id_key.sign_cwt(claims)?;
-        let brain_journal = brain::Journal::new(object_store.clone());
+        let brain_journal = brain_host
+            .journal()
+            .cloned()
+            .ok_or("the Brain host has no journal")?;
         let brain_client = brain::Client::new(cfg.brain_base_url, Some(brain_token))
             .with_host(brain_host.clone(), brain_journal.clone());
 
@@ -501,7 +507,11 @@ impl Engines {
             .ok_or("At least one workspace must be provided")?;
         let subagent_conversations =
             Conversations::connect(db.clone(), "subagent".to_string()).await?;
-        let resource_store = Arc::new(ResourceStore::connect(db.clone()).await?);
+        let resource_store = Arc::new(
+            ResourceStore::connect(db.clone())
+                .await?
+                .with_download_roots(cfg.workspaces.clone()),
+        );
         let conversations_tool = Arc::new(
             ConversationsTool::connect(
                 db.clone(),
@@ -851,6 +861,7 @@ impl Engines {
         };
         let auto_update_route_state = AutoUpdateRouteState {
             app: self.state.clone(),
+            owner: self.cli_workspaces.owner(),
             auto_updater: self.auto_updater.clone(),
         };
         let daemon_control_route_state = DaemonControlRouteState {
@@ -868,6 +879,7 @@ impl Engines {
             submissions: app_protocol::Submissions::new(&self.home_dir),
             memory: memory_state.clone(),
             auth_headers: HeaderMap::new(),
+            credential_expires_at_ms: 0,
             app: self.state.clone(),
             brain: self.brain,
             bridge: self.browser_bridge,
@@ -1049,8 +1061,8 @@ async fn auto_update_install_and_restart(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    if let Err(response) = verify_owner(&state.app, &headers, state.owner, DAEMON_OWNER_ONLY) {
+        return response.into_response();
     }
     match state.auto_updater.install_and_restart().await {
         Ok(state) => AxumJson(state).into_response(),
@@ -1062,8 +1074,13 @@ async fn daemon_shutdown(
     State(state): State<DaemonControlRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        DAEMON_OWNER_ONLY,
+    ) {
+        return response.into_response();
     }
 
     state.cancel_token.cancel();
@@ -1081,12 +1098,13 @@ async fn daemon_maintenance(
     headers: HeaderMap,
     AxumJson(request): AxumJson<MaintenanceRequest>,
 ) -> axum::response::Response {
-    if verify_trusted_user(&state.app, &headers, unix_ms()) != Ok(state.cli_workspaces.owner()) {
-        return (
-            StatusCode::FORBIDDEN,
-            "Only the local owner may coordinate updates",
-        )
-            .into_response();
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        "Only the local owner may coordinate updates",
+    ) {
+        return response.into_response();
     }
     let gate = state.bot.admission();
     let mut token = request.token.clone();
@@ -1153,16 +1171,13 @@ async fn get_daemon_config(
     State(state): State<DaemonControlRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let caller = match verify_trusted_user(&state.app, &headers, unix_ms()) {
-        Ok(caller) => caller,
-        Err(response) => return response.into_response(),
-    };
-    if caller != state.cli_workspaces.owner() {
-        return (
-            StatusCode::FORBIDDEN,
-            "Only the local owner may manage daemon configuration",
-        )
-            .into_response();
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        CONFIG_OWNER_ONLY,
+    ) {
+        return response.into_response();
     }
 
     let content = match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
@@ -1187,16 +1202,13 @@ async fn update_daemon_config(
     headers: HeaderMap,
     AxumJson(request): AxumJson<DaemonConfigUpdateRequest>,
 ) -> impl IntoResponse {
-    let caller = match verify_trusted_user(&state.app, &headers, unix_ms()) {
-        Ok(caller) => caller,
-        Err(response) => return response.into_response(),
-    };
-    if caller != state.cli_workspaces.owner() {
-        return (
-            StatusCode::FORBIDDEN,
-            "Only the local owner may manage daemon configuration",
-        )
-            .into_response();
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        CONFIG_OWNER_ONLY,
+    ) {
+        return response.into_response();
     }
 
     let content = normalize_config_file_content(request.content);
@@ -1214,34 +1226,30 @@ async fn update_daemon_config(
 
     let _write_guard = state.config_write_lock.lock().await;
 
-    if let Some(expected) = &request.expected_revision {
-        let current =
-            match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
-                Ok(content) => content,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                    config::Config::default_template().to_string()
-                }
-                Err(err) => {
-                    return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
-                }
-            };
-        if expected != &daemon_config_revision(&current) {
-            return (
-                StatusCode::CONFLICT,
-                "Configuration changed since it was loaded. Reload before saving.",
-            )
-                .into_response();
-        }
-    }
-
-    match daemon_config_needs_backup(&state.runtime_models.config_path, content.as_bytes()).await {
-        Ok(true) => {
-            if let Err(err) = backup_daemon_config(&state.runtime_models.config_path).await {
-                return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
-            }
-        }
-        Ok(false) => {}
+    // One read serves the revision check and the backup decision.
+    let current = match crate::util::text::read_text_file(&state.runtime_models.config_path).await {
+        Ok(current) => Some(current),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+    };
+    if let Some(expected) = &request.expected_revision
+        && expected
+            != &daemon_config_revision(
+                current
+                    .as_deref()
+                    .unwrap_or(config::Config::default_template()),
+            )
+    {
+        return (
+            StatusCode::CONFLICT,
+            "Configuration changed since it was loaded. Reload before saving.",
+        )
+            .into_response();
+    }
+    if current.as_deref().is_some_and(|current| current != content)
+        && let Err(err) = backup_daemon_config(&state.runtime_models.config_path).await
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
     if let Err(err) =
@@ -1267,8 +1275,13 @@ async fn reload_daemon_models(
     State(state): State<DaemonControlRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        CONFIG_OWNER_ONLY,
+    ) {
+        return response.into_response();
     }
 
     match state.runtime_models.reload_from_config().await {
@@ -1440,6 +1453,24 @@ fn verify_authenticated_request(
     verify_trusted_user(app, headers, unix_ms())
         .map(|_| ())
         .map_err(|error| Box::new(error.into_response()))
+}
+
+const DAEMON_OWNER_ONLY: &str = "Only the local owner may control the daemon";
+const CONFIG_OWNER_ONLY: &str = "Only the local owner may manage daemon configuration";
+
+/// Daemon lifecycle and machine-wide settings (configuration, models, updates,
+/// shutdown) belong to the local owner, not to every trusted user sharing it.
+fn verify_owner(
+    app: &AppState,
+    headers: &HeaderMap,
+    owner: Principal,
+    forbidden: &'static str,
+) -> Result<(), (StatusCode, &'static str)> {
+    if verify_trusted_user(app, headers, unix_ms())? == owner {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, forbidden))
+    }
 }
 
 /// Signature verification identifies a caller; signed envelopes may be created
@@ -1885,13 +1916,18 @@ model:
     async fn auto_update_routes_require_auth_and_return_state() {
         let db = route_test_db().await;
         let key = Ed25519Key::new([5u8; 32]);
-        let app = minimal_app(vec![key.pubkey().into()]);
+        let other_key = Ed25519Key::new([4u8; 32]);
+        let app = minimal_app(vec![key.pubkey().into(), other_key.pubkey().into()]);
         let auto_updater = Arc::new(AutoUpdater::new(
             db,
             std::env::temp_dir(),
             dead_proxy_http(),
         ));
-        let state = AutoUpdateRouteState { app, auto_updater };
+        let state = AutoUpdateRouteState {
+            app,
+            owner: key.id(),
+            auto_updater,
+        };
 
         // Without a token, the status route is unauthorized.
         let resp = auto_update_status(State(state.clone()), HeaderMap::new())
@@ -1910,6 +1946,13 @@ model:
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
+
+        // Installing restarts the daemon, which only the owner may do.
+        let resp =
+            auto_update_install_and_restart(State(state.clone()), authed_headers(&other_key))
+                .await
+                .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
         // Install with no downloaded update is a bad request.
         let resp = auto_update_install_and_restart(State(state), authed_headers(&key))
@@ -2067,13 +2110,21 @@ model:
             original
         );
 
-        // Reloading models from the on-disk config succeeds.
+        // Reloading models from the on-disk config succeeds for the owner only.
+        let resp = reload_daemon_models(State(state.clone()), authed_headers(&other_key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         let resp = reload_daemon_models(State(state.clone()), authed_headers(&key))
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // Shutdown cancels the token.
+        // Shutdown cancels the token; another trusted user may not stop the daemon.
+        let resp = daemon_shutdown(State(state.clone()), authed_headers(&other_key))
+            .await
+            .into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
         assert!(!state.cancel_token.is_cancelled());
         let resp = daemon_shutdown(State(state.clone()), authed_headers(&key))
             .await

@@ -358,7 +358,7 @@ impl Daemon {
             runtime_config: self.cfg.brain.load_runtime_config(&self.home).await?,
             managers: brain_managers,
             models: brain_models.clone(),
-            https_proxy: self.cfg.https_proxy.clone(),
+            http_client: outer_http_client.clone(),
         };
         let bot_db = self.connect_bot_db().await?;
         let auto_updater = Arc::new(auto_update::AutoUpdater::new(
@@ -380,6 +380,7 @@ impl Daemon {
             transcription: self.cfg.transcription.clone(),
             mcp,
             https_proxy: self.cfg.https_proxy.clone(),
+            http_client: outer_http_client.clone(),
             auto_updater,
             gateway_addr: self.cfg.socket_addr()?,
         };

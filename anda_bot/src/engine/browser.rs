@@ -11,7 +11,6 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -703,7 +702,7 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
                     next_cursor: None,
                 }));
             }
-            let launch = launch_browser(args.url.as_deref())?;
+            let launch = launch_browser(args.url.as_deref()).await?;
             let session = self
                 .bridge
                 .wait_for_connected_session(preferred_session, timeout_ms)
@@ -762,7 +761,7 @@ impl ChromeBrowserTool {
                 {
                     return Err("The selected desktop browser is disconnected. Reconnect Anda Desktop before retrying.".into());
                 }
-                let _launch = launch_browser(None)?;
+                let _launch = launch_browser(None).await?;
                 self.bridge
                     .wait_for_connected_session(preferred_session, timeout_ms)
                     .await
@@ -803,6 +802,7 @@ impl ChromeBrowserTool {
             result,
             launch_browser_for_session,
         )
+        .await
     }
 
     fn local_file_from_args(
@@ -846,7 +846,7 @@ fn is_local_file_access_error(error_code: Option<&str>) -> bool {
     error_code == Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE)
 }
 
-fn open_file_result_with_fallback<F>(
+async fn open_file_result_with_fallback<F>(
     session: &str,
     file: &LocalBrowserFile,
     file_url: &str,
@@ -854,7 +854,7 @@ fn open_file_result_with_fallback<F>(
     launch_browser: F,
 ) -> Result<BrowserActionResult, BoxError>
 where
-    F: FnOnce(Option<&str>, &str) -> Result<Value, BoxError>,
+    F: AsyncFnOnce(Option<&str>, &str) -> Result<Value, BoxError>,
 {
     if result.ok {
         if let Some(value) = result.value.as_object_mut() {
@@ -867,7 +867,7 @@ where
         return Ok(result);
     }
 
-    let launch = launch_browser(Some(file_url), session)?;
+    let launch = launch_browser(Some(file_url), session).await?;
     Ok(BrowserActionResult {
         ok: true,
         value: json!({
@@ -1655,15 +1655,18 @@ fn json_null() -> Value {
     Value::Null
 }
 
-fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
-    launch_browser_with_preferred_scope(url, None)
+async fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
+    launch_browser_with_preferred_scope(url, None).await
 }
 
-fn launch_browser_for_session(url: Option<&str>, session: &str) -> Result<Value, BoxError> {
-    launch_browser_with_preferred_scope(url, browser_scope_from_session(session))
+async fn launch_browser_for_session(url: Option<&str>, session: &str) -> Result<Value, BoxError> {
+    launch_browser_with_preferred_scope(url, browser_scope_from_session(session)).await
 }
 
-fn launch_browser_with_preferred_scope(
+/// Launches a browser without blocking a runtime worker. `open` returns once
+/// the application is asked to open; a browser spawned directly on Linux keeps
+/// running and is reaped by the runtime when it exits.
+async fn launch_browser_with_preferred_scope(
     url: Option<&str>,
     preferred_scope: Option<&str>,
 ) -> Result<Value, BoxError> {
@@ -1677,21 +1680,24 @@ fn launch_browser_with_preferred_scope(
         let browsers = macos_browser_candidates(preferred_scope);
         let mut last_error = None;
         for browser in browsers {
-            let mut command = Command::new("open");
-            command.arg("-a").arg(browser);
+            let mut command = tokio::process::Command::new("open");
+            command.arg("-a").arg(browser).kill_on_drop(true);
             if let Some(url) = url {
                 command.arg(url);
             }
 
-            match command.status() {
-                Ok(status) if status.success() => {
+            match tokio::time::timeout(Duration::from_secs(10), command.status()).await {
+                Ok(Ok(status)) if status.success() => {
                     return Ok(json!({ "browser": browser, "url": url }));
                 }
-                Ok(status) => {
+                Ok(Ok(status)) => {
                     last_error = Some(format!("{browser} exited with status {status}"));
                 }
-                Err(err) => {
+                Ok(Err(err)) => {
                     last_error = Some(format!("{browser}: {err}"));
+                }
+                Err(_) => {
+                    last_error = Some(format!("{browser}: timed out"));
                 }
             }
         }
@@ -1737,7 +1743,7 @@ fn launch_browser_with_preferred_scope(
         let browsers = linux_browser_candidates(preferred_scope);
         let mut last_error = None;
         for browser in browsers {
-            let mut command = Command::new(browser);
+            let mut command = tokio::process::Command::new(browser);
             if let Some(url) = url {
                 command.arg(url);
             }
@@ -2200,8 +2206,8 @@ mod tests {
         assert_eq!(result.value["mime_type"], "text/html");
     }
 
-    #[test]
-    fn open_file_result_falls_back_for_local_file_access_errors() {
+    #[tokio::test]
+    async fn open_file_result_falls_back_for_local_file_access_errors() {
         let file = LocalBrowserFile {
             path: PathBuf::from("/tmp/report.html"),
             path_string: "/tmp/report.html".to_string(),
@@ -2219,12 +2225,13 @@ mod tests {
             &file,
             "file:///tmp/report.html",
             result,
-            |url, session| {
+            async |url, session| {
                 assert_eq!(url, Some("file:///tmp/report.html"));
                 assert_eq!(session, "browser:edge:42");
                 Ok(json!({ "browser": "Microsoft Edge", "url": url }))
             },
         )
+        .await
         .unwrap();
 
         assert!(fallback.ok);
@@ -2240,8 +2247,8 @@ mod tests {
         assert_eq!(fallback.value["launch"]["browser"], "Microsoft Edge");
     }
 
-    #[test]
-    fn open_file_result_does_not_fallback_for_other_errors() {
+    #[tokio::test]
+    async fn open_file_result_does_not_fallback_for_other_errors() {
         let file = LocalBrowserFile {
             path: PathBuf::from("/tmp/report.html"),
             path_string: "/tmp/report.html".to_string(),
@@ -2259,8 +2266,9 @@ mod tests {
             &file,
             "file:///tmp/report.html",
             result.clone(),
-            |_url, _session| panic!("unexpected fallback launch"),
+            async |_url, _session| panic!("unexpected fallback launch"),
         )
+        .await
         .unwrap();
 
         assert_eq!(preserved.ok, result.ok);
@@ -2542,8 +2550,8 @@ mod tests {
         assert!(!is_local_file_access_error(None));
     }
 
-    #[test]
-    fn open_file_result_with_fallback_launches_on_access_error() {
+    #[tokio::test]
+    async fn open_file_result_with_fallback_launches_on_access_error() {
         let file = LocalBrowserFile {
             path: PathBuf::from("/tmp/x.html"),
             path_string: "/tmp/x.html".to_string(),
@@ -2561,8 +2569,9 @@ mod tests {
                 error: None,
                 error_code: None,
             },
-            |_url, _session| Ok(json!({"launched": true})),
+            async |_url, _session| Ok(json!({"launched": true})),
         )
+        .await
         .unwrap();
         assert_eq!(ok.value["opened_file"], json!(true));
 
@@ -2577,8 +2586,9 @@ mod tests {
                 error: Some("blocked".to_string()),
                 error_code: Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE.to_string()),
             },
-            |_url, _session| Ok(json!({"launched": true})),
+            async |_url, _session| Ok(json!({"launched": true})),
         )
+        .await
         .unwrap();
         assert!(fallback.ok);
         assert_eq!(fallback.value["fallback_launch"], json!(true));
@@ -2594,8 +2604,9 @@ mod tests {
                 error: Some("boom".to_string()),
                 error_code: Some("OTHER".to_string()),
             },
-            |_url, _session| Ok(json!({"launched": true})),
+            async |_url, _session| Ok(json!({"launched": true})),
         )
+        .await
         .unwrap();
         assert!(!other.ok);
     }

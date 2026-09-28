@@ -52,6 +52,9 @@ pub struct BrowserWebSocketState {
     pub(super) app_protocol: bool,
     pub(super) memory: super::memory_api::MemoryApiState,
     pub(super) auth_headers: HeaderMap,
+    /// When the connection's bearer expires. The signature is verified once at
+    /// the upgrade; a live socket only rechecks the clock.
+    pub(super) credential_expires_at_ms: u64,
     pub app: AppState,
     pub brain: brain::Client,
     pub bridge: Arc<BrowserBridge>,
@@ -154,9 +157,13 @@ pub async fn browser_websocket(
     else {
         return (StatusCode::UNAUTHORIZED, "missing bearer token").into_response();
     };
+    let Some(credential_expires_at_ms) = bearer_expires_at_ms(bearer) else {
+        return (StatusCode::UNAUTHORIZED, "invalid or expired credential").into_response();
+    };
     let mut state = state;
     state.brain = state.brain.with_auth_token(bearer.to_string());
     state.auth_headers = auth_headers;
+    state.credential_expires_at_ms = credential_expires_at_ms;
 
     let upgraded = upgrade::on(&mut request);
     tokio::spawn(async move {
@@ -206,12 +213,11 @@ async fn handle_browser_websocket(
     let (write_sender, mut write_receiver) = mpsc::channel::<String>(64);
     let request_tasks = CancellationToken::new();
     let writer_cancel = request_tasks.clone();
-    let writer_app = state.app.clone();
-    let writer_auth = state.auth_headers.clone();
+    let expires_at_ms = state.credential_expires_at_ms;
 
     let writer = tokio::spawn(async move {
         while let Some(payload) = write_receiver.recv().await {
-            if super::verify_trusted_user(&writer_app, &writer_auth, unix_ms()) != Ok(caller) {
+            if unix_ms() >= expires_at_ms {
                 break;
             }
             if socket_writer
@@ -231,8 +237,6 @@ async fn handle_browser_websocket(
     let event_forwarder = if state.app_protocol {
         let mut events = state.events.subscribe(&caller.to_string());
         let writer = write_sender.clone();
-        let auth = state.auth_headers.clone();
-        let app = state.app.clone();
         let instance = state.events.instance.clone();
         let cancel = request_tasks.clone();
         Some(tokio::spawn(async move {
@@ -243,7 +247,7 @@ async fn handle_browser_websocket(
                     _ = expiry.tick() => false,
                     result = events.changed() => { if result.is_err() { break; } true }
                 };
-                if super::verify_trusted_user(&app, &auth, unix_ms()) != Ok(caller) {
+                if unix_ms() >= expires_at_ms {
                     cancel.cancel();
                     break;
                 }
@@ -265,11 +269,9 @@ async fn handle_browser_websocket(
 
     let action_write_sender = write_sender.clone();
     let action_cancel = request_tasks.clone();
-    let action_app = state.app.clone();
-    let action_auth = state.auth_headers.clone();
     let action_forwarder = tokio::spawn(async move {
         while let Some(command) = action_receiver.recv().await {
-            if super::verify_trusted_user(&action_app, &action_auth, unix_ms()).is_err() {
+            if unix_ms() >= expires_at_ms {
                 break;
             }
             let payload = match serde_json::to_string(&BrowserWsRequest {
@@ -300,7 +302,7 @@ async fn handle_browser_websocket(
     } {
         // A live socket does not extend the credential's lifetime. This also
         // revokes its browser registration and outstanding actions on expiry.
-        if super::verify_trusted_user(&state.app, &state.auth_headers, unix_ms()).is_err() {
+        if unix_ms() >= expires_at_ms {
             break;
         }
         let message = match message {
@@ -411,7 +413,7 @@ async fn handle_browser_ws_request(
 ) {
     let id = incoming.id;
     // Requests run in separate tasks and may start after the frame was read.
-    if super::verify_trusted_user(&state.app, &state.auth_headers, unix_ms()) != Ok(caller) {
+    if unix_ms() >= state.credential_expires_at_ms {
         if let Some(id) = id {
             send_ws_result(
                 write_sender,
@@ -450,6 +452,12 @@ async fn handle_browser_ws_request(
     let result = match incoming.method.as_deref().unwrap_or_default() {
         _ if state.app_protocol && incoming.jsonrpc.as_deref() != Some("2.0") => {
             Err("jsonrpc must be 2.0".into())
+        }
+        // Daemon lifecycle and machine-wide settings belong to the local owner.
+        "pick_workspace" | "reload_models" | "set_model" | "auto_update_install_and_restart"
+            if caller != state.cli_workspaces.owner() =>
+        {
+            Err("Only the local owner may control the daemon".into())
         }
         "initialize" | "chat/subscribe" if state.app_protocol => Ok(json!(AppInitialize {
             protocol_version: 1,
@@ -714,10 +722,10 @@ fn handle_ui_language(state: &BrowserWebSocketState) -> Result<Value, String> {
     Ok(json!({ "language": launcher_ui_language(&state.home_dir) }))
 }
 
-/// Reads the UI language the launcher persisted (launcher/ui.json) so the
-/// browser extension can follow language switches made in the launcher menu.
-/// Read per call: the launcher may rewrite the file while the daemon runs.
-fn launcher_ui_language(home_dir: &std::path::Path) -> Option<String> {
+/// Reads the UI language the launcher persisted (launcher/ui.json), which the
+/// browser extension follows and approval cards are localized to. Read per
+/// call: the launcher may rewrite the file while the daemon runs.
+pub(super) fn launcher_ui_language(home_dir: &std::path::Path) -> Option<String> {
     #[derive(Deserialize)]
     struct LauncherUiSettings {
         #[serde(default)]
@@ -1195,6 +1203,23 @@ fn resolve_engine_id(app: &AppState, id: &str) -> Result<Principal, (StatusCode,
     }
 }
 
+/// Expiry of a bearer CWT that `verify_trusted_user` already accepted.
+fn bearer_expires_at_ms(token: &str) -> Option<u64> {
+    use cose2::cwt::{Claims, NumericDate};
+    use std::str::FromStr;
+    let bytes = ic_auth_types::ByteBufB64::from_str(token).ok()?;
+    let payload = cose2::Sign1Message::from_slice(&bytes).ok()?.payload?;
+    let claims = Claims::from_slice(&payload)
+        .or_else(|_| Claims::from_slice_legacy_tagged(&payload))
+        .ok()?;
+    match claims.expiration? {
+        NumericDate::Integer(secs) => u64::try_from(secs).ok()?.checked_mul(1000),
+        NumericDate::Float(secs) => {
+            (secs.is_finite() && secs >= 0.0).then_some((secs * 1000.0) as u64)
+        }
+    }
+}
+
 fn websocket_auth_headers(headers: &HeaderMap, uri: &Uri) -> HeaderMap {
     let mut headers = headers.clone();
     if headers.get(AUTHORIZATION).is_none()
@@ -1515,6 +1540,9 @@ mod tests {
         let runtime_models = RuntimeModels::new(models.clone(), models, config_path, http.clone());
         let auto_updater = Arc::new(AutoUpdater::new(db, home.clone(), http));
 
+        let token = auth_key
+            .sign_cwt(crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap())
+            .unwrap();
         let state = BrowserWebSocketState {
             admission: Arc::new(crate::runtime_admission::Admission::default()),
             app_protocol: false,
@@ -1527,15 +1555,10 @@ mod tests {
             },
             auth_headers: {
                 let mut headers = HeaderMap::new();
-                let token = auth_key
-                    .sign_cwt(
-                        crate::identity::expiring_claims(std::time::Duration::from_secs(60))
-                            .unwrap(),
-                    )
-                    .unwrap();
                 headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
                 headers
             },
+            credential_expires_at_ms: bearer_expires_at_ms(&token).unwrap(),
             app,
             brain,
             bridge: Arc::new(BrowserBridge::new()),
@@ -1683,8 +1706,33 @@ mod tests {
             denied["error"]
                 .as_str()
                 .unwrap()
-                .contains("invalid or expired credential")
+                .contains("only the local owner")
         );
+
+        // Other daemon controls are owner-only as well.
+        for method in [
+            "pick_workspace",
+            "reload_models",
+            "set_model",
+            "auto_update_install_and_restart",
+        ] {
+            let request =
+                serde_json::from_value(json!({"id":1,"method":method,"params":["m"]})).unwrap();
+            handle_browser_ws_request(
+                request,
+                &state,
+                Principal::anonymous(),
+                engine_id,
+                &connection,
+                &write_tx,
+            )
+            .await;
+            let denied: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+            assert_eq!(
+                denied["error"],
+                "Only the local owner may control the daemon"
+            );
+        }
 
         handle_browser_ws_request(
             request(&workspace),
@@ -1993,9 +2041,8 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        state
-            .auth_headers
-            .insert(AUTHORIZATION, format!("Bearer {expired}").parse().unwrap());
+        state.credential_expires_at_ms = bearer_expires_at_ms(&expired).unwrap();
+        assert_eq!(state.credential_expires_at_ms, 1000);
         let (id, sender, _rx) = state.bridge.open_ws_connection();
         let connection = BrowserWsConnection { id, sender };
         let (tx, mut rx) = mpsc::channel(1);

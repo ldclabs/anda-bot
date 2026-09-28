@@ -166,7 +166,8 @@ pub enum ResourcesToolArgs {
     DownloadResource {
         /// The ID of the persisted resource to download.
         _id: u64,
-        /// Directory to save the file into; defaults to the system temp directory.
+        /// Directory to save the file into, inside a workspace or the system temp
+        /// directory; defaults to the system temp directory.
         dir: Option<String>,
     },
 }
@@ -174,6 +175,9 @@ pub enum ResourcesToolArgs {
 #[derive(Debug, Clone)]
 pub struct ResourceStore {
     resources: Arc<Collection>,
+    /// Directories a download may target besides the system temp directory,
+    /// matching the roots the filesystem tools may write.
+    download_roots: Vec<PathBuf>,
 }
 
 impl ResourceStore {
@@ -202,7 +206,15 @@ impl ResourceStore {
             )
             .await?;
 
-        Ok(Self { resources })
+        Ok(Self {
+            resources,
+            download_roots: Vec::new(),
+        })
+    }
+
+    pub fn with_download_roots(mut self, roots: Vec<PathBuf>) -> Self {
+        self.download_roots = roots;
+        self
     }
 
     pub async fn get_resource(&self, id: u64) -> Result<Resource, BoxError> {
@@ -211,6 +223,9 @@ impl ResourceStore {
 
     /// Downloads the blob of a persisted resource into `dir` (the system temp
     /// directory when `None`), returning the resource and the saved file path.
+    /// `dir` must stay inside a download root or the temp directory: this call
+    /// is not approval-gated, so it must not write where the filesystem tools
+    /// cannot.
     ///
     /// When `caller` is supplied, ownership is verified before the blob is
     /// written to disk.
@@ -224,7 +239,8 @@ impl ResourceStore {
         if let Some(caller) = caller {
             ensure_resource_access(&resource, caller)?;
         }
-        let path = save_resource_blob(&resource, dir).await?;
+        let dir = resolve_download_dir(dir, &self.download_roots).await?;
+        let path = save_resource_blob(&resource, &dir).await?;
         Ok((resource, path))
     }
 
@@ -271,17 +287,56 @@ impl ResourceStore {
     }
 }
 
-/// Saves the resource blob to a file in `dir` (the system temp directory when
-/// `None`), returning the file path.
-async fn save_resource_blob(resource: &Resource, dir: Option<&Path>) -> Result<PathBuf, BoxError> {
+/// Resolves a requested download directory to a canonical path inside one of
+/// `roots` or the system temp directory. A relative directory is taken from the
+/// first root (the temp directory when there is none).
+async fn resolve_download_dir(dir: Option<&Path>, roots: &[PathBuf]) -> Result<PathBuf, BoxError> {
+    let temp_dir = std::env::temp_dir();
+    let Some(dir) = dir else {
+        return Ok(temp_dir);
+    };
+    if dir
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("download directory must not contain '..'".into());
+    }
+    let dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        roots.first().unwrap_or(&temp_dir).join(dir)
+    };
+    // Canonicalize the deepest existing ancestor so a link cannot lead out.
+    let mut existing = dir.as_path();
+    while tokio::fs::metadata(existing).await.is_err() {
+        existing = existing
+            .parent()
+            .ok_or_else(|| format!("invalid download directory: {}", dir.display()))?;
+    }
+    let resolved = tokio::fs::canonicalize(existing)
+        .await?
+        .join(dir.strip_prefix(existing)?);
+    for root in roots.iter().chain([&temp_dir]) {
+        if let Ok(root) = tokio::fs::canonicalize(root).await
+            && resolved.starts_with(&root)
+        {
+            return Ok(resolved);
+        }
+    }
+    Err(format!(
+        "download directory must be inside a workspace or the temp directory: {}",
+        dir.display()
+    )
+    .into())
+}
+
+/// Saves the resource blob to a file in `dir`, returning the file path.
+async fn save_resource_blob(resource: &Resource, dir: &Path) -> Result<PathBuf, BoxError> {
     let blob = resource
         .blob
         .as_ref()
         .ok_or_else(|| format!("resource {} has no blob data", resource._id))?;
-    let dir = dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(std::env::temp_dir);
-    tokio::fs::create_dir_all(&dir).await?;
+    tokio::fs::create_dir_all(dir).await?;
     let path = dir.join(download_file_name(resource));
     tokio::fs::write(&path, blob.as_slice()).await?;
     Ok(path)
@@ -329,7 +384,7 @@ fn resources_tool_parameters() -> Value {
             },
             "dir": {
                 "type": ["string", "null"],
-                "description": "Only for DownloadResource: directory to save the file into. Defaults to the system temp directory."
+                "description": "Only for DownloadResource: directory to save the file into, inside a workspace or the system temp directory. Defaults to the system temp directory."
             }
         },
         "required": ["type", "_id", "dir"],
@@ -581,7 +636,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resource.name, "a.txt");
-        assert_eq!(path, dir.path().join(format!("{id}_a.txt")));
+        assert_eq!(
+            path,
+            dir.path()
+                .canonicalize()
+                .unwrap()
+                .join(format!("{id}_a.txt"))
+        );
         let contents = tokio::fs::read(&path).await.unwrap();
         assert_eq!(contents, b"contents of a.txt");
 
@@ -602,6 +663,48 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("no blob data"));
+    }
+
+    #[tokio::test]
+    async fn download_directory_stays_inside_workspaces_or_temp() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = home.path().join("workspace");
+        tokio::fs::create_dir_all(&workspace).await.unwrap();
+        let roots = vec![workspace.clone()];
+        // The temp directory itself is always allowed, so probe outside it.
+        let outside = PathBuf::from(if cfg!(windows) {
+            "C:\\anda-download-outside"
+        } else {
+            "/anda-download-outside"
+        });
+
+        // Missing subdirectories of a root resolve; relative ones use the first root.
+        let nested = resolve_download_dir(Some(Path::new("out/files")), &roots)
+            .await
+            .unwrap();
+        assert_eq!(
+            nested,
+            workspace.canonicalize().unwrap().join("out").join("files")
+        );
+        assert_eq!(
+            resolve_download_dir(None, &roots).await.unwrap(),
+            std::env::temp_dir()
+        );
+
+        // Anything outside the roots and the temp directory is refused.
+        for dir in [outside.join("sub"), workspace.join("../escape")] {
+            assert!(resolve_download_dir(Some(&dir), &roots).await.is_err());
+        }
+        #[cfg(unix)]
+        {
+            let link = workspace.join("link");
+            std::os::unix::fs::symlink("/", &link).unwrap();
+            assert!(
+                resolve_download_dir(Some(&link.join("sub")), &roots)
+                    .await
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]
@@ -643,7 +746,10 @@ mod tests {
                 let path = result["path"].as_str().unwrap();
                 assert_eq!(
                     PathBuf::from(path),
-                    dir.path().join(format!("{id}_mine.txt"))
+                    dir.path()
+                        .canonicalize()
+                        .unwrap()
+                        .join(format!("{id}_mine.txt"))
                 );
                 let contents = tokio::fs::read(path).await.unwrap();
                 assert_eq!(contents, b"contents of mine.txt");

@@ -19,7 +19,7 @@ La configuración de los canales se encuentra bajo la sección `channels` en `~/
 
 ## Múltiples usuarios
 
-Un único daemon puede dar servicio a varios usuarios de confianza a través del mismo agente de Anda. Cree una clave de usuario y luego configure el campo `user` de una entrada de canal con ese ID. Si se omite `user`, el canal utiliza la identidad del propietario local almacenada en el almacén de credenciales seguro del sistema operativo.
+Un único daemon puede dar servicio a varios usuarios de confianza a través del mismo agente de Anda. Cree una clave de usuario y luego configure el campo `user` de una entrada de canal con ese ID. Si se omite `user`, el canal utiliza la identidad del propietario local almacenada en el almacén de credenciales seguro del sistema operativo. El control del daemon (configuración, recarga y cambio de modelos, instalación de actualizaciones y apagado) sigue reservado al propietario local.
 
 ```bash
 anda user create alice

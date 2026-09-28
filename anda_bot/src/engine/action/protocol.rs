@@ -216,13 +216,6 @@ pub(crate) fn is_action_message_value(value: &Value) -> bool {
         .is_some_and(|name| name == ACTION_MESSAGE_NAME)
 }
 
-pub(crate) fn is_action_message(message: &Message) -> bool {
-    message
-        .name
-        .as_deref()
-        .is_some_and(|name| name == ACTION_MESSAGE_NAME)
-}
-
 pub(crate) fn action_id_from_message(message: &Message) -> Option<String> {
     message.content.iter().find_map(|part| match part {
         ContentPart::Action { payload, .. } => payload_action_id(payload).map(str::to_string),

@@ -111,13 +111,11 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Brain 0.13.2 (Memory Interface, DB/KIP 0.14) is published on crates.io.
-# The commented lines patch the shared stack from sibling checkouts for
-# development; keep one DB/KIP/Core type identity (verify with `cargo metadata`).
-# Core/Engine come from the sibling `anda` checkout until the release after
-# 0.16.2 is published: the session shell needs its legacy approval gate,
-# `NativeRuntime::for_workspace` and console-free Windows sessions. Comment
-# these two out again once it is.
+# Brain 0.13.2 (Memory Interface, DB/KIP 0.14) and Engine 0.16.3 (the session
+# shell's approval gate, shared workspace sessions and console-free Windows
+# sessions) are published on crates.io. The commented lines patch the shared
+# stack from sibling checkouts for development; keep one DB/KIP/Core type
+# identity (verify with `cargo metadata`).
 # anda_brain = { path = "../anda-brain/anda_brain" }
 # anda_core = { path = "../anda/anda_core" }
 # anda_engine = { path = "../anda/anda_engine" }

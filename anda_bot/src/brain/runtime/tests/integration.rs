@@ -161,7 +161,7 @@ async fn create_with_models(
         BrainConfig {
             managers: keys.iter().map(Ed25519Key::pubkey).collect(),
             models,
-            https_proxy: None,
+            http_client: new_reqwest_client(),
             runtime_config: config,
         },
     )
@@ -522,7 +522,7 @@ async fn startup_rejects_unsupported_channel_adapters_and_missing_secrets() {
             BrainConfig {
                 managers: keys.iter().map(Ed25519Key::pubkey).collect(),
                 models: brain_models(),
-                https_proxy: None,
+                http_client: new_reqwest_client(),
                 runtime_config: Some(config),
             },
         )
@@ -583,7 +583,7 @@ async fn learning_http_bindings_probe_separate_services_but_do_not_run_without_s
         BrainConfig {
             managers: vec![key.pubkey()],
             models: brain_models(),
-            https_proxy: None,
+            http_client: new_reqwest_client(),
             runtime_config: Some(config),
         },
         |name| match name {
@@ -632,7 +632,7 @@ async fn lean_build_rejects_learning_configuration() {
         BrainConfig {
             managers: vec![Ed25519Key::new([82; 32]).pubkey()],
             models: brain_models(),
-            https_proxy: None,
+            http_client: new_reqwest_client(),
             runtime_config: Some(config),
         },
     )
@@ -660,7 +660,7 @@ async fn real_structured_recall_and_tool_keep_off_graph_delivery_association() {
         BrainConfig {
             managers: vec![key.pubkey()],
             models,
-            https_proxy: None,
+            http_client: new_reqwest_client(),
             runtime_config: None,
         },
     )

@@ -15,6 +15,13 @@ use std::{
 
 use super::types::*;
 
+/// Run history kept per job; older runs are pruned as new ones finish. Runs of
+/// a removed job stay for audit.
+const MAX_RUNS_PER_JOB: usize = 200;
+/// Older runs removed per finished run, so the first pass over a long history
+/// does not hold the scheduler.
+const RUN_PRUNE_BATCH: usize = 100;
+
 #[derive(Clone)]
 pub struct CronStore {
     jobs: Arc<Collection>,
@@ -77,7 +84,7 @@ impl CronStore {
         Ok(job)
     }
 
-    #[allow(unused)]
+    #[cfg(test)]
     pub async fn update_job(&self, args: UpdateCronJobArgs) -> Result<CronJob, BoxError> {
         self.update_job_with_origin(args, None).await
     }
@@ -362,6 +369,42 @@ impl CronStore {
         }
 
         self.jobs.update(job._id, job_patch).await?;
+        if let Err(err) = self.prune_runs(job._id, run._id).await {
+            log::warn!(name = "cron"; "failed to prune run history of cron job {}: {err}", job._id);
+        }
+        Ok(())
+    }
+
+    async fn prune_runs(&self, job_id: u64, latest_run: u64) -> Result<(), BoxError> {
+        let runs_before = |range: RangeQuery<Fv>| {
+            Filter::And(vec![
+                Box::new(Filter::Field((
+                    "job_id".to_string(),
+                    RangeQuery::Eq(Fv::U64(job_id)),
+                ))),
+                Box::new(Filter::Field(("_id".to_string(), range))),
+            ])
+        };
+        let kept = self
+            .runs
+            .query_last_ids(
+                runs_before(RangeQuery::Le(Fv::U64(latest_run))),
+                Some(MAX_RUNS_PER_JOB),
+            )
+            .await?;
+        let Some(&oldest_kept) = kept.first().filter(|_| kept.len() >= MAX_RUNS_PER_JOB) else {
+            return Ok(());
+        };
+        let stale = self
+            .runs
+            .query_last_ids(
+                runs_before(RangeQuery::Lt(Fv::U64(oldest_kept))),
+                Some(RUN_PRUNE_BATCH),
+            )
+            .await?;
+        for id in stale {
+            self.runs.remove(id).await?;
+        }
         Ok(())
     }
 
@@ -445,6 +488,34 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn finished_runs_prune_history_beyond_the_per_job_limit() {
+        let store = test_store().await;
+        let job = insert_test_job(&store, "busy").await;
+        let other = insert_test_job(&store, "quiet").await;
+        let other_run = store.job_start(other._id, 1).await.unwrap();
+        let mut last = None;
+        for at in 0..(MAX_RUNS_PER_JOB + 3) as u64 {
+            last = Some(store.job_start(job._id, at).await.unwrap());
+        }
+        store
+            .job_finish(&job, last.unwrap(), 1, CronJobResult::default())
+            .await
+            .unwrap();
+
+        let ids = store
+            .runs
+            .query_last_ids(
+                Filter::Field(("job_id".to_string(), RangeQuery::Eq(Fv::U64(job._id)))),
+                Some(MAX_RUNS_PER_JOB + 10),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), MAX_RUNS_PER_JOB);
+        // Other jobs keep their history.
+        assert!(store.runs.get_as::<CronRun>(other_run._id).await.is_ok());
     }
 
     #[tokio::test]

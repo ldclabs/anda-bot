@@ -315,6 +315,11 @@ impl SourceResolver<'_> {
     }
 }
 
+/// The index's chronological page key.
+fn activity_order(user: &str, submitted_at: u64, journal_key: &str) -> String {
+    format!("{user}/{submitted_at:020}/{journal_key}")
+}
+
 impl ActivityStore {
     pub async fn connect(
         db: Arc<AndaDB>,
@@ -352,6 +357,22 @@ impl ActivityStore {
     }
 
     async fn index_submission(&self, key: &str, row: &FormationSubmission) -> Result<(), BoxError> {
+        let native_id = row
+            .brain_conversation
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        let existing = self.indexed(key).await?;
+        // Ownership was verified when the row was first indexed; afterwards
+        // only Brain's native id, a resubmission or a legacy row without its
+        // order key changes it.
+        if existing.as_ref().is_some_and(|old| {
+            old.native_id == native_id
+                && old.submitted_at == row.submitted_at
+                && old.order.as_deref()
+                    == Some(activity_order(&old.user, row.submitted_at, key).as_str())
+        }) {
+            return Ok(());
+        }
         let conversation = self
             .conversations
             .conversations
@@ -364,32 +385,40 @@ impl ActivityStore {
         {
             return Err("Formation ownership mismatch".into());
         }
-        self.index_activity(ActivityIndex {
-            user: conversation.user.to_string(),
-            conversation: row.bot_conversation,
-            journal_key: key.into(),
-            submitted_at: row.submitted_at,
-            native_id: row
-                .brain_conversation
-                .map(|id| id.to_string())
-                .unwrap_or_default(),
-            ..Default::default()
-        })
+        self.index_activity(
+            existing,
+            ActivityIndex {
+                user: conversation.user.to_string(),
+                conversation: row.bot_conversation,
+                journal_key: key.into(),
+                submitted_at: row.submitted_at,
+                native_id,
+                ..Default::default()
+            },
+        )
         .await
     }
 
-    async fn index_activity(&self, mut row: ActivityIndex) -> Result<(), BoxError> {
-        let order = format!("{}/{:020}/{}", row.user, row.submitted_at, row.journal_key);
-        row.order = Some(order.clone());
+    async fn indexed(&self, key: &str) -> Result<Option<ActivityIndex>, BoxError> {
         let existing: Vec<ActivityIndex> = self
             .index
             .search_as(Query {
                 search: None,
-                filter: Some(eq("journal_key", Fv::Text(row.journal_key.clone()))),
+                filter: Some(eq("journal_key", Fv::Text(key.into()))),
                 limit: Some(1),
             })
             .await?;
-        if let Some(old) = existing.first() {
+        Ok(existing.into_iter().next())
+    }
+
+    async fn index_activity(
+        &self,
+        existing: Option<ActivityIndex>,
+        mut row: ActivityIndex,
+    ) -> Result<(), BoxError> {
+        let order = activity_order(&row.user, row.submitted_at, &row.journal_key);
+        row.order = Some(order.clone());
+        if let Some(old) = existing {
             if old.native_id != row.native_id || old.order != row.order || old.user != row.user {
                 self.index
                     .update(
@@ -426,8 +455,9 @@ impl ActivityStore {
         }
     }
 
-    /// Refresh new/changed and nonterminal submissions. A startup/low-frequency
-    /// scan repairs the rebuildable index without rereading history every tick.
+    /// Refresh new/changed and nonterminal submissions. The startup scan
+    /// repairs the rebuildable index; rows already indexed skip the
+    /// conversation read.
     pub(super) async fn reconcile(&self) -> Result<(), BoxError> {
         let mut poll = self.reconciliation.lock().await;
         let keys = match poll.keys(&self.journal, &["formation/", "recall/"]).await {
@@ -500,6 +530,13 @@ impl ActivityStore {
             let Some(id) = row.bot_conversation else {
                 return Ok(false);
             };
+            // A delivery never changes once indexed with its order key.
+            if self.indexed(key).await?.is_some_and(|old| {
+                old.order.as_deref()
+                    == Some(activity_order(&old.user, row.delivered_at, key).as_str())
+            }) {
+                return Ok(false);
+            }
             let conversation = self
                 .conversations
                 .conversations
@@ -508,13 +545,16 @@ impl ActivityStore {
             if conversation.user.to_string() != row.caller {
                 return Ok(false);
             }
-            self.index_activity(ActivityIndex {
-                user: row.caller,
-                conversation: id,
-                journal_key: key.into(),
-                submitted_at: row.delivered_at,
-                ..Default::default()
-            })
+            self.index_activity(
+                None,
+                ActivityIndex {
+                    user: row.caller,
+                    conversation: id,
+                    journal_key: key.into(),
+                    submitted_at: row.delivered_at,
+                    ..Default::default()
+                },
+            )
             .await?;
             Ok(false)
         }

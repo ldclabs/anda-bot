@@ -1,7 +1,7 @@
 use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
-    BoxError, Document, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
-    Usage,
+    BoxError, Document, FunctionDefinition, Principal, RequestMeta, Resource, StateFeatures, Tool,
+    ToolOutput, Usage,
 };
 use anda_db::{collection::Collection, database::AndaDB, schema::Fv};
 use anda_engine::{
@@ -75,6 +75,28 @@ pub struct SourceState {
     pub status: ConversationStatus,
     #[serde(default, rename = "t", alias = "timestamp")]
     pub timestamp: u64,
+    /// Owner of the bound conversation, so ownership checks need not load it.
+    /// Missing in states saved by earlier releases.
+    #[serde(default, rename = "u", skip_serializing_if = "Option::is_none")]
+    pub user: Option<Principal>,
+}
+
+/// Source bindings kept at most; the least recently rebound are dropped
+/// first. Every IM thread and CLI workspace is a source, so the map would
+/// otherwise grow for the daemon's lifetime, and it is saved whole.
+const MAX_SOURCE_STATES: usize = 1024;
+
+fn prune_source_states(states: &mut HashMap<String, SourceState>) {
+    while states.len() > MAX_SOURCE_STATES {
+        let Some(oldest) = states
+            .iter()
+            .min_by_key(|(_, state)| state.timestamp)
+            .map(|(source, _)| source.clone())
+        else {
+            break;
+        };
+        states.remove(&oldest);
+    }
 }
 
 #[derive(Serialize)]
@@ -94,24 +116,19 @@ impl From<SourceState> for SourceStateDisplay {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RequestState {
     pub workspace: String,
     pub source: String,
     pub source_key: String,
     pub source_state: SourceState,
     pub conversation: u64,
-    #[allow(unused)]
-    pub reply_target: Option<String>,
-    #[allow(unused)]
-    pub thread: Option<String>,
 }
 
+/// Marks a context whose tool calls come from an agent rather than a client,
+/// which gets display-friendly and memory-policy-filtered results.
 #[derive(Debug, Clone)]
-pub struct AgentInfo {
-    #[allow(unused)]
-    pub name: String,
-}
+pub struct AgentInfo;
 
 /// A tool for conversation API
 pub struct ConversationsTool {
@@ -267,8 +284,6 @@ impl ConversationsTool {
             source_key,
             source_state,
             conversation,
-            reply_target,
-            thread,
         }
     }
 
@@ -277,18 +292,19 @@ impl ConversationsTool {
         source: String,
         state: SourceState,
     ) -> Result<(), BoxError> {
-        let conversation_id = state.conv_id;
+        let user = state.user;
         let _guard = self.extension_save_lock.lock().await;
         let fv = {
             let mut map = self.source_conversation.write();
             map.insert(source, state);
+            prune_source_states(&mut map);
             Fv::serialized(&*map, None)
         }?;
         self.store
             .save_extension("source_conversation".to_string(), fv)
             .await?;
-        if let Ok(conversation) = self.conversations.get_conversation(conversation_id).await {
-            self.events.changed(&conversation.user.to_string());
+        if let Some(user) = user {
+            self.events.changed(&user.to_string());
         }
         Ok(())
     }
@@ -296,7 +312,7 @@ impl ConversationsTool {
     pub async fn delete_source_state(
         &self,
         source: &str,
-        caller: &anda_core::Principal,
+        caller: &Principal,
     ) -> Result<Option<SourceState>, BoxError> {
         let _guard = self.extension_save_lock.lock().await;
         if let Some(state) = self.get_source_state(source)
@@ -321,9 +337,12 @@ impl ConversationsTool {
 
     async fn owns_source_state(
         &self,
-        caller: &anda_core::Principal,
+        caller: &Principal,
         state: &SourceState,
     ) -> Result<bool, BoxError> {
+        if let Some(user) = &state.user {
+            return Ok(user == caller);
+        }
         Ok(!self
             .conversations
             .batch_get_conversations(caller, vec![state.conv_id])
@@ -333,19 +352,21 @@ impl ConversationsTool {
 
     async fn caller_source_states(
         &self,
-        caller: &anda_core::Principal,
+        caller: &Principal,
     ) -> Result<HashMap<String, SourceState>, BoxError> {
         let mut states = self.source_conversations();
-        let ids = states
+        // Only states saved before owners were recorded need their
+        // conversation loaded to learn who owns it.
+        let unknown = states
             .values()
+            .filter(|state| state.user.is_none())
             .map(|state| state.conv_id)
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
         let mut owned = HashSet::new();
-        // Conversations caps a batch at 1000 IDs. Preserve all caller-owned
-        // bindings when this daemon has accumulated more sources than that.
-        for ids in ids.chunks(1000) {
+        // Conversations caps a batch at 1000 IDs.
+        for ids in unknown.chunks(1000) {
             owned.extend(
                 self.conversations
                     .batch_get_conversations(caller, ids.to_vec())
@@ -354,11 +375,13 @@ impl ConversationsTool {
                     .map(|conversation| conversation._id),
             );
         }
-        states.retain(|_, state| owned.contains(&state.conv_id));
+        states.retain(|_, state| match &state.user {
+            Some(user) => user == caller,
+            None => owned.contains(&state.conv_id),
+        });
         Ok(states)
     }
 
-    #[allow(unused)]
     pub fn tools_usage(&self) -> HashMap<String, Usage> {
         self.tools_usage.read().clone()
     }
@@ -480,10 +503,11 @@ impl Tool<BaseCtx> for ConversationsTool {
 
     async fn init(&self, _ctx: BaseCtx) -> Result<(), BoxError> {
         {
-            let source_conversation: HashMap<String, SourceState> = self
+            let mut source_conversation: HashMap<String, SourceState> = self
                 .store
                 .get_extension_as("source_conversation")
                 .unwrap_or_default();
+            prune_source_states(&mut source_conversation);
 
             *self.source_conversation.write() = source_conversation;
         }
@@ -900,6 +924,7 @@ mod tests {
                 conv_id: id,
                 status: ConversationStatus::Working,
                 timestamp: 1_750_000_000_000,
+                user: None,
             },
         )
         .await
@@ -924,6 +949,51 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn source_states_record_owners_and_stay_bounded() {
+        let tool = test_tool().await;
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        // Owner-bound states answer ownership without loading a conversation.
+        for (source, user) in [
+            ("mine", *ctx.caller()),
+            ("theirs", Principal::management_canister()),
+        ] {
+            tool.update_source_state(
+                source.into(),
+                SourceState {
+                    conv_id: 7,
+                    user: Some(user),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        let states = tool.caller_source_states(ctx.caller()).await.unwrap();
+        assert!(states.contains_key("mine"));
+        assert!(!states.contains_key("theirs"));
+        let theirs = tool.get_source_state("theirs").unwrap();
+        assert!(!tool.owns_source_state(ctx.caller(), &theirs).await.unwrap());
+
+        let mut states = (0..MAX_SOURCE_STATES as u64 + 2)
+            .map(|i| {
+                (
+                    format!("source-{i}"),
+                    SourceState {
+                        conv_id: i,
+                        timestamp: i,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        prune_source_states(&mut states);
+        assert_eq!(states.len(), MAX_SOURCE_STATES);
+        assert!(!states.contains_key("source-0"));
+        assert!(!states.contains_key("source-1"));
+        assert!(states.contains_key("source-2"));
     }
 
     #[tokio::test]
@@ -1004,6 +1074,7 @@ mod tests {
                 conv_id: id,
                 status: ConversationStatus::Idle,
                 timestamp: 1_750_000_000_000,
+                user: None,
             },
         )
         .await
@@ -1022,9 +1093,7 @@ mod tests {
 
         // The agent-facing variant renders display-friendly fields.
         let agent_ctx = ctx.clone();
-        agent_ctx.set_state(AgentInfo {
-            name: "anda".to_string(),
-        });
+        agent_ctx.set_state(AgentInfo);
         let result = ok_result(
             tool.call(
                 agent_ctx.clone(),
@@ -1271,9 +1340,7 @@ mod tests {
 
         // Agent-facing variants render Document/display forms.
         let agent_ctx = ctx.clone();
-        agent_ctx.set_state(AgentInfo {
-            name: "anda".to_string(),
-        });
+        agent_ctx.set_state(AgentInfo);
         tool.call(
             agent_ctx.clone(),
             ConversationsToolArgs::GetConversation { _id: id },
