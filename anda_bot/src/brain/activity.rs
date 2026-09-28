@@ -530,8 +530,9 @@ impl ActivityStore {
             let Some(id) = row.bot_conversation else {
                 return Ok(false);
             };
+            let existing = self.indexed(key).await?;
             // A delivery never changes once indexed with its order key.
-            if self.indexed(key).await?.is_some_and(|old| {
+            if existing.as_ref().is_some_and(|old| {
                 old.order.as_deref()
                     == Some(activity_order(&old.user, row.delivered_at, key).as_str())
             }) {
@@ -546,7 +547,7 @@ impl ActivityStore {
                 return Ok(false);
             }
             self.index_activity(
-                None,
+                existing,
                 ActivityIndex {
                     user: row.caller,
                     conversation: id,
@@ -1202,41 +1203,77 @@ mod tests {
             .await
             .unwrap();
         let key = format!("formation/{id}/0");
-        legacy
-            .add_from(&LegacyIndex {
-                _id: 0,
-                user: owner.to_string(),
-                conversation: id,
-                journal_key: key.clone(),
-                submitted_at: 1,
-                native_id: String::new(),
-            })
-            .await
-            .unwrap();
+        let recall_key = "recall/legacy-delivery";
+        let mut legacy_ids = Vec::new();
+        for journal_key in [key.as_str(), recall_key] {
+            let index_id = legacy
+                .add_from(&LegacyIndex {
+                    _id: 0,
+                    user: owner.to_string(),
+                    conversation: id,
+                    journal_key: journal_key.into(),
+                    submitted_at: 1,
+                    native_id: String::new(),
+                })
+                .await
+                .unwrap();
+            legacy_ids.push((journal_key.to_string(), index_id));
+        }
         let journal = Journal::new(db.object_store());
         let mut row = submission(id);
         row.state = FormationState::Completed;
         journal.write(&key, &row).await.unwrap();
+        journal
+            .record_recall(&crate::brain::RecallDelivery {
+                invocation: "legacy-delivery".into(),
+                caller: owner.to_string(),
+                bot_conversation: Some(id),
+                bot_turn: None,
+                tool_call: None,
+                brain_conversation: None,
+                receipt: None,
+                delivered_at: 1,
+                failed: false,
+                usage: Default::default(),
+                tools_usage: Default::default(),
+                accounting_complete: false,
+            })
+            .await
+            .unwrap();
         db.close().await.unwrap();
-        let db = crate::test_support::db_on_object_store(object_store, "activity_upgrade").await;
-        let conversations = Arc::new(
-            ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
-                .await
-                .unwrap(),
-        );
-        let store = ActivityStore::connect(
-            db.clone(),
-            conversations,
-            Journal::new(db.object_store()),
-            Client::new("http://127.0.0.1:0".into(), None),
-        )
-        .await
-        .unwrap();
-        store.reconcile().await.unwrap();
-        let page = store.page(owner, ActivityQuery::default()).await.unwrap();
-        assert_eq!(page.items.len(), 1);
-        assert_eq!(page.items[0].id, key);
-        assert_eq!(store.index.schema().version(), 1);
-        db.close().await.unwrap();
+        for _ in 0..3 {
+            let db =
+                crate::test_support::db_on_object_store(object_store.clone(), "activity_upgrade")
+                    .await;
+            let conversations = Arc::new(
+                ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+                    .await
+                    .unwrap(),
+            );
+            let store = ActivityStore::connect(
+                db.clone(),
+                conversations,
+                Journal::new(db.object_store()),
+                Client::new("http://127.0.0.1:0".into(), None),
+            )
+            .await
+            .unwrap();
+            store.reconcile().await.unwrap();
+            let page = store.page(owner, ActivityQuery::default()).await.unwrap();
+            assert_eq!(page.items.len(), 2);
+            assert!(page.items.iter().any(|item| item.id == key));
+            assert!(page.items.iter().any(|item| item.id == recall_key));
+            assert_eq!(store.index.len(), 2);
+            for (journal_key, index_id) in &legacy_ids {
+                let row = store.indexed(journal_key).await.unwrap().unwrap();
+                assert_eq!(row._id, *index_id);
+                assert_eq!(
+                    row.order,
+                    Some(activity_order(&owner.to_string(), 1, journal_key))
+                );
+            }
+            assert_eq!(store.index.schema().version(), 1);
+            db.close().await.unwrap();
+        }
     }
 }

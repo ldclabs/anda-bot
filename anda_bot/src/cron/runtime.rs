@@ -240,10 +240,11 @@ impl CronRuntime {
                                 Ok(id) => { running_ids.remove(&id); }
                                 Err(err) => { failure = Some(err.into()); break; }
                             }
-                            // A failed flush keeps the changes for the next one;
-                            // it must not take the whole daemon down with it.
+                            // AndaDB poisons a collection after a failed checkpoint.
+                            // Stop before admitting more work; restart reopens it.
                             if let Err(err) = self.store.flush(unix_ms()).await {
-                                log::error!(name = "cron"; "failed to flush cron state: {err}");
+                                failure = Some(err);
+                                break;
                             }
                         }
                     }
@@ -263,7 +264,11 @@ impl CronRuntime {
                     log::error!(name = "cron"; "cron task failed during shutdown: {err}");
                 }
             }
-            self.store.flush(unix_ms()).await?;
+            // Preserve the original storage failure if the shutdown flush
+            // only reports that its collection handle is now poisoned.
+            if let Err(err) = self.store.flush(unix_ms()).await {
+                failure.get_or_insert(err);
+            }
             log::warn!(name = "cron"; "cron scheduler stopped");
             match failure {
                 Some(err) => Err(err),
@@ -484,6 +489,60 @@ mod tests {
             .expect("scheduler should stop")
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn serve_stops_on_flush_failure_and_preserves_the_storage_error() {
+        use object_store::{ObjectStoreExt, path::Path};
+
+        for collection_name in ["cron_jobs", "cron_runs"] {
+            let db = crate::test_support::memory_db("cron_flush_failure").await;
+            let runtime = CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())
+                .await
+                .unwrap();
+            let engine = test_engine().await;
+            runtime.engine.bind(Arc::downgrade(&engine));
+            let job = insert_due_agent(&runtime).await;
+            let collection = db.get_open_collection(collection_name).unwrap();
+
+            // Change only the backing object's version. Completion can still
+            // save its documents, but the checkpoint's conditional PUT fails
+            // and AndaDB poisons the collection until it is reopened.
+            let store = db.object_store();
+            let path = Path::from(format!("cron_flush_failure/{collection_name}/meta.cbor"));
+            let bytes = store.get(&path).await.unwrap().bytes().await.unwrap();
+            store.put(&path, bytes.into()).await.unwrap();
+
+            let cancel = CancellationToken::new();
+            let mut handle = runtime.clone().serve(cancel.clone()).await.unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(2), &mut handle).await;
+            if result.is_err() {
+                cancel.cancel();
+                let _ = handle.await;
+            }
+            let error = result
+                .expect("a failed checkpoint must stop scheduling without external cancellation")
+                .unwrap()
+                .unwrap_err();
+            assert!(cancel.is_cancelled());
+            assert!(collection.is_poisoned());
+            assert!(
+                error
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("precondition")
+            );
+
+            let recovered = CronStore::connect(db.clone()).await.unwrap();
+            recovered.flush(unix_ms()).await.unwrap();
+            let (runs, _) = recovered
+                .list_runs(None, None, Some(job._id))
+                .await
+                .unwrap();
+            assert_eq!(runs.len(), 1);
+            assert!(runs[0].finished_at > 0);
+            db.close().await.unwrap();
+        }
     }
 
     use anda_core::{
