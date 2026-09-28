@@ -15,6 +15,39 @@ type InstallOptionCopy = {
 	note: string;
 	steps: [string, string, string];
 };
+type Five = [string, string, string, string, string];
+/** Strings for the live product scenes stitched along the landing thread. */
+type DemoCopy = {
+	composer: {
+		status: string;
+		placeholder: string;
+		turns: [ComposerTurn, ComposerTurn];
+	};
+	memory: {
+		kinds: Five;
+		items: Five;
+		revised: string;
+		source: string;
+		updated: string;
+		linked: string;
+	};
+	action: {
+		browser: string;
+		summary: string;
+		goal: string;
+		agents: [string, string, string];
+		routines: [RoutineCopy, RoutineCopy];
+		next: string;
+	};
+	control: {
+		machine: string;
+		items: [string, string, string];
+		model: string;
+		stays: string;
+	};
+};
+type ComposerTurn = { user: string; reply: string; note: string };
+type RoutineCopy = { when: string; what: string };
 export type LandingCopy = {
 	meta: { title: string; description: string };
 	nav: {
@@ -66,6 +99,7 @@ export type LandingCopy = {
 	faqTitle: string;
 	faq: FeatureCopy[];
 	final: { title: string; body: string; install: string; docs: string };
+	demo: DemoCopy;
 };
 export const fallbackLocale: Locale = 'en';
 export const localeOrder: Locale[] = ['en', 'zh', 'es', 'fr', 'ru', 'ar'];
@@ -257,6 +291,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			body: 'Start a conversation, connect your tools, and let useful context accumulate through the work you do together.',
 			install: 'Get started',
 			docs: 'Read the docs'
+		},
+		demo: {
+			composer: {
+				status: 'Local runtime',
+				placeholder: 'Message Anda…',
+				turns: [
+					{
+						user: 'Keep replies short. Mia leads the Atlas redesign, and we ship Friday.',
+						reply: 'Got it. I’ll remember that.',
+						note: '3 memories saved'
+					},
+					{
+						user: 'Draft a launch checklist from docs/launch.md.',
+						reply: 'Done. checklist.md is ready.',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['Preference', 'Project', 'Person', 'Decision', 'Event'],
+				items: [
+					'Short, direct replies',
+					'Atlas redesign',
+					'Mia · design lead',
+					'Ship on Friday',
+					'Launch review · Oct 12'
+				],
+				revised: 'Ship on Monday',
+				source: 'From chat',
+				updated: 'Updated',
+				linked: 'Linked'
+			},
+			action: {
+				browser: '3 sources read',
+				summary: 'Summary',
+				goal: 'Prepare the Atlas launch',
+				agents: ['Research', 'Draft', 'Review'],
+				routines: [
+					{ when: 'Mon 09:00', what: 'Weekly report' },
+					{ when: 'Daily 18:00', what: 'Inbox digest' }
+				],
+				next: 'Next run'
+			},
+			control: {
+				machine: 'Your machine',
+				items: ['Configuration', 'Conversations', 'Memory'],
+				model: 'Model provider',
+				stays: 'Memory stays local'
+			}
 		},
 		install: {
 			badge: 'Get started',
@@ -469,6 +552,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			body: '开始对话，连接工具，让有用的背景在一次次协作中积累。',
 			install: '开始使用',
 			docs: '阅读文档'
+		},
+		demo: {
+			composer: {
+				status: '本地运行',
+				placeholder: '给 Anda 发消息…',
+				turns: [
+					{
+						user: '回复简短一点。Mia 负责 Atlas 改版，我们周五发布。',
+						reply: '好的，我记住了。',
+						note: '已保存 3 条记忆'
+					},
+					{
+						user: '根据 docs/launch.md 起草一份发布清单。',
+						reply: '完成，checklist.md 已就绪。',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['偏好', '项目', '人物', '决定', '事件'],
+				items: [
+					'回复简洁直接',
+					'Atlas 改版',
+					'Mia · 设计负责人',
+					'周五发布',
+					'10 月 12 日上线评审'
+				],
+				revised: '改为周一发布',
+				source: '来自对话',
+				updated: '已更新',
+				linked: '已关联'
+			},
+			action: {
+				browser: '已阅读 3 个来源',
+				summary: '摘要',
+				goal: '准备 Atlas 发布',
+				agents: ['调研', '起草', '审阅'],
+				routines: [
+					{ when: '周一 09:00', what: '每周报告' },
+					{ when: '每天 18:00', what: '收件箱摘要' }
+				],
+				next: '下次运行'
+			},
+			control: {
+				machine: '你的电脑',
+				items: ['配置', '对话', '记忆'],
+				model: '模型服务商',
+				stays: '记忆保存在本机'
+			}
 		},
 		install: {
 			badge: '快速开始',
@@ -694,6 +826,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Empezar',
 			docs: 'Leer la documentación'
 		},
+		demo: {
+			composer: {
+				status: 'Servicio local',
+				placeholder: 'Escribe a Anda…',
+				turns: [
+					{
+						user: 'Respuestas breves. Mia lidera el rediseño de Atlas y lanzamos el viernes.',
+						reply: 'Entendido. Lo tendré en cuenta.',
+						note: '3 recuerdos guardados'
+					},
+					{
+						user: 'Prepara una lista de lanzamiento a partir de docs/launch.md.',
+						reply: 'Hecho. checklist.md está lista.',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['Preferencia', 'Proyecto', 'Persona', 'Decisión', 'Evento'],
+				items: [
+					'Respuestas breves y directas',
+					'Rediseño de Atlas',
+					'Mia · lidera el diseño',
+					'Lanzar el viernes',
+					'Revisión de lanzamiento · 12 oct'
+				],
+				revised: 'Lanzar el lunes',
+				source: 'De la conversación',
+				updated: 'Actualizado',
+				linked: 'Relacionado'
+			},
+			action: {
+				browser: '3 fuentes leídas',
+				summary: 'Resumen',
+				goal: 'Preparar el lanzamiento de Atlas',
+				agents: ['Investigar', 'Redactar', 'Revisar'],
+				routines: [
+					{ when: 'Lun 09:00', what: 'Informe semanal' },
+					{ when: 'Diario 18:00', what: 'Resumen del correo' }
+				],
+				next: 'Próxima ejecución'
+			},
+			control: {
+				machine: 'Tu equipo',
+				items: ['Configuración', 'Conversaciones', 'Memoria'],
+				model: 'Proveedor de modelos',
+				stays: 'La memoria se guarda en local'
+			}
+		},
 		install: {
 			badge: 'Comenzar',
 			title: 'Empieza con algo que quieras hacer.',
@@ -734,7 +915,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					command:
 						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
 					commandLabel: 'Script de instalación de Linux',
-					note: 'Use esta ruta para estaciones de trabajo, servidores и пользователей, предпочитающих напрямую управлять средой выполнения.',
+					note: 'Usa esta opción en estaciones de trabajo, servidores o si prefieres gestionar el runtime directamente.',
 					steps: ['Instalar runtime', 'Configurar proveedor', 'Emparejar navegador']
 				}
 			},
@@ -919,6 +1100,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			body: 'Lancez une conversation, connectez vos outils et enrichissez le contexte utile au fil du travail accompli ensemble.',
 			install: 'Démarrer',
 			docs: 'Lire la documentation'
+		},
+		demo: {
+			composer: {
+				status: 'Service local',
+				placeholder: 'Écrire à Anda…',
+				turns: [
+					{
+						user: 'Réponses courtes. Mia dirige la refonte d’Atlas, et on livre vendredi.',
+						reply: 'Compris. Je m’en souviendrai.',
+						note: '3 souvenirs enregistrés'
+					},
+					{
+						user: 'Rédige une checklist de lancement à partir de docs/launch.md.',
+						reply: 'Terminé. checklist.md est prête.',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['Préférence', 'Projet', 'Personne', 'Décision', 'Événement'],
+				items: [
+					'Réponses courtes et directes',
+					'Refonte d’Atlas',
+					'Mia · responsable design',
+					'Livrer vendredi',
+					'Revue de lancement · 12 oct.'
+				],
+				revised: 'Livrer lundi',
+				source: 'Issu de la conversation',
+				updated: 'Mis à jour',
+				linked: 'Relié'
+			},
+			action: {
+				browser: '3 sources lues',
+				summary: 'Résumé',
+				goal: 'Préparer le lancement d’Atlas',
+				agents: ['Recherche', 'Rédaction', 'Relecture'],
+				routines: [
+					{ when: 'Lun. 09:00', what: 'Rapport hebdo' },
+					{ when: 'Chaque jour 18:00', what: 'Synthèse des messages' }
+				],
+				next: 'Prochaine exécution'
+			},
+			control: {
+				machine: 'Votre machine',
+				items: ['Configuration', 'Conversations', 'Mémoire'],
+				model: 'Fournisseur de modèles',
+				stays: 'La mémoire reste en local'
+			}
 		},
 		install: {
 			badge: 'Démarrer',
@@ -1141,6 +1371,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			install: 'Начать',
 			docs: 'Читать документацию'
 		},
+		demo: {
+			composer: {
+				status: 'Локальная служба',
+				placeholder: 'Сообщение для Anda…',
+				turns: [
+					{
+						user: 'Отвечай коротко. Миа ведёт редизайн Atlas, релиз в пятницу.',
+						reply: 'Принято. Запомню.',
+						note: 'Сохранено 3 воспоминания'
+					},
+					{
+						user: 'Составь чек-лист запуска по docs/launch.md.',
+						reply: 'Готово. Файл checklist.md создан.',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['Предпочтение', 'Проект', 'Человек', 'Решение', 'Событие'],
+				items: [
+					'Короткие и прямые ответы',
+					'Редизайн Atlas',
+					'Миа · руководит дизайном',
+					'Релиз в пятницу',
+					'Обзор запуска · 12 окт.'
+				],
+				revised: 'Релиз в понедельник',
+				source: 'Из разговора',
+				updated: 'Обновлено',
+				linked: 'Связано'
+			},
+			action: {
+				browser: 'Прочитано 3 источника',
+				summary: 'Сводка',
+				goal: 'Подготовить запуск Atlas',
+				agents: ['Поиск', 'Черновик', 'Проверка'],
+				routines: [
+					{ when: 'Пн 09:00', what: 'Недельный отчёт' },
+					{ when: 'Ежедневно 18:00', what: 'Сводка входящих' }
+				],
+				next: 'Следующий запуск'
+			},
+			control: {
+				machine: 'Ваш компьютер',
+				items: ['Настройки', 'Разговоры', 'Память'],
+				model: 'Провайдер моделей',
+				stays: 'Память хранится локально'
+			}
+		},
 		install: {
 			badge: 'Начало работы',
 			title: 'Начните с того, что хотите сделать.',
@@ -1356,6 +1635,55 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			body: 'ابدأ محادثة واربط أدواتك ودع السياق المفيد يتراكم من خلال العمل معاً.',
 			install: 'ابدأ الاستخدام',
 			docs: 'اقرأ التوثيق'
+		},
+		demo: {
+			composer: {
+				status: 'خدمة محلية',
+				placeholder: 'اكتب رسالة إلى Anda…',
+				turns: [
+					{
+						user: 'ردود قصيرة من فضلك. تصميم Atlas الجديد مع Mia، والإطلاق يوم الجمعة.',
+						reply: 'حسناً، سأتذكر ذلك.',
+						note: 'حُفظت 3 ذكريات'
+					},
+					{
+						user: 'اكتب قائمة مهام للإطلاق من docs/launch.md.',
+						reply: 'تم. ملف checklist.md جاهز.',
+						note: 'read_file · write_file'
+					}
+				]
+			},
+			memory: {
+				kinds: ['تفضيل', 'مشروع', 'شخص', 'قرار', 'حدث'],
+				items: [
+					'ردود قصيرة ومباشرة',
+					'إعادة تصميم Atlas',
+					'Mia · قيادة التصميم',
+					'الإطلاق يوم الجمعة',
+					'مراجعة الإطلاق · 12 أكتوبر'
+				],
+				revised: 'الإطلاق يوم الاثنين',
+				source: 'من المحادثة',
+				updated: 'تم التحديث',
+				linked: 'مرتبط'
+			},
+			action: {
+				browser: 'تمت قراءة 3 مصادر',
+				summary: 'ملخص',
+				goal: 'تحضير إطلاق Atlas',
+				agents: ['بحث', 'صياغة', 'مراجعة'],
+				routines: [
+					{ when: 'الاثنين 09:00', what: 'تقرير أسبوعي' },
+					{ when: 'يومياً 18:00', what: 'ملخص البريد' }
+				],
+				next: 'التشغيل التالي'
+			},
+			control: {
+				machine: 'جهازك',
+				items: ['الإعدادات', 'المحادثات', 'الذاكرة'],
+				model: 'مزود النماذج',
+				stays: 'الذاكرة محفوظة محلياً'
+			}
 		},
 		install: {
 			badge: 'ابدأ العمل',

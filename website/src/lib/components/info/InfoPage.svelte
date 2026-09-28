@@ -3,16 +3,16 @@
 	import { Button } from '$lib/components/ui/button';
 	import Anda from '$lib/components/ui/icons/anda.svelte';
 	import Github from '$lib/components/ui/icons/github.svelte';
+	import { LanguageMenu } from '$lib/components/ui/language-menu';
 	import {
 		detectLocale,
 		fallbackLocale,
 		isLocale,
 		localeMeta,
-		localeOrder,
 		type Locale
 	} from '$lib/content/landing';
 	import { infoCopy, type InfoPageKind } from '$lib/content/info';
-	import { ArrowLeft, BookOpen, ExternalLink, Languages } from '@lucide/svelte';
+	import { ArrowLeft, BookOpen, ExternalLink } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 
 	let { kind }: { kind: InfoPageKind } = $props();
@@ -67,7 +67,10 @@
 	<meta property="og:description" content={page.meta.description} />
 	<meta content="website" property="og:type" />
 	<meta content={`https://anda.bot/${kind}`} property="og:url" />
-	<meta content="https://anda.bot/_assets/images/anda_bot.webp" property="og:image" />
+	<meta content="https://anda.bot/_assets/images/og-anda-bot.jpg" property="og:image" />
+	<meta content="1200" property="og:image:width" />
+	<meta content="630" property="og:image:height" />
+	<meta content={page.meta.title} property="og:image:alt" />
 	<meta content="summary_large_image" name="twitter:card" />
 </svelte:head>
 
@@ -77,7 +80,7 @@
 		class="relative z-20 mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-5 sm:px-6 lg:px-8"
 	>
 		<a href="/" class="group inline-flex items-center gap-3 text-sm font-semibold text-white">
-			<img src="/_assets/logo.hdr.png" alt="Anda Bot" class="hdr-img size-12 rounded-lg" />
+			<Anda class="size-12" />
 			<span class="text-2xl">Anda Bot</span>
 		</a>
 
@@ -100,20 +103,12 @@
 		</nav>
 
 		<div class="header-actions">
-			<label class="language-switcher mr-2">
-				<Languages class="size-4" />
-				<span class="sr-only">{copy.common.languageLabel}</span>
-				<select
-					aria-label={copy.common.languageLabel}
-					value={activeLocale}
-					onchange={(event) =>
-						selectLocale((event.currentTarget as HTMLSelectElement).value as Locale)}
-				>
-					{#each localeOrder as locale}
-						<option value={locale}>{localeMeta[locale].nativeName}</option>
-					{/each}
-				</select>
-			</label>
+			<LanguageMenu
+				class="mr-2"
+				value={activeLocale}
+				label={copy.common.languageLabel}
+				onselect={selectLocale}
+			/>
 
 			<Button
 				href="https://docs.anda.bot"
