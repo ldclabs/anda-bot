@@ -44,6 +44,7 @@ export function parseStatus(raw: string): { head: string; branch: string; files:
         worktree: entry[3].replace('.', ' '),
         path: entry.split(' ').slice(pathAfter[kind]).join(' ')
       }
+      if (entry[5] === 'S') file.submodule = true
       if (kind === '2') file.previousPath = parts[++i]
       status.files.push(file)
     }
@@ -122,6 +123,7 @@ export class GitService {
    * Status plus a revision that changes with HEAD, the branch, staged content
    * (porcelain v2 carries index object IDs) and any edit to a changed or
    * untracked file (status alone cannot see a second edit to a modified file).
+   * Changed submodules also include their checked-out HEAD.
    */
   private async scan(
     root: string
@@ -129,13 +131,22 @@ export class GitService {
     const raw = await this.git(root, [...STATUS, '--branch', '--no-ahead-behind'])
     const status = parseStatus(raw)
     const hash = createHash('sha256').update(raw)
-    const stats = await Promise.all(
+    const worktreeState = await Promise.all(
       status.files
         .filter((f) => f.worktree !== ' ')
-        .map((f) => lstat(join(root, f.path)).catch(() => null))
+        .map(async (file) => {
+          const path = join(root, file.path)
+          const stat = await lstat(path).catch(() => null)
+          if (!stat) return '\0-'
+          // A submodule commit can leave both its status and directory metadata unchanged.
+          const head =
+            stat.isDirectory() && file.submodule
+              ? await this.git(path, ['rev-parse', '--verify', 'HEAD'])
+              : ''
+          return `\0${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${head}`
+        })
     )
-    for (const stat of stats)
-      hash.update(stat ? `\0${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}` : '\0-')
+    for (const state of worktreeState) hash.update(state)
     return { ...status, revision: hash.digest('hex') }
   }
   private async common(root: string): Promise<string> {

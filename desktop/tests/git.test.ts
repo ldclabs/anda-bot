@@ -38,6 +38,7 @@ it('parses rename and literal newline paths without quoting ambiguities', () => 
         `2 R. N... 100644 100644 100644 ${hash} ${hash} R100 new\nfile  two`,
         'old file',
         `1 .M N... 100644 100644 100644 ${hash} ${hash} a b`,
+        `1 .M SC.. 160000 160000 160000 ${hash} ${hash} linked module`,
         '? --flag',
         ''
       ].join('\0')
@@ -48,6 +49,7 @@ it('parses rename and literal newline paths without quoting ambiguities', () => 
     files: [
       { index: 'R', worktree: ' ', path: 'new\nfile  two', previousPath: 'old file' },
       { index: ' ', worktree: 'M', path: 'a b' },
+      { index: ' ', worktree: 'M', path: 'linked module', submodule: true },
       { index: '?', worktree: '?', path: '--flag' }
     ]
   })
@@ -70,6 +72,50 @@ it('fingerprints large changes, repeated edits and restaged content without full
   await writeFile(join(f.root, 'staged.txt'), 'six')
   await f.git(['add', 'staged.txt'])
   expect((await f.service.status(f.root)).revision).not.toBe(staged.revision)
+})
+it('rejects stale staging after a changed submodule advances again', async () => {
+  const library = await fixture()
+  await writeFile(join(library.root, 'file.txt'), 'base')
+  await library.git(['add', '.'])
+  await library.git(['commit', '-m', 'base'])
+  const f = await fixture()
+  const path = 'module with spaces'
+  await f.git(['-c', 'protocol.file.allow=always', 'submodule', 'add', library.root, path])
+  await f.git(['commit', '-am', 'add submodule'])
+  const submodule = join(f.root, path)
+  const git = (args: string[]) => run('git', args, { cwd: submodule })
+  await git(['config', 'user.name', 'Test'])
+  await git(['config', 'user.email', 'test@localhost'])
+  await writeFile(join(submodule, 'file.txt'), 'first')
+  await git(['commit', '-am', 'first'])
+  const before = await f.service.status(f.root)
+  const statusArgs = ['status', '--porcelain=v2', '-z']
+  const { stdout: status } = await f.git(statusArgs)
+  const { stdout: index } = await f.git(['ls-files', '--stage', '--', path])
+
+  await writeFile(join(submodule, 'file.txt'), 'second')
+  await git(['commit', '-am', 'second'])
+  expect((await f.git(statusArgs)).stdout).toBe(status)
+  await expect(
+    f.service.request({
+      action: 'stage',
+      workspace: f.root,
+      paths: [path],
+      revision: before.revision
+    })
+  ).rejects.toThrow('repository changed')
+  expect((await f.git(['ls-files', '--stage', '--', path])).stdout).toBe(index)
+
+  const after = await f.service.status(f.root)
+  expect(after.revision).not.toBe(before.revision)
+  await f.service.request({
+    action: 'stage',
+    workspace: f.root,
+    paths: [path],
+    revision: after.revision
+  })
+  const { stdout: head } = await git(['rev-parse', 'HEAD'])
+  expect((await f.git(['rev-parse', `:${path}`])).stdout).toBe(head)
 })
 it('stages literal paths, preserves files when unstaging unborn HEAD and rejects stale writes', async () => {
   const f = await fixture()

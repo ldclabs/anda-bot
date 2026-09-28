@@ -3,6 +3,7 @@ export interface GitFile {
   previousPath?: string
   index: string
   worktree: string
+  submodule?: boolean
 }
 export interface GitSnapshot {
   root: string
