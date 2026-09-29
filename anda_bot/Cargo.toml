@@ -99,35 +99,7 @@ libc = { workspace = true }
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 cpal = { workspace = true }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = { workspace = true }
-objc2-foundation = { workspace = true, features = [
-  "NSData",
-  "NSDistributedNotificationCenter",
-  "NSObject",
-  "NSNotification",
-  "NSString",
-  "objc2-core-foundation",
-] }
-objc2-app-kit = { workspace = true, features = [
-  "NSImage",
-  "NSAlert",
-  "NSApplication",
-  "NSButton",
-  "NSControl",
-  "NSMenu",
-  "NSMenuItem",
-  "NSResponder",
-  "NSRunningApplication",
-  "NSStatusBar",
-  "NSStatusBarButton",
-  "NSStatusItem",
-  "NSView",
-  "objc2-core-foundation",
-] }
-
 [target.'cfg(windows)'.dependencies]
-png = { workspace = true }
 windows-sys = { workspace = true, features = [
   "Win32_Globalization",
   "Win32_Graphics_Gdi",

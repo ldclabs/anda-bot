@@ -30,19 +30,22 @@
     "message": "Подключите Anda на этом компьютере"
   },
   "onboardingIntro": {
-    "message": "Расширению браузера требуется приложение Anda Bot в трее или строке меню, настроенный поставщик модели и запущенный локальный daemon, прежде чем можно будет начать чат."
+    "message": "Расширению браузера требуется Anda Desktop (или командная строка anda), настроенный поставщик модели и запущенный локальный daemon, прежде чем можно будет начать чат."
   },
   "onboardingInstallTitle": {
-    "message": "Установить лаунчер Anda Bot"
+    "message": "Установить Anda Desktop"
   },
   "onboardingInstallBody": {
-    "message": "Используйте установщик Windows или скрипт установки macOS. Лаунчер запускается после настройки и поддерживает локальный daemon доступным."
+    "message": "Скачайте Anda Desktop для Windows или Mac. Он установит командную строку anda и значок в трее, который поддерживает локальный daemon доступным. В Linux или только для командной строки используйте скрипт установки."
   },
   "windowsInstaller": {
-    "message": "Установщик Windows"
+    "message": "Anda Desktop для Windows"
   },
   "macosInstaller": {
-    "message": "Приложение строки меню macOS"
+    "message": "Anda Desktop для Mac (Apple Silicon)"
+  },
+  "cliInstaller": {
+    "message": "Командная строка (macOS/Linux)"
   },
   "openDownload": {
     "message": "Открыть загрузку"
@@ -51,10 +54,10 @@
     "message": "Копировать команду"
   },
   "onboardingConfigureTitle": {
-    "message": "Завершить настройку в лаунчере"
+    "message": "Завершить настройку в Anda Desktop"
   },
   "onboardingConfigureBody": {
-    "message": "Откройте Anda Bot из системного трея, строки меню или меню Пуск, завершите мастер настройки (провайдер/API-ключ/модель) и держите лаунчер запущенным во время использования расширения."
+    "message": "Откройте Anda из системного трея, строки меню или меню Пуск, укажите провайдера, API-ключ и модель в «Настройки → Настройка агента» и держите Anda запущенной во время использования расширения."
   },
   "openConfigEditor": {
     "message": "Открыть редактор config.yaml"
@@ -69,7 +72,7 @@
     "message": "Создать токен расширения"
   },
   "onboardingTokenBody": {
-    "message": "Скопируйте напечатанные Gateway URL и Bearer token в поля ниже."
+    "message": "Скопируйте напечатанные Gateway URL и Bearer token в поля ниже. Anda Desktop также может скопировать токен из трея."
   },
   "tokenCommandLabel": {
     "message": "Токен"

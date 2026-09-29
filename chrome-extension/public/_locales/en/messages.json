@@ -30,19 +30,22 @@
     "message": "Connect Anda on this computer"
   },
   "onboardingIntro": {
-    "message": "The browser extension needs the Anda Bot tray or menu bar app, a configured model provider, and a running local daemon before chat is available."
+    "message": "The browser extension needs Anda Desktop (or the anda command line), a configured model provider, and a running local daemon before chat is available."
   },
   "onboardingInstallTitle": {
-    "message": "Install the Anda Bot launcher"
+    "message": "Install Anda Desktop"
   },
   "onboardingInstallBody": {
-    "message": "Use the Windows setup installer or the macOS install script. The launcher starts after setup and keeps the local daemon available."
+    "message": "Download Anda Desktop for Windows or Mac. It installs the anda command line and a tray that keeps the local daemon available. On Linux, or for the command line only, use the install script."
   },
   "windowsInstaller": {
-    "message": "Windows setup installer"
+    "message": "Anda Desktop for Windows"
   },
   "macosInstaller": {
-    "message": "macOS menu bar app"
+    "message": "Anda Desktop for Mac (Apple Silicon)"
+  },
+  "cliInstaller": {
+    "message": "Command line (macOS/Linux)"
   },
   "openDownload": {
     "message": "Open download"
@@ -51,10 +54,10 @@
     "message": "Copy command"
   },
   "onboardingConfigureTitle": {
-    "message": "Complete setup in the launcher"
+    "message": "Complete setup in Anda Desktop"
   },
   "onboardingConfigureBody": {
-    "message": "Open Anda Bot from the system tray, menu bar, or Start Menu, complete the provider/API key/model wizard, and keep the launcher running while you use the extension."
+    "message": "Open Anda from the system tray, menu bar, or Start Menu, add your provider, API key and model in Settings → Agent configuration, and keep Anda running while you use the extension."
   },
   "openConfigEditor": {
     "message": "Open config.yaml editor"
@@ -69,7 +72,7 @@
     "message": "Generate an extension token"
   },
   "onboardingTokenBody": {
-    "message": "Copy the printed Gateway URL and Bearer token into the fields below."
+    "message": "Copy the printed Gateway URL and Bearer token into the fields below. Anda Desktop can also copy a token from its tray."
   },
   "tokenCommandLabel": {
     "message": "Token"

@@ -274,7 +274,7 @@ describe('AndaSidePanelClient.stopActiveTask', () => {
 })
 
 describe('AndaSidePanelClient.requestExtra', () => {
-  it('includes the synced launcher language in request metadata', async () => {
+  it('includes the synced desktop language in request metadata', async () => {
     const chromeApi = createChromeApi({
       activeTabs: [{ id: 1, url: 'https://example.com', title: 'Example', windowId: 2 }],
       uiLanguage: 'zh-Hans'
@@ -298,7 +298,7 @@ describe('AndaSidePanelClient.requestExtra', () => {
     })
   })
 
-  it('falls back to navigator.language when no launcher language is stored', async () => {
+  it('falls back to navigator.language when no desktop language is stored', async () => {
     const chromeApi = createChromeApi({ chromeUiLanguage: 'en-US' })
     vi.stubGlobal('chrome', chromeApi)
     vi.stubGlobal('navigator', { language: 'fr-FR' })

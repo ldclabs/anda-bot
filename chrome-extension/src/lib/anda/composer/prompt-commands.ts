@@ -32,7 +32,7 @@ export const emptyPromptCommandContext: PromptCommandContext = {
 export const promptSkillsCacheMs = 60_000
 
 // Built fresh on each call so descriptions and details follow the active UI
-// language (the launcher can switch it after this module loads).
+// language (Anda Desktop can switch it after this module loads).
 function promptCommandItems(): PromptCommandSuggestion[] {
   return [
     {

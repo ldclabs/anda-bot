@@ -8,10 +8,10 @@ interface StoredState {
   updateIntent?: {
     previous: string
     target: string
-    managed: boolean
-    wasRunning: boolean
     startedAt: number
   }
+  /** The first-run setup dialog was shown. */
+  setupShown?: boolean
   preferences: Preferences
   storage: Record<string, unknown>
   pending: PendingSubmission[]
@@ -44,6 +44,7 @@ export class DesktopStore {
       this.state = {
         daemonStopped: raw.daemonStopped,
         updateIntent: raw.updateIntent,
+        setupShown: raw.setupShown,
         preferences,
         storage: raw.storage || {},
         pending: (raw.pending || []).map((p) => ({ ...p, state: 'unknown' })),

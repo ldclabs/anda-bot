@@ -1,7 +1,6 @@
-//! Model-provider environment routing shared by the `anda` config loader and
-//! the `anda_launcher` setup wizard. Both binaries compile this same source
-//! file (the `daemon_protocol.rs` pattern), so the provider → env-var table
-//! cannot drift between the daemon and the launcher. Keep it dependency-free.
+//! Model-provider environment routing for the `anda` config loader: the
+//! provider → env-var table that decides which variable supplies an API key.
+//! Keep it dependency-free.
 
 /// API base that marks a provider as authenticating through ChatGPT Codex
 /// OAuth instead of an API key.

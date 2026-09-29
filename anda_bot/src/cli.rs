@@ -2,6 +2,8 @@ use anda_core::BoxError;
 
 pub mod agent;
 pub mod channel;
+pub mod installer;
+mod launcher_retirement;
 pub mod memory;
 pub mod memory_eval;
 pub mod session;

@@ -47,7 +47,6 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     connected: false,
     home: '',
     baseUrl: '',
-    managed: false,
     binary: null
   })
   pending = $state<PendingSubmission[]>([])
@@ -187,6 +186,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         if (this.authorized && !was) void this.refresh().catch((error) => this.fail(error))
       } else if (event.type === 'update') {
         this.systemMessage = { kind: 'info', text: String(event.value) }
+      } else if (event.type === 'preferences') {
+        this.preferences = event.value as Preferences
       } else if (event.type === 'state') {
         this.eventRevision++
         for (const channel of this.channels.values()) channel.wakePolling()

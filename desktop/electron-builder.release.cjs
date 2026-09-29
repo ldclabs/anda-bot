@@ -3,13 +3,12 @@ const path = require('node:path')
 const { parse } = require('yaml')
 
 const config = parse(fs.readFileSync(path.join(__dirname, 'electron-builder.yml'), 'utf8'))
-const url = new URL(process.env.ANDA_UPDATE_URL || '')
-if (url.protocol !== 'https:' || url.username || url.password)
-  throw new Error('ANDA_UPDATE_URL must be a public HTTPS update directory')
 if (!process.env.CSC_LINK)
   throw new Error('A release signing certificate must be configured with CSC_LINK')
 config.forceCodeSigning = true
-config.publish = [{ provider: 'generic', url: url.href }]
+// Desktop packages ship in the same GitHub release as the anda CLI, so the
+// update feed is that release's latest*.yml metadata.
+config.publish = [{ provider: 'github', owner: 'ldclabs', repo: 'anda-bot', releaseType: 'release' }]
 delete config.mac.identity
 config.mac.entitlements = 'resources/entitlements.mac.plist'
 config.mac.entitlementsInherit = 'resources/entitlements.mac.plist'
@@ -36,6 +35,6 @@ config.extraResources.push({
 })
 fs.writeFileSync(
   path.join(__dirname, 'resources/release-channel.json'),
-  JSON.stringify({ signed: true, url: url.href })
+  JSON.stringify({ signed: true, provider: 'github' })
 )
 module.exports = config

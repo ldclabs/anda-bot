@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright'
-import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -20,6 +20,8 @@ assert.equal(
     .update(await readFile(runtime))
     .digest('hex')
 )
+// The bundle carries the curated skills `anda install` copies into the home.
+await access(join(resources, 'runtime/skills', 'pdf', 'SKILL.md'))
 const directory = await mkdtemp(join(tmpdir(), 'anda-packaged-smoke-'))
 const profile = join(directory, 'profile'),
   home = join(directory, 'home'),
@@ -109,7 +111,7 @@ try {
   await mkdir(resolve('test-results'), { recursive: true })
   await page.screenshot({ path: resolve('test-results/12-packaged.png') })
   console.log(
-    'PASS: packaged application startup, final runtime digest, signed native PTY and isolated browser. Real daemon remained stopped.'
+    'PASS: packaged application startup, final runtime digest, bundled skills, signed native PTY and isolated browser. Real daemon remained stopped and nothing was installed.'
   )
 } finally {
   await application?.close()

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Generate and publish the Homebrew formula for anda.
+# Generate and publish the Homebrew formula for anda and, when the release
+# has desktop packages, the anda-desktop cask. The cask depends on the
+# formula, so Anda Desktop uses Homebrew's anda instead of installing its own.
 #
 # Required in CI:
 #   HOMEBREW_TAP_TOKEN  GitHub token with write access to HOMEBREW_TAP_REPO
@@ -18,6 +20,8 @@ FORMULA_CLASS="${FORMULA_CLASS:-Anda}"
 TAP_REPO="${HOMEBREW_TAP_REPO:-ldclabs/homebrew-tap}"
 TAP_BRANCH="${HOMEBREW_TAP_BRANCH:-main}"
 FORMULA_PATH="${HOMEBREW_FORMULA_PATH:-Formula/${FORMULA_NAME}.rb}"
+CASK_NAME="${CASK_NAME:-anda-desktop}"
+CASK_PATH="${HOMEBREW_CASK_PATH:-Casks/${CASK_NAME}.rb}"
 TAG="${1:-${GITHUB_REF_NAME:-}}"
 
 info() { printf '%s\n' "$1"; }
@@ -117,9 +121,9 @@ class ${FORMULA_CLASS} < Formula
     if OS.mac?
       lines += [
         "",
-        "The macOS formula also installs the menu bar launcher:",
-        "  anda_launcher",
-        "Run it once to create or refresh ~/Applications/Anda Bot.app.",
+        "The tray, chat window and settings are in Anda Desktop, which uses this anda:",
+        "  brew install --cask ldclabs/tap/${CASK_NAME}",
+        "anda_launcher only retires the old Anda Bot menu bar launcher and will be removed.",
       ]
     end
 
@@ -134,11 +138,39 @@ end
 EOF
 }
 
+write_cask() {
+    cat <<EOF
+cask "${CASK_NAME}" do
+  arch arm: "arm64", intel: "x64"
+
+  version "${VERSION}"
+  sha256 arm:   "${DESKTOP_MACOS_ARM64_SHA}",
+         intel: "${DESKTOP_MACOS_X64_SHA}"
+
+  url "https://github.com/${REPO}/releases/download/v#{version}/Anda-mac-#{arch}.dmg"
+  name "Anda"
+  desc "Desktop workspace and tray for the Anda local AI agent"
+  homepage "https://anda.bot"
+
+  auto_updates true
+  depends_on formula: "${FORMULA_NAME}"
+
+  app "Anda.app"
+
+  zap trash: [
+    "~/Library/Application Support/Anda",
+    "~/Library/Preferences/org.ldclabs.anda.desktop.plist",
+  ]
+end
+EOF
+}
+
 need_cmd curl
 need_cmd awk
 need_cmd git
 
 TAG=$(normalize_tag "$TAG")
+VERSION="${TAG#v}"
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 
 info "Generating Homebrew formula for ${REPO} ${TAG}..."
@@ -149,15 +181,28 @@ LAUNCHER_MACOS_ARM64_SHA=$(fetch_checksum "anda_launcher-macos-arm64")
 LAUNCHER_MACOS_X86_64_SHA=$(fetch_checksum "anda_launcher-macos-x86_64")
 LINUX_ARM64_SHA=$(fetch_checksum "anda-linux-arm64")
 LINUX_X86_64_SHA=$(fetch_checksum "anda-linux-x86_64")
+# Desktop packages are optional: a release without them publishes no cask.
+DESKTOP_MACOS_ARM64_SHA=$( (fetch_checksum "Anda-mac-arm64.dmg") 2>/dev/null || true)
+DESKTOP_MACOS_X64_SHA=$( (fetch_checksum "Anda-mac-x64.dmg") 2>/dev/null || true)
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 FORMULA_TMP="${TMPDIR}/${FORMULA_NAME}.rb"
 write_formula > "$FORMULA_TMP"
+CASK_TMP=""
+if [ -n "$DESKTOP_MACOS_ARM64_SHA" ] && [ -n "$DESKTOP_MACOS_X64_SHA" ]; then
+    CASK_TMP="${TMPDIR}/${CASK_NAME}.rb"
+    write_cask > "$CASK_TMP"
+else
+    info "Release has no macOS desktop packages; skipping the ${CASK_NAME} cask."
+fi
 
 if [ "${DRY_RUN:-}" = "1" ]; then
     cat "$FORMULA_TMP"
+    if [ -n "$CASK_TMP" ]; then
+        cat "$CASK_TMP"
+    fi
     exit 0
 fi
 
@@ -183,17 +228,25 @@ fi
 
 mkdir -p "${TAP_DIR}/$(dirname "$FORMULA_PATH")"
 cp "$FORMULA_TMP" "${TAP_DIR}/${FORMULA_PATH}"
+TAP_PATHS="$FORMULA_PATH"
+if [ -n "$CASK_TMP" ]; then
+    mkdir -p "${TAP_DIR}/$(dirname "$CASK_PATH")"
+    cp "$CASK_TMP" "${TAP_DIR}/${CASK_PATH}"
+    TAP_PATHS="${TAP_PATHS} ${CASK_PATH}"
+fi
 
 git -C "$TAP_DIR" config user.name "${GIT_COMMITTER_NAME:-github-actions[bot]}"
 git -C "$TAP_DIR" config user.email "${GIT_COMMITTER_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 
-if [ -z "$(git -C "$TAP_DIR" status --porcelain -- "$FORMULA_PATH")" ]; then
-    info "Homebrew formula is already up to date."
+# shellcheck disable=SC2086 # TAP_PATHS is a space-separated list of repo paths.
+if [ -z "$(git -C "$TAP_DIR" status --porcelain -- $TAP_PATHS)" ]; then
+    info "Homebrew formula and cask are already up to date."
     exit 0
 fi
 
-git -C "$TAP_DIR" add "$FORMULA_PATH"
-git -C "$TAP_DIR" commit -m "Update ${FORMULA_NAME} formula to ${TAG}"
+# shellcheck disable=SC2086
+git -C "$TAP_DIR" add $TAP_PATHS
+git -C "$TAP_DIR" commit -m "Update ${FORMULA_NAME} to ${TAG}"
 
 if [ "${PUSH:-1}" = "1" ]; then
     if [ -n "${TAP_ASKPASS:-}" ]; then
@@ -202,7 +255,7 @@ if [ "${PUSH:-1}" = "1" ]; then
     else
         git -C "$TAP_DIR" push origin "HEAD:${TAP_BRANCH}"
     fi
-    info "Published ${FORMULA_PATH} to ${TAP_REPO} ${TAP_BRANCH}."
+    info "Published ${TAP_PATHS} to ${TAP_REPO} ${TAP_BRANCH}."
 else
-    info "Updated ${FORMULA_PATH} in ${TAP_DIR}; PUSH=0 so changes were not pushed."
+    info "Updated ${TAP_PATHS} in ${TAP_DIR}; PUSH=0 so changes were not pushed."
 fi

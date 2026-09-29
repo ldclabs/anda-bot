@@ -1,5 +1,5 @@
-//! OS locale detection shared by the `anda` daemon and the `anda_launcher`
-//! tray app.
+//! OS locale detection shared by the `anda` daemon and the transitional
+//! `anda_launcher`.
 //!
 //! Both binaries compile this same source file — `util.rs` declares
 //! `pub mod locale;` and `anda_launcher.rs` includes it via `#[path]` — so the
@@ -7,8 +7,8 @@
 //!
 //! Callers own the mapping from a locale tag to their own language enum,
 //! because the two binaries ship different sets of translated strings: the
-//! launcher menu is localized into six languages while the daemon's native
-//! dialogs are localized into two. What is shared is *where* tags come from
+//! launcher's retirement notice is localized into six languages while the
+//! daemon's native dialogs are localized into two. What is shared is *where* tags come from
 //! (platform preference list first, then `LC_ALL`/`LC_MESSAGES`/`LANG`), the
 //! order they are tried in, and how a raw tag is normalized before matching.
 

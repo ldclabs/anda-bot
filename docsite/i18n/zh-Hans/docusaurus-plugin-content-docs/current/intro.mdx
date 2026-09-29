@@ -6,13 +6,13 @@ description: Anda Bot 官方文档入口。
 
 # Anda Bot 文档
 
-Anda Bot 是记忆优先的本地 AI 助手。桌面启动器和本地 daemon 让 Brain 持续运行在你的机器上；浏览器侧边栏、终端、文件、Skills、Cron、Subagents、频道和语音，都可以进入同一个长期知识图谱记忆。
+Anda Bot 是记忆优先的本地 AI 助手。Anda 桌面端和本地 daemon 让 Brain 持续运行在你的机器上；浏览器侧边栏、终端、文件、Skills、Cron、Subagents、频道和语音，都可以进入同一个长期知识图谱记忆。
 
 这套文档面向希望真正掌握助手记忆的用户：从安装本地应用开始，继续连接浏览器、配置模型服务商，并理解 Brain 如何让上下文在会话和模型更换中保持可迁移。
 
 ## 你可以从这里开始
 
-- [安装 Anda](./quick-start/install)：选择桌面启动器、Homebrew、安装脚本、Windows PowerShell 或源码路径。
+- [安装 Anda](./quick-start/install)：选择 Anda 桌面端、Homebrew、安装脚本、Windows PowerShell 或源码路径。
 - [连接浏览器](./quick-start/browser-extension)：通过 Gateway URL 和 Bearer token，把浏览器侧边栏接入本地 daemon。
 - [终端使用](./quick-start/terminal)：掌握发送、多行输入、`/goal`、`/loop`、`/side`、`/skill`、`/steer` 和常用命令。
 - [配置运行时](./runtime/configuration)：准备 `~/.anda/config.yaml`、模型 provider、API key、代理和本地目录。
@@ -37,8 +37,8 @@ brew install ldclabs/tap/anda
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
 ```
 
-如果你不在 macOS，或希望使用桌面启动器/安装脚本，请继续看 [安装 Anda](./quick-start/install)。
+如果你不在 macOS，或希望使用 Anda 桌面端/安装脚本，请继续看 [安装 Anda](./quick-start/install)。
 
 :::tip
-首次启动时，Anda 会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型字段缺失，编辑这个文件并保存，然后在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。
+首次启动时，Anda 会创建 `~/.anda/config.yaml`。如果终端 UI 提示模型字段缺失，编辑这个文件并保存，然后在 Anda 桌面端或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。
 :::

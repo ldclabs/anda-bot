@@ -12,8 +12,13 @@ asarUnpack:
   - node_modules/node-pty/**
 electronDist: node_modules/electron/dist
 extraResources:
+  # The bundled anda only installs itself (and these curated skills) at the
+  # shared CLI location; the app never runs it as the daemon.
   - from: resources/runtime
     to: runtime
+  - from: ../skills
+    to: runtime/skills
+    filter: ['**/*', '!**/__pycache__/**', '!**/*.pyc', '!**/.DS_Store']
   - from: ../anda_bot/assets/logo-tray.png
     to: logo-tray.png
   - from: ../anda_bot/assets/config.yaml
@@ -39,10 +44,14 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: false
+  # Matches running processes by this install directory only; the default
+  # prefix match would also stop the shared CLI in ...\Programs\AndaBot.
+  include: resources/installer.nsh
 linux:
   icon: ../anda_bot/assets/logo.png
   target: [AppImage]
 protocols:
   - name: Anda chat
     schemes: [anda]
-artifactName: Anda-${version}-${os}-${arch}.${ext}
+# Stable names let the website and Homebrew link to the latest release.
+artifactName: Anda-${os}-${arch}.${ext}

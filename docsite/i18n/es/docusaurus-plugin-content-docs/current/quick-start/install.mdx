@@ -10,29 +10,39 @@ Anda Bot se puede instalar desde una versión publicada (release) o ejecutar dir
 
 ## Instalar la última versión
 
-En macOS, se recomienda utilizar Homebrew:
+### Anda Desktop
+
+La mayoría de los usuarios debería empezar con Anda Desktop: la ventana de chat, el espacio de trabajo y la bandeja del sistema. Descárguelo desde la [última versión](https://github.com/ldclabs/anda-bot/releases/latest):
+
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`; Intel: `Anda-mac-x64.dmg`
+- Windows x64: `Anda-win-x64.exe`
+- Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (también instala la fórmula `anda`)
+
+Anda Desktop conserva una instalación existente de `anda` o instala el `anda` incluido y las habilidades seleccionadas donde lo hacen los scripts de instalación (`~/.local/bin` en macOS, `%LOCALAPPDATA%\Programs\AndaBot` en Windows). Así, el escritorio, la terminal y la extensión de Chrome comparten un mismo runtime y un mismo daemon. La primera ejecución pregunta si Anda debe iniciarse al iniciar sesión. La bandeja de Anda Desktop sustituye al lanzador retirado de la barra de menús de Anda Bot, que el escritorio elimina.
+
+### Solo línea de comandos
+
+Con Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-En macOS, la fórmula de Homebrew instala tanto `anda` como `anda_launcher`. Ejecute `anda_launcher` una vez para iniciar el lanzador de la barra de menús y actualizar `~/Applications/Anda Bot.app`.
-
-En macOS y Linux también se puede utilizar el script de instalación:
+macOS y Linux con el script de instalación:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-Los usuarios de Windows deben descargar `AndaBotSetup-windows-x86_64.exe` desde la [última versión lanzada](https://github.com/ldclabs/anda-bot/releases/latest) y hacer doble clic en él. El instalador coloca a Anda bajo `%LOCALAPPDATA%\Programs\AndaBot`, instala las habilidades (Skills) preseleccionadas, crea accesos directos en el Escritorio y en el Menú de inicio, registra el lanzador de la bandeja del sistema para que se inicie al iniciar sesión, inicia el lanzador, abre un asistente de configuración gráfico para configurar el proveedor, la clave API y el modelo, y busca actualizaciones descargadas que puedan instalarse mostrando un aviso de reinicio.
+Si también tiene una instalación de Homebrew, abra una nueva terminal y compruebe que `command -v anda` apunta a `~/.local/bin/anda` o a su `ANDA_INSTALL_DIR`; de lo contrario, un binario antiguo de Homebrew puede ocultar el binario actualizado del script.
 
-Los usuarios avanzados y los entornos de Integración Continua (CI) pueden utilizar PowerShell:
+Windows con PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-El instalador de shell para macOS también instala `~/Applications/Anda Bot.app`, registra el lanzador de la barra de menús al iniciar sesión y lo inicia de inmediato; el lanzador inicia el daemon después de la configuración, puede buscar actualizaciones desde la barra de menús y solicita instalar y reiniciar una vez descargada la actualización. Las instalaciones de shell en Linux registran directamente el inicio automático del daemon. Para PowerShell, añada `-NoAutostart` o `-NoStart` para omitir este comportamiento; para el instalador de shell, defina `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
+Los scripts de instalación instalan `anda` y las habilidades seleccionadas, lo añaden al `PATH`, registran el inicio del daemon al iniciar sesión con `anda autostart install` y lo reinician; al volver a ejecutarlos también eliminan el lanzador retirado. En Windows, la entrada de inicio ejecuta `anda start` y muestra brevemente una ventana de consola. Para PowerShell, añada `-NoAutostart` o `-NoStart` para omitir este comportamiento; para el instalador de shell, defina `ANDA_NO_AUTOSTART=1` o `ANDA_NO_START=1`.
 
 Después de la instalación, abra una nueva terminal y ejecute:
 
@@ -42,7 +52,7 @@ anda
 
 ## Preparar una clave API del modelo
 
-Necesita al menos una clave API de proveedor de modelos. Los usuarios del instalador de Windows pueden introducirla en el asistente de configuración. Los usuarios de la interfaz de línea de comandos (CLI) pueden comenzar configurando una variable de entorno:
+Necesita al menos una clave API de proveedor de modelos. Los usuarios de Anda Desktop pueden introducirla en **Ajustes → Configuración del agente**. Los usuarios de la interfaz de línea de comandos (CLI) pueden comenzar configurando una variable de entorno:
 
 ```bash
 DEEPSEEK_API_KEY=TU_CLAVE_API anda
@@ -63,7 +73,7 @@ En la primera ejecución, Anda crea el directorio de runtime local y el archivo 
 1. Abra `~/.anda/config.yaml`.
 2. Complete los campos `family`, `model`, `api_base` y `api_key` o use una variable de entorno para el proveedor del modelo.
 3. Guarde el archivo.
-4. Actualice los modelos desde el lanzador o el panel lateral del navegador, o ejecute `anda models reload`.
+4. Actualice los modelos desde Anda Desktop o el panel lateral del navegador, o ejecute `anda models reload`.
 
 Configuración mínima del modelo:
 

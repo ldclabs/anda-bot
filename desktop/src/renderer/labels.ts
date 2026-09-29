@@ -111,7 +111,23 @@ const en = {
   working: 'Anda is working…',
   organizePrompt: 'Help me organize these thoughts: ',
   restartDaemon: 'Restart daemon',
-  stopDaemon: 'Stop daemon'
+  stopDaemon: 'Stop daemon',
+  openAnda: 'Open Anda',
+  serviceRunning: 'Anda service is running',
+  serviceStopped: 'Anda service is not running',
+  installUpdate: 'Install update and restart',
+  extensionToken: 'Copy Chrome extension token',
+  tokenCopied: 'Chrome extension token copied. Paste it into the extension settings.',
+  quitDesktop: 'Quit Anda Desktop (service keeps running)',
+  setupTitle: 'Anda is ready',
+  setupDetail:
+    'The anda command line is installed at {path} and shared by Anda Desktop, your terminal and the Chrome extension.',
+  startAtLogin: 'Start Anda when I log in',
+  ok: 'OK',
+  launcherRetired: 'The Anda Bot tray is now part of Anda Desktop.',
+  brewOutdated:
+    'Homebrew’s anda is older than this app. Run “brew upgrade anda” to use every desktop feature.',
+  restartToUpgrade: 'Anda {version} is installed. Restart the service from the tray to use it.'
 }
 export type Label = keyof typeof en
 
@@ -230,7 +246,21 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     working: 'Anda 正在处理…',
     organizePrompt: '帮我整理一下这些想法：',
     restartDaemon: '重启服务',
-    stopDaemon: '停止服务'
+    stopDaemon: '停止服务',
+    openAnda: '打开 Anda',
+    serviceRunning: 'Anda 服务运行中',
+    serviceStopped: 'Anda 服务未运行',
+    installUpdate: '安装更新并重启',
+    extensionToken: '复制 Chrome 扩展令牌',
+    tokenCopied: 'Chrome 扩展令牌已复制，请粘贴到扩展设置中。',
+    quitDesktop: '退出 Anda 桌面端（服务继续运行）',
+    setupTitle: 'Anda 已准备就绪',
+    setupDetail: 'anda 命令行已安装在 {path}，由 Anda 桌面端、终端和 Chrome 扩展共同使用。',
+    startAtLogin: '登录时启动 Anda',
+    ok: '好',
+    launcherRetired: 'Anda Bot 托盘已并入 Anda 桌面端。',
+    brewOutdated: 'Homebrew 安装的 anda 比本应用旧。运行“brew upgrade anda”即可使用全部桌面功能。',
+    restartToUpgrade: 'Anda {version} 已安装。请从托盘重启服务以启用新版本。'
   },
   fr: {
     newChat: 'Nouvelle discussion',
@@ -346,7 +376,24 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     working: 'Anda travaille…',
     organizePrompt: 'Aide-moi à organiser ces idées : ',
     restartDaemon: 'Redémarrer le service',
-    stopDaemon: 'Arrêter le service'
+    stopDaemon: 'Arrêter le service',
+    openAnda: 'Ouvrir Anda',
+    serviceRunning: 'Le service Anda fonctionne',
+    serviceStopped: 'Le service Anda est arrêté',
+    installUpdate: 'Installer la mise à jour et redémarrer',
+    extensionToken: 'Copier le jeton de l’extension Chrome',
+    tokenCopied: 'Jeton de l’extension Chrome copié. Collez-le dans les réglages de l’extension.',
+    quitDesktop: 'Quitter Anda Desktop (le service continue)',
+    setupTitle: 'Anda est prêt',
+    setupDetail:
+      'La ligne de commande anda est installée dans {path} et partagée par Anda Desktop, votre terminal et l’extension Chrome.',
+    startAtLogin: 'Démarrer Anda à l’ouverture de session',
+    ok: 'OK',
+    launcherRetired: 'Le lanceur Anda Bot fait désormais partie d’Anda Desktop.',
+    brewOutdated:
+      'Le anda de Homebrew est plus ancien que cette app. Lancez « brew upgrade anda » pour toutes les fonctions.',
+    restartToUpgrade:
+      'Anda {version} est installé. Redémarrez le service depuis l’icône pour l’utiliser.'
   },
   es: {
     newChat: 'Nuevo chat',
@@ -462,7 +509,24 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     working: 'Anda está trabajando…',
     organizePrompt: 'Ayúdame a organizar estas ideas: ',
     restartDaemon: 'Reiniciar el servicio',
-    stopDaemon: 'Detener el servicio'
+    stopDaemon: 'Detener el servicio',
+    openAnda: 'Abrir Anda',
+    serviceRunning: 'El servicio de Anda está en ejecución',
+    serviceStopped: 'El servicio de Anda no está en ejecución',
+    installUpdate: 'Instalar actualización y reiniciar',
+    extensionToken: 'Copiar token de la extensión de Chrome',
+    tokenCopied: 'Token de la extensión de Chrome copiado. Pégalo en los ajustes de la extensión.',
+    quitDesktop: 'Salir de Anda Desktop (el servicio sigue activo)',
+    setupTitle: 'Anda está listo',
+    setupDetail:
+      'La línea de comandos anda está instalada en {path} y la comparten Anda Desktop, tu terminal y la extensión de Chrome.',
+    startAtLogin: 'Iniciar Anda al iniciar sesión',
+    ok: 'Aceptar',
+    launcherRetired: 'La bandeja de Anda Bot ahora forma parte de Anda Desktop.',
+    brewOutdated:
+      'El anda de Homebrew es más antiguo que esta app. Ejecuta «brew upgrade anda» para usar todas las funciones.',
+    restartToUpgrade:
+      'Anda {version} está instalado. Reinicia el servicio desde la bandeja para usarlo.'
   },
   ru: {
     newChat: 'Новый чат',
@@ -578,7 +642,24 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     working: 'Anda работает…',
     organizePrompt: 'Помоги мне упорядочить эти мысли: ',
     restartDaemon: 'Перезапустить службу',
-    stopDaemon: 'Остановить службу'
+    stopDaemon: 'Остановить службу',
+    openAnda: 'Открыть Anda',
+    serviceRunning: 'Служба Anda работает',
+    serviceStopped: 'Служба Anda не запущена',
+    installUpdate: 'Установить обновление и перезапустить',
+    extensionToken: 'Скопировать токен расширения Chrome',
+    tokenCopied: 'Токен расширения Chrome скопирован. Вставьте его в настройки расширения.',
+    quitDesktop: 'Выйти из Anda Desktop (служба продолжит работу)',
+    setupTitle: 'Anda готова',
+    setupDetail:
+      'Командная строка anda установлена в {path} и используется Anda Desktop, терминалом и расширением Chrome.',
+    startAtLogin: 'Запускать Anda при входе в систему',
+    ok: 'ОК',
+    launcherRetired: 'Трей Anda Bot теперь входит в Anda Desktop.',
+    brewOutdated:
+      'anda из Homebrew старше этого приложения. Выполните «brew upgrade anda», чтобы получить все функции.',
+    restartToUpgrade:
+      'Anda {version} установлена. Перезапустите службу из трея, чтобы использовать её.'
   },
   ar: {
     newChat: 'محادثة جديدة',
@@ -693,7 +774,23 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     working: 'Anda تعمل…',
     organizePrompt: 'ساعدني في تنظيم هذه الأفكار: ',
     restartDaemon: 'إعادة تشغيل الخدمة',
-    stopDaemon: 'إيقاف الخدمة'
+    stopDaemon: 'إيقاف الخدمة',
+    openAnda: 'فتح Anda',
+    serviceRunning: 'خدمة Anda قيد التشغيل',
+    serviceStopped: 'خدمة Anda متوقفة',
+    installUpdate: 'تثبيت التحديث وإعادة التشغيل',
+    extensionToken: 'نسخ رمز إضافة Chrome',
+    tokenCopied: 'تم نسخ رمز إضافة Chrome. الصقه في إعدادات الإضافة.',
+    quitDesktop: 'إنهاء Anda Desktop (تستمر الخدمة في العمل)',
+    setupTitle: 'Anda جاهز',
+    setupDetail:
+      'تم تثبيت سطر أوامر anda في {path}، ويشترك فيه Anda Desktop والطرفية وإضافة Chrome.',
+    startAtLogin: 'تشغيل Anda عند تسجيل الدخول',
+    ok: 'حسنًا',
+    launcherRetired: 'أصبح رمز Anda Bot في شريط النظام جزءًا من Anda Desktop.',
+    brewOutdated:
+      'إصدار anda من Homebrew أقدم من هذا التطبيق. شغّل «brew upgrade anda» لاستخدام كل الميزات.',
+    restartToUpgrade: 'تم تثبيت Anda {version}. أعد تشغيل الخدمة من شريط النظام لاستخدامه.'
   }
 }
 export function label(language: string, key: Label): string {

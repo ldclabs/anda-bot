@@ -89,3 +89,16 @@ E2E 截图位于忽略提交的 `desktop/test-results/`，使用合成内容。�
 
 
 本轮交付安装包位于 `desktop/release/validated-workbench/`：`Anda-0.13.1-mac-arm64.dmg`、`Anda-0.13.1-mac-arm64.zip`，附 `SHA256SUMS.txt` 和 `verification.json`。最终 `.app` 已通过独立 profile 的打包后启动/PTY/浏览器测试；应用签名完整性和 runtime manifest 哈希通过。本机包为 ad-hoc 签名，公开公证/签名仍未进行。安装前完成现有任务，停止旧版服务并退出旧桌面，再将新应用拖入 Applications。现有真实 daemon 和用户数据未被本轮测试重启或替换。
+
+## 单一 runtime 与托盘（2026-09-29）
+
+本节取代上文关于 bundled runtime 托管、独立更新禁用和手动升级的描述。
+
+- **同一个 anda**：安装包内的 `anda` 只用于 `anda install`，从不作为 daemon 运行。桌面端每次启动都会执行它：沿用安装脚本位置（`~/.local/bin`、`%LOCALAPPDATA%\Programs\AndaBot`、`ANDA_INSTALL_DIR`）或 Homebrew 中已有的 anda，只在内置版本更新时替换，不改动 Homebrew 安装；没有安装时写入该位置、加入 `PATH` 并复制精选技能。之后所有 daemon 命令都通过这个共享的 `anda` 执行。`ANDA_DESKTOP_MANAGED_RUNTIME`、`managed_runtime`/`runtime_path` 能力字段和托管/外部 runtime 的区分已删除。
+- **同一个托盘**：`anda_launcher` 托盘退役，由桌面端托盘承担服务状态、重启、`anda` 更新、Chrome 扩展令牌和日志入口。`anda install` 会移除旧 launcher 的登录项、`Anda Bot.app`、Windows 快捷方式和 sidecar；若旧 launcher 会在登录时启动，则改由 `anda autostart` 让 daemon 登录启动，桌面端也会开启自己的登录启动。`anda_launcher` 仍以原资产名发布，成为只负责迁移的过渡程序。
+- **更新**：`anda` runtime 由 CLI 更新程序下载；安装时沿用维护租约先排空任务，Unix 原位替换后 `anda restart`，Windows 先停服务、等待替换完成标记再启动，失败时恢复服务。桌面应用本身在签名版中通过 GitHub Release 的 `latest*.yml` 更新，不再停止服务。
+- **发布**：`release.yml` 为 macOS arm64/x64 和 Windows x64 构建桌面包（稳定文件名 `Anda-mac-arm64.dmg`、`Anda-mac-x64.dmg`、`Anda-win-x64.exe`），合并两个 macOS 的更新元数据；Homebrew 发布 `anda-desktop` cask，依赖 `anda` formula。IExpress 版 `AndaBotSetup` 已删除。
+- **Windows 安装器**：electron-builder 默认按 `$INSTDIR` 前缀匹配进程，`...\Programs\Anda` 会误杀 `...\Programs\AndaBot` 中的 CLI daemon；`resources/installer.nsh` 改为只匹配安装目录本身，Windows 安装冒烟测试增加了同名前缀目录进程存活检查。
+- **登录与重连**：登录启动只创建托盘，不创建窗口；自动重连不会再启动在别处（如 `anda stop`）停止的服务。
+
+验证边界：macOS 上运行了 Rust 定向测试、桌面/扩展/官网的类型检查与单元测试；Windows 相关的 Rust 代码（注册表启动项、运行中 exe 改名替换）、NSIS 脚本、PowerShell 安装脚本、签名/公证与跨版本真实更新都需要在 Windows CI 或实机上验收。

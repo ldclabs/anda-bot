@@ -24,79 +24,36 @@ Use a different home directory for a separate identity, profile, or test environ
 cargo run -p anda_bot -- --home /path/to/.anda
 ```
 
-## Local Launcher Development
+## Local Install Development
 
-For local launcher testing on macOS, build both binaries, install them side by
-side, copy the bundled skills, and register the menu bar launcher as a user
-LaunchAgent:
-
-```bash
-cargo build -p anda_bot --release --locked --bin anda --bin anda_launcher
-
-mkdir -p "$HOME/.local/bin" "$HOME/.anda/skills"
-install -m 755 target/release/anda "$HOME/.local/bin/anda"
-install -m 755 target/release/anda_launcher "$HOME/.local/bin/anda_launcher"
-cp -R skills/. "$HOME/.anda/skills/"
-
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>ai.anda.anda-bot.launcher</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$HOME/.local/bin/anda_launcher</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-EOF
-
-launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist"
-launchctl kickstart -k "gui/$(id -u)/ai.anda.anda-bot.launcher"
-```
-
-Verify the installed launcher and daemon state with:
+To test a local build the way Anda Desktop and the install scripts install it,
+run `anda install` from the build output. It copies the binary to the shared
+CLI location (`~/.local/bin`, `%LOCALAPPDATA%\Programs\AndaBot` or
+`ANDA_INSTALL_DIR`), never downgrades a newer install, leaves Homebrew installs
+to `brew upgrade`, adds the directory to `PATH`, installs curated skills found
+in a `skills/` directory next to the binary, and retires the old tray launcher:
 
 ```bash
-launchctl print "gui/$(id -u)/ai.anda.anda-bot.launcher"
-"$HOME/.local/bin/anda" --home "$HOME/.anda" status
+cargo build -p anda_bot --release --locked --bin anda
+target/release/anda install
+anda autostart install
+anda restart
 ```
 
-For a throwaway development profile, run the debug launcher directly. The
-launcher first looks for `anda` next to itself, so build both binaries before
-starting it:
+Use `--dir <directory>` to install elsewhere, and `--json` for the report Anda
+Desktop reads. For a throwaway profile, pass `--home` (or set `ANDA_HOME`) and
+`--dir` to temporary directories.
 
-```bash
-cargo build -p anda_bot --bin anda --bin anda_launcher
-ANDA_HOME="$PWD/.dev/anda-home" target/debug/anda_launcher
-```
-
-To build a Windows installer locally, run the packaging step on Windows because
-it depends on `iexpress.exe`:
-
-```powershell
-cargo build --release --locked --target x86_64-pc-windows-msvc --bin anda --bin anda_launcher
-
-New-Item -ItemType Directory -Force release | Out-Null
-Copy-Item target\x86_64-pc-windows-msvc\release\anda.exe release\anda-windows-x86_64.exe -Force
-Copy-Item target\x86_64-pc-windows-msvc\release\anda_launcher.exe release\anda_launcher-windows-x86_64.exe -Force
-
-if (Test-Path release\anda-skills.zip) { Remove-Item release\anda-skills.zip -Force }
-Compress-Archive -Path skills\* -DestinationPath release\anda-skills.zip -Force
-
-pwsh -NoProfile -ExecutionPolicy Bypass -File scripts\build-windows-installer.ps1 -ReleaseDir release
-.\release\AndaBotSetup-windows-x86_64.exe
-```
+`anda_launcher` is no longer a tray. It is a transitional binary that older
+launchers and `anda update` still download: when an old install starts it, it
+runs `anda install` to remove the launcher's login entry, app bundle, shortcuts
+and sidecar, keeps the daemon starting at login, starts the daemon, and shows a
+one-time notice pointing to Anda Desktop.
 
 Windows Authenticode signing is optional. When Microsoft Artifact Signing is
-configured, the GitHub workflow signs Windows binaries and the generated
-installer before checksums are generated. When it is not configured, the
+configured, the GitHub workflow signs the Windows `anda` and `anda_launcher`
+binaries before checksums are generated; the Anda Desktop installer is signed
+separately with the certificates of the `desktop-release` environment. When it is not configured, the
 workflow still publishes unsigned Windows artifacts. To enable signing, create
 an Azure Artifact Signing account, complete identity validation, create a
 certificate profile, grant the app registration's service principal the
@@ -119,8 +76,8 @@ keep the publisher identity stable across releases so reputation can
 accumulate. Unsigned Windows artifacts may still show the SmartScreen
 unrecognized-app warning.
 
-The release install script downloads published artifacts. For local launcher
-debugging, use the manual install flow above or the generated Windows installer.
+The release install scripts download published artifacts. For a local build,
+use `anda install` as shown above.
 
 ## Configure A Model
 
@@ -270,7 +227,7 @@ What stands between a prompt and a running command is the approval flow:
 
 1. **Static policy.** A built-in policy allows clearly safe commands and flags risky ones.
 2. **Risk model.** In the default `on_risk` mode, commands the static policy cannot clear are classified by the configured LLM; if the model is unavailable, the static policy's conservative answer is used.
-3. **Human approval.** Commands judged risky produce an approval action that you must confirm (in the chat UI, launcher, or browser extension) before they run. In `request_approval` mode every command asks; in `full_access` mode nothing asks.
+3. **Human approval.** Commands judged risky produce an approval action that you must confirm (in Anda Desktop, the terminal, or the browser extension) before they run. In `request_approval` mode every command asks; in `full_access` mode nothing asks.
 
 Implications you should be aware of:
 

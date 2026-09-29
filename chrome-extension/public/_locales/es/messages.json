@@ -30,19 +30,22 @@
     "message": "Conecta Anda en este equipo"
   },
   "onboardingIntro": {
-    "message": "La extensión del navegador necesita la app de bandeja o barra de menús de Anda Bot, un proveedor de modelo configurado y el daemon local en ejecución antes de poder chatear."
+    "message": "La extensión del navegador necesita Anda Desktop (o la línea de comandos anda), un proveedor de modelo configurado y el daemon local en ejecución antes de poder chatear."
   },
   "onboardingInstallTitle": {
-    "message": "Instalar el lanzador de Anda Bot"
+    "message": "Instalar Anda Desktop"
   },
   "onboardingInstallBody": {
-    "message": "Usa el instalador de Windows o el script de instalación de macOS. El lanzador se inicia después de la configuración y mantiene disponible el daemon local."
+    "message": "Descarga Anda Desktop para Windows o Mac. Instala la línea de comandos anda y una bandeja que mantiene disponible el daemon local. En Linux, o solo para la línea de comandos, usa el script de instalación."
   },
   "windowsInstaller": {
-    "message": "Instalador de Windows"
+    "message": "Anda Desktop para Windows"
   },
   "macosInstaller": {
-    "message": "App de barra de menús de macOS"
+    "message": "Anda Desktop para Mac (Apple Silicon)"
+  },
+  "cliInstaller": {
+    "message": "Línea de comandos (macOS/Linux)"
   },
   "openDownload": {
     "message": "Abrir descarga"
@@ -51,10 +54,10 @@
     "message": "Copiar comando"
   },
   "onboardingConfigureTitle": {
-    "message": "Completar configuración en el lanzador"
+    "message": "Completar configuración en Anda Desktop"
   },
   "onboardingConfigureBody": {
-    "message": "Abre Anda Bot desde la bandeja del sistema, la barra de menús o el menú Inicio, completa el asistente de configuración (proveedor/clave API/modelo) y mantén el lanzador en ejecución mientras usas la extensión."
+    "message": "Abre Anda desde la bandeja del sistema, la barra de menús o el menú Inicio, indica proveedor, clave API y modelo en Ajustes → Configuración del agente, y mantén Anda en ejecución mientras usas la extensión."
   },
   "openConfigEditor": {
     "message": "Abrir editor de config.yaml"
@@ -69,7 +72,7 @@
     "message": "Generar un token para la extensión"
   },
   "onboardingTokenBody": {
-    "message": "Copia la Gateway URL y el Bearer token impresos en los campos de abajo."
+    "message": "Copia la Gateway URL y el Bearer token impresos en los campos de abajo. Anda Desktop también puede copiar un token desde su bandeja."
   },
   "tokenCommandLabel": {
     "message": "Token"

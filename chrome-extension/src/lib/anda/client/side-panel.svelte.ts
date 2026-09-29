@@ -48,7 +48,7 @@ import type {
 import { normalTextForSpeech } from './voice'
 
 const workspaceChannelSourcesStorageKey = 'workspaceChannelSources'
-// The launcher persists language switches on disk; the daemon serves them via
+// Anda Desktop persists language switches on disk; the daemon serves them via
 // the `ui_language` RPC, so a modest poll keeps an open panel in sync.
 const uiLanguageSyncIntervalMs = 30_000
 
@@ -183,7 +183,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   /**
-   * Follows the language selected in the Anda launcher: persists it for
+   * Follows the language selected in Anda Desktop: persists it for
    * initI18n(). Every extension page watches the stored value (via
    * watchUiLanguage) and reloads itself so all rendered strings switch.
    */

@@ -94,6 +94,9 @@ pub enum Commands {
     Reload,
     /// Update the anda binary to the latest release.
     Update(cli::updater::UpdateCommand),
+    /// Install this anda binary at the CLI location shared with the install
+    /// scripts, Homebrew and Anda Desktop (never downgrades).
+    Install(cli::installer::InstallCommand),
     /// Tool-related operations against the running daemon.
     #[command(subcommand)]
     Tool(ToolCommand),
@@ -258,6 +261,10 @@ async fn run() -> Result<(), BoxError> {
     };
 
     tokio::fs::create_dir_all(&home).await?;
+    // Installing only copies files; it must not create a config or identity.
+    if let Some(Commands::Install(cmd)) = command.as_ref() {
+        return cli::installer::run(&home, cmd).await;
+    }
     let daemon = load_daemon(home).await?;
 
     if let Some(Commands::Update(cmd)) = command.as_ref() {
@@ -442,6 +449,9 @@ async fn run() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Update(_)) => unreachable!("update command is handled before daemon setup"),
+        Some(Commands::Install(_)) => {
+            unreachable!("install command is handled before daemon setup")
+        }
         Some(Commands::Tool(cmd)) => {
             log::info!("Starting CLI with command 'tool' at {}", daemon.base_url());
 

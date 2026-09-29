@@ -44,26 +44,33 @@ Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积
 
 ## 快速开始
 
-### Electron 桌面客户端
+### Anda 桌面端
 
-桌面端与 Chrome 扩展共享聊天、记忆、技能、书签和配置组件。运行 `pnpm install --filter @anda/desktop...`，再运行 `pnpm --dir desktop package`，即可构建本机安装包。产物位于 `desktop/release/`，包含 Rust runtime，保留已有 `~/.anda` 数据，凭证只由 Electron 主进程持有。详见[桌面安装、开发和验证说明](desktop/README.md)。
+Anda 桌面端是本地 Anda 的聊天窗口、工作台和托盘。请从 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载：
 
-桌面工作台支持服务端推送和持久提交回执、独立内嵌浏览器与 Agent 操作、交互终端、Git 改动/提交及可恢复工作树，并提供音频自检页。Chrome 浏览器自动化仍可使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置；`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
+- macOS Apple Silicon：`Anda-mac-arm64.dmg`；Intel：`Anda-mac-x64.dmg`
+- Windows x64：`Anda-win-x64.exe`
+- Homebrew：`brew install --cask ldclabs/tap/anda-desktop`（会同时安装 `anda` formula）
 
-macOS 本地包采用临时签名和手动安装。正式签名发行版可以协调托管 runtime 更新，延后 cron 调度并等待活动任务完成后安装。已提供 Windows CI、NSIS 和签名配置；Windows 实机验收及公开签名/公证仍需要对应环境和凭证。详见[实施与验证记录](docs/desktop-client-implementation.md)。
+桌面端、终端和 Chrome 扩展共用同一个 `anda` 和同一个 daemon。桌面端启动时会沿用已有安装（安装脚本、`ANDA_INSTALL_DIR` 或 Homebrew 安装的 anda）；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置：macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`。较新的 CLI 不会被降级，Homebrew 安装通过 `brew upgrade` 更新。首次运行会询问是否登录时启动 Anda；关闭窗口后，托盘会让服务继续运行。
 
-### CLI 与托盘启动器
+桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器。安装 Anda 桌面端、重新运行安装脚本或更新旧启动器时，都会移除启动器的登录项、app 包和快捷方式；如果原来启动器会在登录时启动，daemon 仍会在登录时启动。
 
-安装最新发布版：
+托盘和**设置 → 检查更新**会在活动任务结束后安装新的 `anda` 版本并重启服务；桌面应用本身单独更新（正式签名版），不会停止服务。托盘还可以重启服务、复制 Chrome 扩展令牌和打开日志。
+
+桌面端与 Chrome 扩展共享聊天、记忆、技能、书签和配置组件。工作台支持服务端推送和持久提交回执、独立内嵌浏览器与 Agent 操作、交互终端、Git 改动/提交及可恢复工作树，并提供音频自检页。Chrome 浏览器自动化仍可使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置；`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
+
+发布环境提供签名凭证时，发布包会签名并公证；否则为未签名包，没有应用内更新通道。如需构建本机安装包，运行 `pnpm install --filter @anda/desktop...` 和 `pnpm --dir desktop package`；详见[桌面安装、开发和验证说明](desktop/README.md)与[实施与验证记录](docs/desktop-client-implementation.md)。
+
+### 命令行
+
+不安装桌面端，只安装最新的 `anda` 发布版：
 
 通过 Homebrew：
 
 ```bash
 brew install ldclabs/tap/anda
 ```
-
-在 macOS 上，Homebrew formula 会同时安装 `anda` 和 `anda_launcher`。运行一次
-`anda_launcher` 即可启动菜单栏 launcher，并刷新 `~/Applications/Anda Bot.app`。
 
 macOS 和 Linux 通过安装脚本：
 
@@ -75,31 +82,22 @@ curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/insta
 指向 `~/.local/bin/anda` 或你的 `ANDA_INSTALL_DIR`；否则较旧的 Homebrew
 二进制可能会遮蔽安装脚本安装的新版本。
 
-Windows 普通用户请从
-[latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载
-`AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到
-`%LOCALAPPDATA%\Programs\AndaBot`，安装内置 skills，创建开始菜单和桌面快捷方式，
-注册托盘 launcher 登录自启，安装完成后立即启动 launcher，并在 GUI 向导中完成
-provider/API key/model 配置；launcher 还会自动检查并下载更新，下载完成后提示安装
-并重启。
-
-高级用户和 CI 仍可使用 PowerShell 路径：
+Windows 通过 PowerShell：
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon，也可以从菜单栏检查更新，并在更新下载完成后提示安装并重启。Linux shell 安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
-
-使用 `anda_launcher --home <目录>`（或为 launcher 设置 `ANDA_HOME`）可指定状态目录。
-launcher 会将该目录传给 daemon 命令，并保留在登录自启和重启入口中。模型设置只更新
-选中的模型，保留其他 provider 和注释，保存前会验证配置。macOS 登录自启开关从下次
-登录生效，当前 launcher 会继续运行。托盘状态在空闲时每分钟刷新一次，打开菜单或
-完成 daemon 操作时也会异步刷新。
+安装脚本会安装 `anda` 和精选技能，将其加入 `PATH`，用 `anda autostart install`
+注册 daemon 登录自启，并重启 daemon。Windows 上的登录项是当前用户的 `Run`
+注册表值，登录时运行 `anda start`（会短暂出现一个控制台窗口）；Anda 桌面端的登录启动
+不会出现窗口。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；
+shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 前置要求：
 
-- 至少一个可用的模型提供方 API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以写在 `~/.anda/config.yaml`，也可以通过支持的环境变量提供。
+- 至少一个可用的模型提供方 API key。可以在 Anda 桌面端的**设置 → Agent 配置**中填写，
+  也可以写在 `~/.anda/config.yaml`，或通过支持的环境变量提供。
 
 也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
 
@@ -122,7 +120,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-首次启动时，daemon 会自动创建 `~/.anda/config.yaml`。如果界面提示模型配置缺失，请打开该文件，填写 provider 详情，保存后在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。对于 API Key，也可以在启动 Anda 之前导出对应的环境变量。
+首次启动时，daemon 会自动创建 `~/.anda/config.yaml`。如果界面提示模型配置缺失，请打开该文件，填写 provider 详情，保存后在 Anda 桌面端或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。对于 API Key，也可以在启动 Anda 之前导出对应的环境变量。
 
 最小模型配置示例：
 
@@ -157,7 +155,7 @@ anda --home /path/to/.anda
 - 上/下方向键在多行输入中移动光标。
 - Ctrl+U 清空输入。
 - Ctrl+A / Ctrl+E 跳到输入开头或结尾。
-- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 launcher / 浏览器侧边栏点击刷新模型。
+- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 Anda 桌面端 / 浏览器侧边栏点击刷新模型。
 - 修改仍需要重启的 daemon 设置后，再输入 `/reload`。
 - 输入 `/stop` 打断当前任务，取消其后台任务和待审批动作，清除活动目标，并让会话回到 idle 状态以接收下一条消息。
 - 输入 `/cancel` 停止上述工作，并关闭当前活动会话。
@@ -207,7 +205,15 @@ anda
 anda update
 ```
 
-本地构建版本较新时，会保留现有程序、启动器和内置技能。使用 `anda update --force` 可明确安装最新发布版，即使它比本地版本旧。此规则也适用于 `anda update --skills`。
+Homebrew 安装会拒绝 `anda update`，请使用 `brew upgrade anda`。Anda 桌面端的托盘和设置页执行的也是同一个更新。
+
+把当前 `anda` 安装到共享的 CLI 位置（Anda 桌面端就是这样安装内置副本的；不会降级，`--dir` 可指定其他目录）：
+
+```bash
+anda install
+```
+
+本地构建版本较新时，会保留现有程序和内置技能。使用 `anda update --force` 可明确安装最新发布版，即使它比本地版本旧。此规则也适用于 `anda update --skills`。
 
 管理后台 daemon：
 

@@ -14,21 +14,24 @@ import {
   systemPreferences,
   screen,
   protocol,
-  net
+  net,
+  clipboard
 } from 'electron'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
-import { realpath, stat } from 'node:fs/promises'
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { GitService } from './git'
 import { TerminalService } from './terminal'
 import { BrowserService } from './browser'
 import { DesktopUpdater } from './updater'
 import type { Bootstrap, DaemonView, NativeEvent, Preferences } from '../shared/contract'
 import { DesktopStore } from './store'
-import { DaemonClient } from './daemon-client'
+import { DaemonClient, type InstallReport } from './daemon-client'
+import { isOlderRelease } from './update-machine'
 import { appPermissionAllowed, externalUrl, navigationSource, rendererAssetPath } from './policy'
+import { label, type Label } from '../renderer/labels'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -81,6 +84,7 @@ let terminals: TerminalService
 let browser: BrowserService
 let updater: DesktopUpdater
 let quitPrompt = false
+let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
 const firstReconnectDelay = 10_000
@@ -92,10 +96,120 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL
 function emit(event: NativeEvent): void {
   window?.webContents.send('anda:event', event)
 }
-/** Explicit reconnects and wake-ups retry promptly again after a backoff. */
-function connectNow(): Promise<DaemonView> {
+function t(key: Label): string {
+  return label(store.state.preferences.language, key)
+}
+/** Explicit reconnects start the service; retries after a backoff only reconnect. */
+function connectNow(start = true): Promise<DaemonView> {
   reconnectDelay = firstReconnectDelay
-  return daemon.connect()
+  return daemon.connect(start)
+}
+/** Shows `body` in the window when it is open, else as a system notification. */
+function inform(body: string): void {
+  if (window?.isVisible()) emit({ type: 'update', value: body })
+  else if (Notification.isSupported()) new Notification({ title: 'Anda', body }).show()
+}
+async function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  store.state.preferences.launchAtLogin = enabled
+  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] })
+  await store.save()
+  emit({ type: 'preferences', value: store.state.preferences })
+}
+/**
+ * Mirrors the UI language to `launcher/ui.json` in the Anda home: the daemon
+ * localizes approval cards from it and the Chrome extension follows it. The
+ * path is the one the retired tray launcher wrote.
+ */
+async function persistUiLanguage(language: string): Promise<void> {
+  const tag = language.toLowerCase().startsWith('zh') ? 'zh-Hans' : language.split(/[-_]/)[0]
+  const content = JSON.stringify({
+    language: ['en', 'zh-Hans', 'fr', 'es', 'ru', 'ar'].includes(tag!) ? tag : 'en'
+  })
+  const path = join(home, 'launcher', 'ui.json')
+  if ((await readFile(path, 'utf8').catch(() => '')) === content) return
+  await mkdir(join(home, 'launcher'), { recursive: true })
+  await writeFile(path, content)
+}
+/** Follows up on the bundled runtime's `anda install` report. */
+async function onInstalled(report: InstallReport): Promise<void> {
+  if (report.launcher_started_at_login && !store.state.preferences.launchAtLogin)
+    // The retired launcher kept a tray at login; this app's tray takes over.
+    await setLaunchAtLogin(true)
+  if (report.action === 'installed' && !store.state.setupShown) {
+    store.state.setupShown = true
+    const result = await dialog.showMessageBox({
+      type: 'info',
+      message: t('setupTitle'),
+      detail: t('setupDetail').replace('{path}', report.path),
+      checkboxLabel: t('startAtLogin'),
+      checkboxChecked: true,
+      buttons: [t('ok')]
+    })
+    await setLaunchAtLogin(result.checkboxChecked)
+  } else if (report.launcher_retired) inform(t('launcherRetired'))
+  const bundled = await daemon.bundledRelease()
+  if (report.action === 'homebrew' && report.version && bundled)
+    if (isOlderRelease(report.version, bundled)) inform(t('brewOutdated'))
+}
+async function controlDaemon(action: 'stop' | 'restart'): Promise<DaemonView> {
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    message: action === 'stop' ? 'Stop the Anda daemon?' : 'Restart the Anda daemon?',
+    detail:
+      'Running agent tasks, IM channels, and scheduled jobs will be interrupted. Closing the desktop window alone keeps them running.',
+    buttons: ['Cancel', action === 'stop' ? 'Stop daemon' : 'Restart daemon'],
+    defaultId: 0,
+    cancelId: 0
+  }
+  const result = await (window
+    ? dialog.showMessageBox(window, options)
+    : dialog.showMessageBox(options))
+  if (result.response !== 1) return daemon.view
+  clearTimeout(reconnectTimer)
+  return daemon.control(action)
+}
+async function copyExtensionToken(): Promise<void> {
+  clipboard.writeText(await daemon.extensionToken())
+  inform(t('tokenCopied'))
+}
+function refreshTray(): void {
+  if (!tray) return
+  const view = daemon.view
+  const release = updater?.runtimeRelease
+  const runUpdate = (action: () => Promise<string>) =>
+    void action().then(inform, (error) =>
+      inform(error instanceof Error ? error.message : String(error))
+    )
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: t('openAnda'), click: show },
+      { label: t('newChat'), click: () => menuAction('new-chat') },
+      { type: 'separator' },
+      {
+        label: view.connected
+          ? `${t('serviceRunning')}${view.version ? ` · v${view.version}` : ''}`
+          : t('serviceStopped'),
+        enabled: false
+      },
+      { label: t('restartDaemon'), click: () => void controlDaemon('restart').catch(() => {}) },
+      release
+        ? {
+            label: `${t('installUpdate')} (${release})`,
+            click: () => runUpdate(() => updater.installRuntime())
+          }
+        : { label: t('update'), click: () => runUpdate(() => updater.check()) },
+      {
+        label: t('extensionToken'),
+        click: () =>
+          void copyExtensionToken().catch((error) =>
+            inform(error instanceof Error ? error.message : String(error))
+          )
+      },
+      { label: t('logs'), click: () => void showLogs() },
+      { type: 'separator' },
+      { label: t('quitDesktop'), click: () => app.quit() }
+    ])
+  )
 }
 function openExternal(url: unknown): void {
   try {
@@ -413,19 +527,36 @@ async function setup(): Promise<void> {
     home,
     app.isPackaged ? process.resourcesPath : resolve(__dirname, '../../resources'),
     store,
-    testMode ? process.env.ANDA_DESKTOP_TEST_URL : undefined
+    testMode ? process.env.ANDA_DESKTOP_TEST_URL : undefined,
+    app.isPackaged && !testMode
   )
+  daemon.on('installed', (report: InstallReport) => void onInstalled(report).catch(() => {}))
   daemon.on('change', (state) => {
     emit({ type: 'connection', value: state })
+    refreshTray()
+    const installed = daemon.installReport
+    if (
+      state.connected &&
+      state.version &&
+      installed?.action === 'upgraded' &&
+      installed.version !== `v${state.version}` &&
+      !upgradeNoticeShown
+    ) {
+      // The shared anda was upgraded under a daemon that still runs the old one.
+      upgradeNoticeShown = true
+      inform(t('restartToUpgrade').replace('{version}', installed.version || ''))
+    }
     if (state.connected && state.liveEvents) void browser?.reconnect().catch(() => {})
     clearTimeout(reconnectTimer)
     if (state.connected) reconnectDelay = firstReconnectDelay
     else if (!quitting && !daemon.manuallyStopped) {
-      // Each attempt runs the CLI (and may start the daemon); back off up to 5 minutes.
-      reconnectTimer = setTimeout(() => void daemon.connect(), reconnectDelay)
+      // Retries only reconnect: a daemon stopped from the CLI stays stopped
+      // until the user asks for it again. Back off up to 5 minutes.
+      reconnectTimer = setTimeout(() => void daemon.connect(false), reconnectDelay)
       reconnectDelay = Math.min(reconnectDelay * 2, 5 * 60_000)
     }
   })
+  void persistUiLanguage(store.state.preferences.language).catch(() => {})
   nativeTheme.themeSource = store.state.preferences.theme
   daemon.on('state', (value) => emit({ type: 'state', value }))
   daemon.on('submissions', (value) => emit({ type: 'submissions', value }))
@@ -458,9 +589,11 @@ async function setup(): Promise<void> {
     daemon,
     store,
     () => terminals.running,
-    (value) => emit({ type: 'update', value })
+    (value) => emit({ type: 'update', value }),
+    refreshTray
   )
   void updater.recover().catch((error) => emit({ type: 'update', value: String(error) }))
+  if (!testMode) updater.startRuntimeChecks()
   handle('anda:browser', (request) => browser.request(request))
   daemon.on('browser-action', async (message) => {
     const command = message.params
@@ -528,21 +661,10 @@ async function setup(): Promise<void> {
     return git.request(request)
   })
   handle('anda:bootstrap', bootstrap)
-  handle('anda:connect', connectNow)
+  handle('anda:connect', () => connectNow())
   handle('anda:control', async (action) => {
     if (!['stop', 'restart'].includes(action)) throw new Error('Invalid daemon action')
-    const result = await dialog.showMessageBox(window!, {
-      type: 'warning',
-      message: action === 'stop' ? 'Stop the Anda daemon?' : 'Restart the Anda daemon?',
-      detail:
-        'Running agent tasks, IM channels, and scheduled jobs will be interrupted. Closing the desktop window alone keeps them running.',
-      buttons: ['Cancel', action === 'stop' ? 'Stop daemon' : 'Restart daemon'],
-      defaultId: 0,
-      cancelId: 0
-    })
-    if (result.response !== 1) return daemon.view
-    clearTimeout(reconnectTimer)
-    return daemon.control(action)
+    return controlDaemon(action)
   })
   handle('anda:rpc', async (method, params, submissionId) => {
     try {
@@ -578,6 +700,10 @@ async function setup(): Promise<void> {
         openAtLogin: patch.launchAtLogin,
         args: ['--hidden']
       })
+    if (patch.language) {
+      await persistUiLanguage(patch.language).catch(() => {})
+      refreshTray()
+    }
   })
   handle('anda:storage:get', (keys: string[]) => {
     if (
@@ -685,6 +811,7 @@ async function setup(): Promise<void> {
   })
   handle('anda:logs', showLogs)
   handle('anda:update', () => updater.check())
+  handle('anda:extension-token', copyExtensionToken)
   const menu: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {
@@ -714,7 +841,12 @@ async function setup(): Promise<void> {
     }
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(menu))
-  createWindow()
+  // A login start stays in the tray; the window is created when first shown.
+  // macOS login items get no arguments, so ask the system how it started us.
+  const loginStart =
+    process.argv.includes('--hidden') ||
+    (process.platform === 'darwin' && app.isPackaged && app.getLoginItemSettings().wasOpenedAtLogin)
+  if (!loginStart) createWindow()
   const iconPath = app.isPackaged
     ? join(process.resourcesPath, 'logo-tray.png')
     : resolve(__dirname, '../../../anda_bot/assets/logo-tray.png')
@@ -722,21 +854,13 @@ async function setup(): Promise<void> {
   image.setTemplateImage(process.platform === 'darwin')
   tray = new Tray(image)
   tray.setToolTip('Anda')
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Open Anda', click: show },
-      { label: 'New Chat', click: () => menuAction('new-chat') },
-      { type: 'separator' },
-      {
-        label: 'Quit Anda Desktop (keep daemon running)',
-        click: () => app.quit()
-      }
-    ])
-  )
+  refreshTray()
   tray.on('click', show)
   powerMonitor.on('resume', () => {
-    if (!daemon.manuallyStopped) void connectNow()
+    if (!daemon.manuallyStopped) void connectNow(false)
   })
+  // The tray owns the service at login, before any window asks for it.
+  if (!daemon.manuallyStopped) void connectNow()
   if (process.platform !== 'darwin')
     nativeTheme.on('updated', () => window?.setTitleBarOverlay(titleBarOverlay()))
 }

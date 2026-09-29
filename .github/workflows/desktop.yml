@@ -72,7 +72,6 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
-          ANDA_UPDATE_URL: ${{ vars.ANDA_UPDATE_URL }}
         run: |
           node scripts/prepare-runtime.mjs
           pnpm exec electron-builder --config electron-builder.release.cjs --publish never

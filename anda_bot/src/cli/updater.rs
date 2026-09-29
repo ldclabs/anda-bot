@@ -16,6 +16,18 @@ pub(crate) const REPO: &str = "ldclabs/anda-bot";
 pub(crate) const BINARY_NAME: &str = "anda";
 pub(crate) const LAUNCHER_BINARY_NAME: &str = "anda_launcher";
 const SKILLS_ARCHIVE_NAME: &str = "anda-skills.zip";
+pub(crate) const HOMEBREW_UPDATE_MESSAGE: &str =
+    "anda is managed by Homebrew. Update it with `brew upgrade anda`.";
+
+/// Whether Homebrew owns `exe`. `current_exe()` returns the `bin/` symlink on
+/// macOS, and renaming a new file over it would break Homebrew's links, so
+/// Homebrew installs are updated only through `brew upgrade`.
+pub(crate) fn is_homebrew_managed(exe: &Path) -> bool {
+    std::fs::canonicalize(exe)
+        .unwrap_or_else(|_| exe.to_path_buf())
+        .components()
+        .any(|component| component.as_os_str() == "Cellar")
+}
 
 #[derive(Args)]
 #[command(group(ArgGroup::new("update_check").args(["check", "check_if_due"])))]
@@ -73,7 +85,7 @@ struct StagedFile {
     keep: bool,
 }
 
-struct StagedDir {
+pub(crate) struct StagedDir {
     path: PathBuf,
 }
 
@@ -101,11 +113,11 @@ impl Drop for StagedFile {
 }
 
 impl StagedDir {
-    fn new(path: PathBuf) -> Self {
+    pub(crate) fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 }
@@ -214,16 +226,21 @@ pub async fn run(
         .parent()
         .ok_or("Could not detect the current executable directory")?
         .to_path_buf();
+    let homebrew = is_homebrew_managed(&current_exe);
 
     if action == ReleaseAction::SyncExtras {
-        if let Some(finish) =
-            install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
+        if !homebrew
+            && let Some(finish) =
+                install_release_launcher_if_present(client, &base_url, target, &install_dir).await?
         {
             print_launcher_update_finish(latest_tag.as_str(), finish);
         }
         install_release_skills(client, &base_url, home_dir).await?;
         println!("anda is already up to date ({current_tag}).");
         return Ok(());
+    }
+    if homebrew {
+        return Err(HOMEBREW_UPDATE_MESSAGE.into());
     }
 
     let asset_name = target.asset_name();
@@ -608,7 +625,10 @@ fn extract_skills_archive(archive_path: &Path, staging_dir: &Path) -> Result<(),
     Ok(())
 }
 
-fn install_skills_from_staging(staging_dir: &Path, skills_dir: &Path) -> Result<usize, BoxError> {
+pub(crate) fn install_skills_from_staging(
+    staging_dir: &Path,
+    skills_dir: &Path,
+) -> Result<usize, BoxError> {
     std::fs::create_dir_all(skills_dir)?;
 
     let mut installed = 0;
@@ -626,13 +646,13 @@ fn install_skills_from_staging(staging_dir: &Path, skills_dir: &Path) -> Result<
     }
 
     if installed == 0 {
-        return Err(format!("{SKILLS_ARCHIVE_NAME} is empty").into());
+        return Err("the curated skills bundle is empty".into());
     }
 
     Ok(installed)
 }
 
-fn bundled_skills_dir(home_dir: &Path) -> PathBuf {
+pub(crate) fn bundled_skills_dir(home_dir: &Path) -> PathBuf {
     home_dir.join("bundled-skills")
 }
 
@@ -868,7 +888,7 @@ pub(crate) fn temporary_download_path(asset_name: &str) -> PathBuf {
     ))
 }
 
-fn staged_skills_dir_path(home_dir: &Path) -> PathBuf {
+pub(crate) fn staged_skills_dir_path(home_dir: &Path) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())

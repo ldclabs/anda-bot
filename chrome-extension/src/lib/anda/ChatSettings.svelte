@@ -71,8 +71,9 @@
 
   const installScriptCommand =
     'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh'
-  const windowsInstallerUrl =
-    'https://github.com/ldclabs/anda-bot/releases/latest/download/AndaBotSetup-windows-x86_64.exe'
+  const releaseDownload = 'https://github.com/ldclabs/anda-bot/releases/latest/download'
+  const windowsInstallerUrl = `${releaseDownload}/Anda-win-x64.exe`
+  const macInstallerUrl = `${releaseDownload}/Anda-mac-arm64.dmg`
   const tokenCommand = 'anda browser token --days 365'
   const configPageUrl = chrome.runtime.getURL('dashboard.html#config')
 
@@ -269,7 +270,7 @@
         {/snippet}
       </Dialog.Close>
 
-      <div class="shrink-0 flex flex-col gap-2 border-b bg-muted/35 px-5 py-4 pr-12">
+      <div class="flex shrink-0 flex-col gap-2 border-b bg-muted/35 px-5 py-4 pr-12">
         <div class="flex min-w-0 items-start justify-between gap-3">
           <div class="grid min-w-0 gap-1">
             <Dialog.Title class="flex min-w-0 items-center gap-2 text-base font-bold">
@@ -283,7 +284,7 @@
         </div>
       </div>
 
-      <div class="scrollbar-slim min-h-0 flex-1 flex flex-col gap-4 overflow-y-auto px-5 py-4">
+      <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
         <div class="rounded-lg border bg-background shadow-xs">
           <button
             type="button"
@@ -331,7 +332,8 @@
                   </div>
                   <div class="grid gap-2">
                     {@render downloadBlock(getMessage('windowsInstaller'), windowsInstallerUrl)}
-                    {@render commandBlock(getMessage('macosInstaller'), installScriptCommand)}
+                    {@render downloadBlock(getMessage('macosInstaller'), macInstallerUrl)}
+                    {@render commandBlock(getMessage('cliInstaller'), installScriptCommand)}
                   </div>
                 </div>
               </div>
@@ -616,7 +618,7 @@
       </div>
 
       <div
-        class="shrink-0 grid grid-cols-2 gap-2 border-t bg-muted/25 px-5 py-4 sm:grid-cols-2 sm:justify-stretch"
+        class="grid shrink-0 grid-cols-2 gap-2 border-t bg-muted/25 px-5 py-4 sm:grid-cols-2 sm:justify-stretch"
       >
         <button
           type="button"

@@ -6,13 +6,13 @@ description: The official entry point for Anda Bot documentation.
 
 # Anda Bot Docs
 
-Anda Bot is a memory-first local AI assistant. The desktop launcher and local daemon keep Brain running on your machine, while the browser side panel, terminal, files, skills, cron, subagents, channels, and voice can all feed the same long-term graph memory.
+Anda Bot is a memory-first local AI assistant. Anda Desktop and the local daemon keep Brain running on your machine, while the browser side panel, terminal, files, skills, cron, subagents, channels, and voice can all feed the same long-term graph memory.
 
 These docs are for people ready to own the assistant layer instead of renting memory from one model account. Start with the app install, then connect the browser, configure providers, and learn how Brain keeps context portable across sessions and models.
 
 ## Start Here
 
-- [Install Anda](./quick-start/install): choose the launcher, Homebrew, install script, Windows PowerShell, or source path.
+- [Install Anda](./quick-start/install): choose Anda Desktop, Homebrew, the install script, Windows PowerShell, or the source path.
 - [Pair the browser](./quick-start/browser-extension): connect the side panel to the local daemon with a Gateway URL and Bearer token.
 - [Use the terminal](./quick-start/terminal): learn message sending, multiline input, `/goal`, `/loop`, `/side`, `/skill`, `/steer`, and common commands.
 - [Configure the runtime](./runtime/configuration): prepare `~/.anda/config.yaml`, model providers, API keys, proxies, and local directories.
@@ -37,8 +37,8 @@ brew install ldclabs/tap/anda
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
 ```
 
-If you are not on macOS, or you prefer the launcher or install script, continue with [Install Anda](./quick-start/install).
+If you are not on macOS, or you prefer Anda Desktop or the install script, continue with [Install Anda](./quick-start/install).
 
 :::tip
-On first launch, Anda creates `~/.anda/config.yaml`. If the terminal UI reports missing model fields, edit that file, save it, then refresh models from the launcher or browser side panel, or run `anda models reload`.
+On first launch, Anda creates `~/.anda/config.yaml`. If the terminal UI reports missing model fields, edit that file, save it, then refresh models from Anda Desktop or the browser side panel, or run `anda models reload`.
 :::

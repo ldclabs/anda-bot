@@ -221,140 +221,6 @@ install_binary() {
     error "Could not replace ${INSTALL_PATH}"
 }
 
-install_launcher_binary() {
-    [ "$OS" = "macos" ] || return 0
-
-    LAUNCHER_INSTALL_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
-    LAUNCHER_INSTALL_TMP="${INSTALL_DIR}/.${LAUNCHER_INSTALL_NAME}.$$"
-
-    rm -f "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
-
-    if ! mv "${TMPDIR}/${LAUNCHER_ASSET_NAME}" "$LAUNCHER_INSTALL_TMP"; then
-        error "Could not stage launcher in ${INSTALL_DIR}"
-    fi
-
-    chmod +x "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
-
-    if mv -f "$LAUNCHER_INSTALL_TMP" "$LAUNCHER_INSTALL_PATH" 2>/dev/null; then
-        return 0
-    fi
-
-    rm -f "$LAUNCHER_INSTALL_TMP" 2>/dev/null || true
-    error "Could not replace ${LAUNCHER_INSTALL_PATH}"
-}
-
-shell_single_quote() {
-    printf "'"
-    printf '%s' "$1" | sed "s/'/'\\\\''/g"
-    printf "'"
-}
-
-macos_launcher_app_path() {
-    printf '%s/Applications/Anda Bot.app\n' "$HOME"
-}
-
-install_macos_launcher_icon() {
-    [ "$OS" = "macos" ] || return 0
-    [ -n "${TMPDIR:-}" ] || return 0
-
-    RESOURCES_DIR="$1"
-    ICON_DIRECT="${TMPDIR}/AndaBot.icns"
-    ICON_SOURCE="${TMPDIR}/anda-logo.png"
-    ICONSET="${TMPDIR}/AndaBot.iconset"
-    ICNS_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.icns"
-    PNG_URL="https://raw.githubusercontent.com/${REPO}/${VERSION}/anda_bot/assets/logo.png"
-
-    if curl -fsSL "$ICNS_URL" -o "$ICON_DIRECT" &&
-        [ "$(dd if="$ICON_DIRECT" bs=4 count=1 2>/dev/null)" = "icns" ] &&
-        mv "$ICON_DIRECT" "${RESOURCES_DIR}/AndaBot.icns"; then
-        return 0
-    fi
-
-    if ! command -v sips >/dev/null 2>&1 || ! command -v iconutil >/dev/null 2>&1; then
-        info "Could not find sips/iconutil; the launcher will repair its app icon after startup."
-        return 0
-    fi
-
-    if ! curl -fsSL "$PNG_URL" -o "$ICON_SOURCE"; then
-        info "Could not download launcher icon; the launcher will repair its app icon after startup."
-        return 0
-    fi
-
-    rm -rf "$ICONSET" 2>/dev/null || true
-    mkdir -p "$ICONSET" || return 0
-
-    for SIZE in 16 32 128 256 512; do
-        DOUBLE_SIZE=$((SIZE * 2))
-        sips -z "$SIZE" "$SIZE" "$ICON_SOURCE" --out "${ICONSET}/icon_${SIZE}x${SIZE}.png" >/dev/null 2>&1 || true
-        sips -z "$DOUBLE_SIZE" "$DOUBLE_SIZE" "$ICON_SOURCE" --out "${ICONSET}/icon_${SIZE}x${SIZE}@2x.png" >/dev/null 2>&1 || true
-    done
-
-    if iconutil -c icns "$ICONSET" -o "${RESOURCES_DIR}/AndaBot.icns" >/dev/null 2>&1; then
-        return 0
-    fi
-
-    info "Could not build launcher icon; the launcher will repair its app icon after startup."
-}
-
-install_macos_launcher_app() {
-    [ "$OS" = "macos" ] || return 0
-    [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
-
-    APP_DIR=$(macos_launcher_app_path)
-    APP_CONTENTS="${APP_DIR}/Contents"
-    APP_MACOS="${APP_CONTENTS}/MacOS"
-    APP_RESOURCES="${APP_CONTENTS}/Resources"
-    APP_EXECUTABLE="${APP_MACOS}/Anda Bot"
-    APP_EXECUTABLE_TMP="${APP_MACOS}/.Anda Bot.tmp.$$"
-    LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
-
-    mkdir -p "$APP_MACOS" || {
-        info "Could not create ${APP_DIR}; skipping macOS app launcher."
-        return 0
-    }
-    mkdir -p "$APP_RESOURCES" 2>/dev/null || true
-    install_macos_launcher_icon "$APP_RESOURCES"
-
-    cat > "${APP_CONTENTS}/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>Anda Bot</string>
-  <key>CFBundleIdentifier</key>
-  <string>ai.anda.anda-bot.launcher</string>
-  <key>CFBundleName</key>
-  <string>Anda Bot</string>
-  <key>CFBundleIconFile</key>
-  <string>AndaBot</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>LSUIElement</key>
-  <true/>
-</dict>
-</plist>
-EOF
-
-    # Keep the .app executable as the launcher Mach-O. A shell wrapper that
-    # execs the sidecar loses the bundle identity, and AppKit can then run
-    # without showing the menu-bar status item.
-    rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
-    if ! cp "$LAUNCHER_PATH" "$APP_EXECUTABLE_TMP"; then
-        info "Could not copy launcher into ${APP_DIR}; skipping macOS app launcher."
-        rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
-        return 0
-    fi
-    chmod +x "$APP_EXECUTABLE_TMP" 2>/dev/null || true
-    if ! mv -f "$APP_EXECUTABLE_TMP" "$APP_EXECUTABLE"; then
-        info "Could not replace launcher in ${APP_DIR}; skipping macOS app launcher."
-        rm -f "$APP_EXECUTABLE_TMP" 2>/dev/null || true
-        return 0
-    fi
-    printf '%s\n' "$LAUNCHER_PATH" > "${APP_RESOURCES}/LauncherPath" 2>/dev/null || true
-    success "Installed macOS app launcher to ${APP_DIR}"
-}
-
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | awk '{print $1}'
@@ -472,11 +338,6 @@ register_autostart() {
         return 0
     fi
 
-    if [ "$OS" = "macos" ] && [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ]; then
-        register_macos_launcher_autostart
-        return 0
-    fi
-
     info "Registering Anda to start when you log in..."
     if AUTOSTART_OUTPUT=$("${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" autostart install 2>&1); then
         success "Autostart registered."
@@ -489,43 +350,11 @@ register_autostart() {
     fi
 }
 
-register_macos_launcher_autostart() {
-    PLIST_DIR="${HOME}/Library/LaunchAgents"
-    PLIST_PATH="${PLIST_DIR}/ai.anda.anda-bot.launcher.plist"
-    APP_EXECUTABLE="$(macos_launcher_app_path)/Contents/MacOS/Anda Bot"
-    if [ -x "$APP_EXECUTABLE" ]; then
-        LAUNCHER_PATH="$APP_EXECUTABLE"
-    else
-        LAUNCHER_PATH="${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}"
-    fi
-    ESCAPED_LAUNCHER=$(printf '%s' "$LAUNCHER_PATH" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g' -e "s/'/\&apos;/g")
-
-    info "Registering Anda launcher to start when you log in..."
-    mkdir -p "$PLIST_DIR" || {
-        info "Could not create ${PLIST_DIR}; skipping launcher autostart."
-        return 0
-    }
-
-    cat > "$PLIST_PATH" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>ai.anda.anda-bot.launcher</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${ESCAPED_LAUNCHER}</string>
-  </array>
-  <key>RunAtLoad</key>
-  <true/>
-</dict>
-</plist>
-EOF
-
-    launchctl bootout "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
-    success "Launcher autostart registered."
+# Anda Desktop now provides the tray. `anda install` removes the retired
+# menu bar launcher (login entry, app bundle, sidecar) from earlier installs
+# and keeps the daemon starting at login if the launcher did.
+retire_launcher() {
+    "${INSTALL_DIR}/${INSTALL_NAME}" --home "$ANDA_HOME_DIR" install --dir "$INSTALL_DIR" >/dev/null 2>&1 || true
 }
 
 restart_daemon() {
@@ -543,58 +372,6 @@ restart_daemon() {
             printf '%s\n' "$RESTART_OUTPUT"
         fi
     fi
-}
-
-restart_macos_launcher() {
-    if [ "${ANDA_NO_START:-0}" = "1" ]; then
-        return 0
-    fi
-
-    [ "$OS" = "macos" ] || return 0
-    [ -x "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" ] || return 0
-
-    info "Restarting Anda launcher..."
-    APP_DIR=$(macos_launcher_app_path)
-    PLIST_PATH="${HOME}/Library/LaunchAgents/ai.anda.anda-bot.launcher.plist"
-
-    if command -v pkill >/dev/null 2>&1; then
-        pkill -x "$LAUNCHER_INSTALL_NAME" >/dev/null 2>&1 || true
-        pkill -x "Anda Bot" >/dev/null 2>&1 || true
-        sleep 1
-    fi
-
-    if [ -f "$PLIST_PATH" ] && command -v launchctl >/dev/null 2>&1; then
-        # Re-bootstrap instead of only kickstarting so launchd refreshes cached
-        # code-signing/LWCR state after the launcher binary is replaced.
-        launchctl bootout "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1 || true
-        if launchctl bootstrap "gui/$(id -u)" "$PLIST_PATH" >/dev/null 2>&1; then
-            success "Anda launcher restarted."
-            return 0
-        fi
-    fi
-
-    if [ -d "$APP_DIR" ] && command -v open >/dev/null 2>&1; then
-        open -g "$APP_DIR" >/dev/null 2>&1
-        START_STATUS=$?
-    else
-        nohup "${INSTALL_DIR}/${LAUNCHER_INSTALL_NAME}" >/dev/null 2>&1 &
-        START_STATUS=$?
-    fi
-    if [ "$START_STATUS" -eq 0 ]; then
-        success "Anda launcher restarted."
-    else
-        info "Anda is installed, but the launcher did not start yet. Run:"
-        printf '    open "%s"\n' "$APP_DIR"
-    fi
-}
-
-restart_runtime() {
-    if [ "${ANDA_NO_START:-0}" = "1" ]; then
-        return 0
-    fi
-
-    restart_daemon
-    restart_macos_launcher
 }
 
 # Detect OS
@@ -645,9 +422,6 @@ fi
 ASSET_NAME="${BINARY_NAME}-${TARGET}${EXE_EXT}"
 CHECKSUM_NAME="${ASSET_NAME}.sha256"
 INSTALL_NAME="${BINARY_NAME}${EXE_EXT}"
-LAUNCHER_ASSET_NAME="anda_launcher-${TARGET}${EXE_EXT}"
-LAUNCHER_CHECKSUM_NAME="${LAUNCHER_ASSET_NAME}.sha256"
-LAUNCHER_INSTALL_NAME="anda_launcher${EXE_EXT}"
 
 print_banner
 
@@ -677,26 +451,9 @@ else
     error "Checksum file not found: ${CHECKSUM_URL}"
 fi
 
-if [ "$OS" = "macos" ]; then
-    LAUNCHER_URL="https://github.com/${REPO}/releases/download/${VERSION}/${LAUNCHER_ASSET_NAME}"
-    LAUNCHER_CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${LAUNCHER_CHECKSUM_NAME}"
-    info "Downloading ${LAUNCHER_ASSET_NAME}..."
-    if curl -fsSL "$LAUNCHER_URL" -o "${TMPDIR}/${LAUNCHER_ASSET_NAME}"; then
-        if curl -fsSL "$LAUNCHER_CHECKSUM_URL" -o "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"; then
-            verify_checksum "${TMPDIR}/${LAUNCHER_ASSET_NAME}" "${TMPDIR}/${LAUNCHER_CHECKSUM_NAME}"
-        else
-            error "Launcher checksum file not found: ${LAUNCHER_CHECKSUM_URL}"
-        fi
-    else
-        error "Download failed. Launcher binary may not exist for ${TARGET}.\nCheck: https://github.com/${REPO}/releases/tag/${VERSION}"
-    fi
-fi
-
 # Install
 mkdir -p "$INSTALL_DIR" || error "Could not create install directory: ${INSTALL_DIR}"
 install_binary
-install_launcher_binary
-install_macos_launcher_app
 download_and_install_skills
 
 if [ "$OS" = "windows" ]; then
@@ -709,22 +466,22 @@ fi
 if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
     INSTALLED_VERSION=$("${INSTALL_DIR}/${INSTALL_NAME}" --version 2>/dev/null || echo "unknown")
     success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
+    retire_launcher
     register_autostart
-    restart_runtime
+    restart_daemon
     echo ""
     echo "  Manage Anda:"
     echo "    ${BINARY_NAME} status"
     echo "    ${BINARY_NAME} start"
     echo "    ${BINARY_NAME} restart"
     echo "    ${BINARY_NAME} stop"
-    if [ "$OS" = "macos" ]; then
-        echo "    open \"$(macos_launcher_app_path)\""
-        echo "    ${LAUNCHER_INSTALL_NAME}"
-        echo "    launchctl print gui/$(id -u)/ai.anda.anda-bot.launcher"
-    else
-        echo "    ${BINARY_NAME} autostart status"
-    fi
+    echo "    ${BINARY_NAME} autostart status"
     echo "    ${BINARY_NAME} --help"
+    if [ "$OS" = "macos" ] || [ "$OS" = "windows" ]; then
+        echo ""
+        echo "  For the tray, chat window and settings, install Anda Desktop:"
+        echo "    https://anda.bot"
+    fi
 else
     success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"
     echo "  Make sure ${INSTALL_DIR} is in your PATH."

@@ -1,10 +1,13 @@
 import { expect, it } from 'vitest'
-import { installCoordinated, type UpdateCoordinator } from '../src/main/update-machine'
+import {
+  installRuntimeUpdate,
+  isOlderRelease,
+  type RuntimeUpdate
+} from '../src/main/update-machine'
 function fixture(ready = true) {
   const actions: string[] = []
-  const coordinator: UpdateCoordinator = {
-    managed: true,
-    wasRunning: true,
+  const update: RuntimeUpdate = {
+    running: true,
     begin: async () => {
       actions.push('begin')
       return { token: 'lease', ready }
@@ -16,45 +19,44 @@ function fixture(ready = true) {
     release: async () => {
       actions.push('release')
     },
-    stop: async () => {
-      actions.push('stop')
+    install: async (lease) => {
+      actions.push(`install:${lease ?? '-'}`)
     },
-    saveIntent: async () => {
-      actions.push('save')
-    },
-    install: () => {
-      actions.push('install')
-    },
-    recover: async () => {
-      actions.push('recover')
+    recover: async (lease) => {
+      actions.push(`recover:${lease ?? '-'}`)
     },
     wait: async () => {}
   }
-  return { coordinator, actions }
+  return { update, actions }
 }
-it('persists update intent before stopping only a drained managed runtime', async () => {
+it('drains a running daemon before replacing its runtime', async () => {
   const f = fixture()
-  await installCoordinated(f.coordinator)
-  expect(f.actions).toEqual(['begin', 'renew', 'save', 'stop', 'install'])
+  await installRuntimeUpdate(f.update)
+  expect(f.actions).toEqual(['begin', 'renew', 'install:lease'])
 })
 it('keeps active work running and releases maintenance when drain times out', async () => {
   const f = fixture(false)
-  await expect(installCoordinated(f.coordinator)).rejects.toThrow('still active')
+  await expect(installRuntimeUpdate(f.update)).rejects.toThrow('still active')
   expect(f.actions.at(-1)).toBe('release')
-  expect(f.actions).not.toContain('stop')
-  expect(f.actions).not.toContain('install')
+  expect(f.actions.some((action) => action.startsWith('install'))).toBe(false)
 })
-it('never stops or restarts an external runtime', async () => {
+it('installs directly when the daemon is not running', async () => {
   const f = fixture()
-  f.coordinator.managed = false
-  await installCoordinated(f.coordinator)
-  expect(f.actions).toEqual(['save', 'install'])
+  f.update.running = false
+  await installRuntimeUpdate(f.update)
+  expect(f.actions).toEqual(['install:-'])
 })
-it('attempts recovery after failure to stop or launch the installer', async () => {
+it('recovers the daemon after a failed install', async () => {
   const f = fixture()
-  f.coordinator.install = () => {
-    throw new Error('installer unavailable')
+  f.update.install = async () => {
+    throw new Error('replacement failed')
   }
-  await expect(installCoordinated(f.coordinator)).rejects.toThrow('installer unavailable')
-  expect(f.actions).toEqual(['begin', 'renew', 'save', 'stop', 'recover'])
+  await expect(installRuntimeUpdate(f.update)).rejects.toThrow('replacement failed')
+  expect(f.actions).toEqual(['begin', 'renew', 'recover:lease'])
+})
+it('orders release versions numerically', () => {
+  expect(isOlderRelease('v0.9.0', '0.13.0')).toBe(true)
+  expect(isOlderRelease('v0.13.0', 'v0.13.0')).toBe(false)
+  expect(isOlderRelease('0.13.1', 'v0.13.0')).toBe(false)
+  expect(isOlderRelease('v0.13', 'v0.13.1')).toBe(true)
 })

@@ -1,12 +1,8 @@
-//! Wire contract between the `anda` daemon CLI and the `anda_launcher` tray app.
+//! Wire contract of `anda status --json` and `anda update --check --json`,
+//! read by Anda Desktop and by older tray launchers that are still running.
 //!
-//! Both binaries compile this same source file — `main.rs` declares
-//! `mod daemon_protocol;` and `anda_launcher.rs` includes it via `#[path]` —
-//! so the JSON one side prints and the other side parses cannot drift.
-//!
-//! Compatibility rules: the two binaries are replaced together by the update
-//! flow, but an already-running launcher keeps driving an updated `anda`
-//! binary until it restarts. Add fields (covered by `#[serde(default)]`)
+//! Compatibility rules: clients update separately from `anda` (a desktop app
+//! or an already-running old launcher keeps driving an updated binary). Add fields (covered by `#[serde(default)]`)
 //! rather than renaming or retyping them, and give every enum on the wire an
 //! `#[serde(other)] Unknown` arm so new variants degrade instead of failing
 //! the whole parse on old parsers.
@@ -26,12 +22,12 @@ pub enum DaemonStatusState {
     NotRunning,
     /// A state written by a different anda version that this binary does not
     /// know. Without this arm a newly added variant would fail the whole
-    /// [`DaemonStatusReport`] parse on an already-running older launcher.
+    /// [`DaemonStatusReport`] parse on an older client.
     #[serde(other)]
     Unknown,
 }
 
-/// Report printed by `anda status --json` and parsed by the launcher.
+/// Report printed by `anda status --json` and parsed by Anda Desktop.
 // Each binary reads only the fields it displays; unused ones are still wire.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +123,7 @@ mod tests {
     #[test]
     fn unknown_wire_enums_degrade_instead_of_failing_the_parse() {
         // A newer daemon may report states/statuses this binary predates; the
-        // rest of the report must still reach the launcher.
+        // rest of the report must still reach the client.
         let report: DaemonStatusReport =
             serde_json::from_str(r#"{"state":"starting","summary":"booting","pid":7}"#).unwrap();
         assert_eq!(report.state, DaemonStatusState::Unknown);

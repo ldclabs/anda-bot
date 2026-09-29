@@ -156,8 +156,7 @@ wsServer.on('connection', (ws, request) => {
           protocol: 1,
           app_transport: true,
           workspace_sources: true,
-          config_revision: true,
-          managed_runtime: false
+          config_revision: true
         }
       }
     else if (method === 'memory_overview')

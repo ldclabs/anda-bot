@@ -6,12 +6,19 @@ All notable changes to Anda Bot.
 
 ### Added
 
+- **Anda Desktop releases**: every GitHub release now carries Anda Desktop for macOS arm64 (`Anda-mac-arm64.dmg`), macOS x64 (`Anda-mac-x64.dmg`) and Windows x64 (`Anda-win-x64.exe`), built from that release's `anda`, plus the `anda-desktop` Homebrew cask, which depends on the `anda` formula. Signed builds update through the release's update metadata.
+- **`anda install`**: installs the running `anda` at the CLI location the install scripts use (`~/.local/bin`, `%LOCALAPPDATA%\Programs\AndaBot` or `ANDA_INSTALL_DIR`), keeps a newer or Homebrew-managed install, adds the directory to `PATH`, copies curated skills bundled next to it and retires the old tray launcher. Anda Desktop runs its bundled copy this way on every start, so the desktop, terminals and the Chrome extension share one `anda` and one daemon.
 - **Skill catalog tools**: `skills_list` pages through the skill catalog and `skills_read` reads a skill's `SKILL.md` or a bundled reference file in pages, as the `skills_manager` description now directs. Delegated skills get `skills_read` by default, so they can read their own references outside the workspaces.
 - **Supervised shell sessions**: `shell` waits for a command for 10 seconds by default (the agent may ask for up to 30); a command still running then keeps going in the background for up to 24 hours, reports its output to the conversation, and can be polled, stopped or have its log read with the new `shell_session` tool. Commands in a registered CLI or desktop directory stay reachable the same way. Session stdin and PTYs stay disabled. Approval cards show a working directory the command asks for, and one outside the active workspace always needs approval.
 - **`apply_patch`**: a multi-file patch tool over the same workspaces as the file tools. It validates every change before writing, supports dry runs and expected SHA-256 versions, preserves encodings and line endings, and never overwrites a file when adding or moving one.
 
 ### Changed
 
+- **One tray: Anda Desktop**: the tray shows the service state and restarts it, installs `anda` updates after active tasks finish, copies a Chrome extension token and opens the logs; the first run asks whether to start Anda at login. A login start stays in the tray without a window. Automatic reconnects no longer start a daemon that was stopped elsewhere, and the desktop writes its UI language to `launcher/ui.json` for approval cards and the extension.
+- **`anda_launcher` retired**: the menu bar/tray launcher is replaced by a transitional binary with the same release name. When an old launcher updates to it, or the desktop or an install script runs `anda install`, the launcher's login entry, `Anda Bot.app`, shortcuts and sidecar are removed; if it started at login, the daemon keeps starting at login.
+- **Install scripts install the command line only**: `install.sh` and `install.ps1` install `anda` and the curated skills, register daemon autostart with `anda autostart install` and restart the daemon; they no longer install a tray.
+- **Windows autostart without elevation**: `anda autostart install` writes a per-user `Run` value that runs `anda start` instead of creating a logon scheduled task, and removes the old task.
+- **Desktop updates never stop the service**: the bundled runtime is no longer run as the daemon, so the desktop app updates on its own; the managed-runtime environment variable and capabilities are removed.
 - **Subagent turns**: when a background subagent finishes a turn, the main agent is told at once that the session is idle and receives the artifacts the turn produced, instead of waiting for the session to close after its idle timeout. Closing a session whose turn was already reported no longer repeats its result.
 - **Engine 0.16.3 from crates.io**: the shell session fixes (the legacy approval gate, `NativeRuntime::for_workspace`, console-free Windows sessions) ship in anda_engine 0.16.3, so building no longer needs the sibling `../anda` checkout.
 - **Daemon controls are the owner's**: shutting the daemon down, installing an update, reloading models, switching the active model and opening the workspace picker now require the local owner, like configuration and maintenance already did. Other trusted users keep using the agent in their own sessions.
@@ -26,6 +33,8 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Homebrew installs are not self-updated**: `anda update` renamed the new binary over Homebrew's `bin/` symlink, breaking `brew upgrade`. Homebrew installs now report that `brew upgrade anda` is needed (curated skills still update with `anda update --skills`).
+- **Desktop installer on Windows**: the NSIS install, update and uninstall checks stopped every process whose path merely started with the install directory, so `...\Programs\Anda` also terminated the CLI daemon and launcher in `...\Programs\AndaBot`. They now match the install directory itself.
 - **Goal verdicts stay in the conversation**: the supervisor's "Goal completed" message is saved with the conversation instead of disappearing at the next save, and Formation always cites the saved conversation record, so message-level memory sources stay verifiable for special (`$system`) messages too. A turn's history is written once per save instead of being rewritten separately for Formation.
 - **Memory activity no longer rescans all history**: the activity index read every Formation and recall record and loaded each bound conversation every five minutes, a cost that grew with use. It now scans once at startup, follows change notifications afterwards, and skips records it already indexed.
 - **Legacy recall activity upgrades**: upgrading an older activity index fills in the existing recall rows' chronological keys instead of inserting duplicate rows on each restart.
@@ -50,11 +59,13 @@ All notable changes to Anda Bot.
 
 ### Removed
 
+- **Windows setup app (`AndaBotSetup-windows-x86_64.exe`)**: Anda Desktop's installer replaces it; `install.ps1` remains for the command line.
 - **`note` and `todo` tools**: Brain is the Bot's long-term memory, so the Bot no longer keeps a second free-form note store. Notes are no longer injected into the system context, memory modes constrain Brain only, and confirmed memory changes no longer have a Bot Notes cleanup step; Brain still resets its own processing Notes. The session task list is gone too: the compaction handoff already carries the remaining steps, and `/goal` supervises long work. Notes saved by earlier versions stay on disk but are not read.
 - **Browser cookie and site-data actions**: `get_cookies`, `set_cookie`, `delete_cookie` and `clear_browser_cache` were no longer offered to the agent; they are removed from the daemon, the Chrome extension and Anda Desktop, and the extension no longer requests the `cookies` and `browsingData` permissions. `execute_javascript` in the extension always evaluates through the debugger; its unreachable `scripting` route is gone.
 
 ### Upgrade notes
 
+- Installing Anda Desktop, updating an old tray launcher, or rerunning an install script removes the Anda Bot launcher. Its settings in `~/.anda/launcher/ui.json` are kept and now follow the desktop's language. Homebrew users can install the tray with `brew install --cask ldclabs/tap/anda-desktop`.
 - The first start after this update upgrades the memory database's Nexus collection schemas and builds two indexes over the stored rows. Let it finish; do not stop the daemon while it starts. Afterwards do not run Anda Bot 0.13.0 on that database: its Nexus keeps the newer schema without maintaining those indexes.
 - Search index entries are not rebuilt. A Concept written by an earlier version after a restart keeps its earlier terms, so a word inside its Chinese name may not match until the Concept is updated.
 

@@ -8,7 +8,9 @@ use std::{
 };
 
 #[cfg(windows)]
-const TASK_NAME: &str = "Anda Bot";
+const RUN_VALUE: &str = "AndaBot";
+#[cfg(windows)]
+const LEGACY_TASK_NAME: &str = "Anda Bot";
 #[cfg(any(target_os = "macos", test))]
 const MACOS_LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot";
 #[cfg(target_os = "linux")]
@@ -35,27 +37,32 @@ pub enum AutostartStatus {
 }
 
 pub fn install(home: &Path) -> Result<(), BoxError> {
+    install_for(&current_exe()?, home)
+}
+
+/// Registers `exe` (an installed `anda`) to start the daemon at login.
+pub fn install_for(exe: &Path, home: &Path) -> Result<(), BoxError> {
     // Login services have a different working directory than this CLI.
     let home = absolute_home(home)?;
     let home = home.as_path();
     #[cfg(windows)]
     {
-        install_windows(home)
+        install_windows(exe, home)
     }
 
     #[cfg(target_os = "macos")]
     {
-        install_macos(home)
+        install_macos(exe, home)
     }
 
     #[cfg(target_os = "linux")]
     {
-        install_linux(home)
+        install_linux(exe, home)
     }
 
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        let _ = home;
+        let _ = (exe, home);
         Err("anda autostart is not supported on this platform".into())
     }
 }
@@ -118,69 +125,46 @@ fn current_exe() -> Result<PathBuf, BoxError> {
 }
 
 #[cfg(windows)]
-fn install_windows(home: &Path) -> Result<(), BoxError> {
-    let exe = current_exe()?;
-    let task_command = task_command_line(&exe, home);
-    run_schtasks(&[
-        "/Create",
-        "/TN",
-        TASK_NAME,
-        "/SC",
-        "ONLOGON",
-        "/TR",
-        &task_command,
-        "/F",
-    ])?;
+fn install_windows(exe: &Path, home: &Path) -> Result<(), BoxError> {
+    // A per-user Run value needs no elevation, unlike a logon scheduled task.
+    // `start` launches the daemon detached without a console and then exits.
+    crate::util::windows_run_key::set(RUN_VALUE, &run_command_line(exe, home))?;
+    delete_legacy_task();
     Ok(())
 }
 
 #[cfg(windows)]
 fn uninstall_windows() -> Result<AutostartStatus, BoxError> {
-    match run_schtasks(&["/Delete", "/TN", TASK_NAME, "/F"]) {
-        Ok(()) => Ok(AutostartStatus::NotInstalled),
-        Err(err) if is_missing_task_error(&err.to_string()) => Ok(AutostartStatus::NotInstalled),
-        Err(err) => Err(err),
-    }
+    crate::util::windows_run_key::delete(RUN_VALUE)?;
+    delete_legacy_task();
+    Ok(AutostartStatus::NotInstalled)
 }
 
 #[cfg(windows)]
 fn status_windows() -> Result<AutostartStatus, BoxError> {
-    match run_schtasks(&["/Query", "/TN", TASK_NAME]) {
-        Ok(()) => Ok(AutostartStatus::Installed),
-        Err(err) if is_missing_task_error(&err.to_string()) => Ok(AutostartStatus::NotInstalled),
-        Err(err) => Err(err),
-    }
+    Ok(if crate::util::windows_run_key::get(RUN_VALUE).is_some() {
+        AutostartStatus::Installed
+    } else {
+        AutostartStatus::NotInstalled
+    })
 }
 
+/// Removes the logon scheduled task that older releases registered.
 #[cfg(windows)]
-fn run_schtasks(args: &[&str]) -> Result<(), BoxError> {
-    let output = Command::new("schtasks.exe").args(args).output()?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let detail = if !stderr.is_empty() { stderr } else { stdout };
-    Err(format!("schtasks.exe failed: {detail}").into())
-}
-
-#[cfg(windows)]
-fn is_missing_task_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    message.contains("cannot find the file specified")
-        || message.contains("the system cannot find the file specified")
-        || message.contains("not exist")
-        || message.contains("does not exist")
+fn delete_legacy_task() {
+    let mut command = Command::new("schtasks.exe");
+    command.args(["/Delete", "/TN", LEGACY_TASK_NAME, "/F"]);
+    crate::util::windows_process::suppress_console_window(&mut command);
+    let _ = command.output();
 }
 
 #[cfg(any(windows, test))]
-fn task_command_line(exe: &Path, home: &Path) -> String {
+fn run_command_line(exe: &Path, home: &Path) -> String {
     windows_command_line([
         exe.to_path_buf(),
         PathBuf::from("--home"),
         home.to_path_buf(),
-        PathBuf::from("daemon"),
+        PathBuf::from("start"),
     ])
 }
 
@@ -196,13 +180,13 @@ where
 }
 
 #[cfg(target_os = "macos")]
-fn install_macos(home: &Path) -> Result<(), BoxError> {
+fn install_macos(exe: &Path, home: &Path) -> Result<(), BoxError> {
     let plist_path = macos_launch_agent_path()?;
     let plist_dir = plist_path
         .parent()
         .ok_or("could not resolve LaunchAgents directory")?;
     std::fs::create_dir_all(plist_dir)?;
-    std::fs::write(&plist_path, macos_launch_agent_plist(&current_exe()?, home))?;
+    std::fs::write(&plist_path, macos_launch_agent_plist(exe, home))?;
     let _ = macos_launchctl_bootout(&plist_path);
     macos_launchctl_bootstrap(&plist_path)
 }
@@ -287,11 +271,11 @@ fn macos_launch_agent_plist(exe: &Path, home: &Path) -> String {
 }
 
 #[cfg(target_os = "linux")]
-fn install_linux(home: &Path) -> Result<(), BoxError> {
-    if install_linux_systemd(home).is_ok() {
+fn install_linux(exe: &Path, home: &Path) -> Result<(), BoxError> {
+    if install_linux_systemd(exe, home).is_ok() {
         return Ok(());
     }
-    install_linux_xdg(home)
+    install_linux_xdg(exe, home)
 }
 
 #[cfg(target_os = "linux")]
@@ -333,13 +317,13 @@ fn status_linux() -> Result<AutostartStatus, BoxError> {
 }
 
 #[cfg(target_os = "linux")]
-fn install_linux_systemd(home: &Path) -> Result<(), BoxError> {
+fn install_linux_systemd(exe: &Path, home: &Path) -> Result<(), BoxError> {
     let service_path = linux_systemd_service_path()?;
     let service_dir = service_path
         .parent()
         .ok_or("could not resolve systemd user service directory")?;
     std::fs::create_dir_all(service_dir)?;
-    std::fs::write(&service_path, linux_systemd_service(&current_exe()?, home))?;
+    std::fs::write(&service_path, linux_systemd_service(exe, home))?;
     run_command_status(Command::new("systemctl").arg("--user").arg("daemon-reload"))?;
     run_command_status(
         Command::new("systemctl")
@@ -350,13 +334,13 @@ fn install_linux_systemd(home: &Path) -> Result<(), BoxError> {
 }
 
 #[cfg(target_os = "linux")]
-fn install_linux_xdg(home: &Path) -> Result<(), BoxError> {
+fn install_linux_xdg(exe: &Path, home: &Path) -> Result<(), BoxError> {
     let desktop_path = linux_xdg_desktop_path()?;
     let desktop_dir = desktop_path
         .parent()
         .ok_or("could not resolve XDG autostart directory")?;
     std::fs::create_dir_all(desktop_dir)?;
-    std::fs::write(&desktop_path, linux_xdg_desktop_file(&current_exe()?, home))?;
+    std::fs::write(&desktop_path, linux_xdg_desktop_file(exe, home))?;
     Ok(())
 }
 
@@ -508,15 +492,15 @@ mod windows_tests {
     }
 
     #[test]
-    fn task_command_runs_daemon_with_home() {
-        let command = task_command_line(
+    fn run_command_starts_daemon_with_home() {
+        let command = run_command_line(
             Path::new("C:\\Program Files\\Anda Bot\\anda.exe"),
             Path::new("C:\\Users\\me\\.anda"),
         );
 
         assert_eq!(
             command,
-            "\"C:\\Program Files\\Anda Bot\\anda.exe\" --home C:\\Users\\me\\.anda daemon"
+            "\"C:\\Program Files\\Anda Bot\\anda.exe\" --home C:\\Users\\me\\.anda start"
         );
     }
 }

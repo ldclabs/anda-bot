@@ -2,23 +2,42 @@
 
 Electron + Svelte desktop client for the local Anda daemon. Chat messages, approval cards, attachments, memory, skills, bookmarks, configuration and voice reuse the Chrome extension's implementation. The extension remains independently buildable.
 
-## Local installation / 本地安装
+## Installation / 安装
 
-On macOS, open the generated `Anda-<version>-mac-arm64.dmg` and drag **Anda.app** into Applications. The application includes its matching Rust runtime; Node.js, pnpm and Rust are not required to run the installed app. This development package is ad-hoc signed for local use, not Developer ID notarized for public distribution.
+Download `Anda-mac-arm64.dmg`, `Anda-mac-x64.dmg` or `Anda-win-x64.exe` from the latest GitHub release (or `brew install --cask ldclabs/tap/anda-desktop`). On macOS drag **Anda.app** into Applications; on Windows run the installer. Node.js, pnpm and Rust are not required.
 
-macOS 上打开生成的 DMG，将 **Anda.app** 拖入“应用程序”。安装包包含配套 Rust runtime，运行应用不需要安装开发工具。当前是供本机使用的临时签名开发包，未进行公开分发所需的 Developer ID 公证。
+从最新 GitHub Release 下载 `Anda-mac-arm64.dmg`、`Anda-mac-x64.dmg` 或 `Anda-win-x64.exe`（或 `brew install --cask ldclabs/tap/anda-desktop`）。macOS 将 **Anda.app** 拖入“应用程序”，Windows 运行安装程序即可，无需安装开发工具。
 
-- Existing `~/.anda` configuration, identity and conversations are reused. No browser token needs to be copied into the UI.
-- If configuration is incomplete, open **Settings → Agent configuration**, enter the model/provider details, save, then reconnect. Offline saves are validated by the Rust parser before replacing the file; a private `config.yaml.desktop-backup` is preserved.
-- An older running daemon can serve ordinary chat using polling. Application events, durable receipts, desktop browser routing and update coordination require the new runtime; after finishing active tasks, use **Settings → Restart daemon** to activate it. An explicit restart interrupts active tasks and requires confirmation in the app.
-- Closing the window keeps the tray, terminals and notifications. **Quit Anda Desktop** leaves the daemon running, but asks before ending active user terminals; notifications stop until the app is opened again. An explicit daemon stop is remembered across desktop restarts until you reconnect.
+### One runtime / 同一个 runtime
+
+The package carries an `anda` binary and the curated skills, but never runs that binary as the daemon. On every start the app runs it as `anda install`, which:
+
+- keeps an existing install at the install-script location (`~/.local/bin`, `%LOCALAPPDATA%\Programs\AndaBot` or `ANDA_INSTALL_DIR`) or from Homebrew; replaces it only when the bundled release is newer; never touches a Homebrew install (`brew upgrade anda` updates it);
+- otherwise installs the bundled `anda` there, adds the directory to `PATH` and copies the curated skills;
+- retires the old `anda_launcher` tray: its login entry, `~/Applications/Anda Bot.app`, Windows shortcuts and sidecar. If the launcher started at login, the daemon keeps starting at login (`anda autostart`) and this app's tray starts at login.
+
+All daemon commands then use that shared `anda`, so the desktop, terminals and the Chrome extension talk to one daemon with one version. **Settings → Runtime** shows its path and version; *Choose anda executable* overrides it. Existing `~/.anda` configuration, identity and conversations are reused.
+
+安装包内带有 `anda` 和精选技能，但从不直接把它作为 daemon 运行。应用每次启动都会以 `anda install` 运行它：已有安装脚本或 Homebrew 安装的 anda 会被沿用（仅在内置版本更新时替换，Homebrew 安装只通过 `brew upgrade` 更新）；没有安装时，会安装到安装脚本的位置并加入 `PATH`；同时停用旧的 `anda_launcher` 托盘（登录项、`Anda Bot.app`、Windows 快捷方式）。之后所有 daemon 命令都通过这个共享的 `anda` 执行，桌面端、终端和 Chrome 扩展连接的是同一个 daemon。
+
+### Tray and login / 托盘与登录启动
+
+The app's tray is Anda's only tray. It shows whether the service runs, restarts it, installs `anda` updates, copies a 30-day Chrome extension token and opens the logs. The first run asks whether to start Anda at login (**Settings → Launch at login**); a login start stays in the tray without opening a window and starts the service.
+
+- Closing the window keeps the tray, terminals and notifications. **Quit Anda Desktop** leaves the service running, but asks before ending active user terminals. An explicit stop in Settings is remembered across restarts until you reconnect.
+- Automatic reconnects never start a service that was stopped elsewhere (for example with `anda stop`); opening the app, *Reconnect* or sending a message does.
+- The app mirrors its UI language to `~/.anda/launcher/ui.json`, which the daemon uses for approval cards and the Chrome extension follows.
+- If configuration is incomplete, open **Settings → Agent configuration**. Offline saves are validated by the Rust parser before replacing the file; a private `config.yaml.desktop-backup` is preserved.
 - Imported IM channel conversations are read-only; start a local chat to respond without changing the original sender or reply route.
 - Chrome page automation continues to require the Chrome extension. Electron does not share Chrome's tabs or login state.
-- If the older `anda_launcher` is also running, quit its tray UI separately. This local build does not remove the existing launcher or rewrite its login registration.
-- Application updates are installed manually from a new desktop package. The bundled runtime disables its standalone self-installer so it cannot replace files inside the app bundle. No public desktop update feed is configured yet.
-- Before replacing an existing desktop installation that runs the bundled daemon, finish active work, stop the daemon from Settings, and quit the desktop app. Then install the new package and open it again.
 
-已有配置和数据会继续使用。旧 daemon 可提供普通聊天；项目工作目录需要新版本，在设置中明确重启后生效。关闭窗口、退出桌面应用、停止后台服务是三个不同动作。当前本地版采用重新安装桌面包进行升级，不会自动覆盖现有 CLI 安装或旧 launcher 的开机启动设置。
+### Updates / 更新
+
+- **The `anda` runtime** updates through its own release channel. The app checks every six hours (and on *Check for updates*); a downloaded release shows in the tray. Installing it pauses new tasks, waits for active ones, replaces `anda` and restarts the service; a busy service keeps the download for later, and a failed install brings the previous service back. Homebrew installs report that `brew upgrade anda` is needed.
+- **The desktop app** updates with electron-updater from the GitHub release feed in signed builds. The service keeps running, because its executable lives outside the app; only open terminals must be closed first. Unsigned builds have no feed and are reinstalled manually.
+- Uninstalling the desktop leaves the shared `anda`, its data and its login entry in place; remove them like a script install (`anda autostart uninstall`, then delete the install directory).
+
+`anda` runtime 通过自己的发布通道更新：托盘提示可安装时，会先暂停新任务、等待活动任务完成，再替换 `anda` 并重启服务。桌面应用本身在签名版中通过 GitHub Release 更新，更新时服务继续运行。卸载桌面端不会删除共享的 `anda`、数据和登录项。
 
 ## Build
 
@@ -32,7 +51,7 @@ pnpm --dir desktop build
 pnpm --dir desktop package
 ```
 
-`package` builds `anda` with `cargo build --release --locked`, copies it into the application's resources, and creates the local platform's installers under `desktop/release/`. `package:dir` produces an unpacked application. For a CI-built runtime, set `ANDA_DESKTOP_RUNTIME` to that executable before packaging; its version and SHA-256 are recorded in a manifest. Do not commit runtime binaries, installers, or test screenshots.
+`package` builds `anda` with `cargo build --release --locked`, copies it and the curated `skills/` into the application's resources, and creates the local platform's installers under `desktop/release/`. `package:dir` produces an unpacked application. For a CI-built runtime, set `ANDA_DESKTOP_RUNTIME` to that executable before packaging; its version and SHA-256 are recorded in a manifest. Do not commit runtime binaries, installers, or test screenshots.
 
 For development:
 
@@ -44,7 +63,7 @@ You can select a custom home with `--anda-home=/absolute/path`; the desktop prof
 
 ## Validation
 
-Use `--anda-profile=/absolute/path` when an explicit, separate UI profile is needed. `scripts/packaged-smoke.mjs /path/to/Anda.app` uses temporary home/profile directories with the daemon stopped to verify the installed bundle's runtime digest, PTY native module and browser isolation without accessing your real identity or conversations.
+Use `--anda-profile=/absolute/path` when an explicit, separate UI profile is needed. `scripts/packaged-smoke.mjs /path/to/Anda.app` uses temporary home/profile directories with the daemon stopped to verify the installed bundle's runtime digest, bundled skills, PTY native module and browser isolation without accessing your real identity or conversations or installing anything.
 
 ```bash
 pnpm --dir desktop test:e2e
@@ -75,15 +94,15 @@ The Automations editor loads the complete saved task before editing; task previe
 
 Normal chat speech can also be stopped from the composer. Input drafts are preserved independently of browser, terminal and Git panels.
 
-## Release and update coordination
+## Release
 
-Local packages have no public update feed and continue to use manual installation. `.github/workflows/desktop.yml` builds and tests macOS and Windows, including native Electron tests, bundled runtime and NSIS install/uninstall checks. The workflow has not been run on Windows from this macOS development session.
+`.github/workflows/release.yml` builds the desktop for macOS arm64, macOS x64 and Windows x64 from the same release's `anda` binaries and attaches `Anda-mac-*.dmg/.zip`, `Anda-win-x64.exe`, blockmaps, checksums and update metadata (the two macOS `latest-mac.yml` files are merged by `scripts/merge-desktop-update-metadata.mjs`). `scripts/publish-homebrew.sh` publishes the `anda-desktop` cask, which depends on the `anda` formula. `.github/workflows/desktop.yml` builds and tests macOS and Windows on pull requests, including native Electron tests and NSIS install/uninstall checks.
 
-For a signed build, configure the protected `desktop-release` environment: `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`, `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, and the public variables `ANDA_UPDATE_URL` / `ANDA_WINDOWS_PUBLISHER`. Certificate variables are supplied through `CSC_LINK` and `CSC_KEY_PASSWORD` to each platform build. Trigger the workflow with `signed: true`; it uploads artifacts and does **not** publish them. Publish complete installers, ZIPs, blockmaps and update metadata to the configured HTTPS directory together, making the metadata available last.
+For signed builds, configure the protected `desktop-release` environment: `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`, `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, and the public variable `ANDA_WINDOWS_PUBLISHER`. Without certificates the release job builds unsigned packages with the local configuration and no update feed.
 
-`electron-builder.release.cjs` requires signatures and macOS notarization. `scripts/seal-runtime.cjs` records the runtime digest after its final signature, before sealing the outer app. The desktop checks platform, architecture and digest before launching the bundled runtime. The default local configuration remains ad-hoc signed.
+`electron-builder.release.cjs` requires signatures and macOS notarization and publishes update metadata for the GitHub release feed. `scripts/seal-runtime.cjs` records the bundled runtime digest after its final signature, before sealing the outer app; the app verifies platform, architecture and digest before running `anda install`. The default local configuration remains ad-hoc signed.
 
-Signed builds support **Check for updates** → download → explicit install/restart. For the matching bundled runtime, a renewable owner-only maintenance lease stops new task admission, delays cron claims, sends an explicit retry response to the original IM route, and waits for active work to finish. A busy runtime keeps the downloaded update for later. External runtimes are not stopped or replaced; unverifiable ownership blocks installation until the service is stopped explicitly. An interrupted update leaves a recovery record in the desktop profile. If the client disappears before shutdown, its maintenance lease expires after 90 seconds.
+The NSIS installer only stops processes started from its own directory (`resources/installer.nsh`): the default electron-builder check matches `$INSTDIR` as a bare prefix, and `...\Programs\Anda` is a prefix of `...\Programs\AndaBot`, where the shared `anda` and its daemon run.
 
 App protocol types are generated from Rust and checked in tests:
 

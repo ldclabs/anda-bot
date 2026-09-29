@@ -115,8 +115,12 @@ export const localeMeta: Record<
 	ar: { label: 'Arabic', nativeName: 'العربية', htmlLang: 'ar', dir: 'rtl' }
 };
 
-const windowsInstallerFileName = 'AndaBotSetup-windows-x86_64.exe';
-const windowsInstallerUrl = `https://github.com/ldclabs/anda-bot/releases/latest/download/${windowsInstallerFileName}`;
+const releaseDownload = 'https://github.com/ldclabs/anda-bot/releases/latest/download';
+const macInstallerFileName = 'Anda-mac-arm64.dmg';
+const macInstallerUrl = `${releaseDownload}/${macInstallerFileName}`;
+const windowsInstallerFileName = 'Anda-win-x64.exe';
+const windowsInstallerUrl = `${releaseDownload}/${windowsInstallerFileName}`;
+const desktopCaskCommand = 'brew install --cask ldclabs/tap/anda-desktop';
 
 export const landingCopy: Record<Locale, LandingCopy> = {
 	en: {
@@ -257,9 +261,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					title: 'Desktop workbench',
 					detail:
-						'Chat, memory, browser, terminal, and Git in one desktop client. Currently available as a source-built development package.',
-					linkLabel: 'Desktop build guide',
-					status: 'Development preview'
+						'Chat, memory, browser, terminal, and Git in one desktop app, with a tray that keeps Anda running.',
+					linkLabel: 'About Anda Desktop'
 				}
 			]
 		},
@@ -354,24 +357,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Menu-bar launcher',
-					body: 'The install script adds Anda Bot.app, registers the menu-bar launcher at login, and starts the daemon after setup.',
-					primaryLabel: 'Copy installer',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'macOS install script',
-					note: 'The launcher can check for updates, restart the daemon, open logs, and create browser pairing tokens.',
+					title: 'Anda Desktop',
+					body: 'Download Anda for Apple Silicon. It installs the anda command line, curated skills, and a menu-bar tray that keeps Anda running at login.',
+					primaryLabel: 'Download for Mac',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'Intel Mac: download Anda-mac-x64.dmg from the latest release. Command line only: use the install script.',
 					steps: ['Install app', 'Enter model settings', 'Pair browser']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'Graphical installer',
-					body: 'Download the latest setup app. It installs the launcher, Start Menu entry, desktop shortcut, curated skills, and setup wizard.',
+					title: 'Anda Desktop',
+					body: 'Download the installer. It installs Anda Desktop, the anda command line, curated skills, and a tray that keeps Anda running at login.',
 					primaryLabel: 'Download installer',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'The tray launcher starts at login, manages model settings, controls the daemon, and prompts when updates are ready.',
-					steps: ['Run setup', 'Use the wizard', 'Pair browser']
+					note: 'The tray shows service status, installs updates, restarts the service, opens logs, and copies browser pairing tokens.',
+					steps: ['Run setup', 'Enter model settings', 'Pair browser']
 				},
 				linux: {
 					label: 'Linux',
@@ -517,10 +521,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				},
 				{
 					title: '桌面工作台',
-					detail:
-						'在一个桌面客户端中使用聊天、记忆、浏览器、终端与 Git。目前提供从源码构建的开发版本。',
-					linkLabel: '查看桌面构建指南',
-					status: '开发预览'
+					detail: '在一个桌面应用中使用聊天、记忆、浏览器、终端与 Git，托盘让 Anda 持续运行。',
+					linkLabel: '了解 Anda 桌面端'
 				}
 			]
 		},
@@ -615,24 +617,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: '菜单栏启动器',
-					body: '安装脚本会自动添加 Anda Bot.app，将其设为登录时启动的菜单栏应用，并在设置完成后启动守护进程。',
-					primaryLabel: '复制安装命令',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'macOS 安装脚本',
-					note: '启动器支持检查更新、重启守护进程、查看日志，并能快速生成浏览器配对 Token。',
+					title: 'Anda 桌面端',
+					body: '下载适用于 Apple Silicon 的 Anda。它会安装 anda 命令行、精选技能，以及登录时让 Anda 保持运行的菜单栏托盘。',
+					primaryLabel: '下载 Mac 版',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'Intel Mac 请从最新发布版下载 Anda-mac-x64.dmg。只需要命令行时，可使用安装脚本。',
 					steps: ['安装应用', '配置模型', '连接浏览器']
 				},
 				windows: {
 					label: 'Windows',
-					title: '图形化安装程序',
-					body: '下载最新的安装程序。它会自动布置启动器、开始菜单、桌面快捷方式、精选技能以及设置向导。',
+					title: 'Anda 桌面端',
+					body: '下载安装程序。它会安装 Anda 桌面端、anda 命令行、精选技能，以及登录时让 Anda 保持运行的托盘。',
 					primaryLabel: '下载安装程序',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: '系统托盘启动器会随开机自动运行，方便你管理模型设置、控制守护进程，并接收更新推送。',
-					steps: ['运行安装', '跟随向导', '连接浏览器']
+					note: '托盘可查看服务状态、安装更新、重启服务、打开日志，并复制浏览器配对令牌。',
+					steps: ['运行安装', '配置模型', '连接浏览器']
 				},
 				linux: {
 					label: 'Linux',
@@ -791,9 +794,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					title: 'Aplicación de escritorio',
 					detail:
-						'Chat, memoria, navegador, terminal y Git en un cliente. Por ahora se ofrece como versión de desarrollo compilada desde el código fuente.',
-					linkLabel: 'Guía de compilación',
-					status: 'Vista previa de desarrollo'
+						'Chat, memoria, navegador, terminal y Git en una app de escritorio, con una bandeja que mantiene Anda en marcha.',
+					linkLabel: 'Acerca de Anda Desktop'
 				}
 			]
 		},
@@ -888,24 +890,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Lanzador en la barra de menú',
-					body: 'El script de instalación agrega Anda Bot.app, registra el lanzador en la barra de menú al iniciar sesión y arranca el daemon después de la configuración.',
-					primaryLabel: 'Copiar instalador',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script de instalación de macOS',
-					note: 'El lanzador puede buscar actualizaciones, reiniciar el daemon, abrir registros y crear tokens de emparejamiento para el navegador.',
+					title: 'Anda Desktop',
+					body: 'Descargue Anda para Apple Silicon. Instala la línea de comandos anda, habilidades seleccionadas y una bandeja en la barra de menú que mantiene Anda en marcha al iniciar sesión.',
+					primaryLabel: 'Descargar para Mac',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'Mac con Intel: descargue Anda-mac-x64.dmg desde la última versión. Solo línea de comandos: use el script de instalación.',
 					steps: ['Instalar app', 'Configurar modelo', 'Emparejar navegador']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'Instalador gráfico',
-					body: 'Descargue la última aplicación de configuración. Instala el lanzador, una entrada en el Menú de inicio, un acceso directo en el escritorio, habilidades seleccionadas y el asistente de configuración.',
+					title: 'Anda Desktop',
+					body: 'Descargue el instalador. Instala Anda Desktop, la línea de comandos anda, habilidades seleccionadas y una bandeja que mantiene Anda en marcha al iniciar sesión.',
 					primaryLabel: 'Descargar instalador',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'El lanzador en la bandeja del sistema se inicia al iniciar sesión, administra la configuración del modelo, controla el daemon y avisa cuando las actualizaciones están listas.',
-					steps: ['Ejecutar setup', 'Usar el asistente', 'Emparejar navegador']
+					note: 'La bandeja muestra el estado del servicio, instala actualizaciones, reinicia el servicio, abre registros y copia tokens de emparejamiento del navegador.',
+					steps: ['Ejecutar setup', 'Configurar modelo', 'Emparejar navegador']
 				},
 				linux: {
 					label: 'Linux',
@@ -1066,9 +1069,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					title: 'Application de bureau',
 					detail:
-						'Conversations, mémoire, navigateur, terminal et Git dans un client. Actuellement disponible en version de développement à compiler depuis les sources.',
-					linkLabel: 'Guide de compilation',
-					status: 'Aperçu de développement'
+						'Conversations, mémoire, navigateur, terminal et Git dans une app de bureau, avec une icône qui garde Anda actif.',
+					linkLabel: 'Découvrir Anda Desktop'
 				}
 			]
 		},
@@ -1163,24 +1165,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Lanceur de la barre de menus',
-					body: 'Le script d’installation ajoute Anda Bot.app, enregistre le lanceur dans la barre de menus au démarrage et lance le démon après la configuration.',
-					primaryLabel: 'Copier l’installateur',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Script d’installation macOS',
-					note: 'Le lanceur vérifie les mises à jour, redémarre le démon, ouvre les journaux et génère des jetons d’appairage de navigateur.',
+					title: 'Anda Desktop',
+					body: 'Téléchargez Anda pour Apple Silicon. Il installe la ligne de commande anda, des compétences sélectionnées et une icône de barre de menus qui garde Anda actif dès la connexion.',
+					primaryLabel: 'Télécharger pour Mac',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'Mac Intel : téléchargez Anda-mac-x64.dmg depuis la dernière version. Ligne de commande seule : utilisez le script d’installation.',
 					steps: ['Installer l’app', 'Configurer le modèle', 'Appairer le navigateur']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'Installateur graphique',
-					body: 'Téléchargez l’application d’installation. Elle installe le lanceur, un raccourci dans le menu Démarrer et sur le bureau, des compétences sélectionnées et l’assistant de configuration.',
+					title: 'Anda Desktop',
+					body: 'Téléchargez l’installateur. Il installe Anda Desktop, la ligne de commande anda, des compétences sélectionnées et une icône qui garde Anda actif dès la connexion.',
 					primaryLabel: 'Télécharger l’installateur',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'Le lanceur de la zone de notification système démarre à la connexion, gère les paramètres de modèle, contrôle le démon et signale les mises à jour.',
-					steps: ['Lancer le setup', 'Utiliser l’assistant', 'Appairer le navigateur']
+					note: 'L’icône affiche l’état du service, installe les mises à jour, redémarre le service, ouvre les journaux et copie les jetons d’appairage du navigateur.',
+					steps: ['Lancer le setup', 'Configurer le modèle', 'Appairer le navigateur']
 				},
 				linux: {
 					label: 'Linux',
@@ -1336,9 +1339,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					title: 'Приложение для компьютера',
 					detail:
-						'Чат, память, браузер, терминал и Git в одном клиенте. Сейчас доступна версия для разработки со сборкой из исходного кода.',
-					linkLabel: 'Руководство по сборке',
-					status: 'Предварительная версия'
+						'Чат, память, браузер, терминал и Git в одном приложении, а значок в трее поддерживает работу Anda.',
+					linkLabel: 'Об Anda Desktop'
 				}
 			]
 		},
@@ -1433,24 +1435,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'Лаунчер в строке меню',
-					body: 'Скрипт установки добавляет Anda Bot.app, регистрирует лаунчер в строке меню при входе в систему и запускает фоновую службу демона после завершения настройки.',
-					primaryLabel: 'Копировать установщик',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'Скрипт установки macOS',
-					note: 'Лаунчер позволяет проверять наличие обновлений, перезапускать демона, просматривать логи и создавать токены авторизации для браузера.',
+					title: 'Anda Desktop',
+					body: 'Скачайте Anda для Apple Silicon. Приложение установит командную строку anda, навыки и значок в строке меню, который поддерживает работу Anda после входа в систему.',
+					primaryLabel: 'Скачать для Mac',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'Mac на Intel: скачайте Anda-mac-x64.dmg со страницы последнего релиза. Только командная строка — используйте скрипт установки.',
 					steps: ['Установить приложение', 'Настроить модель', 'Связать с браузером']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'Графический установщик',
-					body: 'Скачайте последнюю версию программы установки. Она установит лаунчер, ярлык в меню «Пуск» и на рабочем столе, предустановленные навыки и запустит мастер настройки.',
+					title: 'Anda Desktop',
+					body: 'Скачайте установщик. Он установит Anda Desktop, командную строку anda, навыки и значок в трее, который поддерживает работу Anda после входа в систему.',
 					primaryLabel: 'Скачать установщик',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'Лаунчер в системном трее запускается при входе в систему, управляет настройками моделей, контролирует демона и сообщает о готовности обновлений.',
-					steps: ['Запустить установку', 'Использовать мастер', 'Связать с браузером']
+					note: 'Значок в трее показывает состояние службы, устанавливает обновления, перезапускает службу, открывает логи и копирует токены для браузера.',
+					steps: ['Запустить установку', 'Настроить модель', 'Связать с браузером']
 				},
 				linux: {
 					label: 'Linux',
@@ -1601,9 +1604,8 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 				{
 					title: 'تطبيق سطح المكتب',
 					detail:
-						'المحادثات والذاكرة والمتصفح والطرفية وGit في تطبيق واحد. يتوفر حالياً كنسخة تطوير تُبنى من المصدر.',
-					linkLabel: 'دليل بناء التطبيق',
-					status: 'معاينة تطوير'
+						'المحادثات والذاكرة والمتصفح والطرفية وGit في تطبيق سطح مكتب واحد، مع رمز في شريط النظام يُبقي Anda يعمل.',
+					linkLabel: 'عن Anda Desktop'
 				}
 			]
 		},
@@ -1698,24 +1700,25 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 			options: {
 				macos: {
 					label: 'macOS',
-					title: 'مشغل شريط القوائم',
-					body: 'يقوم سكريبت التثبيت بإضافة Anda Bot.app، وتسجيل المشغل في شريط القوائم عند تسجيل الدخول، وتشغيل الخدمة الخلفية (daemon) بعد التثبيت.',
-					primaryLabel: 'نسخ برنامج التثبيت',
-					command:
-						'curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh',
-					commandLabel: 'سكريبت تثبيت macOS',
-					note: 'يمكن للمشغل فحص التحديثات، وإعادة تشغيل daemon، وفتح سجلات الأحداث، وإنشاء رموز ربط المتصفح.',
+					title: 'Anda Desktop',
+					body: 'نزّل Anda لأجهزة Apple Silicon. يثبّت سطر أوامر anda والمهارات المختارة ورمزًا في شريط القوائم يُبقي Anda يعمل عند تسجيل الدخول.',
+					primaryLabel: 'تنزيل لنظام Mac',
+					href: macInstallerUrl,
+					download: macInstallerFileName,
+					command: desktopCaskCommand,
+					commandLabel: 'Homebrew',
+					note: 'لأجهزة Mac بمعالج Intel: نزّل Anda-mac-x64.dmg من أحدث إصدار. لسطر الأوامر فقط: استخدم سكريبت التثبيت.',
 					steps: ['تثبيت التطبيق', 'إعداد النموذج', 'ربط المتصفح']
 				},
 				windows: {
 					label: 'Windows',
-					title: 'برنامج تثبيت رسومي',
-					body: 'قم بتنزيل أحدث تطبيق إعداد. حيث يقوم بتثبيت المشغل، وإدخال قائمة ابدأ، واختصار سطح المكتب، والمهارات المنسقة، ومعالج الإعداد.',
+					title: 'Anda Desktop',
+					body: 'نزّل برنامج التثبيت. يثبّت Anda Desktop وسطر أوامر anda والمهارات المختارة ورمزًا في شريط النظام يُبقي Anda يعمل عند تسجيل الدخول.',
 					primaryLabel: 'تنزيل برنامج التثبيت',
 					href: windowsInstallerUrl,
 					download: windowsInstallerFileName,
-					note: 'يبدأ مشغل علبة النظام عند تسجيل الدخول، ويدير إعدادات النموذج، ويتحكم في daemon، وينبهك عندما تكون التحديثات جاهزة.',
-					steps: ['تشغيل الإعداد', 'استخدام المعالج', 'ربط المتصفح']
+					note: 'يعرض الرمز حالة الخدمة، ويثبّت التحديثات، ويعيد تشغيل الخدمة، ويفتح السجلات، وينسخ رموز ربط المتصفح.',
+					steps: ['تشغيل الإعداد', 'إعداد النموذج', 'ربط المتصفح']
 				},
 				linux: {
 					label: 'Linux',

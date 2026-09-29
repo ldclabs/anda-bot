@@ -6,13 +6,13 @@ description: Le point d'entrée officiel de la documentation d'Anda Bot.
 
 # Documentation d'Anda Bot
 
-Anda Bot est un assistant IA local avec priorité à la mémoire. Le lanceur de bureau et le démon local maintiennent le Brain en cours d'exécution sur votre machine, tandis que le panneau latéral du navigateur, le terminal, les fichiers, les compétences (Skills), le cron, les sous-agents, les canaux et la voix peuvent tous alimenter la même mémoire graphe à long terme.
+Anda Bot est un assistant IA local avec priorité à la mémoire. Anda Desktop et le démon local maintiennent le Brain en cours d'exécution sur votre machine, tandis que le panneau latéral du navigateur, le terminal, les fichiers, les compétences (Skills), le cron, les sous-agents, les canaux et la voix peuvent tous alimenter la même mémoire graphe à long terme.
 
 Cette documentation s'adresse aux personnes prêtes à s'approprier la couche d'assistant plutôt qu'à louer de la mémoire auprès d'un compte de modèle unique. Commencez par installer l'application, puis connectez le navigateur, configurez les fournisseurs et découvrez comment le Brain maintient le contexte portable à travers les sessions et les modèles.
 
 ## Commencer ici
 
-- [Installer Anda](./quick-start/install) : choisissez le lanceur, Homebrew, le script d'installation, Windows PowerShell ou le chemin à partir des sources.
+- [Installer Anda](./quick-start/install) : choisissez Anda Desktop, Homebrew, le script d'installation, Windows PowerShell ou le chemin à partir des sources.
 - [Appairer le navigateur](./quick-start/browser-extension) : connectez le panneau latéral au démon local à l'aide d'une Gateway URL et d'un Bearer token.
 - [Utiliser le terminal](./quick-start/terminal) : apprenez l'envoi de messages, la saisie multiligne, `/goal`, `/loop`, `/side`, `/skill`, `/steer` et les commandes courantes.
 - [Configurer le runtime](./runtime/configuration) : préparez `~/.anda/config.yaml`, les fournisseurs de modèles, les clés API, les proxies et les répertoires locaux.
@@ -37,8 +37,8 @@ brew install ldclabs/tap/anda
 DEEPSEEK_API_KEY=VOTRE_CLE_API anda
 ```
 
-Si vous n'êtes pas sur macOS ou si vous préférez le lanceur ou le script d'installation, continuez vers [Installer Anda](./quick-start/install).
+Si vous n'êtes pas sur macOS ou si vous préférez Anda Desktop ou le script d'installation, continuez vers [Installer Anda](./quick-start/install).
 
 :::tip
-Lors du premier lancement, Anda crée `~/.anda/config.yaml`. Si l'interface utilisateur du terminal signale des champs de modèle manquants, modifiez ce fichier, enregistrez-le, puis actualisez les modèles à partir du lanceur ou du panneau latéral du navigateur, ou exécutez `anda models reload`.
+Lors du premier lancement, Anda crée `~/.anda/config.yaml`. Si l'interface utilisateur du terminal signale des champs de modèle manquants, modifiez ce fichier, enregistrez-le, puis actualisez les modèles à partir d'Anda Desktop ou du panneau latéral du navigateur, ou exécutez `anda models reload`.
 :::

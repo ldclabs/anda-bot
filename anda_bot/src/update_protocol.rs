@@ -1,5 +1,6 @@
-//! Completion handoff for Windows executable replacement. Both binaries use
-//! the same paths; detached helpers must never inherit the launcher's pipes.
+//! Completion handoff for Windows executable replacement. `anda update` writes
+//! the status next to the executable and Anda Desktop (or an older launcher)
+//! waits for it; detached helpers must never inherit the caller's pipes.
 
 use std::{
     fs, io,

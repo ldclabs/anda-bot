@@ -95,6 +95,8 @@ jobs:
         shell: bash
         run: |
           cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda
+          # anda_launcher is now the transitional binary that retires the old
+          # tray; older launchers and `anda update` still download it.
           if [[ "${{ matrix.target }}" == windows-* || "${{ matrix.target }}" == macos-* ]]; then
             cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda_launcher
           fi
@@ -231,113 +233,125 @@ jobs:
           path: release/*
           if-no-files-found: error
 
-  package-windows-installer:
-    needs:
-      - build-binary
-      - package-skills
-    runs-on: windows-latest
+  build-desktop:
+    needs: build-binary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+            exe_ext: ""
+          - os: macos-15-intel
+            target: macos-x86_64
+            exe_ext: ""
+          - os: windows-latest
+            target: windows-x86_64
+            exe_ext: ".exe"
+    runs-on: ${{ matrix.os }}
+    # Signing and notarization secrets live in this protected environment.
+    environment: desktop-release
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - name: Download Windows binaries
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.7.0"
+
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The desktop bundles the exact anda binary this release publishes; the
+      # app installs it at the shared CLI location instead of running it.
+      - name: Download release runtime
         uses: actions/download-artifact@v4
         with:
-          name: release-windows-x86_64
-          path: release
+          name: release-${{ matrix.target }}
+          path: runtime
 
-      - name: Download skills
-        uses: actions/download-artifact@v4
-        with:
-          name: release-skills
-          path: release
-
-      - name: Check Artifact Signing configuration
-        id: artifact-signing-config
-        shell: pwsh
+      - name: Prepare bundled runtime
+        shell: bash
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          ANDA_DESKTOP_RUNTIME: ${{ github.workspace }}/runtime/anda-${{ matrix.target }}${{ matrix.exe_ext }}
         run: |
-          $missing = @(
-            "AZURE_CLIENT_ID",
-            "AZURE_TENANT_ID",
-            "AZURE_SUBSCRIPTION_ID",
-            "AZURE_ARTIFACT_SIGNING_ENDPOINT",
-            "AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME",
-            "AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME"
-          ) | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) }
+          chmod +x "$ANDA_DESKTOP_RUNTIME"
+          pnpm --dir desktop build
+          node desktop/scripts/prepare-runtime.mjs
 
-          if ($missing.Count -gt 0) {
-            Write-Host "Azure Artifact Signing is not fully configured; building an unsigned Windows installer. Missing: $($missing -join ', ')"
-            "configured=false" >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-
-          "configured=true" >> $env:GITHUB_OUTPUT
-
-      - name: Build Windows installer
-        shell: pwsh
+      - name: Check desktop signing configuration
+        id: signing
+        shell: bash
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
         run: |
-          ./scripts/build-windows-installer.ps1 -ReleaseDir release
+          if [ -n "$CSC_LINK" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Desktop signing is not configured; building unsigned packages without an update feed."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Azure login for Artifact Signing
-        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
-        uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Sign Windows installer
-        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
-          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          files: ${{ github.workspace }}\release\AndaBotSetup-windows-x86_64.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          description: Anda Bot Setup
-          description-url: https://github.com/ldclabs/anda-bot
-
-      - name: Verify Windows installer signature
-        if: ${{ steps.artifact-signing-config.outputs.configured == 'true' }}
-        shell: pwsh
+      - name: Package desktop
+        shell: bash
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
         run: |
-          $path = Join-Path $PWD "release\AndaBotSetup-windows-x86_64.exe"
-          $signature = Get-AuthenticodeSignature -LiteralPath $path
-          if ($signature.Status -ne "Valid") {
-            throw "Invalid Authenticode signature for ${path}: $($signature.Status) $($signature.StatusMessage)"
-          }
-          Write-Host "Verified Authenticode signature for AndaBotSetup-windows-x86_64.exe"
+          config=electron-builder.yml
+          if [ "${{ steps.signing.outputs.configured }}" = "true" ]; then
+            config=electron-builder.release.cjs
+          fi
+          args=(--config "$config" --publish never)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # Desktop and CLI share the release version, which the update feed compares.
+            args+=("-c.extraMetadata.version=${GITHUB_REF_NAME#v}")
+          fi
+          pnpm exec electron-builder "${args[@]}"
 
-      - name: Generate Windows installer checksum
-        shell: pwsh
+      - name: Collect desktop artifacts
+        shell: bash
         run: |
-          $path = Join-Path $PWD "release\AndaBotSetup-windows-x86_64.exe"
-          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
-          Set-Content -Path "$path.sha256" -Value "$hash  AndaBotSetup-windows-x86_64.exe" -Encoding ASCII
+          mkdir -p desktop-release
+          cp desktop/release/Anda-* desktop-release/
+          # Each macOS architecture writes latest-mac.yml; the release job merges them.
+          if [ -f desktop/release/latest-mac.yml ]; then
+            cp desktop/release/latest-mac.yml "desktop-release/latest-mac-${{ matrix.target }}.yml"
+          fi
+          if [ -f desktop/release/latest.yml ]; then
+            cp desktop/release/latest.yml desktop-release/latest.yml
+          fi
+          for file in desktop-release/Anda-*.dmg desktop-release/Anda-*.zip desktop-release/Anda-*.exe; do
+            [ -f "$file" ] || continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              hash="$(sha256sum "$file" | awk '{print $1}')"
+            else
+              hash="$(shasum -a 256 "$file" | awk '{print $1}')"
+            fi
+            echo "$hash  $(basename "$file")" > "${file}.sha256"
+          done
+          ls -lah desktop-release
 
-      - name: Upload Windows installer
+      - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-windows-installer
-          path: |
-            release/AndaBotSetup-windows-x86_64.exe
-            release/AndaBotSetup-windows-x86_64.exe.sha256
+          name: release-desktop-${{ matrix.target }}
+          path: desktop-release/*
           if-no-files-found: error
 
   release:
     needs:
       - build-binary
       - package-skills
-      - package-windows-installer
+      - build-desktop
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -350,6 +364,9 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: release
+
+      - name: Merge desktop update metadata
+        run: node scripts/merge-desktop-update-metadata.mjs release
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

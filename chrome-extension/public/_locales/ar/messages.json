@@ -30,19 +30,22 @@
     "message": "وصّل Anda على هذا الكمبيوتر"
   },
   "onboardingIntro": {
-    "message": "تحتاج إضافة المتصفح إلى تطبيق Anda Bot في علبة النظام أو شريط القوائم، ومزوّد نموذج مُعدّ، وdaemon محلي قيد التشغيل قبل توفر الدردشة."
+    "message": "تحتاج إضافة المتصفح إلى Anda Desktop (أو سطر أوامر anda)، ومزوّد نموذج مُعدّ، وdaemon محلي قيد التشغيل قبل توفر الدردشة."
   },
   "onboardingInstallTitle": {
-    "message": "تثبيت مشغّل Anda Bot"
+    "message": "تثبيت Anda Desktop"
   },
   "onboardingInstallBody": {
-    "message": "استخدم مثبّت Windows أو سكربت تثبيت macOS. يبدأ المشغّل بعد الإعداد ويبقي daemon المحلي متاحًا."
+    "message": "نزّل Anda Desktop لنظام Windows أو Mac. يثبّت سطر أوامر anda ورمزًا في شريط النظام يبقي daemon المحلي متاحًا. على Linux، أو لسطر الأوامر فقط، استخدم سكربت التثبيت."
   },
   "windowsInstaller": {
-    "message": "مثبّت Windows"
+    "message": "Anda Desktop لنظام Windows"
   },
   "macosInstaller": {
-    "message": "تطبيق شريط قوائم macOS"
+    "message": "Anda Desktop لنظام Mac (Apple Silicon)"
+  },
+  "cliInstaller": {
+    "message": "سطر الأوامر (macOS/Linux)"
   },
   "openDownload": {
     "message": "فتح التنزيل"
@@ -51,10 +54,10 @@
     "message": "نسخ الأمر"
   },
   "onboardingConfigureTitle": {
-    "message": "إكمال الإعداد في المشغّل"
+    "message": "إكمال الإعداد في Anda Desktop"
   },
   "onboardingConfigureBody": {
-    "message": "افتح Anda Bot من علبة النظام أو شريط القوائم أو قائمة ابدأ، وأكمل معالج الإعداد (مزوّد النموذج/مفتاح API/النموذج)، وأبقِ المشغّل قيد التشغيل أثناء استخدام الإضافة."
+    "message": "افتح Anda من علبة النظام أو شريط القوائم أو قائمة ابدأ، وأدخل المزوّد ومفتاح API والنموذج في الإعدادات ← إعداد الوكيل، وأبقِ Anda قيد التشغيل أثناء استخدام الإضافة."
   },
   "openConfigEditor": {
     "message": "فتح محرر config.yaml"
@@ -69,7 +72,7 @@
     "message": "إنشاء رمز للإضافة"
   },
   "onboardingTokenBody": {
-    "message": "انسخ Gateway URL وBearer token المطبوعين إلى الحقول أدناه."
+    "message": "انسخ Gateway URL وBearer token المطبوعين إلى الحقول أدناه. يمكن لـ Anda Desktop أيضًا نسخ رمز من شريط النظام."
   },
   "tokenCommandLabel": {
     "message": "الرمز"

@@ -10,16 +10,25 @@ Anda Bot 可以通过发布版安装，也可以直接从仓库源码运行。�
 
 ## 安装最新发布版
 
-macOS 推荐使用 Homebrew：
+### Anda 桌面端
+
+大多数用户建议从 Anda 桌面端开始：它提供聊天窗口、工作台和托盘。请从 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载：
+
+- macOS Apple Silicon：`Anda-mac-arm64.dmg`；Intel：`Anda-mac-x64.dmg`
+- Windows x64：`Anda-win-x64.exe`
+- Homebrew：`brew install --cask ldclabs/tap/anda-desktop`（会同时安装 `anda` formula）
+
+Anda 桌面端会沿用已有的 `anda` 安装；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置（macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`）。之后桌面端、终端和 Chrome 扩展共用同一个 runtime 和 daemon。首次运行会询问是否登录时启动 Anda。桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器，桌面端会将其移除。
+
+### 仅安装命令行
+
+通过 Homebrew：
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-在 macOS 上，Homebrew formula 会同时安装 `anda` 和 `anda_launcher`。运行一次
-`anda_launcher` 即可启动菜单栏 launcher，并刷新 `~/Applications/Anda Bot.app`。
-
-macOS 和 Linux 也可以使用安装脚本：
+macOS 和 Linux 通过安装脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
@@ -29,21 +38,13 @@ curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/insta
 指向 `~/.local/bin/anda` 或你的 `ANDA_INSTALL_DIR`；否则较旧的 Homebrew
 二进制可能会遮蔽安装脚本安装的新版本。
 
-Windows 普通用户请从
-[latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载
-`AndaBotSetup-windows-x86_64.exe`，然后双击安装。安装器会把 Anda 安装到
-`%LOCALAPPDATA%\Programs\AndaBot`，安装内置 skills，创建开始菜单和桌面快捷方式，
-注册托盘 launcher 登录自启，安装完成后立即启动 launcher，并打开 GUI 向导完成
-provider/API key/model 配置；launcher 还会自动检查并下载更新，下载完成后提示安装
-并重启。
-
-高级用户和 CI 仍可使用 PowerShell：
+Windows 通过 PowerShell：
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-macOS shell 安装器也会安装 `~/Applications/Anda Bot.app`，为菜单栏 launcher 注册登录自启，并立即启动 launcher；launcher 会在完成配置后启动 daemon，也可以从菜单栏检查更新，并在更新下载完成后提示安装并重启。Linux shell 安装仍直接注册 daemon 自启。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
+安装脚本会安装 `anda` 和精选技能，将其加入 `PATH`，用 `anda autostart install` 注册 daemon 登录自启并重启 daemon；重新运行安装脚本也会移除已停用的启动器。Windows 上的登录项运行 `anda start`，会短暂出现一个控制台窗口。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 安装完成后打开一个新的终端，并运行：
 
@@ -53,7 +54,7 @@ anda
 
 ## 准备模型 API key
 
-至少需要一个模型 provider API key。Windows 安装器用户可以在 GUI 向导中填写；CLI 用户可以先用环境变量启动：
+至少需要一个模型 provider API key。Anda 桌面端用户可以在**设置 → Agent 配置**中填写；CLI 用户可以先用环境变量启动：
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
@@ -74,7 +75,7 @@ $env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
 1. 打开 `~/.anda/config.yaml`。
 2. 填好 model provider 的 `family`、`model`、`api_base`，以及 `api_key` 或环境变量。
 3. 保存文件。
-4. 在 launcher 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。
+4. 在 Anda 桌面端 或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。
 
 最小模型配置示例：
 

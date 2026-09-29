@@ -40,7 +40,7 @@ export function normalizeUiLanguage(value: unknown): UiLanguage | '' {
 
 /**
  * Drop-in replacement for chrome.i18n.getMessage that prefers the language
- * selected in the Anda launcher over the browser UI language.
+ * selected in Anda Desktop over the browser UI language.
  */
 export function getMessage(key: string, substitutions?: string | string[]): string {
   const message = overrideMessages?.[key]?.message
@@ -117,7 +117,7 @@ function browserUiLanguage(): UiLanguage | '' {
 
 /**
  * Invokes the listener whenever the stored UI language changes in another
- * extension context (e.g. the side panel synced a launcher switch). Pages use
+ * extension context (e.g. the side panel synced a desktop switch). Pages use
  * this to reload themselves so every rendered string switches.
  */
 export function watchUiLanguage(listener: (language: UiLanguage | '') => void): void {

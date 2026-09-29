@@ -30,19 +30,22 @@
     "message": "连接这台电脑上的 Anda"
   },
   "onboardingIntro": {
-    "message": "浏览器扩展需要先安装 Anda Bot 托盘/菜单栏程序、配置模型提供商，并保持本机守护进程运行，之后才能开始聊天。"
+    "message": "浏览器扩展需要先安装 Anda 桌面端（或 anda 命令行）、配置模型提供商，并保持本机守护进程运行，之后才能开始聊天。"
   },
   "onboardingInstallTitle": {
-    "message": "安装 Anda Bot 启动器"
+    "message": "安装 Anda 桌面端"
   },
   "onboardingInstallBody": {
-    "message": "Windows 请使用安装器；macOS 请使用安装脚本。启动器会在安装后启动，并让本机守护进程保持可用。"
+    "message": "下载 Windows 或 Mac 版 Anda 桌面端。它会安装 anda 命令行，以及让本机守护进程保持可用的托盘。Linux 或只需要命令行时，请使用安装脚本。"
   },
   "windowsInstaller": {
-    "message": "Windows 安装器"
+    "message": "Windows 版 Anda 桌面端"
   },
   "macosInstaller": {
-    "message": "macOS 菜单栏程序"
+    "message": "Mac 版 Anda 桌面端（Apple Silicon）"
+  },
+  "cliInstaller": {
+    "message": "命令行（macOS/Linux）"
   },
   "openDownload": {
     "message": "打开下载"
@@ -51,10 +54,10 @@
     "message": "复制命令"
   },
   "onboardingConfigureTitle": {
-    "message": "在启动器中完成设置"
+    "message": "在 Anda 桌面端中完成设置"
   },
   "onboardingConfigureBody": {
-    "message": "从系统托盘、菜单栏或开始菜单打开 Anda Bot，完成提供商/API 密钥/模型向导，并在使用扩展时保持启动器运行。"
+    "message": "从系统托盘、菜单栏或开始菜单打开 Anda，在“设置 → Agent 配置”中填写提供商、API 密钥和模型，并在使用扩展时保持 Anda 运行。"
   },
   "openConfigEditor": {
     "message": "打开 config.yaml 编辑器"
@@ -69,7 +72,7 @@
     "message": "生成扩展令牌"
   },
   "onboardingTokenBody": {
-    "message": "将命令输出的 Gateway URL 和 Bearer 令牌复制到下方字段。"
+    "message": "将命令输出的 Gateway URL 和 Bearer 令牌复制到下方字段。也可以在 Anda 桌面端托盘中复制令牌。"
   },
   "tokenCommandLabel": {
     "message": "令牌"

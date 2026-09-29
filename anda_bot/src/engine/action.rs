@@ -249,7 +249,7 @@ impl ActionSession {
             .unwrap_or_default();
         let approval_mode = ApprovalMode::from_ctx(ctx);
         let language_hint = shell_risk_language_hint(&meta)
-            .or_else(|| super::browser_ws::launcher_ui_language(&self.home_dir));
+            .or_else(|| super::browser_ws::persisted_ui_language(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
             &args,
             approval_mode,

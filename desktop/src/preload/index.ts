@@ -24,6 +24,7 @@ const api: DesktopBridge = {
   showLogs: () => ipcRenderer.invoke('anda:logs'),
   printHtml: (html) => ipcRenderer.invoke('anda:print', html),
   checkUpdate: () => ipcRenderer.invoke('anda:update'),
+  copyExtensionToken: () => ipcRenderer.invoke('anda:extension-token'),
   onEvent: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, data: NativeEvent) => listener(data)
     ipcRenderer.on('anda:event', handler)

@@ -614,7 +614,11 @@
             />
           </div>
           <h2>{t('runtime')}</h2>
-          <p class="runtime-path">{client.connection.binary || t('disconnected')}</p>
+          <p class="runtime-path">
+            {client.connection.binary || t('disconnected')}{client.connection.version
+              ? ` · v${client.connection.version}`
+              : ''}
+          </p>
           <div class="settings-buttons">
             <button
               onclick={async () => {
@@ -626,6 +630,15 @@
                 }
               }}>{t('chooseBinary')}</button
             ><button onclick={() => void window.anda.showLogs()}>{t('logs')}</button>
+            <button
+              onclick={async () => {
+                try {
+                  await window.anda.copyExtensionToken()
+                } catch (error) {
+                  client.fail(error)
+                }
+              }}>{t('extensionToken')}</button
+            >
             <button
               onclick={async () => {
                 try {

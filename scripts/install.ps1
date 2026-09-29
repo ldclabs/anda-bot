@@ -14,11 +14,6 @@ $Repo = "ldclabs/anda-bot"
 $BinaryName = "anda"
 $InstallName = "$BinaryName.exe"
 $LauncherBinaryName = "anda_launcher"
-$LauncherInstallName = "$LauncherBinaryName.exe"
-$DaemonTaskName = "Anda Bot"
-$LauncherTaskName = "Anda Bot Launcher"
-$RunKeyPath = "Software\Microsoft\Windows\CurrentVersion\Run"
-$LauncherRunValueName = "AndaBotLauncher"
 $SkillsArchiveName = "anda-skills.zip"
 $BannerArt = @(
     '      _     _   _   ____      _      '
@@ -198,41 +193,6 @@ function Verify-Checksum($FilePath, $ChecksumPath) {
     Write-Success "Checksum verified."
 }
 
-function Write-IcoFromPng($PngPath, $IcoPath) {
-    [byte[]]$png = [System.IO.File]::ReadAllBytes($PngPath)
-    $width = [System.BitConverter]::ToUInt32([byte[]]@($png[19], $png[18], $png[17], $png[16]), 0)
-    $height = [System.BitConverter]::ToUInt32([byte[]]@($png[23], $png[22], $png[21], $png[20]), 0)
-    [byte[]]$ico = New-Object byte[] (22 + $png.Length)
-    [BitConverter]::GetBytes([UInt16]0).CopyTo($ico, 0)
-    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 2)
-    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 4)
-    $ico[6] = if ($width -eq 256) { 0 } else { [byte]$width }
-    $ico[7] = if ($height -eq 256) { 0 } else { [byte]$height }
-    $ico[8] = 0
-    $ico[9] = 0
-    [BitConverter]::GetBytes([UInt16]1).CopyTo($ico, 10)
-    [BitConverter]::GetBytes([UInt16]32).CopyTo($ico, 12)
-    [BitConverter]::GetBytes([UInt32]$png.Length).CopyTo($ico, 14)
-    [BitConverter]::GetBytes([UInt32]22).CopyTo($ico, 18)
-    [Array]::Copy($png, 0, $ico, 22, $png.Length)
-    [System.IO.File]::WriteAllBytes($IcoPath, $ico)
-}
-
-function Install-LauncherIcon($Version, $Directory, $TempRoot) {
-    $iconPath = Join-Path $Directory "anda.ico"
-    $logoPath = Join-Path $TempRoot "anda-logo.png"
-    $logoUrl = "https://raw.githubusercontent.com/$Repo/$Version/anda_bot/assets/logo.png"
-
-    try {
-        Invoke-WebRequest -Uri $logoUrl -OutFile $logoPath -UseBasicParsing
-        Write-IcoFromPng $logoPath $iconPath
-    } catch {
-        Write-Info "Launcher icon could not be installed; shortcuts may use the default Windows icon."
-    }
-
-    return $iconPath
-}
-
 function Install-Skills($ArchivePath, $HomeDir, $TempRoot) {
     $skillsDir = Join-Path $HomeDir "bundled-skills"
     $stagingDir = Join-Path $TempRoot "skills-staging"
@@ -316,60 +276,43 @@ function Restart-AndaDaemon($AndaPath, $HomeDir) {
     }
 }
 
-function Remove-LegacyScheduledTasks {
+function Invoke-Anda($AndaPath, $HomeDir, [string[]]$Arguments) {
+    $output = @()
+    $exitCode = 1
     try {
-        & schtasks.exe /Delete /TN $DaemonTaskName /F 2>$null | Out-Null
+        $output = & $AndaPath --home $HomeDir @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
     } catch {
+        $output = @($_.Exception.Message)
     }
-    try {
-        & schtasks.exe /Delete /TN $LauncherTaskName /F 2>$null | Out-Null
-    } catch {
-    }
+    return @{ ExitCode = $exitCode; Output = $output }
 }
 
-function Register-LauncherAutostart($LauncherPath) {
-    Remove-LegacyScheduledTasks
-    $runCommand = '"' + $LauncherPath + '"'
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RunKeyPath)
-    if (-not $key) {
-        Fail "Could not open HKCU Run registry key."
+# Older setup apps wrote an uninstall.cmd that predates `anda autostart`.
+function Update-LegacyUninstaller($Directory) {
+    $uninstall = Join-Path $Directory "uninstall.cmd"
+    if (-not (Test-Path -LiteralPath $uninstall)) {
+        return
     }
-
-    try {
-        $key.SetValue($LauncherRunValueName, $runCommand, [Microsoft.Win32.RegistryValueKind]::String)
-    } catch {
-        Fail "Could not register launcher autostart. $($_.Exception.Message)"
-    } finally {
-        $key.Close()
-    }
-}
-
-function Create-StartMenuShortcuts($InstallDir, $LauncherPath, $IconPath) {
-    $shell = New-Object -ComObject WScript.Shell
-    $programsDir = [Environment]::GetFolderPath("Programs")
-    $shortcutDir = Join-Path $programsDir "Anda Bot"
-    $desktopDir = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
-    $shortcutTargets = @(
-        @{ Directory = $shortcutDir; Name = "Anda Bot.lnk" },
-        @{ Directory = $desktopDir; Name = "Anda Bot.lnk" }
+    $lines = @(
+        '@echo off',
+        'setlocal EnableExtensions',
+        'set "INSTALL_DIR=%LOCALAPPDATA%\Programs\AndaBot"',
+        'set "ANDA_HOME=%USERPROFILE%\.anda"',
+        'set "START_MENU_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Anda Bot"',
+        'if exist "%INSTALL_DIR%\anda.exe" "%INSTALL_DIR%\anda.exe" --home "%ANDA_HOME%" autostart uninstall >nul 2>nul',
+        'if exist "%INSTALL_DIR%\anda.exe" "%INSTALL_DIR%\anda.exe" --home "%ANDA_HOME%" stop >nul 2>nul',
+        'reg.exe delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "AndaBotLauncher" /F >nul 2>nul',
+        'taskkill.exe /IM anda_launcher.exe /F >nul 2>nul',
+        'if exist "%START_MENU_DIR%" rmdir /S /Q "%START_MENU_DIR%"',
+        'choice.exe /M "Delete Anda data in %ANDA_HOME%?"',
+        'if errorlevel 2 goto keep_data',
+        'if exist "%ANDA_HOME%" rmdir /S /Q "%ANDA_HOME%"',
+        ':keep_data',
+        'cd /D "%TEMP%"',
+        'rmdir /S /Q "%INSTALL_DIR%"'
     )
-
-    foreach ($target in $shortcutTargets) {
-        if ([string]::IsNullOrWhiteSpace($target.Directory)) {
-            continue
-        }
-        New-Item -ItemType Directory -Force -Path $target.Directory | Out-Null
-
-        $launcherShortcut = $shell.CreateShortcut((Join-Path $target.Directory $target.Name))
-        $launcherShortcut.TargetPath = $LauncherPath
-        $launcherShortcut.Arguments = ""
-        $launcherShortcut.WorkingDirectory = $InstallDir
-        if (Test-Path -LiteralPath $IconPath) {
-            $launcherShortcut.IconLocation = $IconPath
-        }
-        $launcherShortcut.WindowStyle = 7
-        $launcherShortcut.Save()
-    }
+    Set-Content -Path $uninstall -Value $lines -Encoding ASCII
 }
 
 try {
@@ -391,8 +334,6 @@ if ($target -ne "windows-x86_64") {
 
 $assetName = "$BinaryName-$target.exe"
 $checksumName = "$assetName.sha256"
-$launcherAssetName = "$LauncherBinaryName-$target.exe"
-$launcherChecksumName = "$launcherAssetName.sha256"
 
 Write-Banner
 
@@ -402,8 +343,6 @@ Write-Info "Latest version: $version"
 
 $url = "https://github.com/$Repo/releases/download/$version/$assetName"
 $checksumUrl = "https://github.com/$Repo/releases/download/$version/$checksumName"
-$launcherUrl = "https://github.com/$Repo/releases/download/$version/$launcherAssetName"
-$launcherChecksumUrl = "https://github.com/$Repo/releases/download/$version/$launcherChecksumName"
 $skillsUrl = "https://github.com/$Repo/releases/download/$version/$SkillsArchiveName"
 $skillsChecksumName = "$SkillsArchiveName.sha256"
 $skillsChecksumUrl = "https://github.com/$Repo/releases/download/$version/$skillsChecksumName"
@@ -414,8 +353,6 @@ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 try {
     $downloadPath = Join-Path $tempDir $assetName
     $checksumPath = Join-Path $tempDir $checksumName
-    $launcherDownloadPath = Join-Path $tempDir $launcherAssetName
-    $launcherChecksumPath = Join-Path $tempDir $launcherChecksumName
     $skillsArchivePath = Join-Path $tempDir $SkillsArchiveName
     $skillsChecksumPath = Join-Path $tempDir $skillsChecksumName
 
@@ -433,25 +370,8 @@ try {
     }
     Verify-Checksum $downloadPath $checksumPath
 
-    Write-Info "Downloading $launcherAssetName..."
-    try {
-        Invoke-WebRequest -Uri $launcherUrl -OutFile $launcherDownloadPath -UseBasicParsing
-    } catch {
-        Fail "Download failed. Launcher binary may not exist for $target.`nCheck: https://github.com/$Repo/releases/tag/$version"
-    }
-
-    try {
-        Invoke-WebRequest -Uri $launcherChecksumUrl -OutFile $launcherChecksumPath -UseBasicParsing
-    } catch {
-        Fail "Launcher checksum file not found: $launcherChecksumUrl"
-    }
-    Verify-Checksum $launcherDownloadPath $launcherChecksumPath
-
     Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
-    $launcherInstallPath = Install-Binary $launcherDownloadPath $InstallDir $LauncherInstallName
-    $launcherIconPath = Install-LauncherIcon $version $InstallDir $tempDir
-    Create-StartMenuShortcuts $InstallDir $launcherInstallPath $launcherIconPath
 
     Write-Info "Downloading $SkillsArchiveName..."
     $skillsDownloaded = $false
@@ -488,19 +408,25 @@ try {
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"
 
-    Remove-LegacyScheduledTasks
+    # Anda Desktop now provides the tray. `anda install` removes the retired
+    # tray launcher (login entry, shortcuts, binary) from earlier installs and
+    # keeps the daemon starting at login if the launcher did.
+    Invoke-Anda $installPath $AndaHome @("install", "--dir", $InstallDir) | Out-Null
+    Update-LegacyUninstaller $InstallDir
 
     if (-not $NoAutostart) {
-        Write-Info "Registering Anda launcher to start when you log in..."
-        Register-LauncherAutostart $launcherInstallPath
-        Write-Success "Launcher autostart registered."
+        Write-Info "Registering Anda to start when you log in..."
+        $autostart = Invoke-Anda $installPath $AndaHome @("autostart", "install")
+        if ($autostart.ExitCode -eq 0) {
+            Write-Success "Autostart registered."
+        } else {
+            Write-Info "Could not register autostart. You can retry with:"
+            Write-Host "    $BinaryName --home `"$AndaHome`" autostart install"
+        }
     }
 
     if (-not $NoStart) {
         Restart-AndaDaemon $installPath $AndaHome
-        Write-Info "Starting Anda launcher..."
-        Start-Process -FilePath $launcherInstallPath -WorkingDirectory $InstallDir -WindowStyle Hidden
-        Write-Success "Anda launcher started."
     }
 
     Write-Host ""
@@ -509,9 +435,11 @@ try {
     Write-Host "    $BinaryName start"
     Write-Host "    $BinaryName restart"
     Write-Host "    $BinaryName stop"
-    Write-Host "    $LauncherInstallName"
-    Write-Host "    reg.exe query HKCU\$RunKeyPath /v $LauncherRunValueName"
+    Write-Host "    $BinaryName autostart status"
     Write-Host "    $BinaryName --help"
+    Write-Host ""
+    Write-Host "  For the tray, chat window and settings, install Anda Desktop:"
+    Write-Host "    https://anda.bot"
 } finally {
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
 }

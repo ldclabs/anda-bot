@@ -7,6 +7,8 @@ pub mod request_meta;
 pub mod text;
 pub mod tool_response;
 pub mod windows_process;
+#[cfg(windows)]
+pub mod windows_run_key;
 
 /// Polls `future` behind a type-erased box, as an inlining barrier.
 ///

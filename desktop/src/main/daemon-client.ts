@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createReadStream } from 'node:fs'
-import { access, readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import { access, readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join } from 'node:path'
@@ -14,6 +14,61 @@ import { loopbackBaseUrl, validateRpc } from './policy'
 import { DesktopStore } from './store'
 
 const run = promisify(execFile)
+const executable = process.platform === 'win32' ? 'anda.exe' : 'anda'
+/** Printed by `anda install --json`. */
+export interface InstallReport {
+  action: 'installed' | 'upgraded' | 'current' | 'kept_newer' | 'homebrew'
+  path: string
+  version: string | null
+  skills_installed: boolean
+  path_updated: boolean
+  launcher_retired: boolean
+  launcher_started_at_login: boolean
+}
+/** Printed by `anda update --check[-if-due] --json`. */
+export interface RuntimeUpdateState {
+  status: string
+  current_tag: string
+  latest_tag?: string | null
+  downloaded_path?: string | null
+  error?: string | null
+}
+/** The release tag a downloaded runtime update would install, if any. */
+export function downloadedRelease(state?: RuntimeUpdateState): string | null {
+  return state?.status === 'downloaded' &&
+    state.latest_tag &&
+    state.latest_tag !== state.current_tag &&
+    state.downloaded_path
+    ? state.latest_tag
+    : null
+}
+/** Installs other tools and a development build may use, in lookup order. */
+function installedCandidates(): string[] {
+  if (process.platform === 'win32')
+    return [
+      join(
+        process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'),
+        'Programs',
+        'AndaBot',
+        executable
+      ),
+      join(homedir(), 'bin', executable)
+    ]
+  return [
+    join(homedir(), '.local', 'bin', executable),
+    '/opt/homebrew/bin/anda',
+    '/usr/local/bin/anda'
+  ]
+}
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
 type Waiting = {
   resolve(value: unknown): void
   reject(error: Error): void
@@ -33,13 +88,21 @@ export class DaemonClient extends EventEmitter {
   private appTransport = false
   private credentialAt = 0
   private configWrites: Promise<unknown> = Promise.resolve()
-  private runtimeVerified = false
   private browserSessions = new Set<string>()
+  private resolving?: Promise<string>
+  /** The outcome of the last `anda install` from the bundle. */
+  installReport?: InstallReport
+  /**
+   * `installRuntime` is set for packaged apps: their bundle carries an `anda`
+   * that is only ever installed to the shared CLI location, never run as the
+   * daemon, so the desktop, terminals and the extension share one runtime.
+   */
   constructor(
     readonly home: string,
     private resources: string,
     private store: DesktopStore,
-    private mockUrl?: string
+    private mockUrl?: string,
+    private installRuntime = false
   ) {
     super()
     this.manuallyStopped = Boolean(store.state.daemonStopped)
@@ -47,72 +110,94 @@ export class DaemonClient extends EventEmitter {
       connected: false,
       home,
       baseUrl: 'http://127.0.0.1:8042',
-      binary: null,
-      managed: false
+      binary: null
     }
   }
   private get bundled(): string {
-    return join(this.resources, 'runtime', process.platform === 'win32' ? 'anda.exe' : 'anda')
+    return join(this.resources, 'runtime', executable)
   }
-  async discover(): Promise<string> {
-    const bundled = this.bundled
-    const candidates = [
-      this.store.state.binary,
-      bundled,
-      join(homedir(), '.local', 'bin', process.platform === 'win32' ? 'anda.exe' : 'anda'),
-      '/opt/homebrew/bin/anda',
-      '/usr/local/bin/anda'
-    ]
-    for (const candidate of candidates) {
-      if (!candidate) continue
-      try {
-        await access(candidate)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-        throw error
-      }
-      // The packaged runtime cannot change while this process runs; hash it once.
-      if (candidate === bundled && !this.runtimeVerified) {
-        try {
-          const manifest = JSON.parse(
-            await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
-          )
-          if (manifest.platform !== process.platform || manifest.arch !== process.arch)
-            throw new Error('mismatch')
-          // Stream the digest instead of holding the whole runtime in memory.
-          const hash = createHash('sha256')
-          for await (const chunk of createReadStream(candidate)) hash.update(chunk)
-          if (manifest.sha256 !== hash.digest('hex')) throw new Error('mismatch')
-        } catch {
-          throw new Error(
-            'Bundled runtime verification failed. Reinstall a complete desktop package.'
-          )
-        }
-        this.runtimeVerified = true
-      }
-      return candidate
+  /** The release bundled with this app, as `vX.Y.Z`. */
+  async bundledRelease(): Promise<string | null> {
+    try {
+      const manifest = JSON.parse(
+        await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
+      )
+      const version = String(manifest.version || '')
+        .split(/\s+/)
+        .pop()
+      return version ? `v${version.replace(/^v/, '')}` : null
+    } catch {
+      return null
     }
-    throw new Error('Anda runtime was not found. Choose an installed anda executable in Settings.')
   }
-  private async command(args: string[], input?: string): Promise<string> {
+  /** Resolves the shared `anda` CLI once per process (and after a failure). */
+  async discover(): Promise<string> {
+    const chosen = this.store.state.binary
+    if (chosen) {
+      if (await exists(chosen)) return chosen
+      throw new Error('The anda executable chosen in Settings no longer exists.')
+    }
+    this.resolving ||= this.resolveRuntime().catch((error) => {
+      this.resolving = undefined
+      throw error
+    })
+    return this.resolving
+  }
+  private async resolveRuntime(): Promise<string> {
+    if (!this.installRuntime) {
+      // Development builds prefer an installed CLI, then the repository build.
+      for (const candidate of [...installedCandidates(), this.bundled])
+        if (await exists(candidate)) return candidate
+      throw new Error(
+        'Anda runtime was not found. Choose an installed anda executable in Settings.'
+      )
+    }
+    await this.verifyBundle()
+    let output: string
+    try {
+      output = await this.exec(this.bundled, ['install', '--json'], { timeout: 120_000 })
+    } catch {
+      throw new Error('Anda could not install its command-line runtime. Open the logs for details.')
+    }
+    const report = JSON.parse(output) as InstallReport
+    this.installReport = report
+    this.emit('installed', report)
+    return report.path
+  }
+  /** Refuses a bundle whose runtime is not the one this package was built with. */
+  private async verifyBundle(): Promise<void> {
+    try {
+      const manifest = JSON.parse(
+        await readFile(join(this.resources, 'runtime/manifest.json'), 'utf8')
+      )
+      if (manifest.platform !== process.platform || manifest.arch !== process.arch)
+        throw new Error('mismatch')
+      // Stream the digest instead of holding the whole runtime in memory.
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(this.bundled)) hash.update(chunk)
+      if (manifest.sha256 !== hash.digest('hex')) throw new Error('mismatch')
+    } catch {
+      throw new Error('Bundled runtime verification failed. Reinstall a complete desktop package.')
+    }
+  }
+  private exec(binary: string, args: string[], options: { timeout?: number; input?: string } = {}) {
+    const pending = run(binary, ['--home', this.home, ...args], {
+      timeout: options.timeout ?? 45_000,
+      maxBuffer: 2 * 1024 * 1024,
+      windowsHide: true
+    })
+    if (options.input !== undefined) {
+      pending.child.stdin?.on('error', () => {}) // The child exit rejects `pending`.
+      pending.child.stdin?.end(options.input)
+    }
+    return pending.then(({ stdout }) => stdout.trim())
+  }
+  private async command(args: string[], input?: string, timeout?: number): Promise<string> {
     if (this.mockUrl) throw new Error('Native daemon commands are disabled in mock tests')
     const binary = this.view.binary || (await this.discover())
+    this.view.binary = binary
     try {
-      const pending = run(binary, ['--home', this.home, ...args], {
-        timeout: 45_000,
-        maxBuffer: 2 * 1024 * 1024,
-        windowsHide: true,
-        env: {
-          ...process.env,
-          ANDA_DESKTOP_MANAGED_RUNTIME: binary === this.bundled ? '1' : undefined
-        }
-      })
-      if (input !== undefined) {
-        pending.child.stdin?.on('error', () => {}) // The child exit rejects `pending`.
-        pending.child.stdin?.end(input)
-      }
-      const { stdout } = await pending
-      return stdout.trim()
+      return await this.exec(binary, args, { input, timeout })
     } catch (error) {
       const stdout = (error as { stdout?: string }).stdout?.trim()
       if (stdout?.startsWith('{')) return stdout
@@ -120,7 +205,8 @@ export class DaemonClient extends EventEmitter {
       throw new Error(`Anda ${args[0]} failed. Inspect the daemon log for details.`)
     }
   }
-  connect(): Promise<DaemonView> {
+  /** Connects to the daemon; `start` also launches it when it is not running. */
+  connect(start = true): Promise<DaemonView> {
     this.manuallyStopped = false
     this.store.state.daemonStopped = false
     if (
@@ -130,7 +216,7 @@ export class DaemonClient extends EventEmitter {
     )
       return Promise.resolve({ ...this.view })
     if (this.connecting) return this.connecting
-    this.connecting = this.establish().finally(() => {
+    this.connecting = this.establish(start).finally(() => {
       this.connecting = undefined
     })
     return this.connecting
@@ -152,7 +238,7 @@ export class DaemonClient extends EventEmitter {
       throw error
     }
   }
-  private async establish(): Promise<DaemonView> {
+  private async establish(start: boolean): Promise<DaemonView> {
     try {
       if (this.mockUrl) {
         this.view.baseUrl = loopbackBaseUrl(this.mockUrl)
@@ -163,6 +249,7 @@ export class DaemonClient extends EventEmitter {
           state: string
         }
         if (status.state === 'not_running') {
+          if (!start) throw new Error('The Anda service is not running. Reconnect to start it.')
           await this.command(['start'])
         } else if (!['running', 'gateway_running', 'process_unresponsive'].includes(status.state))
           throw new Error(
@@ -184,23 +271,11 @@ export class DaemonClient extends EventEmitter {
         desktop?: {
           protocol?: number
           runtime_version?: string
-          managed_runtime?: boolean
-          runtime_path?: string
           app_transport?: boolean
         }
       }
       this.view.desktopProtocol = capabilities.desktop?.protocol || 0
       this.view.version = capabilities.desktop?.runtime_version
-      const runtimePath = capabilities.desktop?.runtime_path
-      this.view.managed = Boolean(
-        capabilities.desktop?.managed_runtime && runtimePath === this.bundled
-      )
-      this.view.runtimeOwnership =
-        capabilities.desktop?.managed_runtime && !runtimePath
-          ? 'unknown'
-          : this.view.managed
-            ? 'managed'
-            : 'external'
       if (capabilities.desktop?.app_transport) {
         await this.openSocket(true)
         const initialized = (await this.request('initialize', {})) as AppInitialize
@@ -443,6 +518,7 @@ export class DaemonClient extends EventEmitter {
       )
     return response.json()
   }
+  /** Stops a drained daemon so its executable can be replaced (Windows). */
   async stopForUpdate(token: string): Promise<void> {
     this.manuallyStopped = true
     await this.maintenance('shutdown', token)
@@ -453,6 +529,59 @@ export class DaemonClient extends EventEmitter {
       await new Promise((resolve) => setTimeout(resolve, 1000))
     }
     throw new Error('Runtime did not stop. Installation was not started.')
+  }
+  /** Checks for (and downloads) a new `anda` release without installing it. */
+  async runtimeUpdateState(force: boolean): Promise<RuntimeUpdateState> {
+    const output = await this.command(
+      ['update', force ? '--check' : '--check-if-due', '--json'],
+      undefined,
+      10 * 60_000
+    )
+    return JSON.parse(output) as RuntimeUpdateState
+  }
+  /**
+   * Installs the downloaded release into the shared CLI location. Unix
+   * replaces the binary in place; Windows schedules the replacement for when
+   * `anda update` exits and reports completion next to the executable.
+   */
+  async applyRuntimeUpdate(): Promise<void> {
+    const binary = await this.discover()
+    const status = `${binary}.update-status`
+    if (process.platform === 'win32') await rm(status, { force: true })
+    await this.command(['update'], undefined, 10 * 60_000)
+    if (process.platform !== 'win32') return
+    const deadline = Date.now() + 70_000
+    for (;;) {
+      let result: string
+      try {
+        result = (await readFile(status, 'utf8')).replace(/^\uFEFF/, '').trim()
+      } catch (error) {
+        // An up-to-date binary schedules no replacement.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw error
+      }
+      if (result === 'installed') return
+      if (result !== 'pending') throw new Error(result)
+      if (Date.now() > deadline) throw new Error('Timed out replacing the anda executable')
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+  }
+  /** Starts or restarts the daemon after its runtime changed. */
+  async startRuntime(restart: boolean): Promise<DaemonView> {
+    this.manuallyStopped = true
+    this.disconnect()
+    await this.command([restart ? 'restart' : 'start'])
+    this.store.state.daemonStopped = false
+    await this.store.save()
+    return this.connect()
+  }
+  /** A 30-day bearer token for the Chrome extension. */
+  async extensionToken(): Promise<string> {
+    const report = JSON.parse(await this.command(['browser', 'token', '--json'])) as {
+      token?: string
+    }
+    if (!report.token) throw new Error('Could not create a Chrome extension token')
+    return report.token
   }
   browserReply(id: number, session: string, result: unknown, connectionId: number): void {
     if (this.socket?.readyState === WebSocket.OPEN && connectionId === this.connectionId)

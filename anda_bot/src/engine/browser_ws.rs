@@ -719,21 +719,22 @@ async fn handle_register_workspace(
 }
 
 fn handle_ui_language(state: &BrowserWebSocketState) -> Result<Value, String> {
-    Ok(json!({ "language": launcher_ui_language(&state.home_dir) }))
+    Ok(json!({ "language": persisted_ui_language(&state.home_dir) }))
 }
 
-/// Reads the UI language the launcher persisted (launcher/ui.json), which the
-/// browser extension follows and approval cards are localized to. Read per
-/// call: the launcher may rewrite the file while the daemon runs.
-pub(super) fn launcher_ui_language(home_dir: &std::path::Path) -> Option<String> {
+/// Reads the UI language Anda Desktop persists at `launcher/ui.json` (the path
+/// the retired tray launcher used, kept so existing settings still apply),
+/// which the browser extension follows and approval cards are localized to.
+/// Read per call: the desktop may rewrite the file while the daemon runs.
+pub(super) fn persisted_ui_language(home_dir: &std::path::Path) -> Option<String> {
     #[derive(Deserialize)]
-    struct LauncherUiSettings {
+    struct UiSettings {
         #[serde(default)]
         language: String,
     }
 
     let content = std::fs::read_to_string(home_dir.join("launcher").join("ui.json")).ok()?;
-    let settings = serde_json::from_str::<LauncherUiSettings>(&content).ok()?;
+    let settings = serde_json::from_str::<UiSettings>(&content).ok()?;
     let language = settings.language.trim().to_string();
     (!language.is_empty()).then_some(language)
 }
@@ -1041,9 +1042,6 @@ fn handle_capabilities(
             "workspace_sources": true,
             "config_revision": true,
             "runtime_version": env!("CARGO_PKG_VERSION"),
-            "runtime_path": std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),
-            "managed_runtime": std::env::var_os("ANDA_DESKTOP_MANAGED_RUNTIME")
-                .is_some_and(|value| value == "1"),
         },
         "transcription": if has_tool(TranscriptionManager::NAME) {
             state.voice_capabilities.transcription.clone()
@@ -1292,16 +1290,16 @@ fn percent_decode(value: &str) -> String {
 mod tests {
     use super::{
         WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tags,
-        launcher_ui_language, normalize_selected_workspace_path, powershell_single_quoted_string,
+        normalize_selected_workspace_path, persisted_ui_language, powershell_single_quoted_string,
         workspace_picker_macos_script, workspace_picker_title_for_language,
         workspace_picker_windows_script,
     };
     use std::{env, fs, path::MAIN_SEPARATOR};
 
     #[test]
-    fn launcher_ui_language_reads_persisted_launcher_setting() {
+    fn persisted_ui_language_reads_desktop_setting() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(launcher_ui_language(home.path()), None);
+        assert_eq!(persisted_ui_language(home.path()), None);
 
         let launcher_dir = home.path().join("launcher");
         fs::create_dir_all(&launcher_dir).unwrap();
@@ -1309,15 +1307,15 @@ mod tests {
 
         fs::write(&ui_path, r#"{"language": "zh-Hans"}"#).unwrap();
         assert_eq!(
-            launcher_ui_language(home.path()),
+            persisted_ui_language(home.path()),
             Some("zh-Hans".to_string())
         );
 
         fs::write(&ui_path, r#"{"language": "  "}"#).unwrap();
-        assert_eq!(launcher_ui_language(home.path()), None);
+        assert_eq!(persisted_ui_language(home.path()), None);
 
         fs::write(&ui_path, "not json").unwrap();
-        assert_eq!(launcher_ui_language(home.path()), None);
+        assert_eq!(persisted_ui_language(home.path()), None);
     }
 
     #[test]

@@ -30,19 +30,22 @@
     "message": "Connecter Anda sur cet ordinateur"
   },
   "onboardingIntro": {
-    "message": "L'extension de navigateur a besoin de l'application Anda Bot dans la zone de notification ou la barre de menus, d'un fournisseur de modèle configuré et d'un daemon local en cours d'exécution avant de pouvoir discuter."
+    "message": "L'extension de navigateur a besoin d'Anda Desktop (ou de la ligne de commande anda), d'un fournisseur de modèle configuré et d'un daemon local en cours d'exécution avant de pouvoir discuter."
   },
   "onboardingInstallTitle": {
-    "message": "Installer le launcher Anda Bot"
+    "message": "Installer Anda Desktop"
   },
   "onboardingInstallBody": {
-    "message": "Utilisez l'installateur Windows ou le script d'installation macOS. Le launcher démarre après la configuration et garde le daemon local disponible."
+    "message": "Téléchargez Anda Desktop pour Windows ou Mac. Il installe la ligne de commande anda et une icône qui garde le daemon local disponible. Sous Linux, ou pour la ligne de commande seule, utilisez le script d'installation."
   },
   "windowsInstaller": {
-    "message": "Installateur Windows"
+    "message": "Anda Desktop pour Windows"
   },
   "macosInstaller": {
-    "message": "App de barre de menus macOS"
+    "message": "Anda Desktop pour Mac (Apple Silicon)"
+  },
+  "cliInstaller": {
+    "message": "Ligne de commande (macOS/Linux)"
   },
   "openDownload": {
     "message": "Ouvrir le téléchargement"
@@ -51,10 +54,10 @@
     "message": "Copier la commande"
   },
   "onboardingConfigureTitle": {
-    "message": "Terminer la configuration dans le launcher"
+    "message": "Terminer la configuration dans Anda Desktop"
   },
   "onboardingConfigureBody": {
-    "message": "Ouvrez Anda Bot depuis la zone de notification, la barre de menus ou le menu Démarrer, terminez l'assistant de configuration (fournisseur/clé API/modèle) et gardez le lanceur en cours d'exécution pendant l'utilisation de l'extension."
+    "message": "Ouvrez Anda depuis la zone de notification, la barre de menus ou le menu Démarrer, indiquez fournisseur, clé API et modèle dans Paramètres → Configuration de l'agent, et gardez Anda actif pendant l'utilisation de l'extension."
   },
   "openConfigEditor": {
     "message": "Ouvrir l'éditeur config.yaml"
@@ -69,7 +72,7 @@
     "message": "Générer un jeton d'extension"
   },
   "onboardingTokenBody": {
-    "message": "Copiez la Gateway URL et le Bearer token affichés dans les champs ci-dessous."
+    "message": "Copiez la Gateway URL et le Bearer token affichés dans les champs ci-dessous. Anda Desktop peut aussi copier un jeton depuis son icône."
   },
   "tokenCommandLabel": {
     "message": "Jeton"

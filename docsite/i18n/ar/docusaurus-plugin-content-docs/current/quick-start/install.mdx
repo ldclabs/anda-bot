@@ -10,29 +10,39 @@ description: قم بتثبيت إصدار Anda Bot الرسمي، أو قم بت
 
 ## تثبيت الإصدار الأخير
 
-على نظام macOS، يوصى باستخدام Homebrew:
+### Anda Desktop
+
+يُنصح معظم المستخدمين بالبدء بـ Anda Desktop: نافذة الدردشة ومساحة العمل ورمز شريط النظام. نزّله من [أحدث إصدار](https://github.com/ldclabs/anda-bot/releases/latest):
+
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`؛ Intel: `Anda-mac-x64.dmg`
+- Windows x64: `Anda-win-x64.exe`
+- Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (يثبّت أيضًا صيغة `anda`)
+
+يحتفظ Anda Desktop بتثبيت `anda` الموجود، أو يثبّت `anda` المضمّن والمهارات المختارة في المكان الذي تستخدمه سكربتات التثبيت (`~/.local/bin` على macOS و`%LOCALAPPDATA%\Programs\AndaBot` على Windows). وبذلك يشترك التطبيق والطرفية وإضافة Chrome في runtime واحد وdaemon واحد. يسأل التشغيل الأول عما إذا كان يجب تشغيل Anda عند تسجيل الدخول. يحل رمز Anda Desktop في شريط النظام محل مشغّل شريط القوائم القديم Anda Bot، ويزيله التطبيق.
+
+### سطر الأوامر فقط
+
+باستخدام Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-على نظام macOS، تقوم صيغة Homebrew بتثبيت كل من `anda` و `anda_launcher`. قم بتشغيل `anda_launcher` مرة واحدة لبدء تشغيل مشغل شريط القوائم وتحديث `~/Applications/Anda Bot.app`.
-
-يمكن لمستخدمي macOS و Linux أيضاً استخدام سكريبت التثبيت:
+على macOS وLinux باستخدام سكربت التثبيت:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-يجب على مستخدمي نظام Windows تنزيل `AndaBotSetup-windows-x86_64.exe` من [أحدث إصدار](https://github.com/ldclabs/anda-bot/releases/latest) والنقر عليه نقراً مزدوجاً. يضع برنامج التثبيت Anda تحت المسار `%LOCALAPPDATA%\Programs\AndaBot` ، ويقوم بتثبيت المهارات (Skills) المنسقة، ويقوم بإنشاء اختصارات في قائمة ابدأ وسطح المكتب، ويسجل مشغل علبة النظام للتشغيل عند تسجيل الدخول، ويبدأ تشغيل المشغل، ويفتح معالج إعداد رسومي (GUI) لتكوين المزود/مفتاح API/النموذج، ويفحص التحديثات التي تم تنزيلها والتي يمكن تثبيتها عند إشعار إعادة التشغيل.
+إذا كان لديك أيضًا تثبيت عبر Homebrew، فافتح طرفية جديدة وتأكد من أن `command -v anda` يشير إلى `~/.local/bin/anda` أو إلى `ANDA_INSTALL_DIR`؛ وإلا فقد يحجب ملف Homebrew الأقدم الملف المحدَّث من السكربت.
 
-لا يزال بإمكان المستخدمين المتقدمين والبيئات المجدولة (CI) استخدام PowerShell:
+على Windows باستخدام PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-يقوم مثبت macOS shell أيضاً بتثبيت `~/Applications/Anda Bot.app` ، ويسجل مشغل شريط القوائم عند تسجيل الدخول، ويبدأ تشغيله على الفور; يبدأ المشغل daemon بعد الإعداد، ويمكنه التحقق من وجود تحديثات من شريط القوائم، ويطلب التثبيت وإعادة التشغيل بعد تنزيل التحديث. تسجل عمليات تثبيت Linux shell تشغيل daemon التلقائي مباشرة. بالنسبة إلى PowerShell، أضف `-NoAutostart` أو `-NoStart` لإلغاء التشغيل التلقائي؛ بالنسبة لمثبت shell، اضبط متغيرات البيئة `ANDA_NO_AUTOSTART=1` أو `ANDA_NO_START=1`.
+تثبّت سكربتات التثبيت `anda` والمهارات المختارة، وتضيفه إلى `PATH`، وتسجّل تشغيل daemon عند تسجيل الدخول عبر `anda autostart install` ثم تعيد تشغيله؛ كما تزيل إعادة تشغيلها المشغّل القديم. على Windows، يشغّل إدخال تسجيل الدخول `anda start` وتظهر نافذة طرفية لفترة وجيزة. بالنسبة إلى PowerShell، أضف `-NoAutostart` أو `-NoStart` لإلغاء ذلك؛ وبالنسبة لمثبت shell، اضبط `ANDA_NO_AUTOSTART=1` أو `ANDA_NO_START=1`.
 
 بعد التثبيت، افتح طرفية جديدة وقم بتشغيل:
 
@@ -42,7 +52,7 @@ anda
 
 ## إعداد مفتاح API للنموذج
 
-تحتاج إلى مفتاح API واحد على الأقل لمزود النموذج. يمكن لمستخدمي مثبت Windows إدخاله في معالج الإعداد. بينما يمكن لمستخدمي واجهة سطر الأوامر (CLI) البدء بمتغير بيئة:
+تحتاج إلى مفتاح API واحد على الأقل لمزود النموذج. يمكن لمستخدمي Anda Desktop إدخاله من **الإعدادات ← إعداد الوكيل**. بينما يمكن لمستخدمي واجهة سطر الأوامر (CLI) البدء بمتغير بيئة:
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
@@ -63,7 +73,7 @@ $env:DEEPSEEK_API_KEY="YOUR_API_KEY"; anda
 1. افتح ملف `~/.anda/config.yaml`.
 2. املأ حقول مزود النموذج: العائلة (`family`)، والنموذج (`model`)، ورابط قاعدة API (`api_base`)، وإما مفتاح API (`api_key`) أو متغير البيئة.
 3. احفظ الملف.
-4. قم بتحديث النماذج من المشغل أو اللوحة الجانبية للمتصفح، أو قم بتشغيل `anda models reload`.
+4. قم بتحديث النماذج من Anda Desktop أو اللوحة الجانبية للمتصفح، أو قم بتشغيل `anda models reload`.
 
 تكوين النموذج الأدنى:
 

@@ -44,27 +44,33 @@ This allows users to establish a natural feedback loop: state facts or preferenc
 
 ## Quick Start
 
-### Electron desktop client
+### Anda Desktop
 
-The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. Build a local installer with `pnpm install --filter @anda/desktop...` followed by `pnpm --dir desktop package`. Installers appear in `desktop/release/` and include the Rust runtime. Existing `~/.anda` data is preserved; credentials stay in the Electron main process. See [desktop installation, development and validation](desktop/README.md).
+Anda Desktop is the chat window, workbench and tray for your local Anda. Download it from the [latest release](https://github.com/ldclabs/anda-bot/releases/latest):
 
-The desktop workbench includes server-pushed chat updates with durable submission receipts, an isolated embedded browser with agent tools, interactive terminals, Git changes/commits and recoverable worktrees, and an audio self-test page. Chrome automation remains available through the extension. Config editing is owner-only and rejects stale saves; `anda validate-config` validates YAML from stdin without initializing a home or daemon.
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`; Intel: `Anda-mac-x64.dmg`
+- Windows x64: `Anda-win-x64.exe`
+- Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (installs the `anda` formula too)
 
-Local macOS packages are ad-hoc signed and installed manually. Signed release builds can coordinate updates with the managed runtime, deferring cron jobs and draining active work before installation. Windows CI, NSIS and signing configuration are included; Windows device validation and public signing/notarization require their respective environments and credentials. See the [implementation and validation record](docs/desktop-client-implementation.md).
+The desktop, your terminal and the Chrome extension share one `anda` and one daemon. On start, Anda Desktop keeps an existing install (from the install script, `ANDA_INSTALL_DIR` or Homebrew), or installs its bundled `anda` and curated skills where the install scripts put them: `~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows. A newer CLI is never downgraded, and Homebrew installs are updated with `brew upgrade`. The first run asks whether Anda should start at login; the tray then keeps the service running while the window is closed.
 
-### CLI and tray launcher
+The desktop tray replaces the retired Anda Bot menu bar launcher. Installing Anda Desktop, rerunning an install script or updating an old launcher removes the launcher's login entry, app bundle and shortcuts, and keeps the daemon starting at login if the launcher did.
 
-Install the latest release:
+The tray and **Settings → Check for updates** install new `anda` releases after active tasks finish, then restart the service; the desktop app updates separately (signed release builds) without stopping the service. The tray also restarts the service, copies a Chrome extension token and opens the logs.
+
+The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. The workbench includes server-pushed chat updates with durable submission receipts, an isolated embedded browser with agent tools, interactive terminals, Git changes/commits and recoverable worktrees, and an audio self-test page. Chrome automation remains available through the extension. Config editing is owner-only and rejects stale saves; `anda validate-config` validates YAML from stdin without initializing a home or daemon.
+
+Release packages are signed and notarized when the release environment provides credentials; otherwise they are unsigned and have no in-app update feed. To build a local installer, run `pnpm install --filter @anda/desktop...` and `pnpm --dir desktop package`; see [desktop installation, development and validation](desktop/README.md) and the [implementation and validation record](docs/desktop-client-implementation.md).
+
+### Command line
+
+Install the latest `anda` release without the desktop:
 
 With Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
-
-On macOS, the Homebrew formula installs both `anda` and `anda_launcher`. Run
-`anda_launcher` once to start the menu bar launcher and refresh
-`~/Applications/Anda Bot.app`.
 
 macOS and Linux with the install script:
 
@@ -76,42 +82,24 @@ If you also have a Homebrew install, open a new terminal and verify
 `command -v anda` points at `~/.local/bin/anda` or your `ANDA_INSTALL_DIR`;
 otherwise an older Homebrew binary may shadow the updated install-script binary.
 
-Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
-[latest release](https://github.com/ldclabs/anda-bot/releases/latest) and
-double-click it. The installer places Anda under
-`%LOCALAPPDATA%\Programs\AndaBot`, installs curated skills, creates Start Menu
-and desktop shortcuts, registers the tray launcher to start at login, starts
-the launcher, lets you configure provider/API key/model in a GUI wizard, and
-checks for downloaded updates that can be installed with a restart prompt.
-
-Advanced users and CI can still use the PowerShell path:
+Windows with PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The macOS shell installer also installs `~/Applications/Anda Bot.app`,
-registers the menu bar launcher at login, and starts it immediately; the
-launcher starts the daemon after setup. It can also check for updates from the
-menu bar and prompt to install and restart after an update is downloaded. Linux
-shell installs register daemon autostart directly. For PowerShell, use
-`-NoAutostart` or `-NoStart` to opt out; for the shell installer, set
-`ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
-
-Use `anda_launcher --home <directory>` (or set `ANDA_HOME` for the launcher)
-to select a custom state directory. The launcher passes this directory to its
-daemon commands and preserves it in login and restart entrypoints. Model settings
-update the selected model, preserve other providers and comments, and validate
-the configuration before saving. On macOS, the login-startup toggle applies to
-the next login and leaves the current launcher running. Tray status refreshes
-once a minute while idle, and also refreshes asynchronously when you open the
-menu or finish a daemon action.
+The install scripts install `anda` and the curated skills, add it to `PATH`,
+register the daemon to start at login with `anda autostart install` and restart
+it. On Windows that login entry is a per-user `Run` value that runs
+`anda start` (a console window appears briefly); Anda Desktop's login start has
+no window. For PowerShell, use `-NoAutostart` or `-NoStart` to opt out; for the
+shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 Requirements:
 
-- At least one model provider API key. Windows installer users can enter it in
-  the setup wizard; CLI users can put it in `~/.anda/config.yaml` or a supported
-  environment variable.
+- At least one model provider API key. Enter it in Anda Desktop under
+  **Settings → Agent configuration**, or put it in `~/.anda/config.yaml` or a
+  supported environment variable.
 
 Or run Anda Bot from this repository with Rust 1.95 or newer:
 
@@ -134,7 +122,7 @@ cd anda-bot
 cargo run -p anda_bot --
 ```
 
-On first launch, the daemon creates `~/.anda/config.yaml`. If the setup screen indicates a missing model configuration, open this file, specify the provider details, save it, then refresh models from the launcher or browser side panel, or run `anda models reload`. For API keys, you can also export a provider environment variable before starting Anda.
+On first launch, the daemon creates `~/.anda/config.yaml`. If the setup screen indicates a missing model configuration, open this file, specify the provider details, save it, then refresh models from Anda Desktop or the browser side panel, or run `anda models reload`. For API keys, you can also export a provider environment variable before starting Anda.
 
 Minimal model configuration:
 
@@ -169,7 +157,7 @@ When the terminal UI is running:
 - Press Up or Down to move through multi-line input.
 - Press Ctrl+U to clear the input.
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
-- Use `anda models reload`, or the launcher/browser refresh models button, after editing model providers in `config.yaml`.
+- Use `anda models reload`, or the refresh models button in Anda Desktop or the browser side panel, after editing model providers in `config.yaml`.
 - Use `/reload` after changing daemon settings that still require a restart.
 - Use `/stop` to interrupt the current task, cancel its background work and pending approvals, clear the active goal, and leave the conversation idle for your next message.
 - Use `/cancel` to stop the same work and close the active conversation session.
@@ -219,7 +207,15 @@ Update an install-script release to the latest version:
 anda update
 ```
 
-A newer local build is kept, including its launcher and bundled skills. Use `anda update --force` to explicitly install the latest release even if it is older. The same rule applies to `anda update --skills`.
+Homebrew installs refuse `anda update`; use `brew upgrade anda`. Anda Desktop runs the same update from its tray and Settings.
+
+Install this `anda` at the shared CLI location, as Anda Desktop does with its bundled copy (never downgrades; `--dir` picks another directory):
+
+```bash
+anda install
+```
+
+A newer local build is kept, including its bundled skills. Use `anda update --force` to explicitly install the latest release even if it is older. The same rule applies to `anda update --skills`.
 
 Manage the background daemon:
 

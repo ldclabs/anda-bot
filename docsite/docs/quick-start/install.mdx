@@ -10,17 +10,25 @@ Anda Bot can be installed from a release or run directly from the repository sou
 
 ## Install the Latest Release
 
-On macOS, Homebrew is recommended:
+### Anda Desktop
+
+Most people should start with Anda Desktop: the chat window, workbench and tray. Download it from the [latest release](https://github.com/ldclabs/anda-bot/releases/latest):
+
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`; Intel: `Anda-mac-x64.dmg`
+- Windows x64: `Anda-win-x64.exe`
+- Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (also installs the `anda` formula)
+
+Anda Desktop keeps an existing `anda` install, or installs its bundled `anda` and curated skills where the install scripts put them (`~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows). The desktop, your terminal and the Chrome extension then share one runtime and one daemon. The first run asks whether Anda should start at login. The desktop tray replaces the retired Anda Bot menu bar launcher, which the desktop removes.
+
+### Command line only
+
+With Homebrew:
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-On macOS, the Homebrew formula installs both `anda` and `anda_launcher`. Run
-`anda_launcher` once to start the menu bar launcher and refresh
-`~/Applications/Anda Bot.app`.
-
-macOS and Linux can also use the install script:
+macOS and Linux with the install script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
@@ -30,21 +38,13 @@ If you also have a Homebrew install, open a new terminal and verify
 `command -v anda` points at `~/.local/bin/anda` or your `ANDA_INSTALL_DIR`;
 otherwise an older Homebrew binary may shadow the updated install-script binary.
 
-Windows users should download `AndaBotSetup-windows-x86_64.exe` from the
-[latest release](https://github.com/ldclabs/anda-bot/releases/latest) and
-double-click it. The installer places Anda under
-`%LOCALAPPDATA%\Programs\AndaBot`, installs curated skills, creates Start Menu
-and desktop shortcuts, registers the tray launcher to start at login, starts
-the launcher, opens a GUI setup wizard for provider/API key/model, and checks
-for downloaded updates that can be installed with a restart prompt.
-
-Advanced users and CI can still use PowerShell:
+Windows with PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-The macOS shell installer also installs `~/Applications/Anda Bot.app`, registers the menu bar launcher at login, and starts it immediately; the launcher starts the daemon after setup, can check for updates from the menu bar, and prompts to install and restart after an update is downloaded. Linux shell installs register daemon autostart directly. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
+The install scripts install `anda` and the curated skills, add it to `PATH`, register the daemon to start at login with `anda autostart install` and restart it; rerunning them also removes the retired launcher. On Windows the login entry runs `anda start` and briefly shows a console window. For PowerShell, add `-NoAutostart` or `-NoStart` to opt out; for the shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 After installation, open a new terminal and run:
 
@@ -54,7 +54,7 @@ anda
 
 ## Prepare a Model API Key
 
-You need at least one model provider API key. Windows installer users can enter it in the setup wizard. CLI users can start with an environment variable:
+You need at least one model provider API key. Anda Desktop users can enter it under **Settings → Agent configuration**. CLI users can start with an environment variable:
 
 ```bash
 DEEPSEEK_API_KEY=YOUR_API_KEY anda
@@ -75,7 +75,7 @@ On first run, Anda creates the local runtime directory and `~/.anda/config.yaml`
 1. Open `~/.anda/config.yaml`.
 2. Fill in the model provider `family`, `model`, `api_base`, and either `api_key` or an environment variable.
 3. Save the file.
-4. Refresh models from the launcher or browser side panel, or run `anda models reload`.
+4. Refresh models from Anda Desktop or the browser side panel, or run `anda models reload`.
 
 Minimal model configuration:
 
@@ -122,6 +122,8 @@ If installed through the install script, update with:
 ```bash
 anda update
 ```
+
+Homebrew installs update with `brew upgrade anda`. Anda Desktop checks for `anda` releases and installs them from its tray after active tasks finish.
 
 Manage the background daemon with:
 

@@ -45,13 +45,12 @@ export interface DaemonView {
   connected: boolean
   home: string
   baseUrl: string
+  /** The shared `anda` CLI this app runs its daemon commands with. */
   binary: string | null
-  managed: boolean
   error?: string
   version?: string
   desktopProtocol?: number
   liveEvents?: boolean
-  runtimeOwnership?: 'managed' | 'external' | 'unknown'
 }
 export interface Bootstrap {
   daemon: DaemonView
@@ -78,6 +77,7 @@ export interface NativeEvent {
     | 'state'
     | 'terminal'
     | 'browser'
+    | 'preferences'
   value?: unknown
 }
 export interface DesktopBridge {
@@ -105,5 +105,6 @@ export interface DesktopBridge {
   showLogs(): Promise<void>
   printHtml(html: string): Promise<void>
   checkUpdate(): Promise<string>
+  copyExtensionToken(): Promise<void>
   onEvent(listener: (event: NativeEvent) => void): () => void
 }
