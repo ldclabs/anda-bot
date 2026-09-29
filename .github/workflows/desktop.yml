@@ -1,21 +1,31 @@
+# Checks the desktop app and the Chrome extension on macOS and Windows.
+# Signed release packages are built by release.yml.
 name: Desktop
 on:
+  push:
+    branches: ["main"]
+    paths:
+      [
+        "desktop/**",
+        "chrome-extension/**",
+        "anda_bot/**",
+        "skills/**",
+        "Cargo.*",
+        "pnpm-*",
+        ".github/workflows/desktop.yml",
+      ]
   pull_request:
     paths:
       [
         "desktop/**",
         "chrome-extension/**",
         "anda_bot/**",
+        "skills/**",
         "Cargo.*",
         "pnpm-*",
         ".github/workflows/desktop.yml",
       ]
   workflow_dispatch:
-    inputs:
-      signed:
-        description: Build signed release artifacts in the protected desktop-release environment
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -28,7 +38,6 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    environment: ${{ inputs.signed && 'desktop-release' || 'desktop-test' }}
     env:
       RUST_MIN_STACK: "16777216"
     steps:
@@ -60,21 +69,7 @@ jobs:
           pnpm --dir desktop build
           pnpm --dir desktop test:e2e
       - name: Build local installer
-        if: ${{ !inputs.signed }}
         run: pnpm --dir desktop package
-      - name: Build signed artifacts
-        if: ${{ inputs.signed }}
-        working-directory: desktop
-        env:
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
-        run: |
-          node scripts/prepare-runtime.mjs
-          pnpm exec electron-builder --config electron-builder.release.cjs --publish never
       - name: Windows install and uninstall smoke
         if: runner.os == 'Windows'
         shell: pwsh

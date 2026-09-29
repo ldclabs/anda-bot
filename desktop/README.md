@@ -96,7 +96,7 @@ Normal chat speech can also be stopped from the composer. Input drafts are prese
 
 ## Release
 
-`.github/workflows/release.yml` builds the desktop for macOS arm64, macOS x64 and Windows x64 from the same release's `anda` binaries and attaches `Anda-mac-*.dmg/.zip`, `Anda-win-x64.exe`, blockmaps, checksums and update metadata (the two macOS `latest-mac.yml` files are merged by `scripts/merge-desktop-update-metadata.mjs`). `scripts/publish-homebrew.sh` publishes the `anda-desktop` cask, which depends on the `anda` formula. `.github/workflows/desktop.yml` builds and tests macOS and Windows on pull requests, including native Electron tests and NSIS install/uninstall checks.
+`.github/workflows/release.yml` builds the desktop for macOS arm64, macOS x64 and Windows x64 from the same release's `anda` binaries and attaches `Anda-mac-*.dmg/.zip`, `Anda-win-x64.exe`, blockmaps, checksums and update metadata (the two macOS `latest-mac.yml` files are merged by `scripts/merge-desktop-update-metadata.mjs`). `scripts/publish-homebrew.sh` publishes the `anda-desktop` cask, which depends on the `anda` formula. `.github/workflows/desktop.yml` checks the desktop app and the Chrome extension on macOS and Windows for pull requests and pushes to `main`: type checks, unit tests, native Electron tests, an unsigned local package and NSIS install/uninstall checks.
 
 For signed builds, configure the protected `desktop-release` environment: `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`, `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, and the public variable `ANDA_WINDOWS_PUBLISHER`. Without certificates the release job builds unsigned packages with the local configuration and no update feed.
 
