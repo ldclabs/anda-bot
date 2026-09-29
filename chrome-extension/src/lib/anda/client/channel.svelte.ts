@@ -146,12 +146,6 @@ export class Channel extends EventTarget {
     )
   }
 
-  get memoryMode(): string {
-    const policy = this.#conversation?.extra?.memory_policy as
-      | { version?: number; mode?: string }
-      | undefined
-    return policy ? (policy.version === 1 ? policy.mode || 'unknown' : 'unknown') : 'standard'
-  }
   get conversationId(): number {
     return this.#conversation?._id || this.#sourceState?.c || this.#sourceState?.conv_id || 0
   }
@@ -261,12 +255,9 @@ export class Channel extends EventTarget {
 
   async sendPrompt(
     prompt: string,
-    attachments: ChatAttachment[],
-    memoryMode?: 'standard' | 'no_store' | 'off'
+    attachments: ChatAttachment[]
   ): Promise<PollConversation | null> {
     const command = parsePromptCommand(prompt)
-    if (memoryMode && (command?.kind !== 'new' || !command.prompt))
-      throw new Error('Memory mode requires a fresh conversation with a first message')
     const immediate = isImmediatePromptCommand(command)
     if ((this.#sending && !immediate) || (!prompt && attachments.length === 0)) {
       return null
@@ -361,8 +352,7 @@ export class Channel extends EventTarget {
         {
           name: '',
           prompt,
-          resources,
-          ...(memoryMode ? { meta: { memory_mode: memoryMode } } : {})
+          resources
         },
         isRequestStale
       )

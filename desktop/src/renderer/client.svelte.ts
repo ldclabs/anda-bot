@@ -414,7 +414,6 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   async sendPrompt(
     prompt: string,
     attachments: ChatAttachment[],
-    memoryMode?: 'standard' | 'no_store' | 'off',
     speak = false
   ): Promise<void> {
     if (!this.activeChannel || !this.authorized)
@@ -439,8 +438,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const ownsSending = !this.sending && parsePromptCommand(prompt)?.kind !== 'side'
     if (ownsSending) this.sending = true
     try {
-      const text = memoryMode ? `/new ${prompt}` : prompt
-      const poll = await channel.sendPrompt(text, attachments, memoryMode)
+      const poll = await channel.sendPrompt(prompt, attachments)
       if (speak && poll) {
         const epoch = this.speechEpoch
         for await (const message of poll) {
@@ -508,8 +506,10 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   loadResource(resource: Resource): Promise<Resource | null> {
     return this.resources.load(resource)
   }
-  async refreshModelState(): Promise<void> {
-    const state = await this.rpc<DaemonModelState>('model_names', [])
+  /** `reload` has the daemon re-read its configured models first, picking up
+   * providers added or changed since it started. */
+  async refreshModelState(reload = false): Promise<void> {
+    const state = await this.rpc<DaemonModelState>(reload ? 'reload_models' : 'model_names', [])
     this.modelState = {
       activeModel: state.active_model || null,
       modelNames: state.model_names || []
@@ -522,7 +522,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   async sendVoiceTurn(recording: VoiceRecordingInput): Promise<void> {
     const text =
       recording.transcript?.trim() || (await this.voice.transcribe(recording)).text.trim()
-    if (text) await this.sendPrompt(text, [], undefined, Boolean(recording.ttsEnabled))
+    if (text) await this.sendPrompt(text, [], Boolean(recording.ttsEnabled))
   }
   async toolCall<Result>(
     name: string,

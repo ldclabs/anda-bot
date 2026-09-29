@@ -1235,33 +1235,6 @@
   "memoryWatchRetry": {
     "message": "确认或重试本次订阅"
   },
-  "memoryModeLabel": {
-    "message": "记忆模式"
-  },
-  "memoryModeNew": {
-    "message": "下次文字对话"
-  },
-  "memoryModeKeep": {
-    "message": "沿用当前模式"
-  },
-  "memoryMode_standard": {
-    "message": "正常使用记忆"
-  },
-  "memoryMode_no_store": {
-    "message": "本次不保存长期记忆"
-  },
-  "memoryMode_off": {
-    "message": "本次不使用长期记忆"
-  },
-  "memoryMode_unknown": {
-    "message": "未知策略版本"
-  },
-  "memoryModeScope": {
-    "message": "约束自动读取和写入 Brain。聊天记录、文件、日志和模型服务处理仍会保留。受限模式也会禁用子任务、书签和定时任务变更。"
-  },
-  "memoryModeFirstMessage": {
-    "message": "发送一条普通文字消息，将以此模式开启空白新对话，不复制之前的上下文。"
-  },
   "memorySuppress": {
     "message": "停用"
   },

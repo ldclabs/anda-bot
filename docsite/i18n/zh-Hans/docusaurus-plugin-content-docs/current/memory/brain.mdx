@@ -14,7 +14,7 @@ description: Anda Brain 的 Formation、Recall、Maintenance 长期记忆循环�
 
 请核对记录的“更正”“停用”“删除”预览后再确认。停用保留已归档的记录，删除清除预览中的原生集合。来源排除在重启后仍有效，处理 Notes 会清空。原聊天、文件、日志、备份和已交付的上下文仍保留。来源不完整或范围不受支持时，此入口会拒绝操作。更正时先选择是哪种修改：“是我说错了”取代你之前的说法；“情况变了”从现在起记录新值，旧值在它的时段内仍然成立；“你记错了”让 Brain 重读原始消息并修复这条记录。删除会报告擦除计划：已完成、部分完成（有存储面无法验证）或被法律保留阻止。
 
-输入框可为新对话选择记忆模式。CLI 使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off`。它们约束 Brain 自动读写及后台提交，不是聊天或服务商的无痕模式；受限模式也拒绝子任务、书签及 cron 变更。
+需要受限记忆的新会话用命令行开启：`anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off`；聊天应用不提供记忆模式选择。这些模式约束 Brain 自动读写及后台提交，不是聊天或服务商的无痕模式；受限模式也拒绝子任务、书签及 cron 变更。
 
 需要跨会话保留确认问题时，使用“设置记忆待办”或 `anda memory inbox setup`。预览并确认配置后，显式运行 `anda restart`。自定义文件和环境覆盖会保留。对记录订阅后，变化会触发真实原生待办。TUI 使用 `/memory inbox`、`/memory answer <编号> <正文>`、`/memory retry <编号>`，重试沿用原事件与正文。
 

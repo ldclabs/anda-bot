@@ -8,6 +8,8 @@
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import { buttonClass } from '$lib/anda/ui'
+  import { delay } from '$lib/utils/async'
   import MemoryWorkspace from '$lib/anda/memory/MemoryWorkspace.svelte'
   import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
@@ -61,12 +63,7 @@
   let renameSource = $state('')
   let renameTitle = $state('')
   let settingsTab = $state('general')
-  let memoryMode = $state<'standard' | 'no_store' | 'off'>('standard')
-  const memoryModeItems = $derived<{ value: typeof memoryMode; label: string }[]>([
-    { value: 'standard', label: t('standard') },
-    { value: 'no_store', label: t('noStore') },
-    { value: 'off', label: t('off') }
-  ])
+  let reloadingModels = $state(false)
   const themeItems = $derived<{ value: 'system' | 'light' | 'dark'; label: string }[]>([
     { value: 'system', label: t('system') },
     { value: 'light', label: t('light') },
@@ -137,7 +134,6 @@
       if (previewUrl) URL.revokeObjectURL(previewUrl)
       previewUrl = ''
       following = !scrollPositions.has(source)
-      memoryMode = 'standard'
       void tick().then(() => {
         if (scrollArea)
           scrollArea.scrollTop = scrollPositions.get(source) ?? scrollArea.scrollHeight
@@ -203,16 +199,11 @@
   }
   async function send(payload: { text: string; attachments: ChatAttachment[] }) {
     try {
-      await client.sendPrompt(
-        payload.text,
-        payload.attachments,
-        !channel?.conversationId && memoryMode !== 'standard' ? memoryMode : undefined
-      )
+      await client.sendPrompt(payload.text, payload.attachments)
     } catch (error) {
       client.fail(error)
       throw error
     }
-    memoryMode = 'standard'
     following = true
   }
   async function searchHistory() {
@@ -275,6 +266,18 @@
   async function reconnect() {
     client.connection = await window.anda.connect()
     if (client.authorized) await client.refresh()
+  }
+  async function reloadModels() {
+    if (reloadingModels) return
+    reloadingModels = true
+    try {
+      // The spin stays long enough to register, even when the reload is instant.
+      await Promise.all([client.refreshModelState(true), delay(800)])
+    } catch (error) {
+      client.fail(error)
+    } finally {
+      reloadingModels = false
+    }
   }
   async function rename() {
     await client.updateChat(renameSource, { title: renameTitle.trim() || 'Untitled' })
@@ -562,7 +565,7 @@
               stoppable={(working || client.voice.speaking) && !client.readOnly}
               onSend={send}
               onStop={() => client.stopActiveTask()}
-              voiceEnabled={memoryMode === 'standard' && pageVisible}
+              voiceEnabled={pageVisible}
               voiceAvailable={client.voice.capabilities.transcription.length > 0}
               voiceCapabilities={client.voice.capabilities}
               onVoiceSend={(recording) => client.sendVoiceTurn(recording)}
@@ -599,6 +602,19 @@
                     {/snippet}
                   </DropdownMenu>
                 {/if}
+                {#if client.authorized}
+                  <button
+                    type="button"
+                    class={buttonClass('ghost', 'icon-sm', 'composer-icon-button rounded-full')}
+                    disabled={reloadingModels}
+                    aria-label={t('reloadModels')}
+                    title={t('reloadModels')}
+                    onclick={reloadModels}
+                    ><RefreshCw
+                      class={reloadingModels ? 'size-4 animate-spin' : 'size-4'}
+                    /></button
+                  >
+                {/if}
               {/snippet}
             </ChatComposer>{/key}
           <div class="composer-context">
@@ -606,18 +622,6 @@
               ><Folder size={13} />{client.workspace?.split(/[\\/]/).at(-1) ||
                 t('noFolder')}<ChevronDown size={12} /></button
             >
-            {#if !channel?.conversationId}
-              <DropdownMenu
-                items={memoryModeItems}
-                bind:value={memoryMode}
-                ariaLabel={t('memoryMode')}
-              >
-                {#snippet trigger(selected)}
-                  <span class="truncate">{selected?.label}</span>
-                  <ChevronDown size={12} />
-                {/snippet}
-              </DropdownMenu>
-            {/if}
             <span class="composer-local">{t('local')} · Anda</span>
           </div>
         </div>

@@ -1235,33 +1235,6 @@
   "memoryWatchRetry": {
     "message": "Check / retry this subscription"
   },
-  "memoryModeLabel": {
-    "message": "Memory mode"
-  },
-  "memoryModeNew": {
-    "message": "Next text conversation"
-  },
-  "memoryModeKeep": {
-    "message": "Continue current mode"
-  },
-  "memoryMode_standard": {
-    "message": "Use and save memory"
-  },
-  "memoryMode_no_store": {
-    "message": "Do not save long-term memory"
-  },
-  "memoryMode_off": {
-    "message": "Do not use long-term memory"
-  },
-  "memoryMode_unknown": {
-    "message": "Unknown policy version"
-  },
-  "memoryModeScope": {
-    "message": "Applies to automatic Brain access. Chat history, files, logs and provider processing remain. Restricted modes also disable nested agents, bookmarks and cron changes."
-  },
-  "memoryModeFirstMessage": {
-    "message": "Send a regular text message to start a fresh conversation in this mode. Previous context is not copied."
-  },
   "memorySuppress": {
     "message": "Stop using"
   },

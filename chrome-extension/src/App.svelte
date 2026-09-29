@@ -7,8 +7,6 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
-  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
-  import { memoryModeLabel } from '$lib/anda/memory/labels'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
@@ -60,13 +58,6 @@
   import { onMount, tick } from 'svelte'
 
   const memoryActivity = new ConversationMemoryActivity()
-  let nextMemoryMode = $state<'' | 'standard' | 'no_store' | 'off'>('')
-  const memoryModeItems: { value: typeof nextMemoryMode; label: string }[] = [
-    { value: '', label: getMessage('memoryModeKeep') },
-    { value: 'standard', label: getMessage('memoryMode_standard') },
-    { value: 'no_store', label: getMessage('memoryMode_no_store') },
-    { value: 'off', label: getMessage('memoryMode_off') }
-  ]
   let settingsOpen = $state(false)
   let setupGuideOpen = $state(false)
   let sideMessagesOpen = $state(false)
@@ -463,11 +454,7 @@
     if (!andaClient.settings.token) {
       settingsOpen = true
     }
-    if (nextMemoryMode) {
-      if (command) throw new Error(getMessage('memoryModeFirstMessage'))
-      await andaClient.sendPrompt(`/new ${payload.text}`, payload.attachments, nextMemoryMode)
-      nextMemoryMode = ''
-    } else await andaClient.sendPrompt(payload.text, payload.attachments)
+    await andaClient.sendPrompt(payload.text, payload.attachments)
   }
 
   async function stopActiveTask() {
@@ -479,7 +466,7 @@
   }
 
   async function sendVoiceTurn(payload: ComposerVoicePayload) {
-    if (sending || nextMemoryMode) return
+    if (sending) return
     if (!andaClient.settings.token) {
       settingsOpen = true
     }
@@ -817,27 +804,6 @@
     {/if}
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
-      <details class="mb-2 px-1 text-xs text-muted-foreground">
-        <summary class="cursor-pointer"
-          >{getMessage('memoryModeLabel')} · {memoryModeLabel(
-            andaClient.activeChannel?.memoryMode || 'standard'
-          )}</summary
-        >
-        <label class="mt-2 flex flex-wrap items-center gap-2">
-          {getMessage('memoryModeNew')}
-          <DropdownMenu
-            class="h-7 w-auto text-xs text-foreground"
-            items={memoryModeItems}
-            bind:value={nextMemoryMode}
-            disabled={isBusy}
-            ariaLabel={getMessage('memoryModeNew')}
-          />
-        </label>
-        <p class="mt-2 leading-relaxed">{getMessage('memoryModeScope')}</p>
-        {#if nextMemoryMode}<p class="mt-2 leading-relaxed">
-            {getMessage('memoryModeFirstMessage')}
-          </p>{/if}
-      </details>
       <ChatComposer
         placeholder={andaClient.settings.token
           ? getMessage('placeholderMessage')
@@ -845,7 +811,6 @@
         {sending}
         working={isBusy}
         {stoppable}
-        voiceEnabled={!nextMemoryMode}
         voiceAvailable={andaClient.voice.capabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}

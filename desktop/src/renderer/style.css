@@ -476,9 +476,6 @@ textarea:focus-visible {
   align-items: center;
   gap: 6px;
 }
-.composer-context [data-slot='dropdown-menu-trigger'] {
-  max-width: 200px;
-}
 .composer-local {
   margin-inline-start: auto;
 }

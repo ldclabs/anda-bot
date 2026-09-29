@@ -1235,33 +1235,6 @@
   "memoryWatchRetry": {
     "message": "Vérifier / réessayer cet abonnement"
   },
-  "memoryModeLabel": {
-    "message": "Mode mémoire"
-  },
-  "memoryModeNew": {
-    "message": "Prochaine conversation écrite"
-  },
-  "memoryModeKeep": {
-    "message": "Garder le mode actuel"
-  },
-  "memoryMode_standard": {
-    "message": "Utiliser et enregistrer la mémoire"
-  },
-  "memoryMode_no_store": {
-    "message": "Ne pas enregistrer de mémoire durable"
-  },
-  "memoryMode_off": {
-    "message": "Ne pas utiliser de mémoire durable"
-  },
-  "memoryMode_unknown": {
-    "message": "Version de politique inconnue"
-  },
-  "memoryModeScope": {
-    "message": "Limite l’accès automatique à Brain. Les conversations, fichiers, journaux et traitements du fournisseur restent. Les modes restreints désactivent sous-agents, favoris et modifications cron."
-  },
-  "memoryModeFirstMessage": {
-    "message": "Envoyez un message normal pour ouvrir une nouvelle conversation dans ce mode, sans recopier le contexte précédent."
-  },
   "memorySuppress": {
     "message": "Ne plus utiliser"
   },

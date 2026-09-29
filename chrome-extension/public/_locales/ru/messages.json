@@ -1235,33 +1235,6 @@
   "memoryWatchRetry": {
     "message": "Проверить / повторить подписку"
   },
-  "memoryModeLabel": {
-    "message": "Режим памяти"
-  },
-  "memoryModeNew": {
-    "message": "Следующая текстовая беседа"
-  },
-  "memoryModeKeep": {
-    "message": "Сохранить текущий режим"
-  },
-  "memoryMode_standard": {
-    "message": "Использовать и сохранять память"
-  },
-  "memoryMode_no_store": {
-    "message": "Не сохранять долгосрочную память"
-  },
-  "memoryMode_off": {
-    "message": "Не использовать долгосрочную память"
-  },
-  "memoryMode_unknown": {
-    "message": "Неизвестная версия политики"
-  },
-  "memoryModeScope": {
-    "message": "Ограничивает автоматический доступ к Brain. История, файлы, журналы и обработка провайдером сохраняются. Подагенты, закладки и изменения cron отключаются."
-  },
-  "memoryModeFirstMessage": {
-    "message": "Отправьте обычное сообщение для новой беседы в этом режиме. Старый контекст не копируется."
-  },
   "memorySuppress": {
     "message": "Прекратить использование"
   },

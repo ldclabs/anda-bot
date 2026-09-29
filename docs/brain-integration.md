@@ -14,7 +14,7 @@ A correction asks which change it is. **I said it wrong** (`correct`) supersedes
 
 Stopping use archives the previewed claims, cited inputs and recorded dependents. Deletion runs as a Memory Interface `forget` with `mode: "semantic"`: it purges that bounded native set, scrubs Brain's own Formation and Recall transcripts that quoted it, and keeps the ErasurePlan report (`completed`, `partial` when a surface could not be verified, `blocked` by a legal hold) with the confirmed change. A deletion the native product path already confirmed under an older receipt is only reconciled. Both persist source exclusions, fence in-flight processing and reset Brain's processing Notes and history. Related source conversations stop contributing automatically, including their continuation chain. Other independent records, original Bot chats/files/logs/backups, already delivered model context and provider copies remain. Minimal source identifiers/digests are retained to prevent replay. Source gaps, protected dependents, retention holds or an overlarge closure refuse the operation. Restoring an old database backup without current exclusion metadata is outside this guarantee.
 
-For a fresh conversation, use the browser composer's **Memory mode** control, or:
+To start a fresh conversation with restricted memory, run:
 
 ```sh
 anda agent run --memory-mode no-store --prompt 'Help with this task without saving long-term memory'

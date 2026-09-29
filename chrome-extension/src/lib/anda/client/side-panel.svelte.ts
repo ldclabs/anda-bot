@@ -435,11 +435,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     }
   }
 
-  async sendPrompt(
-    text: string,
-    attachments: ChatAttachment[] = [],
-    memoryMode?: 'standard' | 'no_store' | 'off'
-  ): Promise<void> {
+  async sendPrompt(text: string, attachments: ChatAttachment[] = []): Promise<void> {
     const prompt = text.trim()
     const channel = this.activeChannel
     const epoch = this.#connectionEpoch
@@ -463,9 +459,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     }
     try {
       await this.refreshActiveTab()
-      const poller = memoryMode
-        ? await channel.sendPrompt(prompt, attachments, memoryMode)
-        : await channel.sendPrompt(prompt, attachments)
+      const poller = await channel.sendPrompt(prompt, attachments)
       // No consumer here; close so the polling loop does not buffer messages indefinitely.
       poller?.close()
     } catch (error) {
