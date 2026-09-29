@@ -1617,7 +1617,7 @@
     "message": "Ce que signifie « croyance actuelle »"
   },
   "memoryBeliefHint": {
-    "message": "Brain pèse toutes les déclarations sur un même fait avec sa politique de rappel standard : d’abord le contexte le plus précis, puis les déclarations de la personne elle-même plutôt que les propos rapportés, puis la plus récente. Une déclaration remplacée par une plus récente est conservée dans l’historique."
+    "message": "Brain pèse toutes les déclarations sur un même fait avec sa politique de rappel standard : d’abord le contexte le plus précis, puis les déclarations de la personne elle-même plutôt que les propos rapportés, puis la plus récente. Une déclaration remplacée par une plus récente est conservée dans l’historique. Les souvenirs importés, par exemple ceux issus de la mise à niveau depuis KIP 1, sont affichés mais ne comptent pas dans la croyance actuelle."
   },
   "memoryBelief_accepted": {
     "message": "Croyance actuelle"
@@ -1660,5 +1660,14 @@
   },
   "memoryEntityPath": {
     "message": "Chemin des entités"
+  },
+  "memorySourceUnrecorded": {
+    "message": "Aucune source vérifiable : un souvenir antérieur à la mise à jour ou une conclusion tirée par Brain lui-même. Vous pouvez le consulter, mais pas le corriger ici."
+  },
+  "memoryBrainSelf": {
+    "message": "Brain lui-même"
+  },
+  "memoryBrainSystem": {
+    "message": "Système"
   }
 }

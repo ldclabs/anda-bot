@@ -277,7 +277,11 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         output,
         finish: async (applied) => {
           try {
-            if (applied) await window.anda.acknowledgeSubmission(id)
+            if (applied) {
+              await window.anda.acknowledgeSubmission(id)
+              // The main process's own list update may arrive after this.
+              this.pending = this.pending.filter((p) => p.id !== id)
+            }
           } finally {
             release()
           }

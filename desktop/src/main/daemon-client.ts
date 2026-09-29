@@ -615,9 +615,12 @@ export class DaemonClient extends EventEmitter {
       this.emit('state', { recovered: true })
     }
   }
+  /** Null once the submission is no longer pending: acknowledged, or never
+   * receipt-backed, so there is nothing to restore. The renderer's copy of the
+   * pending list can trail an acknowledgement it has just made. */
   async readSubmission(id: string): Promise<SubmissionReceipt | null> {
     const pending = this.store.state.pending.find((p) => p.id === id && p.receipt)
-    if (!pending) throw new Error('No recorded submission with this ID')
+    if (!pending) return null
     if (this.manuallyStopped) throw new Error('Reconnect to read the submission receipt')
     await this.connect()
     return this.request('submission/read', {

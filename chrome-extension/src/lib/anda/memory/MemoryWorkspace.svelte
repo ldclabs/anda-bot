@@ -9,7 +9,7 @@
   import EntityPage from './EntityPage.svelte'
   import EntitySearch from './EntitySearch.svelte'
   import RecordCard from './RecordCard.svelte'
-  import { learningLabel } from './labels'
+  import { entityName, learningLabel } from './labels'
   import WatchControl from './WatchControl.svelte'
   import { ANDA_BOT_SPACE_ID } from '../brain/api'
   import { loadConfigSettings } from '../config/api'
@@ -324,7 +324,7 @@
             onloaded={(entity) => {
               const last = trail[trail.length - 1]
               if (last && last.id === current.id)
-                last.name = entity.about_owner ? getMessage('memoryYou') : entity.name
+                last.name = entityName(entity)
             }}
           />
         {/key}

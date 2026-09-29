@@ -68,12 +68,12 @@ pub async fn list(
         .map(|c| c.parse::<u64>())
         .transpose()
         .map_err(|_| "invalid_cursor")?;
-    let native = host
+    let space = host
         .state
         .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-        .await?
-        .product_records(cursor, limit)
         .await?;
+    let viewer = super::entity::viewer(&space, caller).await;
+    let native = space.product_records(cursor, limit).await?;
     let mut items = Vec::new();
     let mut source_gap = false;
     let mut response_bytes = 1024; // Envelope, separators, reason and cursor.
@@ -81,7 +81,7 @@ pub async fn list(
     let mut size_limited = false;
     let mut resolver = activity.source_resolver(caller);
     for record in native.records {
-        match project(record, &mut resolver).await? {
+        match project(record, &mut resolver, &viewer).await? {
             Some(mut record) => {
                 source_gap |= !record.sources_complete;
                 let size = compact_display(&mut record)?;
@@ -131,14 +131,18 @@ pub(crate) async fn get_with_resolver(
     let id = id
         .parse::<anda_cognitive_nexus::ElementId>()
         .map_err(|_| "invalid_request")?;
-    let record = host
+    let space = host
         .state
         .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-        .await?
+        .await?;
+    let viewer = super::entity::viewer(&space, resolver.caller()).await;
+    let record = space
         .product_record(&id.to_string())
         .await
         .map_err(|_| "not_found")?;
-    let mut record = project(record, resolver).await?.ok_or("not_found")?;
+    let mut record = project(record, resolver, &viewer)
+        .await?
+        .ok_or("not_found")?;
     compact_display(&mut record)?;
     Ok(record)
 }
@@ -146,6 +150,7 @@ pub(crate) async fn get_with_resolver(
 pub(super) async fn project(
     record: anda_brain::product::MemoryRecord,
     resolver: &mut SourceResolver<'_>,
+    viewer: &super::entity::Viewer,
 ) -> Result<Option<MemoryRecordView>, BoxError> {
     let caller = resolver.caller().to_string();
     let mut sources = Vec::new();
@@ -155,15 +160,28 @@ pub(super) async fn project(
         }
     }
     let complete = record.sources_complete && sources.len() == record.sources.len();
-    // Legacy claims can only appear when their semantic actor is this owner.
-    // A partial mixture of attributed sources must never expose a compound
-    // conclusion just because one source belongs to the requesting caller.
-    if !complete && (record.actor_key.as_deref() != Some(&caller) || !sources.is_empty()) {
+    // A claim with no evidence at all names no caller's conversation: the
+    // Brain's own statements (memory upgraded from KIP 1, Maintenance
+    // conclusions) stay visible to the owner, read-only and unsourced.
+    let unsourced = record.sources.is_empty()
+        && (matches!(record.actor_key.as_deref(), Some("$self" | "$system"))
+            || record
+                .actor_id
+                .as_ref()
+                .is_some_and(|id| viewer.brain.contains(id)));
+    // Other legacy claims can only appear when their semantic actor is this
+    // owner. A partial mixture of attributed sources must never expose a
+    // compound conclusion just because one source belongs to the caller.
+    if !complete
+        && !unsourced
+        && (record.actor_key.as_deref() != Some(&caller) || !sources.is_empty())
+    {
         return Ok(None);
     }
-    let about_owner = record.actor_key.as_deref() == Some(&caller)
-        && record.subject.get("id").and_then(serde_json::Value::as_str)
-            == record.actor_id.as_deref();
+    let subject_id = record.subject.get("id").and_then(serde_json::Value::as_str);
+    let about_owner = (viewer.owner.is_some() && subject_id == viewer.owner.as_deref())
+        || (record.actor_key.as_deref() == Some(&caller)
+            && subject_id == record.actor_id.as_deref());
     let predicate_label = record
         .predicate
         .rsplit('/')

@@ -11,6 +11,7 @@
     MemoryRecord
   } from './api'
   import { beliefKey, groupClaims, isCurrent } from './entity'
+  import { entityName } from './labels'
   import EntityGraph from './EntityGraph.svelte'
   import RecordCard from './RecordCard.svelte'
 
@@ -58,7 +59,7 @@
     memoryBelief_excluded: getMessage('memoryBelief_excluded')
   }
   const groups = $derived(groupClaims(claims))
-  const name = $derived(entity?.about_owner ? getMessage('memoryYou') : entity?.name || '')
+  const name = $derived(entity ? entityName(entity) : '')
   const current = $derived(claims.filter(isCurrent).length)
 
   async function load(next: string | null) {
@@ -139,7 +140,7 @@
         <span class={badgeClass('outline')}>{entity.type}</span>
         {#if entity.about_owner}<span>{getMessage('memoryAboutYou')}</span>{/if}
       </p>
-      <h1 class="mt-3 text-2xl font-semibold tracking-tight break-words">{entity.name}</h1>
+      <h1 class="mt-3 text-2xl font-semibold tracking-tight break-words">{name}</h1>
       <p class="mt-3 text-sm leading-relaxed text-muted-foreground">
         {getMessage('memoryEntityIntro')}
       </p>

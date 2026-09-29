@@ -131,6 +131,8 @@ describe('daemon transport and recovery', () => {
     expect((await f.client.readSubmission(id))?.result).toEqual({ conversation: 7 })
     await f.client.acknowledgeSubmission(id)
     expect(f.store.state.pending).toEqual([])
+    // A renderer still holding the acknowledged entry finds nothing to restore.
+    expect(await f.client.readSubmission(id)).toBeNull()
     await restored.load()
     expect(restored.state.pending).toEqual([])
   })

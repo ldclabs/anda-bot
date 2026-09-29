@@ -2,11 +2,12 @@ import type { EntityClaim } from './api'
 
 const BELIEF_STATUSES = ['accepted', 'contested', 'uncertain', 'rejected', 'insufficient']
 
-/** Whether a claim still describes the entity now, as far as Brain can tell. */
+/** Whether a claim has not been replaced, rejected or retired. A claim the
+ * policy merely does not count (imported memory) still describes the entity. */
 export function isCurrent(claim: EntityClaim): boolean {
   return (
     claim.record.state === 'active' &&
-    !claim.belief?.excluded_reason &&
+    claim.belief?.excluded_reason !== 'outside_valid_time' &&
     claim.belief?.status !== 'rejected'
   )
 }
@@ -54,9 +55,10 @@ export function groupClaims(claims: EntityClaim[]): ClaimGroup[] {
 }
 
 export const GRAPH_WIDTH = 160
-export const GRAPH_HEIGHT = 100
-const CENTER = { x: GRAPH_WIDTH / 2, y: GRAPH_HEIGHT / 2 }
-const RADIUS = { x: 54, y: 36 }
+/** Column centres: relations into the entity on the left, out of it on the right. */
+const COLUMN = { incoming: 22, outgoing: 138 }
+/** Lines run between the centre label and the column labels. */
+const LINE = { from: 20, to: 34 }
 
 export interface GraphNode {
   id: string
@@ -93,17 +95,23 @@ export interface EntityGraphLayout {
   relations: GraphRelation[]
   /** Related entities on this page that were not drawn. */
   hidden: number
+  /** Drawing height in the units of `GRAPH_WIDTH`. */
+  height: number
 }
 
 /**
- * A fixed radial layout of the entities the given claims connect to: one node
- * per entity, relations as contiguous sectors clockwise from the right, and
- * at most `max` nodes. Literal values and the entity itself are not drawn.
+ * A fixed two-column layout of the entities the given claims connect to: the
+ * entity in the centre, subjects of relations into it on the left, objects of
+ * relations out of it on the right, one row per entity, `row` units apart,
+ * and at most `maxPerColumn` rows a side. Relations stay contiguous, largest
+ * first.
+ * Literal values and the entity itself are not drawn.
  */
 export function layoutEntityGraph(
   entityId: string,
   claims: EntityClaim[],
-  max = 24
+  maxPerColumn = 12,
+  row = 8
 ): EntityGraphLayout {
   const relations = new Map<
     string,
@@ -137,48 +145,56 @@ export function layoutEntityGraph(
   for (const [key, relation] of ordered) {
     for (const id of relation.members.keys()) if (!assigned.has(id)) assigned.set(id, key)
   }
-  const placed: Array<{ id: string; label: string; current: boolean; group: number }> = []
+  const columns = {
+    incoming: [] as Omit<GraphNode, 'x' | 'y'>[],
+    outgoing: [] as Omit<GraphNode, 'x' | 'y'>[]
+  }
   const shown: GraphRelation[] = []
   for (const [key, relation] of ordered) {
+    const column = columns[relation.direction]
     const group = shown.length
     let nodes = 0
     for (const [id, member] of relation.members) {
-      if (assigned.get(id) !== key || placed.length === max) continue
-      placed.push({ id, ...member, group })
+      if (assigned.get(id) !== key || column.length === maxPerColumn) continue
+      column.push({ id, ...member, group })
       nodes++
     }
     if (nodes)
       shown.push({ direction: relation.direction, predicate: relation.predicate, group, nodes })
   }
-  const outgoing = new Map(shown.map((relation) => [relation.group, relation.direction]))
+  const rows = Math.max(columns.incoming.length, columns.outgoing.length)
+  const height = Math.max(6 * row, (rows + 2) * row)
+  const center = { x: GRAPH_WIDTH / 2, y: height / 2 }
   const nodes: GraphNode[] = []
   const edges: GraphEdge[] = []
-  placed.forEach((node, index) => {
-    const angle = (index * 2 * Math.PI) / placed.length
-    const x = round(CENTER.x + RADIUS.x * Math.cos(angle))
-    const y = round(CENTER.y + RADIUS.y * Math.sin(angle))
-    nodes.push({ ...node, x, y })
-    // Keep lines clear of the centre and node labels.
-    const from = point(CENTER.x, CENTER.y, x, y, 0.24)
-    const to = point(CENTER.x, CENTER.y, x, y, 0.72)
-    // The arrowhead sits mid-line, clear of both labels at any size, and
-    // points at the relation's object.
-    const toNode = outgoing.get(node.group) === 'outgoing'
-    const arrow = toNode
-      ? arrowhead(point(CENTER.x, CENTER.y, x, y, 0.4), point(CENTER.x, CENTER.y, x, y, 0.52))
-      : arrowhead(point(CENTER.x, CENTER.y, x, y, 0.56), point(CENTER.x, CENTER.y, x, y, 0.44))
-    edges.push({
-      id: node.id,
-      x1: from.x,
-      y1: from.y,
-      x2: to.x,
-      y2: to.y,
-      arrow,
-      group: node.group,
-      current: node.current
+  for (const direction of ['incoming', 'outgoing'] as const) {
+    const column = columns[direction]
+    column.forEach((node, index) => {
+      const x = COLUMN[direction]
+      const y = round(center.y + (index - (column.length - 1) / 2) * row)
+      nodes.push({ ...node, x, y })
+      const span = Math.abs(x - center.x)
+      const at = (distance: number) => point(center.x, center.y, x, y, distance / span)
+      const from = at(LINE.from)
+      const to = at(LINE.to)
+      const middle = (LINE.from + LINE.to) / 2
+      edges.push({
+        id: node.id,
+        x1: from.x,
+        y1: from.y,
+        x2: to.x,
+        y2: to.y,
+        // Mid-line, clear of both labels, pointing at the relation's object.
+        arrow:
+          direction === 'outgoing'
+            ? arrowhead(at(middle - 3), at(middle + 3))
+            : arrowhead(at(middle + 3), at(middle - 3)),
+        group: node.group,
+        current: node.current
+      })
     })
-  })
-  return { nodes, edges, relations: shown, hidden: assigned.size - placed.length }
+  }
+  return { nodes, edges, relations: shown, hidden: assigned.size - nodes.length, height }
 }
 
 function point(x1: number, y1: number, x2: number, y2: number, t: number) {

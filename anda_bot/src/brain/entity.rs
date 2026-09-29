@@ -45,11 +45,13 @@ const CONCEPT: &str =
     r#"FIND(?e.id, ?e.name, ?e.schema_ref, ?e.key) WHERE { ?e CONCEPT {id: :id} } LIMIT 1"#;
 const OWNER: &str = r#"FIND(?e.id, ?e.name, ?e.schema_ref, ?e.key) WHERE { ?e {type: "Person", key: :key} } LIMIT 1"#;
 const SEARCH: &str = "SEARCH CONCEPT :query LIMIT :limit";
+const ACTOR: &str = r#"FIND(?e.id) WHERE { ?e {type: "Person", key: :key} } LIMIT 1"#;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntityQuery {
-    /// A Concept id. Omitted, the page is about the caller.
+    /// A Concept id, or `$self` / `$system` for the Brain's own actors.
+    /// Omitted, the page is about the caller.
     pub id: Option<String>,
     pub cursor: Option<String>,
     pub limit: Option<usize>,
@@ -69,6 +71,9 @@ pub struct EntityView {
     #[serde(rename = "type")]
     pub type_name: String,
     pub about_owner: bool,
+    /// `self` or `system` for the Brain's own actors, `$self` and `$system`.
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 /// The other end of a claim. A literal value has no id.
@@ -163,10 +168,16 @@ pub async fn page(
             skip: 0,
         },
     };
+    let viewer = viewer(&space, caller).await;
     let mut resolver = activity.source_resolver(caller);
-    let scan = scan(&space, &mut resolver, start, limit, SCAN_BUDGET).await?;
+    let scan = scan(&space, &mut resolver, &viewer, start, limit, SCAN_BUDGET).await?;
     // Nothing the owner may see names this entity: say so without its name.
-    if query.cursor.is_none() && scan.claims.is_empty() && !entity.about_owner {
+    // The caller and the Brain's own actors are known, so they open empty.
+    if query.cursor.is_none()
+        && scan.claims.is_empty()
+        && !entity.about_owner
+        && entity.actor.is_none()
+    {
         return Err("entity_not_found".into());
     }
     let propositions: Vec<String> = scan
@@ -258,6 +269,7 @@ pub async fn search(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let viewer = viewer(&space, caller).await;
     let mut resolver = activity.source_resolver(caller);
     let mut items = Vec::new();
     for hit in hits {
@@ -271,6 +283,7 @@ pub async fn search(
             || !scan(
                 &space,
                 &mut resolver,
+                &viewer,
                 EntityCursor {
                     entity: entity.id.clone(),
                     kip: None,
@@ -300,6 +313,7 @@ pub async fn search(
 async fn scan(
     space: &Space,
     resolver: &mut SourceResolver<'_>,
+    viewer: &Viewer,
     start: EntityCursor,
     limit: usize,
     budget: usize,
@@ -369,7 +383,7 @@ async fn scan(
                 result.hidden = true;
                 continue;
             };
-            let Some(mut record) = catalog::project(native.clone(), resolver).await? else {
+            let Some(mut record) = catalog::project(native.clone(), resolver, viewer).await? else {
                 result.hidden = true;
                 continue;
             };
@@ -465,6 +479,14 @@ async fn concept(
     id: &str,
     caller: Principal,
 ) -> Result<Option<EntityView>, BoxError> {
+    if let Some(actor) = brain_actor(id) {
+        // The designated `$self` may carry no key of its own: name it here.
+        let view = header(space, OWNER, json!({"key":id}), caller).await?;
+        return Ok(view.map(|view| EntityView {
+            actor: Some(actor.into()),
+            ..view
+        }));
+    }
     if !id
         .strip_prefix("C-")
         .is_some_and(|seq| !seq.is_empty() && seq.bytes().all(|b| b.is_ascii_digit()))
@@ -472,6 +494,41 @@ async fn concept(
         return Err("invalid_request".into());
     }
     header(space, CONCEPT, json!({"id":id}), caller).await
+}
+
+/// Who reads a claim: the caller's own Person Concept, and the Brain's own
+/// actors (`$self`, `$system`), whose Concept may carry no key.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Viewer {
+    pub owner: Option<String>,
+    pub brain: Vec<String>,
+}
+
+/// Resolved in one request. A failed lookup leaves the record projection to
+/// actor keys alone rather than failing the page.
+pub(super) async fn viewer(space: &Space, caller: Principal) -> Viewer {
+    let keys = [caller.to_string(), "$self".into(), "$system".into()];
+    let operations: Vec<Value> = keys
+        .iter()
+        .map(|key| json!({"command":ACTOR,"parameters":{"key":key}}))
+        .collect();
+    let Ok(response) = kip(
+        space,
+        json!({"kip":"2.0","operations":operations,"execution":{"mode":"independent"}}),
+    )
+    .await
+    else {
+        return Viewer::default();
+    };
+    let id = |index: usize| {
+        succeeded(&response, index)
+            .ok()
+            .and_then(|rows| rows.as_array()?.first()?.as_str().map(str::to_string))
+    };
+    Viewer {
+        owner: id(0),
+        brain: [id(1), id(2)].into_iter().flatten().collect(),
+    }
 }
 
 async fn owner(space: &Space, caller: Principal) -> Result<Option<EntityView>, BoxError> {
@@ -501,6 +558,14 @@ async fn header(
     }))
 }
 
+fn brain_actor(key: &str) -> Option<&'static str> {
+    match key {
+        "$self" => Some("self"),
+        "$system" => Some("system"),
+        _ => None,
+    }
+}
+
 fn view(element: &Value, caller: Principal) -> Option<EntityView> {
     let id = element.get("id")?.as_str()?.to_string();
     let schema_ref = element.get("schema_ref")?.as_str()?;
@@ -517,6 +582,11 @@ fn view(element: &Value, caller: Principal) -> Option<EntityView> {
             .to_string(),
         about_owner: type_name == "Person"
             && element.get("key").and_then(Value::as_str) == Some(&caller.to_string()),
+        actor: element
+            .get("key")
+            .and_then(Value::as_str)
+            .and_then(brain_actor)
+            .map(str::to_string),
         type_name,
         id,
     })

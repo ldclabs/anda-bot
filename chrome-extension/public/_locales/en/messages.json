@@ -1617,7 +1617,7 @@
     "message": "What “current belief” means"
   },
   "memoryBeliefHint": {
-    "message": "Brain weighs every statement about the same fact with its standard recall policy: more specific context first, a person's own statements over hearsay, then the most recent. A statement replaced by a newer one stays as history."
+    "message": "Brain weighs every statement about the same fact with its standard recall policy: more specific context first, a person's own statements over hearsay, then the most recent. A statement replaced by a newer one stays as history. Imported memory, such as memory upgraded from KIP 1, is shown but not counted in the current belief."
   },
   "memoryBelief_accepted": {
     "message": "Current belief"
@@ -1660,5 +1660,14 @@
   },
   "memoryEntityPath": {
     "message": "Entity path"
+  },
+  "memorySourceUnrecorded": {
+    "message": "No verifiable source: memory from before the upgrade, or a conclusion Brain drew itself. You can view it but not correct it here."
+  },
+  "memoryBrainSelf": {
+    "message": "Brain itself"
+  },
+  "memoryBrainSystem": {
+    "message": "System"
   }
 }

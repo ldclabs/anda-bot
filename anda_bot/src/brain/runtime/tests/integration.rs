@@ -1960,3 +1960,153 @@ async fn memory_entity_pages_show_owner_visible_claims_with_their_beliefs() {
     );
     fixture.space.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn memory_views_show_the_brains_own_unsourced_claims_read_only() {
+    use crate::brain::{catalog::RecordQuery, entity::EntityQuery, mutation::ChangeRequest};
+    let fixture = memory_product_fixture("Keep release notes short").await;
+    let native = fixture.space.product_record(&fixture.id).await.unwrap();
+    let owner_id = native.actor_id.clone().unwrap();
+    // Memory upgraded from KIP 1 is asserted by the Brain itself, without
+    // Evidence; an unsourced claim by another person stays hidden.
+    let found = fixture
+        .space
+        .execute_kip_readonly(Request::single(
+            r#"FIND(?c.id) WHERE { ?c CONCEPT {type: "Person", key: "$self"} } LIMIT 1"#,
+        ))
+        .await
+        .unwrap();
+    let brain = match found.first_result().and_then(|rows| rows.get(0)).cloned() {
+        Some(Value::String(id)) => id,
+        _ => command(
+            &fixture.space,
+            r#"MUTATE { CREATE CONCEPT ?brain {TYPE "Person" NAME "$self" SET FIELDS {key: "$self"}} }"#,
+            json!({}),
+        )
+        .await["handles"]["brain"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    };
+    let created = command(
+        &fixture.space,
+        r#"MUTATE {
+        CREATE CONCEPT ?style {TYPE "ReleaseNoteStyle" NAME "Numbered release notes"}
+        ASSERT ?legacy (:owner,"prefers",?style) {by: {id: :brain},mode:"stated"}
+        CREATE CONCEPT ?other {TYPE "Person" NAME "Other person"}
+        CREATE CONCEPT ?long {TYPE "ReleaseNoteStyle" NAME "Long notes"}
+        ASSERT ?hidden (:owner,"prefers",?long) {by: ?other,mode:"stated"}
+    }"#,
+        json!({"owner": owner_id, "brain": brain}),
+    )
+    .await;
+    let legacy = created["handles"]["legacy"].as_str().unwrap().to_string();
+    let hidden = created["handles"]["hidden"].as_str().unwrap().to_string();
+
+    let (page, _) = fixture
+        .service
+        .records(
+            fixture.owner,
+            RecordQuery {
+                cursor: None,
+                limit: Some(50),
+            },
+        )
+        .await
+        .unwrap();
+    let ids: Vec<&str> = page.items.iter().map(|item| item.id.as_str()).collect();
+    assert!(!ids.contains(&hidden.as_str()), "{ids:?}");
+    let record = page.items.iter().find(|item| item.id == legacy).unwrap();
+    assert!(!record.sources_complete);
+    assert!(record.sources.is_empty());
+    assert!(record.allowed_actions.is_empty());
+    assert!(record.about_owner);
+    assert_eq!(record.object_label, "Numbered release notes");
+    // The verified record reads as the owner's own too.
+    assert!(
+        fixture
+            .service
+            .record(fixture.owner, &fixture.id)
+            .await
+            .unwrap()
+            .about_owner
+    );
+
+    let (entity, _) = fixture
+        .service
+        .entity(fixture.owner, EntityQuery::default())
+        .await
+        .unwrap();
+    let claims: Vec<&str> = entity
+        .items
+        .iter()
+        .map(|item| item.record.id.as_str())
+        .collect();
+    assert!(claims.contains(&legacy.as_str()), "{claims:?}");
+    assert!(!claims.contains(&hidden.as_str()), "{claims:?}");
+
+    // The Brain's own actors open by name, empty or not; a Space without a
+    // `$system` actor has no such page.
+    let (page, _) = fixture
+        .service
+        .entity(
+            fixture.owner,
+            EntityQuery {
+                id: Some("$self".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.entity.id, brain);
+    assert_eq!(page.entity.actor.as_deref(), Some("self"));
+    assert!(!page.entity.about_owner);
+    assert_eq!(
+        fixture
+            .service
+            .entity(
+                fixture.owner,
+                EntityQuery {
+                    id: Some("$system".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string(),
+        "entity_not_found"
+    );
+    assert_eq!(
+        fixture
+            .service
+            .entity(
+                fixture.owner,
+                EntityQuery {
+                    id: Some("$other".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string(),
+        "invalid_request"
+    );
+
+    // Read-only: a change needs a verified source scope.
+    let error = fixture
+        .service
+        .prepare_change(
+            fixture.owner,
+            ChangeRequest {
+                operation_id: "legacy-delete".into(),
+                record_id: legacy.clone(),
+                expected_revision: record.revision.clone(),
+                kind: anda_brain::product::ChangeKind::Delete,
+                new_value: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "unsupported_scope");
+    fixture.space.close().await.unwrap();
+}

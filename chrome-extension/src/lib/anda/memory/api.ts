@@ -96,6 +96,8 @@ export interface MemoryEntity {
   /** The Concept type's local name, such as `Person`. */
   type: string
   about_owner: boolean
+  /** `self` or `system` for the Brain's own actors, `$self` and `$system`. */
+  actor?: 'self' | 'system' | null
 }
 /** The Proposition's projection under the standard recall policy.
  * `excluded_reason` says why this claim itself did not count, e.g.

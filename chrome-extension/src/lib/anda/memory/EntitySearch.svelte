@@ -3,13 +3,15 @@
   import { getMessage } from '$lib/i18n'
   import { badgeClass, buttonClass, inputClass } from '../ui'
   import type { MemoryApi, MemoryEntity } from './api'
+  import { entityName } from './labels'
 
   let {
     api,
     onopen
   }: {
     api: MemoryApi
-    /** A null id opens the page about the caller. */
+    /** A null id opens the page about the caller; `$self` and `$system` the
+     * Brain's own actors. */
     onopen: (id: string | null, label: string) => void
   } = $props()
 
@@ -42,10 +44,22 @@
 <section class="my-7 border-b border-border pb-6" aria-labelledby="memory-entities">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <h2 id="memory-entities" class="text-sm font-semibold">{getMessage('memoryEntities')}</h2>
-    <button
-      class={buttonClass('outline', 'sm')}
-      onclick={() => onopen(null, getMessage('memoryYou'))}>{getMessage('memoryAboutYou')}</button
-    >
+    <div class="flex flex-wrap gap-2">
+      <button
+        class={buttonClass('outline', 'sm')}
+        onclick={() => onopen(null, getMessage('memoryYou'))}>{getMessage('memoryAboutYou')}</button
+      >
+      <button
+        class={buttonClass('outline', 'sm')}
+        onclick={() => onopen('$self', getMessage('memoryBrainSelf'))}
+        >{getMessage('memoryBrainSelf')}</button
+      >
+      <button
+        class={buttonClass('outline', 'sm')}
+        onclick={() => onopen('$system', getMessage('memoryBrainSystem'))}
+        >{getMessage('memoryBrainSystem')}</button
+      >
+    </div>
   </div>
   <form class="mt-4" onsubmit={search}>
     <label for="memory-entity-search" class="text-xs text-muted-foreground"
@@ -74,15 +88,13 @@
     {#if results.length}
       <ul class="mt-4 divide-y divide-border" aria-live="polite">
         {#each results as entity (entity.id)}
+          {@const name = entityName(entity)}
           <li>
             <button
               class="flex w-full cursor-pointer items-center justify-between gap-3 py-3 text-left text-sm hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-ring"
-              onclick={() => onopen(entity.id, entity.name)}
+              onclick={() => onopen(entity.id, name)}
             >
-              <span class="min-w-0 font-medium break-words"
-                >{entity.name}{#if entity.about_owner}
-                  · {getMessage('memoryYou')}{/if}</span
-              >
+              <span class="min-w-0 font-medium break-words">{name}</span>
               <span class={badgeClass('outline')}>{entity.type}</span>
             </button>
           </li>

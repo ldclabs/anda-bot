@@ -1617,7 +1617,7 @@
     "message": "Qué significa «creencia actual»"
   },
   "memoryBeliefHint": {
-    "message": "Brain pondera todas las afirmaciones sobre un mismo hecho con su política de recuperación estándar: primero el contexto más específico, las afirmaciones de la propia persona antes que lo dicho por terceros y, después, la más reciente. Una afirmación reemplazada por otra más nueva se conserva como historial."
+    "message": "Brain pondera todas las afirmaciones sobre un mismo hecho con su política de recuperación estándar: primero el contexto más específico, las afirmaciones de la propia persona antes que lo dicho por terceros y, después, la más reciente. Una afirmación reemplazada por otra más nueva se conserva como historial. Los recuerdos importados, como los que llegaron al actualizar desde KIP 1, se muestran, pero no cuentan en la creencia actual."
   },
   "memoryBelief_accepted": {
     "message": "Creencia actual"
@@ -1660,5 +1660,14 @@
   },
   "memoryEntityPath": {
     "message": "Ruta de entidades"
+  },
+  "memorySourceUnrecorded": {
+    "message": "Sin fuente verificable: un recuerdo anterior a la actualización o una conclusión del propio Brain. Puedes verlo, pero no corregirlo aquí."
+  },
+  "memoryBrainSelf": {
+    "message": "El propio Brain"
+  },
+  "memoryBrainSystem": {
+    "message": "Sistema"
   }
 }

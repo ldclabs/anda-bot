@@ -1617,7 +1617,7 @@
     "message": "“当前认知”是什么意思"
   },
   "memoryBeliefHint": {
-    "message": "Brain 按标准召回策略权衡关于同一件事的所有说法：更具体的上下文优先，本人陈述优先于转述，其次取最新的说法。被更新说法接替的内容会作为历史保留。"
+    "message": "Brain 按标准召回策略权衡关于同一件事的所有说法：更具体的上下文优先，本人陈述优先于转述，其次取最新的说法。被更新说法接替的内容会作为历史保留。导入的记忆（例如从 KIP 1 升级来的记忆）会显示，但不计入当前认知。"
   },
   "memoryBelief_accepted": {
     "message": "当前认知"
@@ -1660,5 +1660,14 @@
   },
   "memoryEntityPath": {
     "message": "对象路径"
+  },
+  "memorySourceUnrecorded": {
+    "message": "没有可核验的来源：可能是升级前的记忆，或 Brain 自己整理出的结论。只能查看，不能在这里更正。"
+  },
+  "memoryBrainSelf": {
+    "message": "Brain 自己"
+  },
+  "memoryBrainSystem": {
+    "message": "系统"
   }
 }

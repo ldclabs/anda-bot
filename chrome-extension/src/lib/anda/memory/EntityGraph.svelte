@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
   import type { EntityClaim, MemoryEntity } from './api'
-  import { GRAPH_HEIGHT, GRAPH_WIDTH, layoutEntityGraph } from './entity'
+  import { GRAPH_WIDTH, layoutEntityGraph } from './entity'
+  import { actorLabel, entityName } from './labels'
 
   let {
     entity,
@@ -14,15 +15,17 @@
   } = $props()
 
   let width = $state(0)
-  const name = $derived(entity.about_owner ? getMessage('memoryYou') : entity.name)
-  // Narrow screens get fewer, wider labels.
-  const layout = $derived(layoutEntityGraph(entity.id, claims, width && width < 480 ? 10 : 24))
+  const name = $derived(entityName(entity))
+  // Rows stay about 34px apart at any width, so labels never touch; narrow
+  // screens get fewer of them.
+  const row = $derived(width ? Math.max(8, Math.ceil((34 * GRAPH_WIDTH) / width)) : 8)
+  const layout = $derived(layoutEntityGraph(entity.id, claims, width && width < 480 ? 6 : 12, row))
   // Four theme hues stay distinct in both themes; further relations share a
   // neutral colour and are told apart by the legend.
   const color = (group: number) =>
     group < 4 ? `var(--chart-${group + 1})` : 'var(--muted-foreground)'
   const left = (x: number) => `${(x / GRAPH_WIDTH) * 100}%`
-  const top = (y: number) => `${(y / GRAPH_HEIGHT) * 100}%`
+  const top = (y: number) => `${(y / layout.height) * 100}%`
 </script>
 
 {#if layout.nodes.length}
@@ -32,11 +35,11 @@
         .nodes.length <= 4
         ? 'max-w-lg'
         : ''}"
-      style="aspect-ratio: {GRAPH_WIDTH} / {GRAPH_HEIGHT}"
+      style="aspect-ratio: {GRAPH_WIDTH} / {layout.height}"
       bind:clientWidth={width}
     >
       <svg
-        viewBox="0 0 {GRAPH_WIDTH} {GRAPH_HEIGHT}"
+        viewBox="0 0 {GRAPH_WIDTH} {layout.height}"
         class="absolute inset-0 size-full"
         aria-hidden="true"
       >
@@ -60,7 +63,7 @@
         {/each}
       </svg>
       <p
-        class="absolute max-w-[30%] -translate-x-1/2 -translate-y-1/2 truncate rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
+        class="absolute max-w-[22%] -translate-x-1/2 -translate-y-1/2 truncate rounded-full bg-foreground px-3 py-1 text-xs font-medium text-background"
         style="left: 50%; top: 50%"
         title={name}
       >
@@ -72,9 +75,9 @@
             ? ''
             : 'border-dashed text-muted-foreground'}"
           style="left: {left(node.x)}; top: {top(node.y)}; border-color: {color(node.group)}"
-          title={node.label}
-          aria-label={getMessage('memoryOpenEntity', node.label)}
-          onclick={() => onopen(node.id, node.label)}>{node.label}</button
+          title={actorLabel(node.label)}
+          aria-label={getMessage('memoryOpenEntity', actorLabel(node.label))}
+          onclick={() => onopen(node.id, actorLabel(node.label))}>{actorLabel(node.label)}</button
         >
       {/each}
     </div>

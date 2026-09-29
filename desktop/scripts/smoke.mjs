@@ -434,10 +434,23 @@ try {
   await page.getByRole('heading', { name: 'General', exact: true }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '03-settings.png') })
   await page.locator('.settings-tabs').getByRole('button', { name: 'Audio', exact: true }).click()
+  // The meter counts wall-clock time, but the recorder emits nothing until its
+  // encoder has produced a first frame, which a loaded runner delays past the
+  // meter's first tick. Stopping before that records zero bytes and the panel
+  // reports "No audio was recorded", so stop only once a chunk has arrived.
+  await page.evaluate(() => {
+    const start = MediaRecorder.prototype.start
+    window.recordedBytes = 0
+    MediaRecorder.prototype.start = function (...args) {
+      this.addEventListener('dataavailable', (event) => (window.recordedBytes += event.data.size))
+      return start.apply(this, args)
+    }
+  })
   await page.getByRole('button', { name: 'Record test', exact: true }).click()
   await page.waitForFunction(
     () => document.querySelector('.audio-meter span')?.textContent !== '0.0 s'
   )
+  await page.waitForFunction(() => window.recordedBytes > 0)
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
   await page.waitForFunction(() =>
     document.querySelector('.audio-panel audio')?.src.startsWith('blob:')

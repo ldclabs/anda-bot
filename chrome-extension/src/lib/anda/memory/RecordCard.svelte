@@ -3,6 +3,7 @@
   import { getMessage } from '$lib/i18n'
   import { buttonClass } from '../ui'
   import { REVISION_KINDS, type ChangeKind, type MemoryRecord } from './api'
+  import { actorLabel } from './labels'
 
   type Source = MemoryRecord['sources'][number]
   let {
@@ -27,7 +28,10 @@
     footer?: Snippet
   } = $props()
 
-  const subject = $derived(record.about_owner ? getMessage('memoryYou') : record.subject_label)
+  const subject = $derived(
+    record.about_owner ? getMessage('memoryYou') : actorLabel(record.subject_label)
+  )
+  const object = $derived(actorLabel(record.object_label))
   const revision = $derived(REVISION_KINDS.find((kind) => record.allowed_actions.includes(kind)))
   const stateLabel = $derived(
     record.state === 'active'
@@ -62,16 +66,19 @@
   <p class="mt-2 text-sm font-medium break-words whitespace-pre-wrap">
     {#if onentity && record.object_id}<button
         class={entityLink}
-        aria-label={getMessage('memoryOpenEntity', record.object_label)}
-        onclick={() => onentity(record.object_id!, record.object_label)}
-        >{record.object_label}</button
-      >{:else}{record.object_label}{/if}
+        aria-label={getMessage('memoryOpenEntity', object)}
+        onclick={() => onentity(record.object_id!, object)}>{object}</button
+      >{:else}{object}{/if}
   </p>
   <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
     {@render status?.()}<span>{stanceLabel} · {stateLabel}</span>
   </p>
   {#if !record.sources_complete}<p class="mt-2 text-xs text-muted-foreground">
-      {getMessage('memorySourceUnavailable')}
+      {#if record.sources.length}
+        {getMessage('memorySourceUnavailable')}
+      {:else}
+        {getMessage('memorySourceUnrecorded')}
+      {/if}
     </p>{/if}
   {#if record.sources.length}
     <details class="mt-3 text-xs">
