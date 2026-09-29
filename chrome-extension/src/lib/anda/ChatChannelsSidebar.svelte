@@ -1,9 +1,6 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
   import {
-    alertDialogContentClass,
-    alertDialogDescriptionClass,
-    alertDialogOverlayClass,
     badgeClass,
     buttonClass,
     inputClass,
@@ -23,10 +20,10 @@
     Trash2,
     X
   } from '@lucide/svelte'
-  import { AlertDialog } from 'bits-ui'
   import { quadOut } from 'svelte/easing'
   import { fly } from 'svelte/transition'
   import type { Channel } from './client/channel.svelte'
+  import Modal from './Modal.svelte'
 
   type Props = {
     channels: Channel[]
@@ -502,28 +499,21 @@
   {/if}
 </aside>
 
-<AlertDialog.Root bind:open={deleteDialogOpen}>
-  <AlertDialog.Portal>
-    <AlertDialog.Overlay class={alertDialogOverlayClass()} />
-    <AlertDialog.Content class={alertDialogContentClass()}>
-      <div
-        class="grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-6"
-      >
-        <AlertDialog.Title class="text-lg font-medium">
-          {getMessage('deleteChannel')}
-        </AlertDialog.Title>
-        <AlertDialog.Description class={alertDialogDescriptionClass()}>
-          {pendingDeleteDescription}
-        </AlertDialog.Description>
-      </div>
-      <div class="cn-alert-dialog-footer grid grid-cols-2 gap-2">
-        <AlertDialog.Cancel class={buttonClass('outline')}>
-          {getMessage('cancel')}
-        </AlertDialog.Cancel>
-        <AlertDialog.Action class={buttonClass('destructive')} onclick={confirmDeleteChannel}>
-          {getMessage('deleteChannel')}
-        </AlertDialog.Action>
-      </div>
-    </AlertDialog.Content>
-  </AlertDialog.Portal>
-</AlertDialog.Root>
+{#snippet deleteActions()}
+  <button class={buttonClass('outline', 'sm')} onclick={() => (deleteDialogOpen = false)}>
+    {getMessage('cancel')}
+  </button>
+  <button class={buttonClass('destructive', 'sm')} onclick={confirmDeleteChannel}>
+    {getMessage('deleteChannel')}
+  </button>
+{/snippet}
+
+<Modal
+  alert
+  bind:open={deleteDialogOpen}
+  title={getMessage('deleteChannel')}
+  contentClass="min-h-0 sm:max-w-sm"
+  footer={deleteActions}
+>
+  <p class="text-sm leading-relaxed text-muted-foreground">{pendingDeleteDescription}</p>
+</Modal>

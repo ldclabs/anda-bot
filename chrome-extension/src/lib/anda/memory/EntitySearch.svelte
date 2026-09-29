@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { LoaderCircle } from '@lucide/svelte'
   import { getMessage } from '$lib/i18n'
+  import Modal from '../Modal.svelte'
   import { badgeClass, buttonClass, inputClass } from '../ui'
   import type { MemoryApi, MemoryEntity } from './api'
   import { entityName } from './labels'
@@ -19,6 +21,9 @@
   let results = $state<MemoryEntity[] | null>(null)
   let error = $state('')
   let busy = $state(false)
+  /** The matches open in a modal; `searched` is the query they answer. */
+  let open = $state(false)
+  let searched = $state('')
   let disposed = false
 
   async function search(event: SubmitEvent) {
@@ -27,6 +32,8 @@
     busy = true
     error = ''
     results = null
+    searched = query.trim()
+    open = true
     try {
       const page = await api.entitySearch(query)
       if (!disposed) results = page.items
@@ -35,6 +42,10 @@
     } finally {
       if (!disposed) busy = false
     }
+  }
+  function pick(entity: MemoryEntity, name: string) {
+    open = false
+    onopen(entity.id, name)
   }
   onDestroy(() => {
     disposed = true
@@ -70,7 +81,6 @@
         id="memory-entity-search"
         class={inputClass('min-w-0 flex-1')}
         bind:value={query}
-        disabled={busy}
         required
         maxlength="200"
         placeholder={getMessage('memoryEntitySearchPlaceholder')}
@@ -82,17 +92,28 @@
     <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
       {getMessage('memoryEntitySearchHint')}
     </p>
+    {#if !open && (busy || results || error)}<button
+        type="button"
+        class={buttonClass('ghost', 'xs', 'mt-2')}
+        onclick={() => (open = true)}>{getMessage('memoryShowResults')}</button
+      >{/if}
   </form>
-  {#if error}<p role="alert" class="mt-3 text-sm break-words text-destructive">{error}</p>{/if}
-  {#if results}
-    {#if results.length}
-      <ul class="mt-4 divide-y divide-border" aria-live="polite">
+</section>
+
+<Modal bind:open title={getMessage('memoryEntities')} description={searched}>
+  <div aria-live="polite">
+    {#if busy}<p role="status" class="flex items-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircle class="size-4 animate-spin" />{getMessage('loading')}
+      </p>{/if}
+    {#if error}<p role="alert" class="text-sm break-words text-destructive">{error}</p>{/if}
+    {#if results?.length}
+      <ul class="-my-1 divide-y divide-border">
         {#each results as entity (entity.id)}
           {@const name = entityName(entity)}
           <li>
             <button
-              class="flex w-full cursor-pointer items-center justify-between gap-3 py-3 text-left text-sm hover:text-foreground/80 focus-visible:outline-2 focus-visible:outline-ring"
-              onclick={() => onopen(entity.id, name)}
+              class="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-center justify-between gap-3 rounded-md px-2 py-3 text-start text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+              onclick={() => pick(entity, name)}
             >
               <span class="min-w-0 font-medium break-words">{name}</span>
               <span class={badgeClass('outline')}>{entity.type}</span>
@@ -100,10 +121,8 @@
           </li>
         {/each}
       </ul>
-    {:else}
-      <p class="mt-4 text-sm text-muted-foreground" aria-live="polite">
-        {getMessage('memoryEntitySearchEmpty')}
-      </p>
+    {:else if results}
+      <p class="text-sm text-muted-foreground">{getMessage('memoryEntitySearchEmpty')}</p>
     {/if}
-  {/if}
-</section>
+  </div>
+</Modal>

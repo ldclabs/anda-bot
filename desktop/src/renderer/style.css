@@ -701,6 +701,17 @@ textarea:focus-visible {
 [data-slot='dropdown-menu-content'] input:focus-visible {
   outline: none;
 }
+/* Shared modals render in <body> too: the desktop palette, and clickable
+   where they cover the title bar's drag region. */
+[data-slot='modal-overlay'],
+[data-slot='modal-content'] {
+  -webkit-app-region: no-drag;
+}
+[data-slot='modal-content'] {
+  background: var(--desk-bg);
+  color: var(--desk-text);
+  font-size: inherit;
+}
 .modal-backdrop {
   position: fixed;
   inset: 0;

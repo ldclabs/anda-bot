@@ -8,9 +8,6 @@
   } from '$lib/anda/client/types'
   import {
     buttonClass,
-    dialogContentClass,
-    dialogDescriptionClass,
-    dialogOverlayClass,
     fieldClass,
     fieldGroupClass,
     fieldLabelClass,
@@ -18,6 +15,7 @@
     separatorClass
   } from '$lib/anda/ui'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import Modal from '$lib/anda/Modal.svelte'
   import { delay } from '$lib/utils/async'
   import {
     BrainCircuit,
@@ -37,10 +35,8 @@
     RefreshCw,
     Save,
     Sun,
-    Terminal,
-    X
+    Terminal
   } from '@lucide/svelte'
-  import { Dialog } from 'bits-ui'
   import { onMount } from 'svelte'
 
   let {
@@ -246,167 +242,110 @@
   </div>
 {/snippet}
 
-<Dialog.Root bind:open>
-  <Dialog.Portal>
-    <Dialog.Overlay class={dialogOverlayClass()} />
-    <Dialog.Content
-      class={dialogContentClass(
-        'flex max-h-[min(90vh,46rem)] min-h-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl'
-      )}
-      aria-label={getMessage('settings')}
-    >
-      <Dialog.Close>
-        {#snippet child({ props })}
-          <button
-            {...props}
-            type="button"
-            class={buttonClass('ghost', 'icon-sm', 'absolute top-4 right-4 z-10')}
-          >
-            <X class="size-4" />
-            <span class="sr-only">Close</span>
-          </button>
-        {/snippet}
-      </Dialog.Close>
+{#snippet actions()}
+  <button
+    type="button"
+    class={buttonClass('default', 'sm', 'flex-1')}
+    disabled={savingSettings || !settingsDirty}
+    onclick={saveSettings}
+  >
+    {#if savingSettings}
+      <LoaderCircle class="size-3.5 animate-spin" />
+    {:else}
+      <Save class="size-3.5" />
+    {/if}
+    {getMessage('save')}
+  </button>
+  <button
+    type="button"
+    class={buttonClass('outline', 'sm', 'flex-1 bg-background')}
+    disabled={testingConnection}
+    onclick={testConnection}
+  >
+    {#if testingConnection}
+      <LoaderCircle class="size-3.5 animate-spin" />
+    {:else}
+      <PlugZap class="size-3.5" />
+    {/if}
+    {getMessage('test')}
+  </button>
+{/snippet}
 
-      <div class="flex shrink-0 flex-col gap-2 border-b bg-muted/35 px-5 py-4 pr-12">
-        <div class="flex min-w-0 items-start justify-between gap-3">
-          <div class="grid min-w-0 gap-1">
-            <Dialog.Title class="flex min-w-0 items-center gap-2 text-base font-bold">
-              <Terminal class="size-4 shrink-0 text-emerald-800" />
-              <span class="truncate">{getMessage('settings')}</span>
-            </Dialog.Title>
-            <Dialog.Description class={dialogDescriptionClass('text-xs leading-relaxed')}>
-              {getMessage('onboardingIntro')}
-            </Dialog.Description>
-          </div>
-        </div>
-      </div>
+<Modal
+  bind:open
+  title={getMessage('settings')}
+  description={getMessage('onboardingIntro')}
+  footer={actions}
+>
+  <div class="flex flex-col gap-4">
+    <div class="rounded-lg border bg-background shadow-xs">
+      <button
+        type="button"
+        class="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        aria-expanded={setupGuideOpen}
+        aria-controls="local-setup-guide"
+        aria-label={setupGuideOpen
+          ? getMessage('collapseLocalSetup')
+          : getMessage('expandLocalSetup')}
+        onclick={() => (setupGuideOpen = !setupGuideOpen)}
+      >
+        <span class="grid min-w-0 gap-1">
+          <span class="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
+            <Terminal class="size-3.5" />
+            <span>{getMessage('onboardingEyebrow')}</span>
+          </span>
+          <span class="text-sm font-bold text-foreground">
+            {getMessage('onboardingTitle')}
+          </span>
+          <span class="text-xs leading-relaxed text-muted-foreground">
+            {getMessage('onboardingIntro')}
+          </span>
+        </span>
+        <ChevronDown
+          class={`mt-0.5 size-4 shrink-0 text-emerald-800 transition-transform ${setupGuideOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
 
-      <div class="scrollbar-slim flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-        <div class="rounded-lg border bg-background shadow-xs">
-          <button
-            type="button"
-            class="grid w-full grid-cols-[1fr_auto] items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-            aria-expanded={setupGuideOpen}
-            aria-controls="local-setup-guide"
-            aria-label={setupGuideOpen
-              ? getMessage('collapseLocalSetup')
-              : getMessage('expandLocalSetup')}
-            onclick={() => (setupGuideOpen = !setupGuideOpen)}
-          >
-            <span class="grid min-w-0 gap-1">
-              <span class="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
-                <Terminal class="size-3.5" />
-                <span>{getMessage('onboardingEyebrow')}</span>
-              </span>
-              <span class="text-sm font-bold text-foreground">
-                {getMessage('onboardingTitle')}
-              </span>
-              <span class="text-xs leading-relaxed text-muted-foreground">
-                {getMessage('onboardingIntro')}
-              </span>
-            </span>
-            <ChevronDown
-              class={`mt-0.5 size-4 shrink-0 text-emerald-800 transition-transform ${setupGuideOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
-
-          {#if setupGuideOpen}
-            <div id="local-setup-guide" class="grid gap-3 border-t px-3 py-3">
-              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-                <div
-                  class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
-                >
-                  <Download class="size-3.5" />
-                </div>
-                <div class="grid min-w-0 gap-2">
-                  <div class="grid gap-0.5">
-                    <h3 class="text-xs font-bold text-foreground">
-                      {getMessage('onboardingInstallTitle')}
-                    </h3>
-                    <p class="text-xs leading-relaxed text-muted-foreground">
-                      {getMessage('onboardingInstallBody')}
-                    </p>
-                  </div>
-                  <div class="grid gap-2">
-                    {@render downloadBlock(getMessage('windowsInstaller'), windowsInstallerUrl)}
-                    {@render downloadBlock(getMessage('macosInstaller'), macInstallerUrl)}
-                    {@render commandBlock(getMessage('cliInstaller'), installScriptCommand)}
-                  </div>
-                </div>
-              </div>
-
-              <div class={separatorClass()} data-orientation="horizontal"></div>
-
-              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-                <div
-                  class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
-                >
-                  <FileCog class="size-3.5" />
-                </div>
-                <div class="grid min-w-0 gap-2">
-                  <div class="grid gap-0.5">
-                    <h3 class="text-xs font-bold text-foreground">
-                      {getMessage('onboardingConfigureTitle')}
-                    </h3>
-                    <p class="text-xs leading-relaxed text-muted-foreground">
-                      {getMessage('onboardingConfigureBody')}
-                    </p>
-                  </div>
-                  <a
-                    class={buttonClass(
-                      'outline',
-                      'sm',
-                      'w-full justify-between bg-background text-xs'
-                    )}
-                    href={configPageUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <span class="min-w-0 truncate">{getMessage('openConfigEditor')}</span>
-                    <ExternalLink class="size-3.5" />
-                  </a>
-                </div>
-              </div>
-
-              <div class={separatorClass()} data-orientation="horizontal"></div>
-
-              <div class="grid grid-cols-[1.75rem_1fr] gap-3">
-                <div
-                  class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
-                >
-                  <KeyRound class="size-3.5" />
-                </div>
-                <div class="grid min-w-0 gap-2">
-                  <div class="grid gap-0.5">
-                    <h3 class="text-xs font-bold text-foreground">
-                      {getMessage('onboardingTokenTitle')}
-                    </h3>
-                    <p class="text-xs leading-relaxed text-muted-foreground">
-                      {getMessage('onboardingTokenBody')}
-                    </p>
-                  </div>
-                  {@render commandBlock(getMessage('tokenCommandLabel'), tokenCommand)}
-                </div>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <div class="rounded-lg border bg-background p-3 shadow-xs">
+      {#if setupGuideOpen}
+        <div id="local-setup-guide" class="grid gap-3 border-t px-3 py-3">
           <div class="grid grid-cols-[1.75rem_1fr] gap-3">
             <div
-              class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
+              class="grid size-7 place-items-center rounded-md border border-sky-900/10 bg-sky-50 text-sky-800"
+            >
+              <Download class="size-3.5" />
+            </div>
+            <div class="grid min-w-0 gap-2">
+              <div class="grid gap-0.5">
+                <h3 class="text-xs font-bold text-foreground">
+                  {getMessage('onboardingInstallTitle')}
+                </h3>
+                <p class="text-xs leading-relaxed text-muted-foreground">
+                  {getMessage('onboardingInstallBody')}
+                </p>
+              </div>
+              <div class="grid gap-2">
+                {@render downloadBlock(getMessage('windowsInstaller'), windowsInstallerUrl)}
+                {@render downloadBlock(getMessage('macosInstaller'), macInstallerUrl)}
+                {@render commandBlock(getMessage('cliInstaller'), installScriptCommand)}
+              </div>
+            </div>
+          </div>
+
+          <div class={separatorClass()} data-orientation="horizontal"></div>
+
+          <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+            <div
+              class="grid size-7 place-items-center rounded-md border border-amber-900/10 bg-amber-50 text-amber-800"
             >
               <FileCog class="size-3.5" />
             </div>
             <div class="grid min-w-0 gap-2">
               <div class="grid gap-0.5">
                 <h3 class="text-xs font-bold text-foreground">
-                  {getMessage('configEditorTitle')}
+                  {getMessage('onboardingConfigureTitle')}
                 </h3>
                 <p class="text-xs leading-relaxed text-muted-foreground">
-                  {getMessage('configEditorBody')}
+                  {getMessage('onboardingConfigureBody')}
                 </p>
               </div>
               <a
@@ -420,211 +359,227 @@
               </a>
             </div>
           </div>
-        </div>
 
-        <div data-slot="field-group" class={fieldGroupClass('gap-4')}>
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-foreground">
-              <Play class="size-3.5 shrink-0 text-emerald-800" />
-              <span class="truncate">{getMessage('connectionDetails')}</span>
-            </div>
-          </div>
+          <div class={separatorClass()} data-orientation="horizontal"></div>
 
-          <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label
-              class={fieldLabelClass('text-xs font-bold text-muted-foreground')}
-              for="base-url"
-            >
-              <ExternalLink class="size-3" />
-              {getMessage('gatewayUrl')}
-            </label>
-            <input
-              id="base-url"
-              type="url"
-              class={inputClass()}
-              spellcheck={false}
-              placeholder="http://127.0.0.1:8042"
-              bind:value={draftSettings.baseUrl}
-              oninput={markSettingsDirty}
-            />
-          </div>
-
-          <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')} for="token">
-              <KeyRound class="size-3" />
-              {getMessage('bearerToken')}
-            </label>
-            <input
-              id="token"
-              type="text"
-              class={inputClass()}
-              spellcheck={false}
-              placeholder={getMessage('tokenPlaceholder')}
-              bind:value={draftSettings.token}
-              oninput={markSettingsDirty}
-            />
-          </div>
-
-          <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <div class="flex items-center justify-between gap-2">
-              <label
-                class={fieldLabelClass('min-w-0 text-xs font-bold text-muted-foreground')}
-                for="active-model"
-              >
-                <BrainCircuit class="size-3" />
-                <span class="truncate">{getMessage('activeModel')}</span>
-              </label>
-            </div>
-            <div class="grid grid-cols-[1fr_auto] items-center gap-2">
-              <DropdownMenu
-                id="active-model"
-                class="h-8"
-                items={modelNames.length > 0
-                  ? modelNames.map((modelName) => ({ value: modelName, label: modelName }))
-                  : [{ value: '', label: getMessage('modelListEmpty') }]}
-                value={activeModel}
-                disabled={!canChangeModel}
-                onSelect={(model) => void switchActiveModel(model)}
-                ariaLabel={getMessage('activeModel')}
-              />
-              <button
-                type="button"
-                class={buttonClass('ghost')}
-                disabled={!andaClient.settings.token || loadingModels || switchingModel}
-                aria-label={getMessage('refreshModels')}
-                title={getMessage('refreshModels')}
-                onclick={refreshModels}
-              >
-                <RefreshCw
-                  class={`size-4 ${loadingModels || switchingModel ? 'animate-spin text-emerald-700' : ''}`}
-                />
-              </button>
-            </div>
-          </div>
-
-          <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
-              <Monitor class="size-3" />
-              {getMessage('appearanceTheme')}
-            </label>
+          <div class="grid grid-cols-[1.75rem_1fr] gap-3">
             <div
-              class="grid grid-cols-3 gap-1 rounded-md border bg-muted/45 p-1"
-              role="radiogroup"
-              aria-label={getMessage('appearanceTheme')}
+              class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
             >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={draftSettings.appearanceTheme === 'light'}
-                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('light'))}
-                disabled={savingAppearanceTheme}
-                onclick={() => updateAppearanceTheme('light')}
-              >
-                <Sun class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{getMessage('appearanceLight')}</span>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={draftSettings.appearanceTheme === 'dark'}
-                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('dark'))}
-                disabled={savingAppearanceTheme}
-                onclick={() => updateAppearanceTheme('dark')}
-              >
-                <Moon class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{getMessage('appearanceDark')}</span>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={draftSettings.appearanceTheme === 'system'}
-                class={buttonClass('ghost', 'default', appearanceThemeButtonClass('system'))}
-                disabled={savingAppearanceTheme}
-                onclick={() => updateAppearanceTheme('system')}
-              >
-                <Monitor class="size-3.5 shrink-0" />
-                <span class="min-w-0 truncate">{getMessage('appearanceSystem')}</span>
-              </button>
+              <KeyRound class="size-3.5" />
             </div>
-          </div>
-
-          <div data-slot="field" class={fieldClass('gap-1.5')}>
-            <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
-              <Keyboard class="size-3" />
-              {getMessage('enterKeyBehavior')}
-            </label>
-            <div
-              class="grid grid-cols-2 gap-1 rounded-md border bg-muted/45 p-1"
-              role="radiogroup"
-              aria-label={getMessage('enterKeyBehavior')}
-            >
-              <button
-                type="button"
-                role="radio"
-                aria-checked={draftSettings.submitKeyMode === 'enter'}
-                class={buttonClass('ghost', 'default', submitKeyModeButtonClass('enter'))}
-                onclick={() => updateSubmitKeyMode('enter')}
-              >
-                <span class="grid min-w-0 gap-0.5">
-                  <span class="block truncate text-xs font-bold">
-                    {getMessage('enterSendsMessage')}
-                  </span>
-                  <span class="block truncate text-[10px] font-semibold opacity-70">
-                    {getMessage('shiftEnterNewLine')}
-                  </span>
-                </span>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={draftSettings.submitKeyMode === 'modifier-enter'}
-                class={buttonClass('ghost', 'default', submitKeyModeButtonClass('modifier-enter'))}
-                onclick={() => updateSubmitKeyMode('modifier-enter')}
-              >
-                <span class="grid min-w-0 gap-0.5">
-                  <span class="block truncate text-xs font-bold">
-                    {getMessage('modifierEnterSendsMessage')}
-                  </span>
-                  <span class="block truncate text-[10px] font-semibold opacity-70">
-                    {getMessage('enterNewLineModifierSends')}
-                  </span>
-                </span>
-              </button>
+            <div class="grid min-w-0 gap-2">
+              <div class="grid gap-0.5">
+                <h3 class="text-xs font-bold text-foreground">
+                  {getMessage('onboardingTokenTitle')}
+                </h3>
+                <p class="text-xs leading-relaxed text-muted-foreground">
+                  {getMessage('onboardingTokenBody')}
+                </p>
+              </div>
+              {@render commandBlock(getMessage('tokenCommandLabel'), tokenCommand)}
             </div>
           </div>
         </div>
+      {/if}
+    </div>
+
+    <div class="rounded-lg border bg-background p-3 shadow-xs">
+      <div class="grid grid-cols-[1.75rem_1fr] gap-3">
+        <div
+          class="grid size-7 place-items-center rounded-md border border-emerald-900/10 bg-emerald-50 text-emerald-800"
+        >
+          <FileCog class="size-3.5" />
+        </div>
+        <div class="grid min-w-0 gap-2">
+          <div class="grid gap-0.5">
+            <h3 class="text-xs font-bold text-foreground">
+              {getMessage('configEditorTitle')}
+            </h3>
+            <p class="text-xs leading-relaxed text-muted-foreground">
+              {getMessage('configEditorBody')}
+            </p>
+          </div>
+          <a
+            class={buttonClass('outline', 'sm', 'w-full justify-between bg-background text-xs')}
+            href={configPageUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <span class="min-w-0 truncate">{getMessage('openConfigEditor')}</span>
+            <ExternalLink class="size-3.5" />
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <div data-slot="field-group" class={fieldGroupClass('gap-4')}>
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex min-w-0 items-center gap-1.5 text-xs font-bold text-foreground">
+          <Play class="size-3.5 shrink-0 text-emerald-800" />
+          <span class="truncate">{getMessage('connectionDetails')}</span>
+        </div>
       </div>
 
-      <div
-        class="grid shrink-0 grid-cols-2 gap-2 border-t bg-muted/25 px-5 py-4 sm:grid-cols-2 sm:justify-stretch"
-      >
-        <button
-          type="button"
-          class={buttonClass('default', 'sm', 'w-full')}
-          disabled={savingSettings || !settingsDirty}
-          onclick={saveSettings}
-        >
-          {#if savingSettings}
-            <LoaderCircle class="size-3.5 animate-spin" />
-          {:else}
-            <Save class="size-3.5" />
-          {/if}
-          {getMessage('save')}
-        </button>
-        <button
-          type="button"
-          class={buttonClass('outline', 'sm', 'w-full bg-background')}
-          disabled={testingConnection}
-          onclick={testConnection}
-        >
-          {#if testingConnection}
-            <LoaderCircle class="size-3.5 animate-spin" />
-          {:else}
-            <PlugZap class="size-3.5" />
-          {/if}
-          {getMessage('test')}
-        </button>
+      <div data-slot="field" class={fieldClass('gap-1.5')}>
+        <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')} for="base-url">
+          <ExternalLink class="size-3" />
+          {getMessage('gatewayUrl')}
+        </label>
+        <input
+          id="base-url"
+          type="url"
+          class={inputClass()}
+          spellcheck={false}
+          placeholder="http://127.0.0.1:8042"
+          bind:value={draftSettings.baseUrl}
+          oninput={markSettingsDirty}
+        />
       </div>
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>
+
+      <div data-slot="field" class={fieldClass('gap-1.5')}>
+        <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')} for="token">
+          <KeyRound class="size-3" />
+          {getMessage('bearerToken')}
+        </label>
+        <input
+          id="token"
+          type="text"
+          class={inputClass()}
+          spellcheck={false}
+          placeholder={getMessage('tokenPlaceholder')}
+          bind:value={draftSettings.token}
+          oninput={markSettingsDirty}
+        />
+      </div>
+
+      <div data-slot="field" class={fieldClass('gap-1.5')}>
+        <div class="flex items-center justify-between gap-2">
+          <label
+            class={fieldLabelClass('min-w-0 text-xs font-bold text-muted-foreground')}
+            for="active-model"
+          >
+            <BrainCircuit class="size-3" />
+            <span class="truncate">{getMessage('activeModel')}</span>
+          </label>
+        </div>
+        <div class="grid grid-cols-[1fr_auto] items-center gap-2">
+          <DropdownMenu
+            id="active-model"
+            class="h-8"
+            items={modelNames.length > 0
+              ? modelNames.map((modelName) => ({ value: modelName, label: modelName }))
+              : [{ value: '', label: getMessage('modelListEmpty') }]}
+            value={activeModel}
+            disabled={!canChangeModel}
+            onSelect={(model) => void switchActiveModel(model)}
+            ariaLabel={getMessage('activeModel')}
+          />
+          <button
+            type="button"
+            class={buttonClass('ghost')}
+            disabled={!andaClient.settings.token || loadingModels || switchingModel}
+            aria-label={getMessage('refreshModels')}
+            title={getMessage('refreshModels')}
+            onclick={refreshModels}
+          >
+            <RefreshCw
+              class={`size-4 ${loadingModels || switchingModel ? 'animate-spin text-emerald-700' : ''}`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div data-slot="field" class={fieldClass('gap-1.5')}>
+        <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
+          <Monitor class="size-3" />
+          {getMessage('appearanceTheme')}
+        </label>
+        <div
+          class="grid grid-cols-3 gap-1 rounded-md border bg-muted/45 p-1"
+          role="radiogroup"
+          aria-label={getMessage('appearanceTheme')}
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={draftSettings.appearanceTheme === 'light'}
+            class={buttonClass('ghost', 'default', appearanceThemeButtonClass('light'))}
+            disabled={savingAppearanceTheme}
+            onclick={() => updateAppearanceTheme('light')}
+          >
+            <Sun class="size-3.5 shrink-0" />
+            <span class="min-w-0 truncate">{getMessage('appearanceLight')}</span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={draftSettings.appearanceTheme === 'dark'}
+            class={buttonClass('ghost', 'default', appearanceThemeButtonClass('dark'))}
+            disabled={savingAppearanceTheme}
+            onclick={() => updateAppearanceTheme('dark')}
+          >
+            <Moon class="size-3.5 shrink-0" />
+            <span class="min-w-0 truncate">{getMessage('appearanceDark')}</span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={draftSettings.appearanceTheme === 'system'}
+            class={buttonClass('ghost', 'default', appearanceThemeButtonClass('system'))}
+            disabled={savingAppearanceTheme}
+            onclick={() => updateAppearanceTheme('system')}
+          >
+            <Monitor class="size-3.5 shrink-0" />
+            <span class="min-w-0 truncate">{getMessage('appearanceSystem')}</span>
+          </button>
+        </div>
+      </div>
+
+      <div data-slot="field" class={fieldClass('gap-1.5')}>
+        <label class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>
+          <Keyboard class="size-3" />
+          {getMessage('enterKeyBehavior')}
+        </label>
+        <div
+          class="grid grid-cols-2 gap-1 rounded-md border bg-muted/45 p-1"
+          role="radiogroup"
+          aria-label={getMessage('enterKeyBehavior')}
+        >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={draftSettings.submitKeyMode === 'enter'}
+            class={buttonClass('ghost', 'default', submitKeyModeButtonClass('enter'))}
+            onclick={() => updateSubmitKeyMode('enter')}
+          >
+            <span class="grid min-w-0 gap-0.5">
+              <span class="block truncate text-xs font-bold">
+                {getMessage('enterSendsMessage')}
+              </span>
+              <span class="block truncate text-[10px] font-semibold opacity-70">
+                {getMessage('shiftEnterNewLine')}
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={draftSettings.submitKeyMode === 'modifier-enter'}
+            class={buttonClass('ghost', 'default', submitKeyModeButtonClass('modifier-enter'))}
+            onclick={() => updateSubmitKeyMode('modifier-enter')}
+          >
+            <span class="grid min-w-0 gap-0.5">
+              <span class="block truncate text-xs font-bold">
+                {getMessage('modifierEnterSendsMessage')}
+              </span>
+              <span class="block truncate text-[10px] font-semibold opacity-70">
+                {getMessage('enterNewLineModifierSends')}
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</Modal>

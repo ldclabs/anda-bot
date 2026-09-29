@@ -1289,6 +1289,9 @@
   "memorySearchEmpty": {
     "message": "No usable memory was returned."
   },
+  "memoryShowResults": {
+    "message": "Show results"
+  },
   "memorySearchCoverage": {
     "message": "Full result, coverage and warnings"
   },

@@ -1289,6 +1289,9 @@
   "memorySearchEmpty": {
     "message": "Aucune mémoire exploitable retournée."
   },
+  "memoryShowResults": {
+    "message": "Afficher les résultats"
+  },
   "memorySearchCoverage": {
     "message": "Résultat complet, couverture et avertissements"
   },

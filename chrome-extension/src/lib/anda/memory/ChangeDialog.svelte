@@ -9,6 +9,7 @@
     type ChangeKind,
     type ChangeView
   } from './api'
+  import Modal from '../Modal.svelte'
   import { buttonClass, textareaClass } from '../ui'
   import { getMessage } from '$lib/i18n'
 
@@ -63,7 +64,7 @@
     }
   }
   const isSuppression = $derived(kind === 'suppress')
-  let dialog: HTMLDialogElement
+  let open = $state(true)
   let text = $state('')
   let input = $state<ChangeInput | null>(null)
   let view = $state<ChangeView | null>(null)
@@ -192,7 +193,7 @@
       localStorage.removeItem(storageKey)
       if (!disposed) {
         onchanged()
-        dialog.close()
+        open = false
       }
     } catch (e) {
       if (!disposed) error = String(e)
@@ -202,7 +203,6 @@
   }
   onMount(() => {
     text = record?.object_label || ''
-    dialog.showModal()
     if (restored) {
       try {
         const saved = JSON.parse(localStorage.getItem(storageKey) || '{}')
@@ -225,149 +225,147 @@
   })
 </script>
 
-<dialog
-  bind:this={dialog}
-  {onclose}
-  class="m-auto w-[calc(100%_-_2rem)] max-w-lg rounded-lg border border-border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/40"
-  aria-labelledby="memory-change-title"
->
-  <div class="max-h-[85vh] overflow-y-auto p-5 sm:p-6">
-    <h2 id="memory-change-title" class="text-lg font-semibold">
-      {getMessage(
-        isCorrection ? 'memoryCorrect' : isSuppression ? 'memorySuppress' : 'memoryDelete'
-      )}
-    </h2>
-    {#if view?.state === 'confirmed'}
-      <p role="status" class="mt-4 text-sm">{getMessage('memoryChangeConfirmed')}</p>
-      {#if view.memory?.erasure}<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-          {erasureLabel(view.memory.erasure.status)}
-          <span class="mt-1 block break-words">{view.memory.erasure.summary}</span>
-        </p>{/if}
-      {#if view.kind === 'correct' && view.replacement_record && view.before}<button
-          class={buttonClass('outline', 'sm', 'mt-4')}
-          disabled={busy}
-          onclick={undo}>{getMessage('memoryUndoPreview')}</button
-        >{/if}
-    {:else if view?.state === 'discarded'}
-      <p role="status" class="mt-4 text-sm">{getMessage('memoryChangeDiscarded')}</p>
+{#snippet actions()}
+  <button class={buttonClass('outline', 'sm')} onclick={() => (open = false)}
+    >{getMessage('memoryClose')}</button
+  >
+  {#if input && !unknown && (!view || view.state === 'prepared')}<button
+      class={buttonClass('ghost', 'sm')}
+      disabled={busy}
+      onclick={discard}>{getMessage('memoryDiscardDraft')}</button
+    >{/if}
+  {#if view?.state !== 'confirmed' && view?.state !== 'discarded'}
+    {#if unknown || (view && view.state !== 'prepared') || (restored && !view)}
+      <button class={buttonClass('default', 'sm')} disabled={busy || !input} onclick={check}
+        >{getMessage('memoryCheckResult')}</button
+      >
     {:else if view}
-      {#if view.before}<p class="mt-4 whitespace-pre-wrap break-words text-sm">
-          {view.before.object_label}
-        </p>{/if}
-      {#if view.new_value}<p
-          class="mt-3 whitespace-pre-wrap break-words rounded-md bg-muted/50 p-3 text-sm"
-        >
-          → {view.new_value}
-        </p>{/if}
-      <details class="mt-4 text-sm">
-        <summary class="cursor-pointer"
-          >{getMessage('memoryChangeAffected', String(view.targets.length))}</summary
-        >
-        <ul class="mt-2 list-inside list-disc space-y-2">
-          {#each view.affected_records || [] as affected (affected.id)}<li class="break-words">
-              {affected.text}
-            </li>{/each}
-        </ul>
-        <p class="mt-2 break-all text-xs text-muted-foreground">{view.targets.join(', ')}</p>
-      </details>
-      <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-        {getMessage(isSuppression ? 'memorySuppressScope' : 'memoryChangeScope')}
-      </p>
-      {#if view.state === 'failed' || view.state === 'blocked'}<p
-          role="alert"
-          class="mt-4 text-sm text-destructive"
-        >
-          {view.state === 'blocked' ? erasureLabel('blocked') : getMessage('memoryChangeFailed')}
-        </p>
-      {:else if view.state !== 'prepared'}<p role="status" class="mt-4 text-sm">
-          {getMessage('memoryChangePending')}
-        </p>{/if}
-    {:else if !restored}
-      <p class="mt-4 whitespace-pre-wrap break-words text-sm">
-        {record?.object_label || input?.record_id}
-      </p>
-      {#if isCorrection}
-        <fieldset class="mt-4 text-sm" disabled={busy || !!input}>
-          <legend class="font-medium">{getMessage('memoryReviseKind')}</legend>
-          {#each revisionKinds as option (option)}<label class="mt-2 flex items-start gap-2"
-              ><input
-                type="radio"
-                name="memory-revise-kind"
-                value={option}
-                checked={kind === option}
-                onchange={() => {
-                  kind = option
-                  text = option === 'misrecorded' ? '' : record?.object_label || ''
-                }}
-              /><span
-                >{kindLabel(option)}<span class="block text-xs text-muted-foreground"
-                  >{kindHint(option)}</span
-                ></span
-              ></label
-            >{/each}
-        </fieldset>
-        <label class="mt-4 block text-sm"
-          >{getMessage(needsValue ? 'memoryNewValue' : 'memoryMisrecordedValue')}<textarea
-            class={textareaClass('mt-2 min-h-24')}
-            bind:value={text}
-            disabled={busy || !!input}></textarea></label
-        >
-      {/if}
-      <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-        {getMessage('memoryReviewHint')}
-      </p>
+      <button
+        class={buttonClass(kind === 'delete' ? 'destructive' : 'default', 'sm')}
+        disabled={busy || !!view.error || Date.now() > view.expires_at}
+        onclick={confirm}
+        >{getMessage(
+          isCorrection
+            ? 'memoryConfirmCorrection'
+            : isSuppression
+              ? 'memoryConfirmSuppress'
+              : 'memoryConfirmDelete'
+        )}</button
+      >
+    {:else}
+      <button
+        class={buttonClass('default', 'sm')}
+        disabled={busy || (needsValue && (!text.trim() || text === record?.object_label))}
+        onclick={prepare}>{getMessage('memoryReviewChange')}</button
+      >
     {/if}
-    {#if error}<p role="alert" class="mt-4 break-words text-sm text-destructive">{error}</p>{/if}
-    {#if view?.state === 'prepared' && view.error}<p
+  {/if}
+{/snippet}
+
+<Modal
+  bind:open
+  onOpenChangeComplete={(value) => {
+    if (!value) onclose()
+  }}
+  title={getMessage(
+    isCorrection ? 'memoryCorrect' : isSuppression ? 'memorySuppress' : 'memoryDelete'
+  )}
+  contentClass="sm:max-w-lg"
+  footer={actions}
+>
+  {#if view?.state === 'confirmed'}
+    <p role="status" class="mt-4 text-sm">{getMessage('memoryChangeConfirmed')}</p>
+    {#if view.memory?.erasure}<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+        {erasureLabel(view.memory.erasure.status)}
+        <span class="mt-1 block break-words">{view.memory.erasure.summary}</span>
+      </p>{/if}
+    {#if view.kind === 'correct' && view.replacement_record && view.before}<button
+        class={buttonClass('outline', 'sm', 'mt-4')}
+        disabled={busy}
+        onclick={undo}>{getMessage('memoryUndoPreview')}</button
+      >{/if}
+  {:else if view?.state === 'discarded'}
+    <p role="status" class="mt-4 text-sm">{getMessage('memoryChangeDiscarded')}</p>
+  {:else if view}
+    {#if view.before}<p class="mt-4 text-sm break-words whitespace-pre-wrap">
+        {view.before.object_label}
+      </p>{/if}
+    {#if view.new_value}<p
+        class="mt-3 rounded-md bg-muted/50 p-3 text-sm break-words whitespace-pre-wrap"
+      >
+        → {view.new_value}
+      </p>{/if}
+    <details class="mt-4 text-sm">
+      <summary class="cursor-pointer"
+        >{getMessage('memoryChangeAffected', String(view.targets.length))}</summary
+      >
+      <ul class="mt-2 list-inside list-disc space-y-2">
+        {#each view.affected_records || [] as affected (affected.id)}<li class="break-words">
+            {affected.text}
+          </li>{/each}
+      </ul>
+      <p class="mt-2 text-xs break-all text-muted-foreground">{view.targets.join(', ')}</p>
+    </details>
+    <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+      {getMessage(isSuppression ? 'memorySuppressScope' : 'memoryChangeScope')}
+    </p>
+    {#if view.state === 'failed' || view.state === 'blocked'}<p
         role="alert"
-        class="mt-3 text-sm text-destructive"
+        class="mt-4 text-sm text-destructive"
       >
-        {getMessage('memoryChangeNeedsReview')}
+        {view.state === 'blocked' ? erasureLabel('blocked') : getMessage('memoryChangeFailed')}
+      </p>
+    {:else if view.state !== 'prepared'}<p role="status" class="mt-4 text-sm">
+        {getMessage('memoryChangePending')}
       </p>{/if}
-    {#if unknown}<p class="mt-3 text-xs text-muted-foreground">
-        {getMessage('memoryUnknownHint')}
-      </p>{/if}
-    <div class="mt-6 flex flex-wrap justify-end gap-2">
-      <button class={buttonClass('outline', 'sm')} onclick={() => dialog.close()}
-        >{getMessage('memoryClose')}</button
+  {:else if !restored}
+    <p class="mt-4 text-sm break-words whitespace-pre-wrap">
+      {record?.object_label || input?.record_id}
+    </p>
+    {#if isCorrection}
+      <fieldset class="mt-4 text-sm" disabled={busy || !!input}>
+        <legend class="font-medium">{getMessage('memoryReviseKind')}</legend>
+        {#each revisionKinds as option (option)}<label class="mt-2 flex items-start gap-2"
+            ><input
+              type="radio"
+              name="memory-revise-kind"
+              value={option}
+              checked={kind === option}
+              onchange={() => {
+                kind = option
+                text = option === 'misrecorded' ? '' : record?.object_label || ''
+              }}
+            /><span
+              >{kindLabel(option)}<span class="block text-xs text-muted-foreground"
+                >{kindHint(option)}</span
+              ></span
+            ></label
+          >{/each}
+      </fieldset>
+      <label class="mt-4 block text-sm"
+        >{getMessage(needsValue ? 'memoryNewValue' : 'memoryMisrecordedValue')}<textarea
+          class={textareaClass('mt-2 min-h-24')}
+          bind:value={text}
+          disabled={busy || !!input}></textarea></label
       >
-      {#if input && !unknown && (!view || view.state === 'prepared')}<button
-          class={buttonClass('ghost', 'sm')}
-          disabled={busy}
-          onclick={discard}>{getMessage('memoryDiscardDraft')}</button
-        >{/if}
-      {#if view?.state !== 'confirmed' && view?.state !== 'discarded'}
-        {#if unknown || (view && view.state !== 'prepared') || (restored && !view)}
-          <button class={buttonClass('default', 'sm')} disabled={busy || !input} onclick={check}
-            >{getMessage('memoryCheckResult')}</button
-          >
-        {:else if view}
-          <button
-            class={buttonClass(kind === 'delete' ? 'destructive' : 'default', 'sm')}
-            disabled={busy || !!view.error || Date.now() > view.expires_at}
-            onclick={confirm}
-            >{getMessage(
-              isCorrection
-                ? 'memoryConfirmCorrection'
-                : isSuppression
-                  ? 'memoryConfirmSuppress'
-                  : 'memoryConfirmDelete'
-            )}</button
-          >
-        {:else}
-          <button
-            class={buttonClass('default', 'sm')}
-            disabled={busy ||
-              (needsValue && (!text.trim() || text === record?.object_label))}
-            onclick={prepare}>{getMessage('memoryReviewChange')}</button
-          >
-        {/if}
-      {/if}
-    </div>
-    {#if input && view?.state !== 'confirmed' && view?.state !== 'discarded'}<p
-        class="mt-4 text-xs leading-relaxed text-muted-foreground"
-      >
-        {getMessage('memoryDraftStored')}
-      </p>{/if}
-  </div>
-</dialog>
+    {/if}
+    <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+      {getMessage('memoryReviewHint')}
+    </p>
+  {/if}
+  {#if error}<p role="alert" class="mt-4 text-sm break-words text-destructive">{error}</p>{/if}
+  {#if view?.state === 'prepared' && view.error}<p
+      role="alert"
+      class="mt-3 text-sm text-destructive"
+    >
+      {getMessage('memoryChangeNeedsReview')}
+    </p>{/if}
+  {#if unknown}<p class="mt-3 text-xs text-muted-foreground">
+      {getMessage('memoryUnknownHint')}
+    </p>{/if}
+  {#if input && view?.state !== 'confirmed' && view?.state !== 'discarded'}<p
+      class="mt-4 text-xs leading-relaxed text-muted-foreground"
+    >
+      {getMessage('memoryDraftStored')}
+    </p>{/if}
+</Modal>

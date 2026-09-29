@@ -1289,6 +1289,9 @@
   "memorySearchEmpty": {
     "message": "没有返回可用记忆。"
   },
+  "memoryShowResults": {
+    "message": "查看结果"
+  },
   "memorySearchCoverage": {
     "message": "完整结果、覆盖范围与警告"
   },

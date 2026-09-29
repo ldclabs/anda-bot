@@ -1289,6 +1289,9 @@
   "memorySearchEmpty": {
     "message": "Доступная память не найдена."
   },
+  "memoryShowResults": {
+    "message": "Показать результаты"
+  },
   "memorySearchCoverage": {
     "message": "Полный результат, охват и предупреждения"
   },

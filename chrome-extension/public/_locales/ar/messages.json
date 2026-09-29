@@ -1289,6 +1289,9 @@
   "memorySearchEmpty": {
     "message": "لم تُرجع ذاكرة قابلة للاستخدام."
   },
+  "memoryShowResults": {
+    "message": "عرض النتائج"
+  },
   "memorySearchCoverage": {
     "message": "النتيجة الكاملة والتغطية والتنبيهات"
   },
