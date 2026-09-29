@@ -310,6 +310,34 @@ impl Client {
         single_kip_result(rt)
     }
 
+    /// The Concept the Space designates as its `$self` (KIP 2.0 §5.6). The
+    /// Primer names it by id only, so its identity and core memory are read
+    /// by that id. `{}` when the Space has designated none or cannot see it.
+    pub async fn self_knowledge(&self) -> Result<Json, BoxError> {
+        let primer = self.describe_primer().await?;
+        let Some(id) = primer
+            .pointer("/cognitive_identity/self_concept/id")
+            .and_then(Json::as_str)
+        else {
+            return Ok(json!({}));
+        };
+        let mut request = KipRequest::single(
+            "FIND(?self.id, ?self.key, ?self.name, ?self.attributes) WHERE {?self CONCEPT {id: :id}} LIMIT 1",
+        );
+        request.parameters = Some(serde_json::Map::from_iter([("id".into(), id.into())]));
+        let result = single_kip_result(self.execute_kip_readonly(request).await?)?;
+        let row = result
+            .as_array()
+            .and_then(|rows| rows.first())
+            .and_then(Json::as_array);
+        Ok(match row.map(Vec::as_slice) {
+            Some([id, key, name, attributes]) => {
+                json!({"id": id, "key": key, "name": name, "attributes": attributes})
+            }
+            _ => json!({}),
+        })
+    }
+
     pub async fn execute_kip_readonly(&self, request: KipRequest) -> Result<KipResponse, BoxError> {
         self.post("/execute_kip_readonly", &super::http_kip_args(request)?)
             .await
@@ -955,6 +983,54 @@ mod tests {
         let client = Client::new(base_url, None);
         let err = client.describe_primer().await.map(|_| ()).unwrap_err();
         assert!(err.to_string().contains("nexus unavailable"));
+    }
+
+    #[tokio::test]
+    async fn self_knowledge_reads_the_designated_self_concept_by_id() {
+        async fn serve(primer: Value, rows: Value) -> Client {
+            let app = Router::new().route(
+                "/v1/anda_bot/execute_kip_readonly",
+                routing::post(move |axum::Json(body): axum::Json<Value>| {
+                    let (primer, rows) = (primer.clone(), rows.clone());
+                    async move {
+                        let command = body["operations"][0]["command"].as_str().unwrap();
+                        let result = if command == "DESCRIBE PRIMER" {
+                            primer
+                        } else {
+                            assert!(command.contains("{id: :id}"), "{command}");
+                            assert_eq!(body["parameters"]["id"], "C-21");
+                            rows
+                        };
+                        axum::Json(serde_json::to_value(KipResponse::ok(result)).unwrap())
+                    }
+                }),
+            );
+            Client::new(spawn_brain_mock(app).await, None)
+        }
+
+        let designated = json!({"cognitive_identity": {
+            "self_concept": {"id": "C-21"},
+            "note": "protected Space configuration; ordinary KML cannot create or change it (§5.6)"
+        }});
+        let client = serve(
+            designated.clone(),
+            json!([["C-21", "$self", "$self", {"handle": "安达", "core_mission": "grow"}]]),
+        )
+        .await;
+        assert_eq!(
+            client.self_knowledge().await.unwrap(),
+            json!({"id": "C-21", "key": "$self", "name": "$self", "attributes": {"handle": "安达", "core_mission": "grow"}})
+        );
+
+        // Designated but not visible, and never designated: nothing to render.
+        let client = serve(designated, json!([])).await;
+        assert_eq!(client.self_knowledge().await.unwrap(), json!({}));
+        let client = serve(
+            json!({"cognitive_identity": {"self_concept": null}}),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(client.self_knowledge().await.unwrap(), json!({}));
     }
 
     #[tokio::test]

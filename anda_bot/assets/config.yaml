@@ -39,32 +39,21 @@ log_level: warn
 #     pubkey: ""
 
 model:
-  active: "deepseek-v4-pro"
+  active: "deepseek-flash"
   providers:
     - family: anthropic
-      model: "deepseek-v4-pro"
+      model: "deepseek-flash"
       api_base: "https://api.deepseek.com/anthropic"
       api_key: ""
-      effort: high
+      effort: max
       context_window: 400000
       max_output: 384000
-      labels: ["memory"]
-      stream: true
-      disabled: false
-
-    - family: anthropic
-      model: "MiniMax-M3"
-      api_base: "https://api.minimaxi.com/anthropic/v1"
-      api_key: ""
-      effort: high
-      context_window: 400000
-      max_output: 130000
-      labels: ["flash", "memory", "image", "video"]
+      labels: ["memory", "image"]
       stream: true
       disabled: false
 
     - family: openai
-      model: "gpt-5.5"
+      model: "gpt-6.1-sol"
       api_base: "https://chatgpt.com/backend-api/codex"
       api_key: ""
       effort: high
@@ -75,18 +64,18 @@ model:
       disabled: false
 
     - family: openai
-      model: "gpt-5.4"
+      model: "gpt-6-luna"
       api_base: "https://api.openai.com/v1"
       api_key: ""
       effort: high
       context_window: 400000
       max_output: 128000
-      labels: ["flash", "memory", "image", "audio", "video"]
+      labels: ["flash", "image", "audio", "video"]
       stream: true
       disabled: false
 
     - family: anthropic
-      model: "claude-opus-4-7"
+      model: "claude-opus-5-5"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
       effort: high
@@ -97,12 +86,13 @@ model:
       disabled: false
 
     - family: anthropic
-      model: "claude-haiku-4-5"
+      model: "claude-sonnet-5-5"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
+      effort: high
       context_window: 200000
       max_output: 64000
-      labels: ["flash", "memory"]
+      labels: ["flash"]
       stream: true
       disabled: false
 

@@ -109,8 +109,8 @@ impl AndaBot {
         } else {
             None
         };
-        let primer = if policy.may_read() {
-            crate::util::boxed(self.inner.brain.describe_primer()).await?
+        let self_knowledge = if policy.may_read() {
+            crate::util::boxed(self.inner.brain.self_knowledge()).await?
         } else {
             serde_json::json!({})
         };
@@ -122,8 +122,7 @@ impl AndaBot {
             serde_json::json!({})
         };
         let local_date = format_local_date(now_ms);
-        let self_knowledge =
-            serde_json::to_string(primer.get("cognitive_identity").unwrap_or(&primer))?;
+        let self_knowledge = serde_json::to_string(&self_knowledge)?;
         let user_profile = serde_json::to_string(&user_profile)?;
         if policy.may_read()
             && let Some(access) = &self.inner.memory_access
@@ -195,8 +194,8 @@ mod tests {
 
     #[test]
     fn system_instructions_explain_system_identity_and_tool_selection() {
-        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$system" }"#));
-        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "name": "$external_user" }"#));
+        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "key": "$system" }"#));
+        assert!(SELF_INSTRUCTIONS.contains(r#"{ "type": "Person", "key": "$external_user" }"#));
         assert!(SELF_INSTRUCTIONS.contains("external untrusted user"));
         assert!(SELF_INSTRUCTIONS.contains("Available Callable Names"));
         assert!(SELF_INSTRUCTIONS.contains("tools_groups"));

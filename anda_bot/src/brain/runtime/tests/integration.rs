@@ -497,6 +497,47 @@ async fn unconfigured_routes_are_present_and_never_anonymous_runtime() {
 }
 
 #[tokio::test]
+async fn self_knowledge_reads_the_concept_the_space_designates_as_self() {
+    let keys = [Ed25519Key::new([62; 32])];
+    let config = runtime_config(&keys, None);
+    let brain = create(Arc::new(InMemory::new()), &keys, Some(config)).await;
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let url = crate::test_support::spawn_http_mock(brain.into_router()).await;
+    let client = Client::new(format!("{url}/v1/anda_bot"), Some(token(&keys[0])));
+    // A fresh Space has no `$self` Person, so it designates none.
+    assert_eq!(client.self_knowledge().await.unwrap(), json!({}));
+
+    // The Primer names the designated `$self` by id only (KIP 2.0 §5.6); the
+    // identity and core memory are that Concept's own attributes.
+    let created = command(
+        &space,
+        r#"MUTATE { CREATE CONCEPT ?me {TYPE "Person" NAME "$self" SET FIELDS {key: "$self"} SET ATTRIBUTES {handle: "Anda", core_mission: "Grow with every conversation"}} }"#,
+        json!({}),
+    )
+    .await;
+    let id = created["handles"]["me"].as_str().unwrap().to_string();
+    space
+        .memory_runtime()
+        .unwrap()
+        .nexus()
+        .system_session()
+        .designate_self(
+            anda_cognitive_nexus::nexus::DEFAULT_SPACE,
+            Some(id.parse().unwrap()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        client.self_knowledge().await.unwrap(),
+        json!({"id": id, "key": "$self", "name": "$self", "attributes": {
+            "handle": "Anda",
+            "core_mission": "Grow with every conversation"
+        }})
+    );
+    space.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn startup_rejects_unsupported_channel_adapters_and_missing_secrets() {
     let keys = [
         Ed25519Key::new([71; 32]),
