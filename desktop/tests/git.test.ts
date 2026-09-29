@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest'
 import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -23,7 +23,7 @@ async function fixture() {
   await git(['config', 'user.email', 'test@localhost'])
   const service = new GitService(join(home, 'desktop'), async (path) => {
     const resolved = await realpath(path)
-    if (!resolved.startsWith(`${home}/`)) throw new Error('Not authorized')
+    if (!resolved.startsWith(`${home}${sep}`)) throw new Error('Not authorized')
     return resolved
   })
   return { root, git, service }

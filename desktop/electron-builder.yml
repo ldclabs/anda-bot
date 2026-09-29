@@ -37,7 +37,8 @@ mac:
     NSMicrophoneUsageDescription: Anda uses the microphone only when you record a voice message.
     NSAppleEventsUsageDescription: Anda opens files and folders you choose.
 win:
-  icon: ../anda_bot/assets/logo.png
+  # electron-builder rejects a PNG under 256x256 when it builds the .ico.
+  icon: ../anda_bot/assets/logo256.png
   target: [nsis]
 nsis:
   oneClick: false

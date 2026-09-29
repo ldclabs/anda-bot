@@ -1034,13 +1034,20 @@ mod tests {
         let token = user_key.sign_cwt(claims).unwrap();
         let user_pubkey = user_key.pubkey();
 
-        let serve_handle = tokio::spawn(daemon.serve(id_key, user_pubkey));
+        let mut serve_handle = tokio::spawn(daemon.serve(id_key, user_pubkey));
 
         let client = crate::gateway::Client::new(base_url, token);
-        client
-            .wait_for_daemon_ready(Duration::from_secs(20))
-            .await
-            .unwrap();
+        // The gateway binds only after the Brain space and every engine are
+        // built on this fresh home: under a second on a dev machine, ~9s on a
+        // Windows CI runner that also stalls for seconds at a time. Startup
+        // speed is not under test, so the cap only tells slow from dead, and a
+        // daemon that dies early is reported as itself, not as a timeout.
+        tokio::select! {
+            ready = client.wait_for_daemon_ready(Duration::from_secs(120)) => ready.unwrap(),
+            exited = &mut serve_handle => {
+                panic!("daemon exited before it became ready: {exited:?}")
+            }
+        }
         client.shutdown().await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(5), serve_handle)

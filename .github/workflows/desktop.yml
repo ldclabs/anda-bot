@@ -1,5 +1,7 @@
-# Checks the desktop app and the Chrome extension on macOS and Windows.
-# Signed release packages are built by release.yml.
+# Checks the desktop app and the Chrome extension on macOS and Windows, and
+# packages the desktop around a fast, unoptimized `anda` to exercise the
+# installer. The Rust tests run in test.yml; signed release packages are built
+# by release.yml.
 name: Desktop
 on:
   push:
@@ -31,6 +33,11 @@ permissions:
 concurrency:
   group: desktop-${{ github.ref }}
   cancel-in-progress: true
+defaults:
+  run:
+    # Windows defaults to pwsh, where only the last command of a multi-line
+    # step decides its exit code, so an earlier failing check would pass.
+    shell: bash
 jobs:
   build:
     strategy:
@@ -38,8 +45,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      RUST_MIN_STACK: "16777216"
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -48,28 +54,43 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: "11.7.0"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: protoc@3.23.4
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Type and contract checks
+      # Only the two projects exercised here: docsite and website are most of
+      # the workspace's packages.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "./desktop..." --filter "./chrome-extension..."
+      - name: Type and unit checks
         run: |
           pnpm --dir desktop check
           pnpm --dir desktop test
           pnpm --dir chrome-extension check
           pnpm --dir chrome-extension test
           pnpm --dir chrome-extension i18n
-          cargo test -p anda_bot app_protocol --bin anda
-          cargo test -p anda_bot runtime_admission --bin anda
       - name: Build and exercise Electron
         run: |
           pnpm --dir desktop build
           pnpm --dir desktop test:e2e
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: protoc@3.23.4
+      - uses: dtolnay/rust-toolchain@stable
+      # `shared-key: test` is the key test.yml's job derives from its id, so this
+      # restores the cache of its `--profile ci` build, which already compiled
+      # every dependency of `anda`. Keep this setup identical to test.yml's.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          cache-on-failure: true
+      # The packaging checks only run `anda --version`, so an unoptimized build
+      # is enough; the release profile's fat LTO alone took over half an hour.
+      # release.yml bundles the real release binary.
+      - name: Build the bundled runtime
+        run: cargo build --locked -p anda_bot --bin anda --profile ci
       - name: Build local installer
-        run: pnpm --dir desktop package
+        env:
+          ANDA_DESKTOP_RUNTIME: ${{ github.workspace }}/target/ci/anda${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          node desktop/scripts/prepare-runtime.mjs
+          pnpm --dir desktop exec electron-builder --publish never
       - name: Windows install and uninstall smoke
         if: runner.os == 'Windows'
         shell: pwsh
@@ -78,6 +99,4 @@ jobs:
         if: always()
         with:
           name: desktop-${{ runner.os }}
-          path: |
-            desktop/release/*.*
-            desktop/test-results/
+          path: desktop/test-results/
