@@ -29,8 +29,6 @@ const rpcMethods = new Set([
   'register_workspace',
   'agent_run',
   'tool_call',
-  'brain_status',
-  'brain_kip_readonly',
   'brain_attention',
   'brain_respond',
   'brain_runtime_status',

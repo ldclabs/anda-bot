@@ -509,9 +509,6 @@
   "refresh": {
     "message": "刷新"
   },
-  "search": {
-    "message": "搜索"
-  },
   "clearSearch": {
     "message": "清除搜索"
   },
@@ -520,129 +517,6 @@
   },
   "loading": {
     "message": "加载中"
-  },
-  "brainPageTitle": {
-    "message": "Anda 记忆图谱"
-  },
-  "brainStatusIdle": {
-    "message": "空闲"
-  },
-  "brainStatusSettingsUnavailable": {
-    "message": "设置不可用"
-  },
-  "brainStatusLoadingGraph": {
-    "message": "正在加载图谱"
-  },
-  "brainStatusOverviewNodes": {
-    "message": "概览 $1 个节点"
-  },
-  "brainStatusLoadFailed": {
-    "message": "加载失败"
-  },
-  "brainStatusSearching": {
-    "message": "正在搜索"
-  },
-  "brainStatusSearchResults": {
-    "message": "$1 条搜索结果"
-  },
-  "brainStatusSearchFailed": {
-    "message": "搜索失败"
-  },
-  "brainStatusRunningKip": {
-    "message": "正在执行 KIP"
-  },
-  "brainStatusKipComplete": {
-    "message": "KIP 执行完成"
-  },
-  "brainStatusKipFailed": {
-    "message": "KIP 执行失败"
-  },
-  "brainClipboardUnavailable": {
-    "message": "剪贴板不可用"
-  },
-  "brainConnection": {
-    "message": "连接"
-  },
-  "brainFieldSpace": {
-    "message": "空间"
-  },
-  "brainSearchPlaceholder": {
-    "message": "概念、类型、别名"
-  },
-  "brainPrev": {
-    "message": "上一个"
-  },
-  "brainNext": {
-    "message": "下一个"
-  },
-  "brainLoadedNodes": {
-    "message": "已加载节点"
-  },
-  "brainLoadedLinks": {
-    "message": "已加载链接"
-  },
-  "brainVisibleNodes": {
-    "message": "可见节点"
-  },
-  "brainVisibleLinks": {
-    "message": "可见链接"
-  },
-  "brainTotalConcepts": {
-    "message": "概念总数 $1"
-  },
-  "brainTotalProps": {
-    "message": "命题总数 $1"
-  },
-  "brainZoomIn": {
-    "message": "放大"
-  },
-  "brainZoomOut": {
-    "message": "缩小"
-  },
-  "brainFitView": {
-    "message": "适应视图"
-  },
-  "brainFocusSelected": {
-    "message": "聚焦所选"
-  },
-  "brainInspector": {
-    "message": "检查器"
-  },
-  "brainCopyJson": {
-    "message": "复制 JSON"
-  },
-  "brainCopiedJson": {
-    "message": "已复制 JSON"
-  },
-  "brainCloseInspector": {
-    "message": "关闭检查器"
-  },
-  "brainAttributes": {
-    "message": "属性"
-  },
-  "brainMetadata": {
-    "message": "元数据"
-  },
-  "brainProposition": {
-    "message": "命题"
-  },
-  "brainVirtual": {
-    "message": "虚拟"
-  },
-  "brainSubject": {
-    "message": "主语 $1"
-  },
-  "brainObject": {
-    "message": "宾语 $1"
-  },
-  "brainHide": {
-    "message": "收起"
-  },
-  "brainShow": {
-    "message": "展开"
-  },
-  "brainRunReadonly": {
-    "message": "只读执行"
   },
   "configSectionRuntime": {
     "message": "运行时"
@@ -887,84 +761,6 @@
   "loadMore": {
     "message": "加载更多"
   },
-  "brainAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneFocus": {
-    "message": "聚焦"
-  },
-  "brainScenePath": {
-    "message": "路径"
-  },
-  "brainAtlasClusters": {
-    "message": "Atlas 分组"
-  },
-  "brainFrequentHubs": {
-    "message": "高频入口"
-  },
-  "brainRecentMemories": {
-    "message": "最近记忆"
-  },
-  "brainVisibleSummary": {
-    "message": "$1 个节点，$2 条关系"
-  },
-  "brainBreadcrumb": {
-    "message": "记忆面包屑"
-  },
-  "brainBudgetHidden": {
-    "message": "已汇总 $1 个节点和 $2 条关系"
-  },
-  "brainShowMoreRelated": {
-    "message": "显示更多相关记忆"
-  },
-  "brainShowMoreRelatedWithCount": {
-    "message": "显示更多相关记忆（还有 $1 条）"
-  },
-  "brainPin": {
-    "message": "Pin"
-  },
-  "brainUnpin": {
-    "message": "取消 Pin"
-  },
-  "brainRelatedMemories": {
-    "message": "相关记忆"
-  },
-  "brainSummaryNode": {
-    "message": "汇总"
-  },
-  "brainRelatedCount": {
-    "message": "$1 条相关记忆"
-  },
-  "brainAtlasSummary": {
-    "message": "搜索或选择入口即可聚焦图谱。Atlas 会控制画布规模，把细节放到列表中。"
-  },
-  "brainPath": {
-    "message": "路径"
-  },
-  "brainClearPins": {
-    "message": "清空 Pin"
-  },
-  "brainViewPinnedPath": {
-    "message": "查看它们的关系"
-  },
-  "brainNoPins": {
-    "message": "Pin 记忆后可以比较它们之间的关系。"
-  },
-  "brainAdvanced": {
-    "message": "高级"
-  },
-  "brainMoreInGroup": {
-    "message": "本组还有 $1 条"
-  },
-  "brainMoreType": {
-    "message": "更多 $1"
-  },
-  "brainPinnedMemories": {
-    "message": "已 Pin 记忆"
-  },
   "dashboardSkillsDetail": {
     "message": "个人工作流"
   },
@@ -1157,9 +953,6 @@
   "brainPageCompleteHint": {
     "message": "分页结束不表示待办已完成。"
   },
-  "brainBackToGraph": {
-    "message": "返回图谱"
-  },
   "memoryTitle": {
     "message": "记忆"
   },
@@ -1186,9 +979,6 @@
   },
   "memoryEvidenceHint": {
     "message": "对话整理完成，不代表每条事实都已保存。"
-  },
-  "memoryExplore": {
-    "message": "探索关系"
   },
   "memoryConversation": {
     "message": "对话"

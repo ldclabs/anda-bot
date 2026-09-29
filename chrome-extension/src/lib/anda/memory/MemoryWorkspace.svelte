@@ -1,6 +1,5 @@
 <script lang="ts">
   import { storeClientState } from '$lib/anda/client/platform'
-  const loadBrainApp = () => import('../../../BrainApp.svelte')
   import { createBookmarkJumpRequest, bookmarkJumpRequestStorageKey } from '../bookmark-jump'
   import { openAndaSidePanel } from '../dashboard/side-panel'
   import Inbox from '../brain/Inbox.svelte'
@@ -9,7 +8,9 @@
   import SearchPanel from './SearchPanel.svelte'
   import { learningLabel } from './labels'
   import WatchControl from './WatchControl.svelte'
-  import { loadBrainGraphSettings, type BrainGraphSettings } from '../brain/api'
+  import { ANDA_BOT_SPACE_ID } from '../brain/api'
+  import { loadConfigSettings } from '../config/api'
+  import type { SettingsState } from '$lib/service-worker/types'
   import {
     MemoryApi,
     REVISION_KINDS,
@@ -32,8 +33,8 @@
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
-  let mode = $state<'home' | 'graph' | 'inbox'>('home')
-  let settings = $state<BrainGraphSettings | null>(null)
+  let mode = $state<'home' | 'inbox'>('home')
+  let settings = $state<SettingsState | null>(null)
   let overview = $state<Overview | null>(null)
   let activity = $state<ActivityPage | null>(null)
   let records = $state<RecordPage | null>(null)
@@ -106,7 +107,7 @@
       if (disposed || current !== generation) return
       overview = next
       changeStorageKey = next.caller
-        ? `anda-memory-change/v1/${JSON.stringify([settings.baseUrl, settings.spaceId, next.caller])}`
+        ? `anda-memory-change/v1/${JSON.stringify([settings.baseUrl, ANDA_BOT_SPACE_ID, next.caller])}`
         : ''
       try {
         hasPendingChange = !!changeStorageKey && !!localStorage.getItem(changeStorageKey)
@@ -185,7 +186,7 @@
     recordCursor = null
     activityCursor = null
     try {
-      const saved = await loadBrainGraphSettings()
+      const saved = await loadConfigSettings()
       if (disposed || current !== generation) return
       settings = saved
       await refresh()
@@ -233,7 +234,7 @@
       } else if (mode === 'home') void refresh()
     }
     const changed = (changes: Record<string, unknown>) => {
-      if (['baseUrl', 'token', 'brainSpaceId'].some((key) => key in changes)) {
+      if (['baseUrl', 'token'].some((key) => key in changes)) {
         mode = 'home'
         void bindSettings()
       }
@@ -249,7 +250,7 @@
   })
 </script>
 
-{#if mode !== 'home'}
+{#if mode === 'inbox'}
   <div class="flex h-full min-h-0 flex-col">
     <div class="border-b border-border p-3">
       <button class={buttonClass('ghost', 'sm')} onclick={() => select('home')}
@@ -257,12 +258,7 @@
       >
     </div>
     <div class="min-h-0 flex-1">
-      {#if mode === 'graph'}
-        {#await loadBrainApp()}
-          <p class="p-4">{getMessage('loading')}</p>
-        {:then module}<module.default embedded />
-        {:catch error}<p role="alert" class="p-4 text-destructive">{String(error)}</p>{/await}
-      {:else if settings}<Inbox {settings} />{/if}
+      {#if settings}<Inbox {settings} />{/if}
     </div>
   </div>
 {:else}
@@ -485,14 +481,9 @@
         </section>
       {/if}
       <section aria-label={getMessage('memoryActivity')}>
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="flex items-center gap-2 text-sm font-semibold">
-            <History class="size-4" />{getMessage('memoryActivity')}
-          </h2>
-          <button class={buttonClass('ghost', 'sm')} onclick={() => select('graph')}
-            >{getMessage('memoryExplore')}<ArrowUpRight class="size-3.5" /></button
-          >
-        </div>
+        <h2 class="flex items-center gap-2 text-sm font-semibold">
+          <History class="size-4" />{getMessage('memoryActivity')}
+        </h2>
         <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
           {getMessage('memoryEvidenceHint')}
         </p>

@@ -509,9 +509,6 @@
   "refresh": {
     "message": "Actualizar"
   },
-  "search": {
-    "message": "Buscar"
-  },
   "clearSearch": {
     "message": "Borrar búsqueda"
   },
@@ -520,129 +517,6 @@
   },
   "loading": {
     "message": "Cargando"
-  },
-  "brainPageTitle": {
-    "message": "Grafo de memoria de Anda"
-  },
-  "brainStatusIdle": {
-    "message": "Inactivo"
-  },
-  "brainStatusSettingsUnavailable": {
-    "message": "Configuración no disponible"
-  },
-  "brainStatusLoadingGraph": {
-    "message": "Cargando el grafo"
-  },
-  "brainStatusOverviewNodes": {
-    "message": "Vista general: $1 nodos"
-  },
-  "brainStatusLoadFailed": {
-    "message": "Error al cargar"
-  },
-  "brainStatusSearching": {
-    "message": "Buscando"
-  },
-  "brainStatusSearchResults": {
-    "message": "$1 resultados de búsqueda"
-  },
-  "brainStatusSearchFailed": {
-    "message": "Error en la búsqueda"
-  },
-  "brainStatusRunningKip": {
-    "message": "Ejecutando KIP"
-  },
-  "brainStatusKipComplete": {
-    "message": "KIP completado"
-  },
-  "brainStatusKipFailed": {
-    "message": "Error de KIP"
-  },
-  "brainClipboardUnavailable": {
-    "message": "El portapapeles no está disponible"
-  },
-  "brainConnection": {
-    "message": "Conexión"
-  },
-  "brainFieldSpace": {
-    "message": "Espacio"
-  },
-  "brainSearchPlaceholder": {
-    "message": "Concepto, tipo, alias"
-  },
-  "brainPrev": {
-    "message": "Anterior"
-  },
-  "brainNext": {
-    "message": "Siguiente"
-  },
-  "brainLoadedNodes": {
-    "message": "Nodos cargados"
-  },
-  "brainLoadedLinks": {
-    "message": "Enlaces cargados"
-  },
-  "brainVisibleNodes": {
-    "message": "Nodos visibles"
-  },
-  "brainVisibleLinks": {
-    "message": "Enlaces visibles"
-  },
-  "brainTotalConcepts": {
-    "message": "Conceptos totales: $1"
-  },
-  "brainTotalProps": {
-    "message": "Proposiciones totales: $1"
-  },
-  "brainZoomIn": {
-    "message": "Acercar"
-  },
-  "brainZoomOut": {
-    "message": "Alejar"
-  },
-  "brainFitView": {
-    "message": "Ajustar vista"
-  },
-  "brainFocusSelected": {
-    "message": "Enfocar selección"
-  },
-  "brainInspector": {
-    "message": "Inspector"
-  },
-  "brainCopyJson": {
-    "message": "Copiar JSON"
-  },
-  "brainCopiedJson": {
-    "message": "JSON copiado"
-  },
-  "brainCloseInspector": {
-    "message": "Cerrar inspector"
-  },
-  "brainAttributes": {
-    "message": "Atributos"
-  },
-  "brainMetadata": {
-    "message": "Metadatos"
-  },
-  "brainProposition": {
-    "message": "Proposición"
-  },
-  "brainVirtual": {
-    "message": "Virtual"
-  },
-  "brainSubject": {
-    "message": "Sujeto $1"
-  },
-  "brainObject": {
-    "message": "Objeto $1"
-  },
-  "brainHide": {
-    "message": "Ocultar"
-  },
-  "brainShow": {
-    "message": "Mostrar"
-  },
-  "brainRunReadonly": {
-    "message": "Ejecutar en solo lectura"
   },
   "configSectionRuntime": {
     "message": "Tiempo de ejecución"
@@ -887,84 +761,6 @@
   "loadMore": {
     "message": "Cargar más"
   },
-  "brainAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneFocus": {
-    "message": "Foco"
-  },
-  "brainScenePath": {
-    "message": "Ruta"
-  },
-  "brainAtlasClusters": {
-    "message": "Grupos de Atlas"
-  },
-  "brainFrequentHubs": {
-    "message": "Nodos frecuentes"
-  },
-  "brainRecentMemories": {
-    "message": "Memorias recientes"
-  },
-  "brainVisibleSummary": {
-    "message": "$1 nodos, $2 relaciones"
-  },
-  "brainBreadcrumb": {
-    "message": "Ruta de Brain"
-  },
-  "brainBudgetHidden": {
-    "message": "$1 nodos y $2 relaciones estan resumidos"
-  },
-  "brainShowMoreRelated": {
-    "message": "Mostrar mas memorias relacionadas"
-  },
-  "brainShowMoreRelatedWithCount": {
-    "message": "Mostrar mas memorias relacionadas ($1 mas)"
-  },
-  "brainPin": {
-    "message": "Fijar"
-  },
-  "brainUnpin": {
-    "message": "Quitar fijado"
-  },
-  "brainRelatedMemories": {
-    "message": "Memorias relacionadas"
-  },
-  "brainSummaryNode": {
-    "message": "Resumen"
-  },
-  "brainRelatedCount": {
-    "message": "$1 memorias relacionadas"
-  },
-  "brainAtlasSummary": {
-    "message": "Busca o elige una entrada para enfocar el grafo. Atlas mantiene el lienzo pequeno y mueve los detalles a listas."
-  },
-  "brainPath": {
-    "message": "Ruta"
-  },
-  "brainClearPins": {
-    "message": "Borrar fijados"
-  },
-  "brainViewPinnedPath": {
-    "message": "Ver su relacion"
-  },
-  "brainNoPins": {
-    "message": "Fija memorias para comparar su relacion."
-  },
-  "brainAdvanced": {
-    "message": "Avanzado"
-  },
-  "brainMoreInGroup": {
-    "message": "$1 mas en este grupo"
-  },
-  "brainMoreType": {
-    "message": "Mas $1"
-  },
-  "brainPinnedMemories": {
-    "message": "Memorias fijadas"
-  },
   "dashboardSkillsDetail": {
     "message": "Flujos de trabajo personales"
   },
@@ -1157,9 +953,6 @@
   "brainPageCompleteHint": {
     "message": "El final de una página no significa que las tareas hayan terminado."
   },
-  "brainBackToGraph": {
-    "message": "Volver al grafo"
-  },
   "memoryTitle": {
     "message": "Memoria"
   },
@@ -1186,9 +979,6 @@
   },
   "memoryEvidenceHint": {
     "message": "Una conversación procesada no demuestra que cada dato se haya guardado."
-  },
-  "memoryExplore": {
-    "message": "Explorar relaciones"
   },
   "memoryConversation": {
     "message": "Conversación"

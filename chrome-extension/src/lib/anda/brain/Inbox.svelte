@@ -3,15 +3,15 @@
   import { buttonClass, textareaClass, badgeClass } from '$lib/anda/ui'
   import {
     BrainApi,
-    type BrainGraphSettings,
     type AttentionPage,
     type RuntimeStatus,
     type AttentionResponse,
     brainPendingStorageKey
   } from './api'
+  import type { SettingsState } from '$lib/service-worker/types'
   import { onMount } from 'svelte'
 
-  let { settings }: { settings: BrainGraphSettings } = $props()
+  let { settings }: { settings: SettingsState } = $props()
   let page = $state<AttentionPage | null>(null)
   let status = $state<RuntimeStatus | null>(null)
   let error = $state('')
@@ -23,7 +23,7 @@
   let identity = 0
 
   // Persist a response before submitting it, so a lost ACK or a page reload
-  // retries exactly the same logical event. Separate every credential/Space.
+  // retries exactly the same logical event. Separate every caller/credential.
   async function bindIdentity() {
     const version = ++identity
     page = null

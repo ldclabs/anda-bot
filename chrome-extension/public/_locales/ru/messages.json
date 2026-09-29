@@ -509,9 +509,6 @@
   "refresh": {
     "message": "Обновить"
   },
-  "search": {
-    "message": "Поиск"
-  },
   "clearSearch": {
     "message": "Очистить поиск"
   },
@@ -520,129 +517,6 @@
   },
   "loading": {
     "message": "Загрузка"
-  },
-  "brainPageTitle": {
-    "message": "Граф памяти Anda"
-  },
-  "brainStatusIdle": {
-    "message": "Ожидание"
-  },
-  "brainStatusSettingsUnavailable": {
-    "message": "Настройки недоступны"
-  },
-  "brainStatusLoadingGraph": {
-    "message": "Загрузка графа"
-  },
-  "brainStatusOverviewNodes": {
-    "message": "Обзор: $1 узлов"
-  },
-  "brainStatusLoadFailed": {
-    "message": "Не удалось загрузить"
-  },
-  "brainStatusSearching": {
-    "message": "Поиск"
-  },
-  "brainStatusSearchResults": {
-    "message": "Результатов поиска: $1"
-  },
-  "brainStatusSearchFailed": {
-    "message": "Поиск не удался"
-  },
-  "brainStatusRunningKip": {
-    "message": "Выполнение KIP"
-  },
-  "brainStatusKipComplete": {
-    "message": "KIP выполнен"
-  },
-  "brainStatusKipFailed": {
-    "message": "Ошибка KIP"
-  },
-  "brainClipboardUnavailable": {
-    "message": "Буфер обмена недоступен"
-  },
-  "brainConnection": {
-    "message": "Подключение"
-  },
-  "brainFieldSpace": {
-    "message": "Пространство"
-  },
-  "brainSearchPlaceholder": {
-    "message": "Концепт, тип, псевдоним"
-  },
-  "brainPrev": {
-    "message": "Назад"
-  },
-  "brainNext": {
-    "message": "Далее"
-  },
-  "brainLoadedNodes": {
-    "message": "Загружено узлов"
-  },
-  "brainLoadedLinks": {
-    "message": "Загружено связей"
-  },
-  "brainVisibleNodes": {
-    "message": "Видимые узлы"
-  },
-  "brainVisibleLinks": {
-    "message": "Видимые связи"
-  },
-  "brainTotalConcepts": {
-    "message": "Всего концептов: $1"
-  },
-  "brainTotalProps": {
-    "message": "Всего пропозиций: $1"
-  },
-  "brainZoomIn": {
-    "message": "Увеличить"
-  },
-  "brainZoomOut": {
-    "message": "Уменьшить"
-  },
-  "brainFitView": {
-    "message": "Вписать в окно"
-  },
-  "brainFocusSelected": {
-    "message": "Фокус на выбранном"
-  },
-  "brainInspector": {
-    "message": "Инспектор"
-  },
-  "brainCopyJson": {
-    "message": "Копировать JSON"
-  },
-  "brainCopiedJson": {
-    "message": "JSON скопирован"
-  },
-  "brainCloseInspector": {
-    "message": "Закрыть инспектор"
-  },
-  "brainAttributes": {
-    "message": "Атрибуты"
-  },
-  "brainMetadata": {
-    "message": "Метаданные"
-  },
-  "brainProposition": {
-    "message": "Пропозиция"
-  },
-  "brainVirtual": {
-    "message": "Виртуальная"
-  },
-  "brainSubject": {
-    "message": "Субъект $1"
-  },
-  "brainObject": {
-    "message": "Объект $1"
-  },
-  "brainHide": {
-    "message": "Скрыть"
-  },
-  "brainShow": {
-    "message": "Показать"
-  },
-  "brainRunReadonly": {
-    "message": "Выполнить (только чтение)"
   },
   "configSectionRuntime": {
     "message": "Среда выполнения"
@@ -887,84 +761,6 @@
   "loadMore": {
     "message": "Загрузить ещё"
   },
-  "brainAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneFocus": {
-    "message": "Фокус"
-  },
-  "brainScenePath": {
-    "message": "Путь"
-  },
-  "brainAtlasClusters": {
-    "message": "Кластеры Atlas"
-  },
-  "brainFrequentHubs": {
-    "message": "Частые узлы"
-  },
-  "brainRecentMemories": {
-    "message": "Недавние воспоминания"
-  },
-  "brainVisibleSummary": {
-    "message": "$1 узлов, $2 связей"
-  },
-  "brainBreadcrumb": {
-    "message": "Навигация Brain"
-  },
-  "brainBudgetHidden": {
-    "message": "$1 узлов и $2 связей свернуты в сводку"
-  },
-  "brainShowMoreRelated": {
-    "message": "Показать больше связанных воспоминаний"
-  },
-  "brainShowMoreRelatedWithCount": {
-    "message": "Показать больше связанных воспоминаний (еще $1)"
-  },
-  "brainPin": {
-    "message": "Закрепить"
-  },
-  "brainUnpin": {
-    "message": "Открепить"
-  },
-  "brainRelatedMemories": {
-    "message": "Связанные воспоминания"
-  },
-  "brainSummaryNode": {
-    "message": "Сводка"
-  },
-  "brainRelatedCount": {
-    "message": "$1 связанных воспоминаний"
-  },
-  "brainAtlasSummary": {
-    "message": "Ищите или выберите вход, чтобы сфокусировать граф. Atlas держит холст компактным, а детали показывает списками."
-  },
-  "brainPath": {
-    "message": "Путь"
-  },
-  "brainClearPins": {
-    "message": "Очистить закрепления"
-  },
-  "brainViewPinnedPath": {
-    "message": "Показать их связь"
-  },
-  "brainNoPins": {
-    "message": "Закрепите воспоминания, чтобы сравнить их связь."
-  },
-  "brainAdvanced": {
-    "message": "Дополнительно"
-  },
-  "brainMoreInGroup": {
-    "message": "Еще $1 в этой группе"
-  },
-  "brainMoreType": {
-    "message": "Еще $1"
-  },
-  "brainPinnedMemories": {
-    "message": "Закрепленные воспоминания"
-  },
   "dashboardSkillsDetail": {
     "message": "Персональные рабочие процессы"
   },
@@ -1157,9 +953,6 @@
   "brainPageCompleteHint": {
     "message": "Конец страницы не означает завершение задач."
   },
-  "brainBackToGraph": {
-    "message": "Вернуться к графу"
-  },
   "memoryTitle": {
     "message": "Память"
   },
@@ -1186,9 +979,6 @@
   },
   "memoryEvidenceHint": {
     "message": "Обработка разговора не доказывает сохранение каждого факта."
-  },
-  "memoryExplore": {
-    "message": "Исследовать связи"
   },
   "memoryConversation": {
     "message": "Разговор"

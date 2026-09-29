@@ -509,9 +509,6 @@
   "refresh": {
     "message": "تحديث"
   },
-  "search": {
-    "message": "بحث"
-  },
   "clearSearch": {
     "message": "مسح البحث"
   },
@@ -520,129 +517,6 @@
   },
   "loading": {
     "message": "جارٍ التحميل"
-  },
-  "brainPageTitle": {
-    "message": "مخطط ذاكرة Anda"
-  },
-  "brainStatusIdle": {
-    "message": "خامل"
-  },
-  "brainStatusSettingsUnavailable": {
-    "message": "الإعدادات غير متاحة"
-  },
-  "brainStatusLoadingGraph": {
-    "message": "جارٍ تحميل المخطط"
-  },
-  "brainStatusOverviewNodes": {
-    "message": "نظرة عامة: $1 عقدة"
-  },
-  "brainStatusLoadFailed": {
-    "message": "فشل التحميل"
-  },
-  "brainStatusSearching": {
-    "message": "جارٍ البحث"
-  },
-  "brainStatusSearchResults": {
-    "message": "نتائج البحث: $1"
-  },
-  "brainStatusSearchFailed": {
-    "message": "فشل البحث"
-  },
-  "brainStatusRunningKip": {
-    "message": "جارٍ تنفيذ KIP"
-  },
-  "brainStatusKipComplete": {
-    "message": "اكتمل KIP"
-  },
-  "brainStatusKipFailed": {
-    "message": "فشل KIP"
-  },
-  "brainClipboardUnavailable": {
-    "message": "الحافظة غير متاحة"
-  },
-  "brainConnection": {
-    "message": "الاتصال"
-  },
-  "brainFieldSpace": {
-    "message": "المساحة"
-  },
-  "brainSearchPlaceholder": {
-    "message": "مفهوم، نوع، اسم بديل"
-  },
-  "brainPrev": {
-    "message": "السابق"
-  },
-  "brainNext": {
-    "message": "التالي"
-  },
-  "brainLoadedNodes": {
-    "message": "العقد المحمّلة"
-  },
-  "brainLoadedLinks": {
-    "message": "الروابط المحمّلة"
-  },
-  "brainVisibleNodes": {
-    "message": "العقد المرئية"
-  },
-  "brainVisibleLinks": {
-    "message": "الروابط المرئية"
-  },
-  "brainTotalConcepts": {
-    "message": "إجمالي المفاهيم: $1"
-  },
-  "brainTotalProps": {
-    "message": "إجمالي القضايا: $1"
-  },
-  "brainZoomIn": {
-    "message": "تكبير"
-  },
-  "brainZoomOut": {
-    "message": "تصغير"
-  },
-  "brainFitView": {
-    "message": "ملاءمة العرض"
-  },
-  "brainFocusSelected": {
-    "message": "تركيز على المحدد"
-  },
-  "brainInspector": {
-    "message": "الفاحص"
-  },
-  "brainCopyJson": {
-    "message": "نسخ JSON"
-  },
-  "brainCopiedJson": {
-    "message": "تم نسخ JSON"
-  },
-  "brainCloseInspector": {
-    "message": "إغلاق الفاحص"
-  },
-  "brainAttributes": {
-    "message": "السمات"
-  },
-  "brainMetadata": {
-    "message": "البيانات الوصفية"
-  },
-  "brainProposition": {
-    "message": "قضية"
-  },
-  "brainVirtual": {
-    "message": "افتراضي"
-  },
-  "brainSubject": {
-    "message": "الفاعل $1"
-  },
-  "brainObject": {
-    "message": "المفعول $1"
-  },
-  "brainHide": {
-    "message": "إخفاء"
-  },
-  "brainShow": {
-    "message": "إظهار"
-  },
-  "brainRunReadonly": {
-    "message": "تشغيل للقراءة فقط"
   },
   "configSectionRuntime": {
     "message": "بيئة التشغيل"
@@ -887,84 +761,6 @@
   "loadMore": {
     "message": "تحميل المزيد"
   },
-  "brainAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneFocus": {
-    "message": "تركيز"
-  },
-  "brainScenePath": {
-    "message": "مسار"
-  },
-  "brainAtlasClusters": {
-    "message": "مجموعات Atlas"
-  },
-  "brainFrequentHubs": {
-    "message": "عقد متكررة"
-  },
-  "brainRecentMemories": {
-    "message": "ذكريات حديثة"
-  },
-  "brainVisibleSummary": {
-    "message": "$1 عقد، $2 علاقات"
-  },
-  "brainBreadcrumb": {
-    "message": "مسار Brain"
-  },
-  "brainBudgetHidden": {
-    "message": "تم تلخيص $1 عقد و $2 علاقات"
-  },
-  "brainShowMoreRelated": {
-    "message": "إظهار مزيد من الذكريات المرتبطة"
-  },
-  "brainShowMoreRelatedWithCount": {
-    "message": "إظهار مزيد من الذكريات المرتبطة ($1 إضافية)"
-  },
-  "brainPin": {
-    "message": "تثبيت"
-  },
-  "brainUnpin": {
-    "message": "إلغاء التثبيت"
-  },
-  "brainRelatedMemories": {
-    "message": "ذكريات مرتبطة"
-  },
-  "brainSummaryNode": {
-    "message": "ملخص"
-  },
-  "brainRelatedCount": {
-    "message": "$1 ذكريات مرتبطة"
-  },
-  "brainAtlasSummary": {
-    "message": "ابحث أو اختر مدخلا لتركيز الرسم. يحافظ Atlas على بساطة اللوحة وينقل التفاصيل إلى القوائم."
-  },
-  "brainPath": {
-    "message": "مسار"
-  },
-  "brainClearPins": {
-    "message": "مسح التثبيتات"
-  },
-  "brainViewPinnedPath": {
-    "message": "عرض العلاقة بينها"
-  },
-  "brainNoPins": {
-    "message": "ثبّت الذكريات لمقارنة العلاقة بينها."
-  },
-  "brainAdvanced": {
-    "message": "متقدم"
-  },
-  "brainMoreInGroup": {
-    "message": "$1 أخرى في هذه المجموعة"
-  },
-  "brainMoreType": {
-    "message": "المزيد من $1"
-  },
-  "brainPinnedMemories": {
-    "message": "ذكريات مثبتة"
-  },
   "dashboardSkillsDetail": {
     "message": "سير العمل الشخصي"
   },
@@ -1157,9 +953,6 @@
   "brainPageCompleteHint": {
     "message": "نهاية الصفحة لا تعني اكتمال المهام."
   },
-  "brainBackToGraph": {
-    "message": "العودة إلى الرسم"
-  },
   "memoryTitle": {
     "message": "الذاكرة"
   },
@@ -1186,9 +979,6 @@
   },
   "memoryEvidenceHint": {
     "message": "اكتمال معالجة المحادثة لا يثبت حفظ كل معلومة."
-  },
-  "memoryExplore": {
-    "message": "استكشاف العلاقات"
   },
   "memoryConversation": {
     "message": "المحادثة"

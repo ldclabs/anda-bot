@@ -509,9 +509,6 @@
   "refresh": {
     "message": "Refresh"
   },
-  "search": {
-    "message": "Search"
-  },
   "clearSearch": {
     "message": "Clear search"
   },
@@ -520,129 +517,6 @@
   },
   "loading": {
     "message": "Loading"
-  },
-  "brainPageTitle": {
-    "message": "Anda Brain Graph"
-  },
-  "brainStatusIdle": {
-    "message": "Idle"
-  },
-  "brainStatusSettingsUnavailable": {
-    "message": "Settings unavailable"
-  },
-  "brainStatusLoadingGraph": {
-    "message": "Loading graph"
-  },
-  "brainStatusOverviewNodes": {
-    "message": "Overview $1 nodes"
-  },
-  "brainStatusLoadFailed": {
-    "message": "Load failed"
-  },
-  "brainStatusSearching": {
-    "message": "Searching"
-  },
-  "brainStatusSearchResults": {
-    "message": "$1 search results"
-  },
-  "brainStatusSearchFailed": {
-    "message": "Search failed"
-  },
-  "brainStatusRunningKip": {
-    "message": "Running KIP"
-  },
-  "brainStatusKipComplete": {
-    "message": "KIP complete"
-  },
-  "brainStatusKipFailed": {
-    "message": "KIP failed"
-  },
-  "brainClipboardUnavailable": {
-    "message": "Clipboard is unavailable"
-  },
-  "brainConnection": {
-    "message": "Connection"
-  },
-  "brainFieldSpace": {
-    "message": "Space"
-  },
-  "brainSearchPlaceholder": {
-    "message": "Concept, type, alias"
-  },
-  "brainPrev": {
-    "message": "Prev"
-  },
-  "brainNext": {
-    "message": "Next"
-  },
-  "brainLoadedNodes": {
-    "message": "Loaded nodes"
-  },
-  "brainLoadedLinks": {
-    "message": "Loaded links"
-  },
-  "brainVisibleNodes": {
-    "message": "Visible nodes"
-  },
-  "brainVisibleLinks": {
-    "message": "Visible links"
-  },
-  "brainTotalConcepts": {
-    "message": "Total concepts $1"
-  },
-  "brainTotalProps": {
-    "message": "Total props $1"
-  },
-  "brainZoomIn": {
-    "message": "Zoom in"
-  },
-  "brainZoomOut": {
-    "message": "Zoom out"
-  },
-  "brainFitView": {
-    "message": "Fit view"
-  },
-  "brainFocusSelected": {
-    "message": "Focus selected"
-  },
-  "brainInspector": {
-    "message": "Inspector"
-  },
-  "brainCopyJson": {
-    "message": "Copy JSON"
-  },
-  "brainCopiedJson": {
-    "message": "Copied JSON"
-  },
-  "brainCloseInspector": {
-    "message": "Close inspector"
-  },
-  "brainAttributes": {
-    "message": "Attributes"
-  },
-  "brainMetadata": {
-    "message": "Metadata"
-  },
-  "brainProposition": {
-    "message": "Proposition"
-  },
-  "brainVirtual": {
-    "message": "Virtual"
-  },
-  "brainSubject": {
-    "message": "Subject $1"
-  },
-  "brainObject": {
-    "message": "Object $1"
-  },
-  "brainHide": {
-    "message": "Hide"
-  },
-  "brainShow": {
-    "message": "Show"
-  },
-  "brainRunReadonly": {
-    "message": "Run readonly"
   },
   "configSectionRuntime": {
     "message": "Runtime"
@@ -887,84 +761,6 @@
   "loadMore": {
     "message": "Load more"
   },
-  "brainAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneAtlas": {
-    "message": "Atlas"
-  },
-  "brainSceneFocus": {
-    "message": "Focus"
-  },
-  "brainScenePath": {
-    "message": "Path"
-  },
-  "brainAtlasClusters": {
-    "message": "Atlas clusters"
-  },
-  "brainFrequentHubs": {
-    "message": "Frequent hubs"
-  },
-  "brainRecentMemories": {
-    "message": "Recent memories"
-  },
-  "brainVisibleSummary": {
-    "message": "$1 nodes, $2 relations"
-  },
-  "brainBreadcrumb": {
-    "message": "Brain breadcrumb"
-  },
-  "brainBudgetHidden": {
-    "message": "$1 nodes and $2 relations are summarized"
-  },
-  "brainShowMoreRelated": {
-    "message": "Show more related memories"
-  },
-  "brainShowMoreRelatedWithCount": {
-    "message": "Show more related memories ($1 more)"
-  },
-  "brainPin": {
-    "message": "Pin"
-  },
-  "brainUnpin": {
-    "message": "Unpin"
-  },
-  "brainRelatedMemories": {
-    "message": "Related memories"
-  },
-  "brainSummaryNode": {
-    "message": "Summary"
-  },
-  "brainRelatedCount": {
-    "message": "$1 related memories"
-  },
-  "brainAtlasSummary": {
-    "message": "Search or choose an entry to focus the graph. Atlas keeps the canvas small and moves details into lists."
-  },
-  "brainPath": {
-    "message": "Path"
-  },
-  "brainClearPins": {
-    "message": "Clear pins"
-  },
-  "brainViewPinnedPath": {
-    "message": "View their relationship"
-  },
-  "brainNoPins": {
-    "message": "Pin memories to compare their relationship."
-  },
-  "brainAdvanced": {
-    "message": "Advanced"
-  },
-  "brainMoreInGroup": {
-    "message": "$1 more in this group"
-  },
-  "brainMoreType": {
-    "message": "More $1"
-  },
-  "brainPinnedMemories": {
-    "message": "Pinned memories"
-  },
   "dashboardSkillsDetail": {
     "message": "Personal workflows"
   },
@@ -1157,9 +953,6 @@
   "brainPageCompleteHint": {
     "message": "The end of a page does not mean its tasks are complete."
   },
-  "brainBackToGraph": {
-    "message": "Back to graph"
-  },
   "memoryTitle": {
     "message": "Memory"
   },
@@ -1186,9 +979,6 @@
   },
   "memoryEvidenceHint": {
     "message": "A completed conversation was processed; this does not prove that every fact was saved."
-  },
-  "memoryExplore": {
-    "message": "Explore relationships"
   },
   "memoryConversation": {
     "message": "Conversation"

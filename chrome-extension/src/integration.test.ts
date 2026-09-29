@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { parseConfigDraft, renderConfigYaml, removeArrayItem } from './lib/anda/config/schema'
-import { loadBrainGraphSettings, saveBrainGraphSettings } from './lib/anda/brain/api'
 import { conversationToGroup, type NormalizedMessageCache } from './lib/anda/client/conversations'
 import { DaemonConfigApi, loadConfigSettings, saveConfigSettings } from './lib/anda/config/api'
 import { renderMarkdown } from './lib/utils/markdown'
@@ -9,7 +8,6 @@ import { handlePageAudioCapture } from './lib/service-worker/page-voice'
 import { createTabLoadWatcher } from './lib/service-worker/browser-navigation'
 import { waitForNetworkIdle } from './lib/service-worker/browser-debugger'
 import { BookmarkBrowser, emptyBookmarkFolders } from './lib/anda/bookmarks/browser.svelte'
-import { BrainGraphData } from './lib/anda/brain/graph.svelte'
 import { Channel } from './lib/anda/client/channel.svelte'
 import { attachmentDownloadUrl } from './lib/anda/chat/attachment-view'
 import { resolveInputTarget } from './lib/service-worker/page-scripts'
@@ -164,21 +162,6 @@ it('ignores an old folder response after selecting another folder', async () => 
   await first
   expect(browser.activeFolder).toBe(2)
   expect(browser.items[0].conversation).toBe(2)
-})
-
-it('restores the cursor after repeated cached graph expansion', async () => {
-  const graph = new BrainGraphData({
-    executeKipReadonly: async () => ({
-      kip: '2.0',
-      status: 'succeeded',
-      results: [0, 1].map(() => ({ status: 'succeeded', result: [] }))
-    })
-  } as any)
-  graph.addConcept({ id: 'C-1', name: 'test', type: 'Event', attributes: {} })
-  await graph.expandConcept('C-1')
-  expect(graph.nodes.get('C-1')!._isExpanding).toBe(false)
-  await graph.expandConcept('C-1')
-  expect(graph.nodes.get('C-1')!._isExpanding).toBe(false)
 })
 
 const conversation = (id: number, ancestors: number[] = []) => ({
@@ -462,26 +445,6 @@ it('initializes a dashboard without starting conversation reads or voice discove
   expect(client.settings.appearanceTheme).toBe('dark')
   client.destroy()
 })
-
-it.each(['request_approval', 'on_risk', 'full_access', 'custom'])(
-  'preserves %s when Brain saves its own settings',
-  async (approvalMode) => {
-    const state: any = { baseUrl: 'http://localhost:8042', token: 'test', approvalMode }
-    vi.stubGlobal('chrome', {
-      storage: {
-        local: {
-          get: async (keys: string[]) =>
-            Object.fromEntries(keys.filter((key) => key in state).map((key) => [key, state[key]])),
-          set: async (items: any) => Object.assign(state, items)
-        }
-      }
-    })
-    const settings = await loadBrainGraphSettings()
-    await saveBrainGraphSettings({ ...settings, appearanceTheme: 'dark' })
-    expect(state.approvalMode).toBe(approvalMode)
-    expect(state.appearanceTheme).toBe('dark')
-  }
-)
 
 it('retains existing message objects when appending to a long conversation', () => {
   const cache: NormalizedMessageCache = new WeakMap()

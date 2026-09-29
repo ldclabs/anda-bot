@@ -1,19 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import {
-  ANDA_BOT_SPACE_ID,
-  BrainApi,
-  assertKipSucceeded,
-  brainPendingStorageKey,
-  type BrainGraphSettings
-} from './api'
+import { BrainApi, brainPendingStorageKey } from './api'
+import type { SettingsState } from '$lib/service-worker/types'
 
-function settings(spaceId = ANDA_BOT_SPACE_ID): BrainGraphSettings {
+function settings(): SettingsState {
   return {
     baseUrl: 'http://127.0.0.1:8042/',
     token: 'browser-token',
     submitKeyMode: 'enter',
-    appearanceTheme: 'system',
-    spaceId
+    appearanceTheme: 'system'
   }
 }
 
@@ -22,46 +16,14 @@ afterEach(() => {
 })
 
 describe('BrainApi', () => {
-  it('uses extension RPC for the default Anda Bot space', async () => {
-    const sendMessage = vi.fn(async () => ({
-      ok: true,
-      result: {
-        kip: '2.0',
-        status: 'succeeded',
-        results: [
-          {
-            status: 'succeeded',
-            result: [
-              {
-                id: 'C-1',
-                kind: 'concept',
-                schema_ref: 'kip://test@1.0.0/Memory',
-                name: 'Node 1',
-                attributes: {}
-              }
-            ]
-          }
-        ]
-      }
-    }))
+  it('sends Brain calls through the extension RPC with normalized settings', async () => {
+    const page = { scope: { space_id: 'anda_bot', space_instance: 'i' }, items: [], complete: true }
+    const sendMessage = vi.fn(async () => ({ ok: true, result: page }))
     const fetch = vi.fn()
     vi.stubGlobal('chrome', { runtime: { sendMessage } })
     vi.stubGlobal('fetch', fetch)
 
-    const api = new BrainApi(settings())
-    const response = await api.executeKipReadonly({
-      operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }]
-    })
-
-    expect(response.results[0].result).toEqual([
-      {
-        id: 'C-1',
-        kind: 'concept',
-        schema_ref: 'kip://test@1.0.0/Memory',
-        name: 'Node 1',
-        attributes: {}
-      }
-    ])
+    expect(await new BrainApi(settings()).attention('next')).toEqual(page)
     expect(fetch).not.toHaveBeenCalled()
     expect(sendMessage).toHaveBeenCalledWith({
       type: 'anda_rpc',
@@ -72,82 +34,9 @@ describe('BrainApi', () => {
         appearanceTheme: 'system',
         approvalMode: 'on_risk'
       },
-      method: 'brain_kip_readonly',
-      params: [{ operations: [{ command: 'FIND(?node) WHERE { ?node CONCEPT {} }' }] }]
+      method: 'brain_attention',
+      params: [{ cursor: 'next', limit: 20 }]
     })
-  })
-
-  it('falls back to Brain REST for custom spaces', async () => {
-    const sendMessage = vi.fn()
-    const fetch = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      text: async () =>
-        JSON.stringify({
-          result: {
-            id: 'custom',
-            concepts: 1,
-            propositions: 2,
-            conversations: 3,
-            formation_processing: false,
-            maintenance_processing: false,
-            formation_processed_id: 4,
-            maintenance_processed_id: 5
-          }
-        })
-    }))
-    vi.stubGlobal('chrome', { runtime: { sendMessage } })
-    vi.stubGlobal('fetch', fetch)
-
-    const api = new BrainApi(settings('custom'))
-    const status = await api.status()
-
-    expect(status).toMatchObject({ id: 'custom', concepts: 1, propositions: 2 })
-    expect(sendMessage).not.toHaveBeenCalled()
-    expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8042/v1/custom/formation_status',
-      expect.objectContaining({ method: 'GET' })
-    )
-  })
-  it('rejects partial, missing and failed operations without treating partial results as success', () => {
-    const ok = { kip: '2.0', status: 'succeeded', results: [{ status: 'succeeded', result: [] }] }
-    expect(() => assertKipSucceeded(ok, 1)).not.toThrow()
-    expect(() => assertKipSucceeded({ ...ok, status: 'partial' }, 1)).toThrow()
-    expect(() => assertKipSucceeded({ ...ok, results: [] }, 1)).toThrow()
-    expect(() => assertKipSucceeded(ok, 2)).toThrow()
-    expect(() =>
-      assertKipSucceeded({ ...ok, results: [{ status: 'failed', result: [] }] }, 1)
-    ).toThrow()
-    expect(() => assertKipSucceeded({ ...ok, results: [{ status: 'succeeded' }] }, 1)).toThrow()
-  })
-  it('preserves application KIP fields and the caller bearer over direct HTTP', async () => {
-    vi.stubGlobal('chrome', undefined)
-    const fetch = vi.fn(
-      async (_url: string, _init: RequestInit) =>
-        new Response(
-          JSON.stringify({
-            kip: '2.0',
-            status: 'succeeded',
-            results: [{ status: 'succeeded', result: [] }]
-          }),
-          { status: 200 }
-        )
-    )
-    vi.stubGlobal('fetch', fetch)
-    const request = {
-      operations: [{ op_id: 'read-1', command: 'DESCRIBE PRIMER', parameters: { name: 'bound' } }],
-      execution: { mode: 'independent' as const },
-      read: { snapshot_token: 'opaque' },
-      parameters: { shared: 1 },
-      dry_run: true
-    }
-    await new BrainApi(settings('custom')).executeKipReadonly(request)
-    expect(fetch.mock.calls[0][0]).toBe('http://127.0.0.1:8042/v1/custom/execute_kip_readonly')
-    const init = fetch.mock.calls[0][1] as RequestInit
-    expect(JSON.parse(init.body as string)).toEqual(request)
-    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer browser-token')
-    expect(JSON.parse(init.body as string)).not.toHaveProperty('kip')
   })
 
   it('uses separate runtime RPCs and preserves stable response event identity', async () => {
@@ -193,5 +82,21 @@ describe('BrainApi', () => {
       await brainPendingStorageKey(after, 'other-principal')
     )
     expect(await brainPendingStorageKey(before)).not.toBe(await brainPendingStorageKey(after))
+  })
+
+  it('finds pending responses saved under the Anda Bot space key', async () => {
+    const bytes = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(
+        JSON.stringify(['http://127.0.0.1:8042/', 'anda_bot', ['caller', 'owner-principal']])
+      )
+    )
+    const saved = Array.from(new Uint8Array(bytes), (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('')
+
+    expect(await brainPendingStorageKey(settings(), 'owner-principal')).toBe(
+      `brain-responses:${saved}`
+    )
   })
 })

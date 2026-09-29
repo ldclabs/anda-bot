@@ -7,7 +7,6 @@ import { DaemonConfigApi } from '../config/api'
 const settings = {
   baseUrl: 'http://127.0.0.1:8042',
   token: 'native-session',
-  spaceId: 'anda_bot',
   appearanceTheme: 'system' as const,
   submitKeyMode: 'enter' as const,
   approvalMode: 'on_risk' as const
@@ -29,9 +28,6 @@ describe('native adapters for shared extension views', () => {
     await new BrainApi(settings).runtimeStatus()
     expect(rpc).toHaveBeenCalledWith('brain_runtime_status', [])
     expect(fetch).not.toHaveBeenCalled()
-    await expect(
-      new MemoryApi({ ...settings, spaceId: 'another-space' }).overview()
-    ).rejects.toThrow('unsupported_memory_space')
   })
   it('preserves the configuration revision when crossing the native boundary', async () => {
     const config = vi

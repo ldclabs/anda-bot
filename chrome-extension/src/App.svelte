@@ -114,7 +114,7 @@
   $effect(() => {
     const id = andaClient.activeChannel?.conversationId || 0
     memoryActivity.configure(
-      { ...andaClient.settings, spaceId: 'anda_bot' },
+      andaClient.settings,
       Number.isSafeInteger(id) && id > 0 ? String(id) : '',
       sending || status === 'working' || status === 'submitted'
     )

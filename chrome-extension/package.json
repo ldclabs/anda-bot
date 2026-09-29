@@ -41,8 +41,6 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
-    "@antv/g6": "^5.1.1",
-    "@antv/layout": "2.0.0",
     "katex": "^0.17.0",
     "markdown-it": "^14.3.2",
     "prismjs": "^1.30.0",

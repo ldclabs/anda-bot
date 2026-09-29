@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryApi, unwrap } from './api'
-import type { BrainGraphSettings } from '../brain/api'
+import type { SettingsState } from '$lib/service-worker/types'
 
-const settings: BrainGraphSettings = {
+const settings: SettingsState = {
   baseUrl: 'http://127.0.0.1:8042',
   token: 'owner-token',
-  spaceId: 'anda_bot',
   submitKeyMode: 'enter',
   appearanceTheme: 'system'
 }

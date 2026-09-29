@@ -90,7 +90,7 @@ Chrome blocks extension scripts on some protected pages such as `chrome://` URLs
 
 Connection settings are shared by the Side Panel and Dashboard. Updating the
 Gateway URL or bearer token clears data from the previous connection; saving
-Brain or daemon configuration preserves the selected approval policy.
+the daemon configuration preserves the selected approval policy.
 
 The Dashboard loads workspaces on demand and does not restore chat histories in
 the background. Chat renders Markdown and math with bundled styles; raw HTML is

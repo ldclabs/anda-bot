@@ -1,4 +1,4 @@
-import type { BrainGraphSettings } from '../brain/api'
+import type { SettingsState } from '$lib/service-worker/types'
 import { MemoryApi, type Activity } from './api'
 
 /** One poller for the visible conversation, independent of assistant completion. */
@@ -9,13 +9,13 @@ export class ConversationMemoryActivity {
   #generation = 0
   #timer: ReturnType<typeof setTimeout> | undefined
   #controller: AbortController | undefined
-  #settings: BrainGraphSettings | null = null
+  #settings: SettingsState | null = null
   #conversation = ''
   #working = false
   #emptyChecks = 0
 
-  configure(settings: BrainGraphSettings, conversation: string, working: boolean) {
-    const key = JSON.stringify([settings.baseUrl, settings.spaceId, settings.token, conversation])
+  configure(settings: SettingsState, conversation: string, working: boolean) {
+    const key = JSON.stringify([settings.baseUrl, settings.token, conversation])
     if (key === this.#key) {
       if (this.#working !== working) {
         this.#working = working

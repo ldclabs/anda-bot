@@ -18,7 +18,7 @@
 | 有持续关注需求的使用者 | 记忆 → **需要确认** | 回答一个具体问题，让后续工作继续 | 有实际事项才出现；配置引导按需展示 |
 | 开发者、评测者、部署者 | 设置 → 高级 → **记忆实验室** | 验证收益、接入业务学习 | 独立入口，显式预算与授权 |
 
-Brain 保留为引擎名称；MIB 保留为高级协议名称。Formation、Recall、CWT、cohort 等词不进入日常使用主路径。知识图谱保留在“探索关系”里，默认首页展示用户可读的信息和下一步行动。
+Brain 保留为引擎名称；MIB 保留为高级协议名称。Formation、Recall、CWT、cohort 等词不进入日常使用主路径。默认首页展示用户可读的信息和下一步行动，不提供全局知识图谱可视化。
 
 **首先交付可验证的记忆闭环，再做自动学习。** 用户修正了一条偏好、系统保存了一次对话、一次对比实验提升了成绩，是三种不同的产品事实。
 
@@ -57,7 +57,7 @@ Brain 保留为引擎名称；MIB 保留为高级协议名称。Formation、Reca
 - [持久日志](../anda_bot/src/brain/journal.rs)：接受状态、具体 Brain 会话与不确定提交窗口。
 - [Brain 客户端](../anda_bot/src/brain/client.rs)：普通记忆状态、召回、Formation、待办独立 API。
 - [身份边界](../anda_bot/src/brain/host.rs)：运行时按认证调用者映射，不复用 Bot 全局身份。
-- [浏览器入口](../chrome-extension/src/BrainApp.svelte)与[待办](../chrome-extension/src/lib/anda/brain/Inbox.svelte)：现有图谱和持久回复机制。
+- [浏览器入口](https://github.com/ldclabs/anda-bot/blob/cf2001b196586c7ac5e64170133aae4641a44155/chrome-extension/src/BrainApp.svelte)与[待办](../chrome-extension/src/lib/anda/brain/Inbox.svelte)：现有图谱和持久回复机制。
 - [MIB 宿主](../anda_bot/src/mib.rs)：隔离实验、协议接口、部分成本计量，不包含完整评测产品。
 
 ## 3. 围绕三个真实任务设计
@@ -120,7 +120,7 @@ Brain 保留为引擎名称；MIB 保留为高级协议名称。Formation、Reca
 | 3 | **最近记住 / 最近更新** | 人类可读的记录、来源、范围、状态；进入详情核对、更正 |
 | 4 | **关于你 / 进行中的项目** | 按用户任务组织的视图，不把底层 Concept 类型直接变成导航 |
 
-页脚弱化展示“整理中 / 连接异常”；“探索关系”“处理记录”“高级设置”作为次级入口。用户不配置 native runtime，仍应能使用首页的普通记忆能力。
+页脚弱化展示“整理中 / 连接异常”；“处理记录”“高级设置”作为次级入口。用户不配置 native runtime，仍应能使用首页的普通记忆能力。
 
 记录详情建议包含：正文、适用人物/项目、来源对话和时间、生效时间、被替代关系、可用操作。缺失来源就显示“来源信息不足”，不能让模型补造来源链接。
 

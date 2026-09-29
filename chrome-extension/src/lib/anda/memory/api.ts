@@ -1,5 +1,5 @@
 import { daemonRpc, getClientPlatform } from '../client/platform'
-import type { BrainGraphSettings } from '../brain/api'
+import type { SettingsState } from '$lib/service-worker/types'
 
 export type ReadState =
   | 'reachable'
@@ -185,7 +185,7 @@ export function unwrap<T extends { schema_version: number }>(envelope: Envelope<
 }
 
 export class MemoryApi {
-  constructor(private settings: BrainGraphSettings) {}
+  constructor(private settings: SettingsState) {}
   async overview(signal?: AbortSignal): Promise<Overview> {
     return unwrap(await this.read<Overview>('memory_overview', [], signal))
   }
@@ -283,7 +283,6 @@ export class MemoryApi {
     params: unknown[],
     signal?: AbortSignal
   ): Promise<Envelope<T>> {
-    if (this.settings.spaceId !== 'anda_bot') throw new Error('unsupported_memory_space')
     if (!getClientPlatform() && !this.settings.token) throw new Error('unauthorized')
     signal?.throwIfAborted()
     return daemonRpc<Envelope<T>>(method, params, this.settings)

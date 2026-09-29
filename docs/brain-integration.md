@@ -4,7 +4,7 @@ Anda Bot 0.13 embeds Brain 0.13 on KIP 2.0 (`cognitive-memory@2.0.0`) and uses i
 
 ## Start with ordinary memory
 
-Run `anda memory guide` for an offline guide, or `anda memory` to check a running daemon. These commands do not call a model; the guide does not create a home or identity. The browser dashboard now opens **Memory** with an example, connection status, records and source quotes. **Explore relationships** preserves the graph view. TUI `/memory` and bare `/brain` show the same overview; explicit `/brain status` keeps its technical meaning.
+Run `anda memory guide` for an offline guide, or `anda memory` to check a running daemon. These commands do not call a model; the guide does not create a home or identity. The browser dashboard now opens **Memory** with an example, connection status, records and source quotes. TUI `/memory` and bare `/brain` show the same overview; explicit `/brain status` keeps its technical meaning.
 
 Tell Anda a useful preference, wait for background processing, then use `/new` and ask about it. A reply saying “remembered” is not a storage receipt. Message badges and `/memory activity` report the specific conversation's processing; a completed Formation need not contain the fact you expected. Unknown acceptance is reconciled without resubmission. Source quotes link to the original message only when the durable mapping and content digests agree.
 

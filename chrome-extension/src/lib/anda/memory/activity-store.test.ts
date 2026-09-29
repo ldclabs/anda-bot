@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { ConversationMemoryActivity } from './activity-store.svelte'
 import { MemoryApi, type Overview, type ActivityPage } from './api'
-import type { BrainGraphSettings } from '../brain/api'
+import type { SettingsState } from '$lib/service-worker/types'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -12,10 +12,9 @@ afterEach(() => {
 it('drops late results across identities and uses only proven message references', async () => {
   vi.useFakeTimers()
   vi.stubGlobal('document', { hidden: false })
-  const settings: BrainGraphSettings = {
+  const settings: SettingsState = {
     baseUrl: 'http://localhost:8042',
     token: 'a',
-    spaceId: 'anda_bot',
     submitKeyMode: 'enter',
     appearanceTheme: 'system'
   }
