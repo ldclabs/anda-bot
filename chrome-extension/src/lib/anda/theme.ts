@@ -1,9 +1,19 @@
 import type { AppearanceTheme } from '$lib/anda/client/types'
+import { getMessage } from '$lib/i18n'
 import { normalizeAppearanceTheme } from '$lib/service-worker/settings'
 
 const darkSchemeQuery = '(prefers-color-scheme: dark)'
 
 export type ResolvedAppearanceTheme = 'light' | 'dark'
+
+/** The appearance choices, labelled for a theme picker. */
+export function appearanceThemeItems(): { value: AppearanceTheme; label: string }[] {
+  return [
+    { value: 'system', label: getMessage('appearanceSystem') },
+    { value: 'light', label: getMessage('appearanceLight') },
+    { value: 'dark', label: getMessage('appearanceDark') }
+  ]
+}
 
 export function resolveAppearanceTheme(
   theme: AppearanceTheme,

@@ -5,6 +5,7 @@
   import { bytesToBase64, base64ToBytes } from '$lib/utils/base64'
   import { testTone } from './audio-test'
   import { label, type Label } from './labels'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   let { client }: { client: DesktopClient } = $props()
   const t = (key: Label) => label(client.preferences.language, key)
   let devices = $state<MediaDeviceInfo[]>([])
@@ -29,6 +30,17 @@
   const urls = new Set<string>()
   function fail(e: unknown) {
     if (!disposed) error = e instanceof Error ? e.message : String(e)
+  }
+  function deviceItems(kind: MediaDeviceKind, fallback: string) {
+    return [
+      { value: 'default', label: t('systemDefault') },
+      ...devices
+        .filter((d) => d.kind === kind && d.deviceId !== 'default')
+        .map((device, index) => ({
+          value: device.deviceId,
+          label: device.label || `${fallback} ${index + 1}`
+        }))
+    ]
   }
   async function refreshDevices() {
     try {
@@ -207,28 +219,27 @@
   <h1>{t('audio')}</h1>
   <p class="muted">{t('audioHint')}</p>
   <div class="setting-row">
-    <label for="audio-input">{t('input')}</label><select
+    <label for="audio-input">{t('input')}</label><DropdownMenu
       id="audio-input"
+      items={deviceItems('audioinput', t('input'))}
       bind:value={input}
       disabled={recording}
-      ><option value="default">{t('systemDefault')}</option
-      >{#each devices.filter((d) => d.kind === 'audioinput' && d.deviceId !== 'default') as device, index}<option
-          value={device.deviceId}>{device.label || `${t('input')} ${index + 1}`}</option
-        >{/each}</select
-    >
+      ariaLabel={t('input')}
+      align="end"
+    />
   </div>
   <div class="setting-row">
-    <label for="audio-output">{t('output')}</label><select
+    <label for="audio-output">{t('output')}</label><DropdownMenu
       id="audio-output"
-      bind:value={output}
-      onchange={() => {
-        if ('setSinkId' in audio) void audio.setSinkId(output).catch(fail)
+      items={deviceItems('audiooutput', t('output'))}
+      value={output}
+      onSelect={(deviceId) => {
+        output = deviceId
+        if ('setSinkId' in audio) void audio.setSinkId(deviceId).catch(fail)
       }}
-      ><option value="default">{t('systemDefault')}</option
-      >{#each devices.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'default') as device, index}<option
-          value={device.deviceId}>{device.label || `${t('output')} ${index + 1}`}</option
-        >{/each}</select
-    >
+      ariaLabel={t('output')}
+      align="end"
+    />
   </div>
   <div class="audio-meter">
     <meter min="0" max="1" value={level} aria-label={t('input')}></meter><span

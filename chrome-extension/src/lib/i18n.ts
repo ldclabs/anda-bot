@@ -1,6 +1,16 @@
 export const UI_LANGUAGES = ['en', 'zh_CN', 'ru', 'ar', 'fr', 'es'] as const
 export type UiLanguage = (typeof UI_LANGUAGES)[number]
 
+/** Each UI language named in itself, for language pickers. */
+export const UI_LANGUAGE_NAMES: Record<UiLanguage, string> = {
+  en: 'English',
+  zh_CN: '简体中文',
+  ru: 'Русский',
+  ar: 'العربية',
+  fr: 'Français',
+  es: 'Español'
+}
+
 export const uiLanguageStorageKey = 'uiLanguage'
 
 type LocaleMessages = Record<string, { message?: string }>

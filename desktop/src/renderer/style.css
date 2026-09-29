@@ -29,6 +29,10 @@ body,
   overflow: hidden;
   margin: 0;
 }
+html {
+  /* Scrollbars sit on the surface they scroll, with no track of their own. */
+  scrollbar-color: color-mix(in srgb, var(--desk-muted) 45%, transparent) transparent;
+}
 body {
   background: var(--desk-bg);
   color: var(--desk-text);
@@ -55,12 +59,22 @@ textarea:focus-visible {
   outline-offset: 3px;
 }
 .desktop-shell {
+  /* A dragged --sidebar-width replaces the per-window-size default; the column
+     still gives way before a wide sidebar would push the grid past the window. */
+  --sidebar-column: minmax(180px, var(--sidebar-width, 242px));
   display: grid;
-  grid-template-columns: 242px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
   height: 100dvh;
 }
 .desktop-shell.with-panel {
-  grid-template-columns: 242px minmax(0, 1fr) 340px;
+  grid-template-columns: var(--sidebar-column) minmax(0, 1fr) 340px;
+}
+.desktop-shell.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.desktop-shell.sidebar-resizing iframe {
+  pointer-events: none;
 }
 .desktop-shell.sidebar-collapsed {
   grid-template-columns: minmax(0, 1fr);
@@ -72,8 +86,9 @@ textarea:focus-visible {
   display: none;
 }
 .sidebar {
+  position: relative;
   background: var(--desk-side);
-  border-right: 1px solid var(--desk-border);
+  border-inline-end: 1px solid var(--desk-border);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -182,18 +197,6 @@ textarea:focus-visible {
   align-items: center;
   gap: 5px;
 }
-.add-project {
-  margin: 0 8px;
-  padding: 6px 0;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--desk-muted);
-}
-.chat-section {
-  margin-top: 22px;
-}
 .chat-row {
   position: relative;
   display: flex;
@@ -203,7 +206,8 @@ textarea:focus-visible {
   margin: 1px 0;
 }
 .chat-row:hover,
-.chat-row.active {
+.chat-row.active,
+.chat-row:has(.chat-more[data-state='open']) {
   background: var(--desk-hover);
 }
 .chat-title {
@@ -226,7 +230,8 @@ textarea:focus-visible {
   margin-right: 4px;
 }
 .chat-row:hover .chat-more,
-.chat-row:focus-within .chat-more {
+.chat-row:focus-within .chat-more,
+.chat-more[data-state='open'] {
   opacity: 1;
 }
 .sidebar-empty {
@@ -238,6 +243,32 @@ textarea:focus-visible {
 .sidebar-bottom {
   padding: 9px 0 14px;
   border-top: 1px solid var(--desk-border);
+}
+.sidebar-resizer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: -4px;
+  z-index: 5;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 3px;
+  width: 2px;
+  transition: background 120ms ease-out;
+}
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.sidebar-resizing .sidebar-resizer::after {
+  background: var(--desk-muted);
 }
 .connection-row {
   display: flex;
@@ -302,6 +333,12 @@ textarea:focus-visible {
   -webkit-app-region: no-drag;
 }
 .sidebar-collapsed .workspace-header {
+  padding-left: 92px;
+}
+/* macOS keeps its window buttons at the top-left when the app reads right to
+   left, where the main column or an open side panel now begins. */
+:root[data-platform='darwin'][dir='rtl'] .workspace-header,
+:root[data-platform='darwin'][dir='rtl'] .resource-panel > header {
   padding-left: 92px;
 }
 .conversation-scroll {
@@ -399,22 +436,39 @@ textarea:focus-visible {
 .composer-footer {
   padding: 12px 30px 20px;
   flex-shrink: 0;
+  /* The composer card's palette, in desktop colours. */
+  --message-bg: var(--desk-input);
+  --message-surface: var(--desk-side);
+  --message-surface-hover: var(--desk-hover);
+  --message-border: var(--desk-border);
+  --message-text: var(--desk-text);
+  --message-muted: var(--desk-muted);
+  --message-muted-soft: var(--desk-muted);
 }
 .composer-container {
   max-width: 790px;
   margin: 0 auto;
-  padding: 10px 13px 5px;
-  border: 1px solid var(--desk-border);
-  border-radius: 16px;
-  background: var(--desk-input);
-  box-shadow: 0 3px 12px #00000004;
+}
+.composer-container textarea {
+  font-size: 14px;
+  min-height: 52px;
+  background: transparent;
+}
+.composer-container textarea:focus-visible {
+  outline: none;
+}
+.composer-model {
+  max-width: 240px;
+  padding: 0 6px;
+  font-size: 13px;
+  color: var(--desk-text);
 }
 .composer-context {
   display: flex;
   gap: 14px;
   align-items: center;
-  padding: 1px 4px 6px;
-  font-size: 10px;
+  padding: 8px 12px 0;
+  font-size: 12px;
   color: var(--desk-muted);
 }
 .composer-context button {
@@ -422,35 +476,11 @@ textarea:focus-visible {
   align-items: center;
   gap: 6px;
 }
-.composer-context select {
+.composer-context [data-slot='dropdown-menu-trigger'] {
   max-width: 200px;
-  background: transparent;
-  border: 0;
-  font-size: 10px;
 }
-.composer-container [data-slot='input-group'] {
-  border: 0;
-  box-shadow: none;
-  background: transparent;
-}
-.composer-container textarea {
-  font-size: 14px;
-  min-height: 70px;
-  background: transparent;
-}
-.composer-meta {
-  padding: 7px 5px 3px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--desk-muted);
-  font-size: 10px;
-}
-.composer-meta select {
-  max-width: 280px;
-  background: transparent;
-  border: 0;
-  font-size: 11px;
+.composer-local {
+  margin-inline-start: auto;
 }
 .status-banner {
   display: flex;
@@ -562,12 +592,15 @@ textarea:focus-visible {
   padding: 20px 0;
   border-bottom: 1px solid var(--desk-border);
 }
-.setting-row select {
+.setting-row [data-slot='dropdown-menu-trigger'] {
+  width: auto;
+  height: auto;
   border: 1px solid var(--desk-border);
   border-radius: 7px;
   padding: 5px 9px;
   background: var(--desk-input);
   min-width: 135px;
+  box-shadow: none;
 }
 .runtime-path {
   font:
@@ -652,6 +685,22 @@ textarea:focus-visible {
   width: 100%;
   height: 70vh;
 }
+/* Dropdown menus render in <body>: keep them above modal dialogs, in the
+   desktop palette. */
+[data-slot='dropdown-menu-content'] {
+  z-index: 110;
+  border-color: var(--desk-border);
+  background: var(--desk-input);
+  color: var(--desk-text);
+  font-size: inherit;
+}
+[data-slot='dropdown-menu-content'] [data-highlighted] {
+  background: var(--desk-hover);
+  color: var(--desk-text);
+}
+[data-slot='dropdown-menu-content'] input:focus-visible {
+  outline: none;
+}
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -713,28 +762,6 @@ textarea:focus-visible {
   text-align: center;
   padding: 20px;
 }
-.context-menu {
-  position: absolute;
-  z-index: 20;
-  right: 0;
-  top: 30px;
-  min-width: 140px;
-  padding: 5px;
-  border: 1px solid var(--desk-border);
-  border-radius: 9px;
-  background: var(--desk-input);
-  box-shadow: 0 6px 20px #0002;
-}
-.context-menu button {
-  padding: 7px 10px;
-  display: block;
-  width: 100%;
-  text-align: left;
-  border-radius: 4px;
-}
-.context-menu button:hover {
-  background: var(--desk-hover);
-}
 .rename-dialog,
 .automation-editor {
   background: var(--desk-bg);
@@ -751,12 +778,16 @@ textarea:focus-visible {
 .rename-dialog > input,
 .automation-editor input,
 .automation-editor textarea,
-.automation-editor select {
+.automation-editor [data-slot='dropdown-menu-trigger'] {
   width: 100%;
   padding: 9px;
   border: 1px solid var(--desk-border);
   border-radius: 6px;
   background: var(--desk-input);
+}
+.automation-editor [data-slot='dropdown-menu-trigger'] {
+  height: auto;
+  box-shadow: none;
 }
 .rename-dialog > div,
 .dialog-actions {
@@ -896,7 +927,7 @@ button.primary {
 }
 @media (max-width: 1080px) {
   .desktop-shell.with-panel {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
   }
   .desktop-shell.with-panel .resource-panel {
     position: fixed;
@@ -912,12 +943,12 @@ button.primary {
     justify-content: center;
   }
   .desktop-shell {
-    grid-template-columns: 210px minmax(0, 1fr);
+    --sidebar-column: minmax(180px, var(--sidebar-width, 210px));
   }
 }
 @media (max-width: 800px) {
   .desktop-shell {
-    grid-template-columns: 190px minmax(0, 1fr);
+    --sidebar-column: minmax(180px, var(--sidebar-width, 190px));
   }
   .welcome h1 {
     font-size: 24px;
@@ -952,13 +983,10 @@ button.primary {
 [data-platform='win32'] .header-actions {
   margin-right: 120px;
 }
-.composer-container .max-w-24 {
-  max-width: 170px;
-}
 
 /* Native workbench panels share the application's compact, neutral chrome. */
 .desktop-shell.workbench-open {
-  grid-template-columns: 242px minmax(340px, 1fr) minmax(440px, 42%);
+  grid-template-columns: var(--sidebar-column) minmax(340px, 1fr) minmax(440px, 42%);
 }
 .desktop-shell.sidebar-collapsed.workbench-open {
   grid-template-columns: minmax(340px, 1fr) minmax(440px, 46%);
@@ -998,11 +1026,13 @@ button.primary {
   color: var(--desk-text);
 }
 .workbench-toolbar button,
-.git-panel button,
-.worktree-create select {
+.git-panel button {
   font-size: 12px;
   padding: 6px 9px;
   border-radius: 6px;
+}
+.worktree-create [data-slot='dropdown-menu-trigger'] {
+  height: auto;
 }
 .workbench-empty {
   padding: 24px;
@@ -1122,7 +1152,7 @@ button.primary {
 }
 @media (max-width: 1150px) {
   .desktop-shell.workbench-open {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
   }
   .desktop-shell.sidebar-collapsed.workbench-open {
     grid-template-columns: minmax(0, 1fr);

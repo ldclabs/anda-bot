@@ -63,21 +63,18 @@
     alertClass,
     alertDescriptionClass,
     buttonClass,
-    cardClass,
     inputClass,
-    inputGroupClass,
     textareaClass,
     tooltipArrowClass,
     tooltipContentClass
   } from '$lib/anda/ui'
   import {
+    ArrowUp,
     Keyboard,
     Check,
-    ChevronDown,
     LoaderCircle,
     Mic,
-    Paperclip,
-    SendHorizontal,
+    Plus,
     Settings,
     Shield,
     ShieldAlert,
@@ -89,7 +86,7 @@
     X
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
-  import { onDestroy, onMount, tick, untrack } from 'svelte'
+  import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte'
 
   let {
     disabled = false,
@@ -121,7 +118,8 @@
     incomingDraft = null,
     initialDraft,
     onDraftChange,
-    skillsRevision = 0
+    skillsRevision = 0,
+    actions
   }: {
     disabled?: boolean
     sending?: boolean
@@ -153,6 +151,9 @@
     initialDraft?: ComposerSubmitPayload
     onDraftChange?: (draft: ComposerSubmitPayload) => void
     skillsRevision?: number
+    /** Extra controls at the head of the toolbar's right side, before the
+     * voice and send buttons (the desktop puts its model picker here). */
+    actions?: Snippet
   } = $props()
 
   let text = $state(untrack(() => initialDraft?.text || ''))
@@ -817,19 +818,14 @@
     onchange={handleFileInput}
   />
 
-  <div
-    class={cardClass(
-      `composer-shell gap-2 rounded-lg p-2 ${composerWorking ? 'composer-working' : ''}`
-    )}
-    aria-busy={composerWorking}
-  >
+  <div class="composer-shell" class:composer-working={composerWorking} aria-busy={composerWorking}>
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
     {#if attachmentError}
       <div
         role="alert"
         class={alertClass(
-          'mb-2 rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800'
+          'rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800'
         )}
       >
         <div class={alertDescriptionClass('text-xs text-amber-800')}>
@@ -838,102 +834,21 @@
       </div>
     {/if}
 
-    <div class="grid gap-2">
-      {#if inputMode === 'voice'}
-        <VoicePanel
-          voiceStage={recorder.stage}
-          {sending}
-          {canRecordVoice}
-          {voiceOrbStyle}
-          {voiceStatus}
-          voiceProvider={recorder.provider}
-          {canUseBrowserSpeech}
-          {canUseAndaVoice}
-          voiceTranscript={recorder.transcript}
-          onToggleRecording={() => recorder.toggle()}
-          onSelectVoiceProvider={(provider) => recorder.selectProvider(provider)}
-        />
-      {:else}
-        {#if quickPrompts.length}
-          <div class="quick-prompts-row" aria-label={getMessage('quickPromptsLabel')}>
-            <div class="quick-prompts-scroll">
-              {#each quickPrompts as prompt (prompt.id)}
-                <span class="quick-prompt-chip">
-                  <button
-                    type="button"
-                    class="quick-prompt-main"
-                    aria-label={getMessage('useQuickPrompt', prompt.text)}
-                    title={getMessage('useQuickPrompt', prompt.text)}
-                    {disabled}
-                    onclick={() => applyQuickPrompt(prompt)}
-                  >
-                    {prompt.text}
-                  </button>
-                  <button
-                    type="button"
-                    class="quick-prompt-remove"
-                    disabled={disabled || !onRemoveQuickPrompt}
-                    aria-label={getMessage('removeQuickPromptItem', prompt.text)}
-                    title={getMessage('removeQuickPromptItem', prompt.text)}
-                    onclick={() => removeQuickPrompt(prompt)}
-                  >
-                    <X class="size-3" />
-                  </button>
-                </span>
-              {/each}
-            </div>
-            {#if onClearQuickPrompts && quickPrompts.length > 1}
-              <button
-                type="button"
-                class={buttonClass('ghost', 'icon-xs', 'quick-prompts-clear composer-icon-button')}
-                aria-label={getMessage('clearQuickPrompts')}
-                title={getMessage('clearQuickPrompts')}
-                onclick={clearQuickPrompts}
-              >
-                <Trash2 class="size-3" />
-              </button>
-            {/if}
-          </div>
-        {/if}
-        <div class="prompt-input-wrap">
-          {#if promptCommandPanelOpen}
-            <PromptCommandPanel
-              title={promptCommandPanelTitle}
-              suggestions={promptCommandSuggestions}
-              activeIndex={activePromptCommandIndex}
-              onApply={applyPromptCommandSuggestion}
-            />
-          {/if}
-          <div
-            role="group"
-            class={inputGroupClass(
-              'h-auto min-h-10 border-0 bg-transparent shadow-none has-[[data-slot=input-group-control]:focus-visible]:ring-0'
-            )}
-          >
-            <textarea
-              bind:this={textareaElement}
-              data-slot="input-group-control"
-              bind:value={text}
-              rows={1}
-              {placeholder}
-              spellcheck="true"
-              {disabled}
-              aria-haspopup="listbox"
-              class={textareaClass(
-                'composer-textarea max-h-38 min-h-10 flex-1 resize-none rounded-none border-0 bg-transparent px-2 leading-5 shadow-none ring-0 focus-visible:ring-0 disabled:opacity-60 aria-invalid:ring-0 dark:bg-transparent'
-              )}
-              onkeydown={handleKeydown}
-              oninput={handleTextareaInput}
-              onfocus={handleTextareaFocus}
-              onblur={handleTextareaBlur}
-              onclick={updateTextareaCaret}
-              onkeyup={updateTextareaCaret}
-              onselect={updateTextareaCaret}></textarea>
-          </div>
-        </div>
-      {/if}
-
-      {#if inputMode === 'voice' && recorder.error}
+    {#if inputMode === 'voice'}
+      <VoicePanel
+        voiceStage={recorder.stage}
+        {sending}
+        {canRecordVoice}
+        {voiceOrbStyle}
+        {voiceStatus}
+        voiceProvider={recorder.provider}
+        {canUseBrowserSpeech}
+        {canUseAndaVoice}
+        voiceTranscript={recorder.transcript}
+        onToggleRecording={() => recorder.toggle()}
+        onSelectVoiceProvider={(provider) => recorder.selectProvider(provider)}
+      />
+      {#if recorder.error}
         <div
           role="alert"
           class={alertClass(
@@ -945,214 +860,275 @@
           </div>
         </div>
       {/if}
+    {:else}
+      {#if quickPrompts.length}
+        <div class="quick-prompts-row" aria-label={getMessage('quickPromptsLabel')}>
+          <div class="quick-prompts-scroll">
+            {#each quickPrompts as prompt (prompt.id)}
+              <span class="quick-prompt-chip">
+                <button
+                  type="button"
+                  class="quick-prompt-main"
+                  aria-label={getMessage('useQuickPrompt', prompt.text)}
+                  title={getMessage('useQuickPrompt', prompt.text)}
+                  {disabled}
+                  onclick={() => applyQuickPrompt(prompt)}
+                >
+                  {prompt.text}
+                </button>
+                <button
+                  type="button"
+                  class="quick-prompt-remove"
+                  disabled={disabled || !onRemoveQuickPrompt}
+                  aria-label={getMessage('removeQuickPromptItem', prompt.text)}
+                  title={getMessage('removeQuickPromptItem', prompt.text)}
+                  onclick={() => removeQuickPrompt(prompt)}
+                >
+                  <X class="size-3" />
+                </button>
+              </span>
+            {/each}
+          </div>
+          {#if onClearQuickPrompts && quickPrompts.length > 1}
+            <button
+              type="button"
+              class={buttonClass('ghost', 'icon-xs', 'quick-prompts-clear composer-icon-button')}
+              aria-label={getMessage('clearQuickPrompts')}
+              title={getMessage('clearQuickPrompts')}
+              onclick={clearQuickPrompts}
+            >
+              <Trash2 class="size-3" />
+            </button>
+          {/if}
+        </div>
+      {/if}
+      <div class="prompt-input-wrap">
+        {#if promptCommandPanelOpen}
+          <PromptCommandPanel
+            title={promptCommandPanelTitle}
+            suggestions={promptCommandSuggestions}
+            activeIndex={activePromptCommandIndex}
+            onApply={applyPromptCommandSuggestion}
+          />
+        {/if}
+        <textarea
+          bind:this={textareaElement}
+          bind:value={text}
+          rows={1}
+          {placeholder}
+          spellcheck="true"
+          {disabled}
+          aria-haspopup="listbox"
+          class={textareaClass(
+            'composer-textarea max-h-38 min-h-10 resize-none rounded-none border-0 bg-transparent px-1.5 py-1.5 leading-5 shadow-none focus-visible:ring-0 disabled:opacity-60 dark:bg-transparent'
+          )}
+          onkeydown={handleKeydown}
+          oninput={handleTextareaInput}
+          onfocus={handleTextareaFocus}
+          onblur={handleTextareaBlur}
+          onclick={updateTextareaCaret}
+          onkeyup={updateTextareaCaret}
+          onselect={updateTextareaCaret}></textarea>
+      </div>
+    {/if}
 
-      <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-1">
+    <div class="composer-toolbar">
+      <div class="composer-toolbar-group">
+        <button
+          type="button"
+          class={buttonClass('ghost', 'icon-sm', 'composer-icon-button rounded-full')}
+          disabled={disabled || preparingAttachments}
+          aria-label={getMessage('attachFiles')}
+          title={getMessage('attachFiles')}
+          onclick={openFileDialog}
+        >
+          {#if preparingAttachments}
+            <LoaderCircle class="size-4 animate-spin" />
+          {:else}
+            <Plus class="size-4.5" />
+          {/if}
+        </button>
+
+        <div bind:this={approvalMenuElement} class="approval-mode-wrap">
           <button
             type="button"
-            class={buttonClass('ghost', 'icon-sm', 'composer-icon-button hover:text-emerald-700')}
-            disabled={disabled || preparingAttachments}
-            aria-label={getMessage('attachFiles')}
-            title={getMessage('attachFiles')}
-            onclick={openFileDialog}
+            class={buttonClass(
+              approvalMenuOpen ? 'secondary' : 'ghost',
+              'sm',
+              'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 rounded-full px-2.5 font-normal'
+            )}
+            {disabled}
+            aria-haspopup="menu"
+            aria-expanded={approvalMenuOpen}
+            title={approvalModeDescription(currentApprovalMode)}
+            onclick={() => (approvalMenuOpen = !approvalMenuOpen)}
           >
-            {#if preparingAttachments}
-              <LoaderCircle class="size-4 animate-spin" />
-            {:else}
-              <Paperclip class="size-4" />
-            {/if}
+            <CurrentApprovalIcon class="size-4" />
+            <span class="truncate">{approvalModeLabel(currentApprovalMode)}</span>
           </button>
 
-          <div bind:this={approvalMenuElement} class="approval-mode-wrap">
-            <button
-              type="button"
-              class={buttonClass(
-                approvalMenuOpen ? 'secondary' : 'ghost',
-                'sm',
-                'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 px-2 hover:text-emerald-700'
-              )}
-              {disabled}
-              aria-haspopup="menu"
-              aria-expanded={approvalMenuOpen}
-              title={approvalModeDescription(currentApprovalMode)}
-              onclick={() => (approvalMenuOpen = !approvalMenuOpen)}
+          {#if approvalMenuOpen}
+            <div
+              class="approval-mode-menu"
+              role="menu"
+              aria-label={getMessage('approvalModeMenuAria')}
             >
-              <CurrentApprovalIcon class="size-4" />
-              <span class="max-w-24 truncate text-xs font-semibold">
-                {approvalModeLabel(currentApprovalMode)}
-              </span>
-              <ChevronDown class="size-3" />
-            </button>
-
-            {#if approvalMenuOpen}
-              <div
-                class="approval-mode-menu"
-                role="menu"
-                aria-label={getMessage('approvalModeMenuAria')}
-              >
-                <div class="approval-mode-menu-eyebrow">{getMessage('approvalModeMenuPrompt')}</div>
-                {#each approvalModeOptions as option (option.value)}
-                  {@const OptionIcon = approvalModeIcon(option)}
-                  <button
-                    type="button"
-                    class="approval-mode-item"
-                    class:approval-mode-item-active={option.value === approvalMode}
-                    role="menuitemradio"
-                    aria-checked={option.value === approvalMode}
-                    onclick={() => selectApprovalMode(option.value)}
-                  >
-                    <OptionIcon class="approval-mode-item-icon size-4" />
-                    <span class="min-w-0 flex-1">
-                      <span class="block truncate text-sm font-semibold">
-                        {approvalModeLabel(option)}
-                      </span>
-                      <span class="approval-mode-item-description block truncate text-xs">
-                        {approvalModeDescription(option)}
-                      </span>
+              <div class="approval-mode-menu-eyebrow">{getMessage('approvalModeMenuPrompt')}</div>
+              {#each approvalModeOptions as option (option.value)}
+                {@const OptionIcon = approvalModeIcon(option)}
+                <button
+                  type="button"
+                  class="approval-mode-item"
+                  class:approval-mode-item-active={option.value === approvalMode}
+                  role="menuitemradio"
+                  aria-checked={option.value === approvalMode}
+                  onclick={() => selectApprovalMode(option.value)}
+                >
+                  <OptionIcon class="approval-mode-item-icon size-4" />
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-sm font-semibold">
+                      {approvalModeLabel(option)}
                     </span>
-                    {#if option.value === approvalMode}
-                      <Check class="size-4" />
-                    {/if}
-                  </button>
-                {/each}
-              </div>
+                    <span class="approval-mode-item-description block truncate text-xs">
+                      {approvalModeDescription(option)}
+                    </span>
+                  </span>
+                  {#if option.value === approvalMode}
+                    <Check class="size-4" />
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <div class="composer-toolbar-group">
+        {@render actions?.()}
+
+        {#if canUseVoice}
+          <button
+            type="button"
+            class={buttonClass(
+              inputMode === 'voice' ? 'secondary' : 'ghost',
+              'icon-sm',
+              'composer-icon-button rounded-full'
+            )}
+            disabled={disabled || sending}
+            aria-label={inputMode === 'voice'
+              ? getMessage('switchToKeyboard')
+              : getMessage('switchToVoice')}
+            title={inputMode === 'voice' ? getMessage('keyboardInput') : getMessage('voiceInput')}
+            onclick={toggleInputMode}
+          >
+            {#if inputMode === 'voice'}
+              <Keyboard class="size-4" />
+            {:else}
+              <Mic class="size-4" />
             {/if}
-          </div>
-        </div>
+          </button>
+        {/if}
 
-        <div class="flex items-center gap-1">
-          {#if canUseVoice}
-            <button
-              type="button"
-              class={buttonClass(
-                inputMode === 'voice' ? 'secondary' : 'ghost',
-                'icon-sm',
-                'composer-icon-button hover:text-emerald-700'
-              )}
-              disabled={disabled || sending}
-              aria-label={inputMode === 'voice'
-                ? getMessage('switchToKeyboard')
-                : getMessage('switchToVoice')}
-              title={inputMode === 'voice' ? getMessage('keyboardInput') : getMessage('voiceInput')}
-              onclick={toggleInputMode}
-            >
-              {#if inputMode === 'voice'}
-                <Keyboard class="size-4" />
-              {:else}
-                <Mic class="size-4" />
-              {/if}
-            </button>
-          {/if}
-
-          {#if inputMode === 'voice'}
-            <button
-              type="button"
-              class={buttonClass(
-                ttsEnabled ? 'secondary' : 'ghost',
-                'icon-sm',
-                'composer-icon-button hover:text-emerald-700'
-              )}
-              disabled={disabled ||
-                sending ||
-                recorder.stage === 'recording' ||
-                !selectedVoiceTtsAvailable}
-              aria-label={ttsEnabled ? getMessage('disablePlayback') : getMessage('enablePlayback')}
-              title={selectedVoiceTtsAvailable
-                ? `${voiceProviderLabel} ${ttsEnabled ? getMessage('playbackOn') : getMessage('playbackOff')}`
-                : `${voiceProviderLabel} ${getMessage('playbackUnavailable')}`}
-              onclick={() => (ttsEnabled = !ttsEnabled)}
-            >
-              {#if ttsEnabled}
-                <Volume2 class="size-4" />
-              {:else}
-                <VolumeX class="size-4" />
-              {/if}
-            </button>
-          {:else}
-            <Tooltip.Provider delayDuration={0}>
-              <Tooltip.Root>
-                <Tooltip.Trigger>
-                  {#snippet child({ props })}
-                    {#if showStopButton}
-                      <button
-                        {...props}
-                        type="button"
-                        disabled={stopPending}
-                        class={buttonClass(
-                          'default',
-                          'icon-sm',
-                          'composer-stop-button duration-200 shadow-sm rounded-full'
-                        )}
-                        aria-label={stopTitle}
-                        onclick={stopTask}
-                      >
-                        {#if stopPending}
-                          <LoaderCircle class="size-4 animate-spin" />
-                        {:else}
-                          <Square class="size-3.5 fill-current" />
-                        {/if}
-                      </button>
-                    {:else}
-                      <button
-                        {...props}
-                        type="submit"
-                        disabled={!canSend}
-                        class={buttonClass(
-                          canSend ? 'default' : 'ghost',
-                          'icon-sm',
-                          `duration-200 ${
-                            canSend
-                              ? 'bg-primary/80 shadow-sm hover:bg-primary focus-visible:bg-primary'
-                              : 'composer-send-disabled'
-                          }`
-                        )}
-                        aria-label={getMessage('send')}
-                      >
-                        {#if sending}
-                          <LoaderCircle class="size-4 animate-spin" />
-                        {:else}
-                          <SendHorizontal class="size-4" />
-                        {/if}
-                      </button>
-                    {/if}
-                  {/snippet}
-                </Tooltip.Trigger>
-                <Tooltip.Portal>
-                  <Tooltip.Content side="top" sideOffset={6} class={tooltipContentClass()}>
-                    {showStopButton ? stopTitle : submitTitle}
-                    <Tooltip.Arrow>
-                      {#snippet child({ props })}
-                        <div class={tooltipArrowClass()} {...props}></div>
-                      {/snippet}
-                    </Tooltip.Arrow>
-                  </Tooltip.Content>
-                </Tooltip.Portal>
-              </Tooltip.Root>
-            </Tooltip.Provider>
-          {/if}
-        </div>
+        {#if inputMode === 'voice'}
+          <button
+            type="button"
+            class={buttonClass(
+              ttsEnabled ? 'secondary' : 'ghost',
+              'icon-sm',
+              'composer-icon-button rounded-full'
+            )}
+            disabled={disabled ||
+              sending ||
+              recorder.stage === 'recording' ||
+              !selectedVoiceTtsAvailable}
+            aria-label={ttsEnabled ? getMessage('disablePlayback') : getMessage('enablePlayback')}
+            title={selectedVoiceTtsAvailable
+              ? `${voiceProviderLabel} ${ttsEnabled ? getMessage('playbackOn') : getMessage('playbackOff')}`
+              : `${voiceProviderLabel} ${getMessage('playbackUnavailable')}`}
+            onclick={() => (ttsEnabled = !ttsEnabled)}
+          >
+            {#if ttsEnabled}
+              <Volume2 class="size-4" />
+            {:else}
+              <VolumeX class="size-4" />
+            {/if}
+          </button>
+        {:else}
+          <Tooltip.Provider delayDuration={0}>
+            <Tooltip.Root>
+              <Tooltip.Trigger>
+                {#snippet child({ props })}
+                  {#if showStopButton}
+                    <button
+                      {...props}
+                      type="button"
+                      disabled={stopPending}
+                      class={buttonClass('default', 'icon-sm', 'rounded-full')}
+                      aria-label={stopTitle}
+                      onclick={stopTask}
+                    >
+                      {#if stopPending}
+                        <LoaderCircle class="size-4 animate-spin" />
+                      {:else}
+                        <Square class="size-3 fill-current" />
+                      {/if}
+                    </button>
+                  {:else}
+                    <button
+                      {...props}
+                      type="submit"
+                      disabled={!canSend}
+                      class={buttonClass('default', 'icon-sm', 'rounded-full disabled:opacity-30')}
+                      aria-label={getMessage('send')}
+                    >
+                      {#if sending}
+                        <LoaderCircle class="size-4 animate-spin" />
+                      {:else}
+                        <ArrowUp class="size-4" />
+                      {/if}
+                    </button>
+                  {/if}
+                {/snippet}
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content side="top" sideOffset={6} class={tooltipContentClass()}>
+                  {showStopButton ? stopTitle : submitTitle}
+                  <Tooltip.Arrow>
+                    {#snippet child({ props })}
+                      <div class={tooltipArrowClass()} {...props}></div>
+                    {/snippet}
+                  </Tooltip.Arrow>
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          </Tooltip.Provider>
+        {/if}
       </div>
     </div>
   </div>
 </form>
 
 <style>
-  :global(.composer-shell) {
+  /* One card: the text box on top, one toolbar row under it. */
+  .composer-shell {
     position: relative;
     isolation: isolate;
-    overflow: visible;
-    border-color: var(--message-border, #e6e6e6);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 86%, var(--message-surface, #f7f7f7));
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    border: 1px solid var(--message-border, #e6e6e6);
+    border-radius: 1.25rem;
+    background: var(--message-bg, #ffffff);
+    padding: 0.625rem 0.625rem 0.5rem;
     color: var(--message-text, #171717);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
     transition:
       border-color 180ms ease-out,
-      background-color 180ms ease-out,
       box-shadow 180ms ease-out;
   }
 
-  :global(.composer-shell)::before,
-  :global(.composer-shell)::after {
+  .composer-shell::before,
+  .composer-shell::after {
     position: absolute;
     content: '';
     pointer-events: none;
@@ -1161,9 +1137,9 @@
     z-index: 0;
   }
 
-  :global(.composer-shell)::before {
+  .composer-shell::before {
     inset: -1px;
-    border-radius: 9px;
+    border-radius: inherit;
     background: linear-gradient(90deg, #10b981, #3b82f6, #f59e0b, #10b981);
     background-size: 300% 100%;
     mask:
@@ -1173,9 +1149,9 @@
     padding: 1.5px;
   }
 
-  :global(.composer-shell)::after {
+  .composer-shell::after {
     inset: -1px;
-    border-radius: 9px;
+    border-radius: inherit;
     background: linear-gradient(
       90deg,
       rgba(16, 185, 129, 0.4),
@@ -1192,19 +1168,33 @@
     padding: 3px;
   }
 
-  :global(.composer-shell) > :global(*) {
+  .composer-shell > :global(*) {
     position: relative;
     z-index: 1;
   }
 
-  :global(.composer-shell.composer-working) {
+  .composer-shell.composer-working {
     border-color: transparent;
   }
 
-  :global(.composer-shell.composer-working)::before,
-  :global(.composer-shell.composer-working)::after {
+  .composer-shell.composer-working::before,
+  .composer-shell.composer-working::after {
     opacity: 1;
     animation: composer-border-flow 4s linear infinite;
+  }
+
+  .composer-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .composer-toolbar-group {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.25rem;
   }
 
   .prompt-input-wrap {
@@ -1296,7 +1286,7 @@
   }
 
   .approval-mode-button {
-    max-width: 8.5rem;
+    max-width: 12rem;
   }
 
   .approval-mode-menu {
@@ -1361,23 +1351,13 @@
     color: var(--message-muted-soft, #a0a0a0);
   }
 
-  :global(.composer-icon-button),
-  :global(.composer-send-disabled) {
+  :global(.composer-icon-button) {
     color: var(--message-muted, #737373);
   }
 
   :global(.composer-icon-button:hover) {
     background: var(--message-surface-hover, #eeeeee);
-  }
-
-  :global(.composer-stop-button) {
-    background: #2a2a2a;
-    color: #ffffff;
-  }
-
-  :global(.composer-stop-button:hover),
-  :global(.composer-stop-button:focus-visible) {
-    background: #000000;
+    color: var(--message-text, #171717);
   }
 
   @keyframes composer-border-flow {
@@ -1390,8 +1370,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    :global(.composer-shell.composer-working)::before,
-    :global(.composer-shell.composer-working)::after {
+    .composer-shell.composer-working::before,
+    .composer-shell.composer-working::after {
       animation: none;
     }
   }

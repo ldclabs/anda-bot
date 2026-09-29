@@ -3,6 +3,7 @@
   import type { DesktopClient } from './client.svelte'
   import type { GitSnapshot, GitRequest } from '../shared/workbench'
   import { label, type Label } from './labels'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   let { client, workspace }: { client: DesktopClient; workspace: string } = $props()
   const t = (key: Label) => label(client.preferences.language, key)
   let snapshot = $state<GitSnapshot | null>(null)
@@ -141,13 +142,14 @@
       </div>
     {:else}
       <div class="worktree-create">
-        <input placeholder={t('branch')} aria-label={t('branch')} bind:value={branch} /><select
-          aria-label="Base branch"
+        <input placeholder={t('branch')} aria-label={t('branch')} bind:value={branch} />
+        <DropdownMenu
+          items={['HEAD', ...snapshot.branches].map((name) => ({ value: name, label: name }))}
           bind:value={base}
-          ><option value="HEAD">HEAD</option>{#each snapshot.branches as name}<option value={name}
-              >{name}</option
-            >{/each}</select
-        ><button
+          ariaLabel="Base branch"
+          searchable
+          searchPlaceholder={t('find')}
+        /><button
           disabled={busy || !branch.trim() || !snapshot.head}
           onclick={() =>
             act({

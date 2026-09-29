@@ -463,6 +463,7 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'approvalMode',
     'notifications',
     'launchAtLogin',
+    'sidebarWidth',
     'chats',
     'projects',
     'activeSource',
@@ -476,6 +477,12 @@ function validatePreferences(patch: Partial<Preferences>): void {
     !['on_risk', 'request_approval', 'full_access', 'custom'].includes(patch.approvalMode)
   )
     throw new Error('Invalid approval mode')
+  if (
+    patch.sidebarWidth !== undefined &&
+    (typeof patch.sidebarWidth !== 'number' ||
+      !(patch.sidebarWidth >= 120 && patch.sidebarWidth <= 800))
+  )
+    throw new Error('Invalid sidebar width')
   if (
     patch.chats &&
     (!Array.isArray(patch.chats) ||

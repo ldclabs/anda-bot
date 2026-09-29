@@ -24,15 +24,9 @@
     type RelatedMemoryItem,
     typeColor
   } from '$lib/anda/brain/view-model'
-  import { applyAppearanceTheme } from '$lib/anda/theme'
-  import {
-    badgeClass,
-    buttonClass,
-    inputClass,
-    nativeSelectClass,
-    separatorClass,
-    textareaClass
-  } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import { appearanceThemeItems, applyAppearanceTheme } from '$lib/anda/theme'
+  import { badgeClass, buttonClass, inputClass, separatorClass, textareaClass } from '$lib/anda/ui'
   import { cn } from '$lib/utils'
   import Prism from '$lib/utils/prismjs'
   import { defaultSettings, errorToMessage } from '$lib/service-worker/settings'
@@ -638,11 +632,12 @@ LIMIT 100`)
           </label>
           <label class="brain-field">
             <span>{getMessage('appearanceTheme')}</span>
-            <select class={nativeSelectClass('h-8 text-xs')} bind:value={settings.appearanceTheme}>
-              <option value="system">{getMessage('appearanceSystem')}</option>
-              <option value="light">{getMessage('appearanceLight')}</option>
-              <option value="dark">{getMessage('appearanceDark')}</option>
-            </select>
+            <DropdownMenu
+              class="h-8 text-xs"
+              items={appearanceThemeItems()}
+              bind:value={settings.appearanceTheme}
+              ariaLabel={getMessage('appearanceTheme')}
+            />
           </label>
           <button
             class={buttonClass('default', 'sm', 'w-full')}

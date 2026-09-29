@@ -11,6 +11,7 @@
   } from '$lib/anda/bookmarks/browser.svelte'
   import { bookmarkJumpRequestStorageKey, createBookmarkJumpRequest } from '$lib/anda/bookmark-jump'
   import { buttonClass, inputClass } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { openAndaSidePanel } from '$lib/anda/dashboard/side-panel'
   import { getMessage } from '$lib/i18n'
   import { errorToMessage } from '$lib/service-worker/settings'
@@ -20,6 +21,7 @@
     Bookmark as BookmarkIcon,
     BrainCircuit,
     Check,
+    ChevronDown,
     Copy,
     ExternalLink,
     Folder,
@@ -109,15 +111,6 @@
   async function createFolder() {
     if (await browser.createFolder(newFolderName)) {
       newFolderName = ''
-    }
-  }
-
-  function addToFolder(bookmark: BookmarkedMessage, event: Event) {
-    const select = event.currentTarget as HTMLSelectElement
-    const folderId = Number(select.value)
-    select.value = ''
-    if (folderId) {
-      void browser.addToFolder(bookmark.message_id, folderId)
     }
   }
 
@@ -419,19 +412,23 @@
                   {/if}
                 {/each}
                 {#if browser.folderList.length > bookmarkFolderIds(bookmark).length}
-                  <select
-                    class="h-6 max-w-44 rounded-md border bg-background px-2 text-[11px] text-muted-foreground outline-none transition focus:border-ring disabled:opacity-50"
+                  <DropdownMenu
+                    class="h-6 max-w-44 gap-1 border bg-background px-2 text-[11px] text-muted-foreground focus-visible:border-ring"
+                    items={browser.folderList
+                      .filter((folder) => !bookmarkFolderIds(bookmark).includes(folder._id))
+                      .map((folder) => ({ value: String(folder._id), label: folder.name }))}
                     disabled={browser.isAssigning(bookmark.message_id)}
-                    aria-label={getMessage('addToBookmarkFolder')}
-                    title={getMessage('addToBookmarkFolder')}
-                    onclick={(event) => event.stopPropagation()}
-                    onchange={(event) => addToFolder(bookmark, event)}
+                    onSelect={(folderId) =>
+                      void browser.addToFolder(bookmark.message_id, Number(folderId))}
                   >
-                    <option value="">{getMessage('addToBookmarkFolder')}</option>
-                    {#each browser.folderList.filter((folder) => !bookmarkFolderIds(bookmark).includes(folder._id)) as folder (folder._id)}
-                      <option value={folder._id}>{folder.name}</option>
-                    {/each}
-                  </select>
+                    {#snippet trigger()}
+                      <span class="truncate">{getMessage('addToBookmarkFolder')}</span>
+                      <ChevronDown
+                        class="size-3 shrink-0 opacity-60 group-data-[state=open]:rotate-180"
+                        aria-hidden="true"
+                      />
+                    {/snippet}
+                  </DropdownMenu>
                 {/if}
               </div>
             </article>

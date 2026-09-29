@@ -9,13 +9,8 @@
     SkillFileEntry,
     SkillSourceInfo
   } from '$lib/anda/client/types'
-  import {
-    badgeClass,
-    buttonClass,
-    inputClass,
-    nativeSelectClass,
-    textareaClass
-  } from '$lib/anda/ui'
+  import { badgeClass, buttonClass, inputClass, textareaClass } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { openAndaSidePanel } from '$lib/anda/dashboard/side-panel'
   import { getMessage } from '$lib/i18n'
   import { escapeHtml } from '$lib/utils/format'
@@ -53,6 +48,20 @@
   let searchQuery = $state('')
   let sourceFilter = $state<SourceFilter>('all')
   let statusFilter = $state<StatusFilter>('all')
+  const sourceFilterItems = $derived<{ value: SourceFilter; label: string }[]>([
+    { value: 'all', label: getMessage('allSources') },
+    ...sources.map((source) => ({
+      value: source.source,
+      label: `${source.source_label} (${sourceCount(source)})`
+    }))
+  ])
+  const statusFilterItems: { value: StatusFilter; label: string }[] = [
+    { value: 'all', label: getMessage('allStatuses') },
+    { value: 'active', label: getMessage('skillStatusActive') },
+    { value: 'disabled', label: getMessage('skillStatusDisabled') },
+    { value: 'shadowed', label: getMessage('skillStatusShadowed') },
+    { value: 'error', label: getMessage('skillStatusError') }
+  ]
   let activeTab = $state<DetailTab>('overview')
   let loading = $state(false)
   let detailLoading = $state(false)
@@ -553,19 +562,8 @@
           </button>
         </div>
         <div class="grid grid-cols-2 gap-2">
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={sourceFilter}>
-            <option value="all">{getMessage('allSources')}</option>
-            {#each sources as source (source.source)}
-              <option value={source.source}>{source.source_label} ({sourceCount(source)})</option>
-            {/each}
-          </select>
-          <select class={nativeSelectClass('h-8 text-xs')} bind:value={statusFilter}>
-            <option value="all">{getMessage('allStatuses')}</option>
-            <option value="active">{getMessage('skillStatusActive')}</option>
-            <option value="disabled">{getMessage('skillStatusDisabled')}</option>
-            <option value="shadowed">{getMessage('skillStatusShadowed')}</option>
-            <option value="error">{getMessage('skillStatusError')}</option>
-          </select>
+          <DropdownMenu class="h-8 text-xs" items={sourceFilterItems} bind:value={sourceFilter} />
+          <DropdownMenu class="h-8 text-xs" items={statusFilterItems} bind:value={statusFilter} />
         </div>
       </div>
 

@@ -4,6 +4,7 @@
   import { Plus, Clock3, Play, Pause, Trash2, RefreshCw, X } from '@lucide/svelte'
   import type { DesktopClient } from './client.svelte'
   import type { RpcOutput } from '$lib/anda/client/types'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { label, type Label } from './labels'
   let { client }: { client: DesktopClient } = $props()
   const t = (key: Label) => label(client.preferences.language, key)
@@ -35,6 +36,16 @@
   let prompt = $state('')
   let kind = $state('agent')
   let scheduleKind = $state('every')
+  const kindItems = [
+    { value: 'agent', label: 'Agent' },
+    { value: 'shell', label: 'Shell' }
+  ]
+  const scheduleKindItems = [
+    { value: 'every', label: 'Every' },
+    { value: 'once', label: 'Once' },
+    { value: 'cron', label: 'Cron' },
+    { value: 'at', label: 'At (RFC3339)' }
+  ]
   let schedule = $state('1d')
   let timezone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone)
   let selected = $state<number | null>(null)
@@ -206,17 +217,19 @@
         <button class="icon-button" onclick={() => (editing = false)}><X size={17} /></button>
       </div>
       <label>{t('name')}<input bind:value={name} /></label><label
-        >{t('task')}<select bind:value={kind}
-          ><option value="agent">Agent</option><option value="shell">Shell</option></select
-        ><textarea rows="6" bind:value={prompt}></textarea></label
+        >{t('task')}<DropdownMenu
+          items={kindItems}
+          bind:value={kind}
+          ariaLabel={t('task')}
+        /><textarea rows="6" bind:value={prompt}></textarea></label
       >
       <div class="schedule-fields">
         <label
-          >{t('schedule')}<select bind:value={scheduleKind}
-            ><option value="every">Every</option><option value="once">Once</option><option
-              value="cron">Cron</option
-            ><option value="at">At (RFC3339)</option></select
-          ></label
+          >{t('schedule')}<DropdownMenu
+            items={scheduleKindItems}
+            bind:value={scheduleKind}
+            ariaLabel={t('schedule')}
+          /></label
         ><label
           >{t('interval')}<input
             bind:value={schedule}

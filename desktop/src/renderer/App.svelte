@@ -7,6 +7,7 @@
   import pandaLogo from '../../../anda_bot/assets/logo.png'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import MemoryWorkspace from '$lib/anda/memory/MemoryWorkspace.svelte'
   import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
@@ -22,7 +23,6 @@
     PanelLeftClose,
     PanelLeft,
     PanelRight,
-    Plus,
     Folder,
     ChevronDown,
     ArrowDown,
@@ -37,6 +37,7 @@
     Sparkles
   } from '@lucide/svelte'
   import type { DesktopClient } from './client.svelte'
+  import { defaultPreferences, type ChatEntry } from '../shared/contract'
   import type { ChatAttachment, Conversation, RpcOutput, Resource } from '$lib/anda/client/types'
   import { label, type Label } from './labels'
   import Automations from './Automations.svelte'
@@ -44,6 +45,7 @@
   import GitPanel from './GitPanel.svelte'
   import BrowserPanel from './BrowserPanel.svelte'
   import AudioPanel from './AudioPanel.svelte'
+  import LocaleSwitcher from './LocaleSwitcher.svelte'
   let { client }: { client: DesktopClient } = $props()
   provideAndaClient(untrack(() => client))
   const t = (key: Label) => label(client.preferences.language, key)
@@ -56,11 +58,27 @@
   let searchBusy = $state(false)
   let searchResults = $state<Conversation[]>([])
   let showArchived = $state(false)
-  let menuSource = $state('')
   let renameSource = $state('')
   let renameTitle = $state('')
   let settingsTab = $state('general')
   let memoryMode = $state<'standard' | 'no_store' | 'off'>('standard')
+  const memoryModeItems = $derived<{ value: typeof memoryMode; label: string }[]>([
+    { value: 'standard', label: t('standard') },
+    { value: 'no_store', label: t('noStore') },
+    { value: 'off', label: t('off') }
+  ])
+  const themeItems = $derived<{ value: 'system' | 'light' | 'dark'; label: string }[]>([
+    { value: 'system', label: t('system') },
+    { value: 'light', label: t('light') },
+    { value: 'dark', label: t('dark') }
+  ])
+  // The sidebar's width is dragged from its edge and saved on release; until
+  // someone resizes it the narrow-window defaults in style.css apply.
+  const SIDEBAR_MIN = 200
+  const SIDEBAR_MAX = 400
+  let sidebar = $state<HTMLElement | null>(null)
+  let draggedWidth = $state<number | null>(null)
+  const sidebarWidth = $derived(draggedWidth ?? client.preferences.sidebarWidth)
   let scrollArea = $state<HTMLElement | null>(null)
   let following = $state(true)
   let scrollPositions = new Map<string, number>()
@@ -160,7 +178,6 @@
     }
     if (event.key === 'Escape') {
       searchOpen = false
-      menuSource = ''
       renameSource = ''
     }
   }
@@ -263,6 +280,54 @@
     await client.updateChat(renameSource, { title: renameTitle.trim() || 'Untitled' })
     renameSource = ''
   }
+  function chatMenu(chat: ChatEntry) {
+    return [
+      { value: 'rename' as const, label: t('rename') },
+      { value: 'pin' as const, label: chat.pinned ? t('unpin') : t('pin') },
+      { value: 'archive' as const, label: chat.archived ? t('restore') : t('archive') }
+    ]
+  }
+  function chatAction(chat: ChatEntry, action: 'rename' | 'pin' | 'archive') {
+    if (action === 'rename') {
+      renameSource = chat.source
+      renameTitle = chat.title
+    } else if (action === 'pin') void client.updateChat(chat.source, { pinned: !chat.pinned })
+    else void client.updateChat(chat.source, { archived: !chat.archived })
+  }
+  function clampSidebar(width: number) {
+    return Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width)))
+  }
+  /** Pixels the sidebar grows by when the pointer moves `dx` to the right. */
+  function sidebarGrowth(dx: number) {
+    return document.documentElement.dir === 'rtl' ? -dx : dx
+  }
+  function startSidebarResize(event: PointerEvent) {
+    if (event.button !== 0 || !sidebar) return
+    const handle = event.currentTarget as HTMLElement
+    const startX = event.clientX
+    const startWidth = sidebar.getBoundingClientRect().width
+    handle.setPointerCapture(event.pointerId)
+    const move = (e: PointerEvent) => {
+      draggedWidth = clampSidebar(startWidth + sidebarGrowth(e.clientX - startX))
+    }
+    const end = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', end)
+      handle.removeEventListener('pointercancel', end)
+      if (draggedWidth !== null) void preference({ sidebarWidth: draggedWidth })
+      draggedWidth = null
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', end)
+    handle.addEventListener('pointercancel', end)
+  }
+  function resizeSidebarByKey(event: KeyboardEvent) {
+    const step = event.key === 'ArrowRight' ? 16 : event.key === 'ArrowLeft' ? -16 : 0
+    if (!step || !sidebar) return
+    event.preventDefault()
+    const width = sidebar.getBoundingClientRect().width
+    void preference({ sidebarWidth: clampSidebar(width + sidebarGrowth(step)) })
+  }
   async function preference(patch: Parameters<DesktopClient['savePreferences']>[0]) {
     try {
       await client.savePreferences(patch)
@@ -276,11 +341,15 @@
 <svelte:document onvisibilitychange={() => (pageVisible = !document.hidden)} />
 <div
   class:sidebar-collapsed={collapsed}
+  class:sidebar-resizing={draggedWidth !== null}
   class:with-panel={rightOpen && client.view === 'chat'}
   class:workbench-open={rightOpen && rightTab !== 'resources' && client.view === 'chat'}
   class="desktop-shell"
+  style:--sidebar-width={sidebarWidth === defaultPreferences.sidebarWidth
+    ? undefined
+    : `${sidebarWidth}px`}
 >
-  <aside class="sidebar">
+  <aside class="sidebar" bind:this={sidebar}>
     <div class="sidebar-titlebar">
       <span class="wordmark">anda<span class="wordmark-dot">●</span></span><button
         class="icon-button"
@@ -315,22 +384,6 @@
     </div>
     <div class="sidebar-scroll">
       <div class="section-label">
-        <span>{t('projects')}</span><button
-          class="icon-button"
-          title={t('addProject')}
-          onclick={addProject}><Plus size={14} /></button
-        >
-      </div>
-      {#each client.preferences.projects as project}<button
-          class="nav-row project-row"
-          title={project.path}
-          onclick={() => client.newChat(project.path)}
-          ><Folder size={15} /><span>{project.name}</span><Plus size={13} /></button
-        >{/each}
-      {#if !client.preferences.projects.length}<button class="add-project" onclick={addProject}
-          ><Plus size={13} />{t('addProject')}</button
-        >{/if}
-      <div class="section-label chat-section">
         <button onclick={() => (showArchived = !showArchived)}
           >{showArchived ? t('archived') : t('recent')}<ChevronDown size={12} /></button
         >
@@ -346,31 +399,16 @@
                 class="working-dot"
               ></span>{/if}</button
           >
-          <button
+          <DropdownMenu
             class="chat-more icon-button"
+            items={chatMenu(chat)}
+            onSelect={(action) => chatAction(chat, action)}
+            ariaLabel={t('details')}
             title={t('details')}
-            onclick={() => (menuSource = menuSource === chat.source ? '' : chat.source)}
-            ><MoreHorizontal size={16} /></button
+            align="end"
           >
-          {#if menuSource === chat.source}<div class="context-menu">
-              <button
-                onclick={() => {
-                  renameSource = chat.source
-                  renameTitle = chat.title
-                  menuSource = ''
-                }}>{t('rename')}</button
-              ><button
-                onclick={() => {
-                  void client.updateChat(chat.source, { pinned: !chat.pinned })
-                  menuSource = ''
-                }}>{chat.pinned ? t('unpin') : t('pin')}</button
-              ><button
-                onclick={() => {
-                  void client.updateChat(chat.source, { archived: !chat.archived })
-                  menuSource = ''
-                }}>{chat.archived ? t('restore') : t('archive')}</button
-              >
-            </div>{/if}
+            {#snippet trigger()}<MoreHorizontal size={16} />{/snippet}
+          </DropdownMenu>
         </div>
       {/each}
       {#if !chats.length}<p class="sidebar-empty">{t('noChats')}</p>{/if}
@@ -390,6 +428,22 @@
         ><RefreshCw size={12} /></button
       >
     </div>
+    <!-- A focusable separator is ARIA's window-splitter widget (drag, or arrow
+         keys); Svelte's a11y rules only know the static kind. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="sidebar-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t('resizeSidebar')}
+      aria-valuemin={SIDEBAR_MIN}
+      aria-valuemax={SIDEBAR_MAX}
+      aria-valuenow={sidebarWidth}
+      tabindex="0"
+      onpointerdown={startSidebarResize}
+      onkeydown={resizeSidebarByKey}
+      ondblclick={() => void preference({ sidebarWidth: defaultPreferences.sidebarWidth })}
+    ></div>
   </aside>
   <section class="main-column">
     <header class="workspace-header">
@@ -500,18 +554,6 @@
         >{/if}
       <footer class="composer-footer">
         <div class="composer-container">
-          <div class="composer-context">
-            <button onclick={addProject}
-              ><Folder size={13} />{client.workspace?.split(/[\\/]/).at(-1) ||
-                t('noFolder')}<ChevronDown size={12} /></button
-            >{#if !channel?.conversationId}<select
-                aria-label={t('memoryMode')}
-                bind:value={memoryMode}
-                ><option value="standard">{t('standard')}</option><option value="no_store"
-                  >{t('noStore')}</option
-                ><option value="off">{t('off')}</option></select
-              >{/if}
-          </div>
           {#key client.activeSource}<ChatComposer
               disabled={!client.authorized || client.readOnly || currentPending.length > 0}
               placeholder={t('prompt')}
@@ -535,19 +577,48 @@
               incomingDraft={client.incomingDraft}
               initialDraft={client.getDraft(client.activeSource)}
               onDraftChange={(draft) => client.saveDraft(client.activeSource, draft)}
-            />{/key}
-          <div class="composer-meta">
-            <select
-              aria-label="Model"
-              title={t('modelScope')}
-              value={client.modelState.activeModel || ''}
-              onchange={(event) =>
-                void client
-                  .setActiveModel(event.currentTarget.value)
-                  .catch((error) => client.fail(error))}
-              >{#each client.modelState.modelNames as name}<option value={name}>{name}</option
-                >{/each}</select
-            ><span>{t('local')} · Anda</span>
+            >
+              {#snippet actions()}
+                {#if client.modelState.modelNames.length}
+                  <DropdownMenu
+                    class="composer-model"
+                    items={client.modelState.modelNames.map((name) => ({
+                      value: name,
+                      label: name
+                    }))}
+                    value={client.modelState.activeModel || ''}
+                    onSelect={(name) =>
+                      void client.setActiveModel(name).catch((error) => client.fail(error))}
+                    ariaLabel="Model"
+                    title={t('modelScope')}
+                    align="end"
+                  >
+                    {#snippet trigger()}
+                      <span class="truncate">{client.modelState.activeModel}</span>
+                      <ChevronDown size={12} />
+                    {/snippet}
+                  </DropdownMenu>
+                {/if}
+              {/snippet}
+            </ChatComposer>{/key}
+          <div class="composer-context">
+            <button onclick={addProject}
+              ><Folder size={13} />{client.workspace?.split(/[\\/]/).at(-1) ||
+                t('noFolder')}<ChevronDown size={12} /></button
+            >
+            {#if !channel?.conversationId}
+              <DropdownMenu
+                items={memoryModeItems}
+                bind:value={memoryMode}
+                ariaLabel={t('memoryMode')}
+              >
+                {#snippet trigger(selected)}
+                  <span class="truncate">{selected?.label}</span>
+                  <ChevronDown size={12} />
+                {/snippet}
+              </DropdownMenu>
+            {/if}
+            <span class="composer-local">{t('local')} · Anda</span>
           </div>
         </div>
       </footer>
@@ -576,28 +647,16 @@
           <h1>{t('general')}</h1>
           <p class="muted">Anda Desktop · {client.connection.home}</p>
           <div class="setting-row">
-            <span>{t('theme')}</span><select
+            <span>{t('theme')}</span><DropdownMenu
+              items={themeItems}
               value={client.preferences.theme}
-              onchange={(event) =>
-                preference({ theme: event.currentTarget.value as 'system' | 'light' | 'dark' })}
-              ><option value="system">{t('system')}</option><option value="light"
-                >{t('light')}</option
-              ><option value="dark">{t('dark')}</option></select
-            >
+              onSelect={(theme) => void preference({ theme })}
+              ariaLabel={t('theme')}
+              align="end"
+            />
           </div>
           <div class="setting-row">
-            <span>{t('language')}</span><select
-              value={client.preferences.language}
-              onchange={async (event) => {
-                await preference({ language: event.currentTarget.value })
-                location.reload()
-              }}
-              ><option value="en">English</option><option value="zh_CN">简体中文</option><option
-                value="fr">Français</option
-              ><option value="es">Español</option><option value="ru">Русский</option><option
-                value="ar">العربية</option
-              ></select
-            >
+            <span>{t('language')}</span><LocaleSwitcher {client} />
           </div>
           <div class="setting-row">
             <span>{t('notifications')}</span><input

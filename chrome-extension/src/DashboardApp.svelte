@@ -7,8 +7,9 @@
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   provideAndaClient(andaClient)
-  import { applyAppearanceTheme } from '$lib/anda/theme'
-  import { buttonClass, nativeSelectClass } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import { appearanceThemeItems, applyAppearanceTheme } from '$lib/anda/theme'
+  import { buttonClass } from '$lib/anda/ui'
   import { getMessage } from '$lib/i18n'
   import { connectionKey } from '$lib/service-worker/settings'
   import { cn } from '$lib/utils'
@@ -219,18 +220,13 @@
       {#if !navCollapsed}
         <label class="grid gap-1 text-[11px] font-medium text-muted-foreground">
           {getMessage('appearanceTheme')}
-          <select
-            class={nativeSelectClass('h-8 text-xs')}
+          <DropdownMenu
+            class="h-8 text-xs"
+            items={appearanceThemeItems()}
             value={andaClient.settings.appearanceTheme}
-            onchange={(event) =>
-              void andaClient.saveAppearanceTheme(
-                event.currentTarget.value as 'light' | 'dark' | 'system'
-              )}
-          >
-            <option value="system">{getMessage('appearanceSystem')}</option>
-            <option value="light">{getMessage('appearanceLight')}</option>
-            <option value="dark">{getMessage('appearanceDark')}</option>
-          </select>
+            onSelect={(theme) => void andaClient.saveAppearanceTheme(theme)}
+            ariaLabel={getMessage('appearanceTheme')}
+          />
         </label>
       {/if}
       <button

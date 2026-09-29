@@ -1,21 +1,13 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
   import { applyAppearanceTheme } from '$lib/anda/theme'
-  import {
-    buttonClass,
-    fieldClass,
-    fieldLabelClass,
-    inputClass,
-    nativeSelectClass,
-    nativeSelectWrapperClass,
-    textareaClass
-  } from '$lib/anda/ui'
+  import { buttonClass, fieldClass, fieldLabelClass, inputClass, textareaClass } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { defaultSettings, errorToMessage } from '$lib/service-worker/settings'
   import type { SettingsState } from '$lib/service-worker/types'
   import {
     AlertCircle,
     Check,
-    ChevronDown,
     FileCode2,
     LoaderCircle,
     Plus,
@@ -170,13 +162,8 @@
     errorMessage = ''
   }
 
-  function updateString(target: JsonObject, field: FieldSchema, event: Event) {
-    setStringValue(
-      target,
-      field.key,
-      (event.currentTarget as HTMLInputElement).value,
-      field.nullable
-    )
+  function updateString(target: JsonObject, field: FieldSchema, value: string) {
+    setStringValue(target, field.key, value, field.nullable)
     markFormDirty()
   }
 
@@ -311,21 +298,12 @@
         >
       </label>
     {:else if field.kind === 'select'}
-      <div class={nativeSelectWrapperClass('w-full')} data-slot="native-select-wrapper">
-        <select
-          class={nativeSelectClass()}
-          value={stringValue(target, field.key)}
-          onchange={(event) => updateString(target, field, event)}
-        >
-          {#each field.options || [] as option}
-            <option class="bg-[Canvas] text-[CanvasText]" value={option}>{option}</option>
-          {/each}
-        </select>
-        <ChevronDown
-          class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden="true"
-        />
-      </div>
+      <DropdownMenu
+        items={(field.options || []).map((option) => ({ value: option, label: option }))}
+        value={stringValue(target, field.key)}
+        onSelect={(value) => updateString(target, field, value)}
+        ariaLabel={field.label}
+      />
     {:else if field.kind === 'number'}
       <input
         class={inputClass('h-9 text-sm')}
@@ -356,7 +334,7 @@
         value={stringValue(target, field.key)}
         placeholder={field.placeholder ||
           (field.nullable ? getMessage('configOptionalPlaceholder') : undefined)}
-        oninput={(event) => updateString(target, field, event)}
+        oninput={(event) => updateString(target, field, event.currentTarget.value)}
       />
     {/if}
   </div>

@@ -24,6 +24,8 @@ export interface Preferences {
   approvalMode: ApprovalMode
   notifications: boolean
   launchAtLogin: boolean
+  /** Sidebar width in CSS pixels, set by dragging its edge. */
+  sidebarWidth: number
   chats: ChatEntry[]
   projects: ProjectEntry[]
   activeSource?: string
@@ -37,6 +39,7 @@ export const defaultPreferences: Preferences = {
   approvalMode: 'on_risk',
   notifications: true,
   launchAtLogin: false,
+  sidebarWidth: 242,
   chats: [],
   projects: [],
   drafts: {}

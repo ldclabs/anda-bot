@@ -470,7 +470,9 @@ try {
   await app.evaluate(({ dialog }, path) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] })
   }, project)
-  await page.locator('.add-project').click()
+  // Projects are picked from a new chat's workspace button.
+  await page.locator('.sidebar-primary').getByText('New chat', { exact: true }).click()
+  await page.locator('.composer-context button').first().click()
   await page.waitForFunction(() =>
     document.querySelector('.composer-context')?.textContent.includes('smoke-project')
   )
@@ -482,6 +484,39 @@ try {
   await page.getByText(/Shell command approval.*Approved/).waitFor()
   assert.equal(approvals, 1)
   assert.equal(lastWorkspace, project)
+  // A chat's menu closes on a click elsewhere, and Rename keeps focus in its
+  // dialog after the menu finishes closing.
+  const approvalRow = page.locator('.chat-row').filter({ hasText: 'Approval check' })
+  await approvalRow.hover()
+  await approvalRow.getByRole('button', { name: 'Details' }).click()
+  await page.getByRole('menuitem', { name: 'Rename' }).waitFor()
+  const main = await page.locator('.main-column').boundingBox()
+  await page.mouse.click(main.x + main.width / 2, main.y + main.height / 2)
+  await page.getByRole('menu').waitFor({ state: 'detached' })
+  await approvalRow.hover()
+  await approvalRow.getByRole('button', { name: 'Details' }).click()
+  await page.getByRole('menuitem', { name: 'Rename' }).click()
+  await page.getByRole('menu').waitFor({ state: 'detached' })
+  assert.ok(await page.evaluate(() => document.activeElement?.closest('.rename-dialog') !== null))
+  await page.keyboard.press('Escape')
+  // Dragging the sidebar's edge resizes it and saves the width; a double-click restores it.
+  const sidebarWidth = async () => (await page.locator('.sidebar').boundingBox()).width
+  const startWidth = await sidebarWidth()
+  const edge = await page.locator('.sidebar-resizer').boundingBox()
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(edge.x + edge.width / 2 + 80, edge.y + edge.height / 2, { steps: 4 })
+  await page.mouse.up()
+  assert.ok(Math.abs((await sidebarWidth()) - (startWidth + 80)) <= 1)
+  await page.waitForFunction(
+    async (width) =>
+      Math.abs((await window.anda.bootstrap()).preferences.sidebarWidth - width) <= 1,
+    startWidth + 80
+  )
+  await page.locator('.sidebar-resizer').dblclick()
+  await page.waitForFunction(
+    async () => (await window.anda.bootstrap()).preferences.sidebarWidth === 242
+  )
   await page.locator('.workspace-header').getByTitle('Resources').click()
   await page
     .locator('.resource-panel')
@@ -614,10 +649,12 @@ try {
   )
   await page.screenshot({ path: join(screenshotDir, '05-narrow.png') })
   await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
-  await page.locator('.setting-row select').first().selectOption('dark')
+  await page.locator('.setting-row').getByRole('button', { name: 'Appearance' }).click()
+  await page.getByRole('menuitem', { name: 'Dark' }).click()
   await page.waitForFunction(() => document.documentElement.classList.contains('dark'))
   await page.screenshot({ path: join(screenshotDir, '06-dark.png') })
-  await page.locator('.setting-row select').nth(1).selectOption('zh_CN')
+  await page.locator('.setting-row').getByRole('button', { name: 'Language' }).click()
+  await page.getByRole('menuitem', { name: '简体中文' }).click()
   await page.getByText('最近', { exact: true }).waitFor({ timeout: 15_000 })
   await page.screenshot({ path: join(screenshotDir, '07-chinese.png') })
   const secrets = await page.evaluate(() =>
@@ -629,7 +666,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {

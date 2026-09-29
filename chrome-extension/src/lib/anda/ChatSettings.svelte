@@ -15,10 +15,9 @@
     fieldGroupClass,
     fieldLabelClass,
     inputClass,
-    nativeSelectClass,
-    nativeSelectWrapperClass,
     separatorClass
   } from '$lib/anda/ui'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { delay } from '$lib/utils/async'
   import {
     BrainCircuit,
@@ -185,8 +184,7 @@
     }
   }
 
-  async function switchActiveModel(event: Event) {
-    const nextModel = (event.currentTarget as HTMLSelectElement | null)?.value || ''
+  async function switchActiveModel(nextModel: string) {
     if (!nextModel || nextModel === activeModel || switchingModel) {
       return
     }
@@ -478,37 +476,17 @@
               </label>
             </div>
             <div class="grid grid-cols-[1fr_auto] items-center gap-2">
-              <div
-                class={nativeSelectWrapperClass('w-full')}
-                data-slot="native-select-wrapper"
-                data-size="sm"
-              >
-                <select
-                  id="active-model"
-                  data-slot="native-select"
-                  data-size="sm"
-                  class={nativeSelectClass()}
-                  value={activeModel}
-                  disabled={!canChangeModel}
-                  aria-label={getMessage('activeModel')}
-                  onchange={switchActiveModel}
-                >
-                  {#if modelNames.length === 0}
-                    <option class="bg-[Canvas] text-[CanvasText]" value="">
-                      {getMessage('modelListEmpty')}
-                    </option>
-                  {/if}
-                  {#each modelNames as modelName}
-                    <option class="bg-[Canvas] text-[CanvasText]" value={modelName}>
-                      {modelName}
-                    </option>
-                  {/each}
-                </select>
-                <ChevronDown
-                  class="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-muted-foreground select-none"
-                  aria-hidden="true"
-                />
-              </div>
+              <DropdownMenu
+                id="active-model"
+                class="h-8"
+                items={modelNames.length > 0
+                  ? modelNames.map((modelName) => ({ value: modelName, label: modelName }))
+                  : [{ value: '', label: getMessage('modelListEmpty') }]}
+                value={activeModel}
+                disabled={!canChangeModel}
+                onSelect={(model) => void switchActiveModel(model)}
+                ariaLabel={getMessage('activeModel')}
+              />
               <button
                 type="button"
                 class={buttonClass('ghost')}

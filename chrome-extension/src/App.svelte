@@ -7,6 +7,7 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { memoryModeLabel } from '$lib/anda/memory/labels'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
@@ -60,6 +61,12 @@
 
   const memoryActivity = new ConversationMemoryActivity()
   let nextMemoryMode = $state<'' | 'standard' | 'no_store' | 'off'>('')
+  const memoryModeItems: { value: typeof nextMemoryMode; label: string }[] = [
+    { value: '', label: getMessage('memoryModeKeep') },
+    { value: 'standard', label: getMessage('memoryMode_standard') },
+    { value: 'no_store', label: getMessage('memoryMode_no_store') },
+    { value: 'off', label: getMessage('memoryMode_off') }
+  ]
   let settingsOpen = $state(false)
   let setupGuideOpen = $state(false)
   let sideMessagesOpen = $state(false)
@@ -818,16 +825,13 @@
         >
         <label class="mt-2 flex flex-wrap items-center gap-2">
           {getMessage('memoryModeNew')}
-          <select
-            class="rounded border border-border bg-background p-1 text-foreground"
+          <DropdownMenu
+            class="h-7 w-auto text-xs text-foreground"
+            items={memoryModeItems}
             bind:value={nextMemoryMode}
             disabled={isBusy}
-          >
-            <option value="">{getMessage('memoryModeKeep')}</option>
-            <option value="standard">{getMessage('memoryMode_standard')}</option>
-            <option value="no_store">{getMessage('memoryMode_no_store')}</option>
-            <option value="off">{getMessage('memoryMode_off')}</option>
-          </select>
+            ariaLabel={getMessage('memoryModeNew')}
+          />
         </label>
         <p class="mt-2 leading-relaxed">{getMessage('memoryModeScope')}</p>
         {#if nextMemoryMode}<p class="mt-2 leading-relaxed">
