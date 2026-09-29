@@ -1,7 +1,7 @@
 {
   "name": "@anda/desktop",
   "private": true,
-  "version": "0.13.0",
+  "version": "0.13.0-beta.1",
   "description": "Anda — your local AI workspace",
   "author": "LDC Labs",
   "license": "Apache-2.0",
