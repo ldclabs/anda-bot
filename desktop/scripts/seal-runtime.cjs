@@ -9,9 +9,10 @@ const run = promisify(execFile)
 // electron-builder 26 signs Windows extraResources during copying, before this
 // hook. On macOS we sign the runtime here and exclude only that binary from the
 // subsequent recursive app-signing pass; helpers and the outer app still sign.
-// The runtime carries its own entitlements because `anda install` copies it to
-// the shared CLI location, where the hardened runtime blocks voice input
-// unless audio-input is granted.
+// `anda install` copies the runtime to the shared CLI location, so it is signed
+// like the release binary (scripts/sign-macos-binaries.sh): the same identifier
+// keeps macOS privacy grants across `anda update`, and the anda entitlements
+// let voice input use the microphone under the hardened runtime.
 module.exports = async function sealRuntime(context) {
   const mac = context.electronPlatformName === 'darwin'
   const resources = mac
@@ -54,8 +55,10 @@ module.exports = async function sealRuntime(context) {
       identity,
       '--options',
       'runtime',
+      '--identifier',
+      'ai.anda.anda-bot',
       '--entitlements',
-      join(__dirname, '../resources/entitlements.runtime.plist'),
+      join(__dirname, '../../anda_bot/assets/anda.entitlements.plist'),
       ...(identity === '-' ? [] : ['--timestamp']),
       ...(keychain ? ['--keychain', keychain] : []),
       runtime

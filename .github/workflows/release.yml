@@ -208,6 +208,70 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  # Its own job so build-binary's Azure OIDC subject does not change with the
+  # environment that holds the Developer ID certificate.
+  sign-macos-binary:
+    needs: build-binary
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    environment: desktop-release
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check macOS signing configuration
+        id: signing
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+        run: |
+          if [ -n "$MAC_CSC_LINK" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "macOS signing is not configured; keeping the ad-hoc signed binaries."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download binaries
+        if: ${{ steps.signing.outputs.configured == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release
+
+      - name: Sign and notarize
+        if: ${{ steps.signing.outputs.configured == 'true' }}
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          binaries=(release/anda-${{ matrix.target }} release/anda_launcher-${{ matrix.target }})
+          scripts/sign-macos-binaries.sh "${binaries[@]}"
+          chmod +x "${binaries[@]}"
+          "${binaries[0]}" --version
+          for file in "${binaries[@]}"; do
+            echo "$(shasum -a 256 "$file" | awk '{print $1}')  $(basename "$file")" > "${file}.sha256"
+          done
+
+      - name: Upload signed binaries
+        if: ${{ steps.signing.outputs.configured == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: release/*
+          if-no-files-found: error
+          overwrite: true
+
   package-skills:
     runs-on: ubuntu-latest
     steps:
@@ -234,7 +298,9 @@ jobs:
           if-no-files-found: error
 
   build-desktop:
-    needs: build-binary
+    needs:
+      - build-binary
+      - sign-macos-binary
     strategy:
       fail-fast: false
       matrix:
@@ -350,6 +416,7 @@ jobs:
   release:
     needs:
       - build-binary
+      - sign-macos-binary
       - package-skills
       - build-desktop
     if: startsWith(github.ref, 'refs/tags/v')
