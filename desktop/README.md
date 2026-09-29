@@ -100,7 +100,7 @@ Normal chat speech can also be stopped from the composer. Input drafts are prese
 
 For signed builds, configure the protected `desktop-release` environment: `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`, `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, and the public variable `ANDA_WINDOWS_PUBLISHER`. Without certificates the release job builds unsigned packages with the local configuration and no update feed.
 
-`electron-builder.release.cjs` requires signatures and macOS notarization and publishes update metadata for the GitHub release feed. `scripts/seal-runtime.cjs` records the bundled runtime digest after its final signature, before sealing the outer app; the app verifies platform, architecture and digest before running `anda install`. The default local configuration remains ad-hoc signed.
+`electron-builder.release.cjs` requires signatures and macOS notarization and publishes update metadata for the GitHub release feed. `scripts/seal-runtime.cjs` signs the bundled runtime with `resources/entitlements.runtime.plist` (microphone only, for voice input once it is installed at the shared CLI location) and records its digest after that final signature, before sealing the outer app; the app verifies platform, architecture and digest before running `anda install`. The default local configuration remains ad-hoc signed.
 
 The NSIS installer only stops processes started from its own directory (`resources/installer.nsh`): the default electron-builder check matches `$INSTDIR` as a bare prefix, and `...\Programs\Anda` is a prefix of `...\Programs\AndaBot`, where the shared `anda` and its daemon run.
 

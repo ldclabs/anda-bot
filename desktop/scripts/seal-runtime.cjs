@@ -9,6 +9,9 @@ const run = promisify(execFile)
 // electron-builder 26 signs Windows extraResources during copying, before this
 // hook. On macOS we sign the runtime here and exclude only that binary from the
 // subsequent recursive app-signing pass; helpers and the outer app still sign.
+// The runtime carries its own entitlements because `anda install` copies it to
+// the shared CLI location, where the hardened runtime blocks voice input
+// unless audio-input is granted.
 module.exports = async function sealRuntime(context) {
   const mac = context.electronPlatformName === 'darwin'
   const resources = mac
@@ -51,6 +54,8 @@ module.exports = async function sealRuntime(context) {
       identity,
       '--options',
       'runtime',
+      '--entitlements',
+      join(__dirname, '../resources/entitlements.runtime.plist'),
       ...(identity === '-' ? [] : ['--timestamp']),
       ...(keychain ? ['--keychain', keychain] : []),
       runtime
