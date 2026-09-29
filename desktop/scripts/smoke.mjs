@@ -19,6 +19,8 @@ const usage = {
   cached_tokens: 0,
   requests: 1
 }
+const assistantReply =
+  'Hello from the local daemon.\n\nYour desktop connection is working. **No external model was called.**'
 const sources = {}
 const conversations = new Map()
 let next = 1
@@ -200,12 +202,7 @@ wsServer.on('connection', (ws, request) => {
       })
       c.messages.push({
         role: 'assistant',
-        content: [
-          {
-            type: 'Text',
-            text: 'Hello from the local daemon.\n\nYour desktop connection is working. **No external model was called.**'
-          }
-        ],
+        content: [{ type: 'Text', text: assistantReply }],
         timestamp: Date.now() + 1
       })
       if (prompt === 'Approval check')
@@ -337,6 +334,7 @@ const env = {
 }
 delete env.ELECTRON_RUN_AS_NODE
 let app
+let userClipboard
 try {
   app = await electron.launch({
     executablePath: electronPath,
@@ -379,6 +377,29 @@ try {
     .waitFor({ timeout: 15_000 })
   assert.equal(conversations.size, 1)
   await page.screenshot({ path: join(screenshotDir, '02-chat.png') })
+  // Message copy buttons write through navigator.clipboard, which Electron
+  // grants only through the session's permission request handler. The user's
+  // clipboard text is restored when the run ends.
+  userClipboard = await app.evaluate(({ clipboard }) => clipboard.readText())
+  const reply = page.locator('article').filter({ hasText: 'No external model was called.' })
+  const copied = async (button, type) => {
+    await app.evaluate(({ clipboard }) => clipboard.clear())
+    await reply.getByRole('button', { name: button, exact: true }).click()
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const value = await app.evaluate(async ({ clipboard }, type) => {
+        const item = (await clipboard.read()).find((item) => item.types.includes(type))
+        return item ? (await item.getType(type)).text() : ''
+      }, type)
+      if (value) return value
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    assert.fail(`${button} did not write ${type} to the system clipboard`)
+  }
+  assert.equal((await copied('Copy message', 'text/plain')).replace(/\r\n/g, '\n'), assistantReply)
+  assert.match(
+    await copied('Copy rich text', 'text/html'),
+    /<strong[^>]*>No external model was called\.<\/strong>/
+  )
   await editor.fill('An unsent draft')
   await page.waitForTimeout(450)
   await page.locator('.sidebar-primary').getByText('New chat', { exact: true }).click()
@@ -543,6 +564,8 @@ try {
   await browserAction(browserSession, { action: 'click', selector: '#go' })
   const text = await browserAction(browserSession, { action: 'extract_text' })
   assert.ok(JSON.stringify(text).includes('Anda browser input'), JSON.stringify(text))
+  await browserAction(browserSession, { action: 'copy_to_clipboard', text: 'Anda browser copy' })
+  assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), 'Anda browser copy')
   const captured = await browserAction(browserSession, { action: 'screenshot' })
   assert.ok(captured.data_url.startsWith('data:image/png;base64,'))
   await writeFile(
@@ -606,7 +629,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {
@@ -619,6 +642,10 @@ try {
   }
   throw error
 } finally {
+  if (userClipboard !== undefined)
+    await app
+      .evaluate(({ clipboard }, text) => clipboard.writeText(text), userClipboard)
+      .catch(() => {})
   await app?.close()
   for (const ws of wsServer.clients) ws.terminate()
   await new Promise((resolve) => wsServer.close(resolve))

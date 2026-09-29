@@ -622,7 +622,7 @@ export class BrowserService {
         }
       }
       case 'copy_to_clipboard':
-        clipboard.writeText(args.text || '')
+        await clipboard.writeText(args.text || '')
         return { copied: true }
       case 'upload_file': {
         // The browser tool may select files only after the local user reviews

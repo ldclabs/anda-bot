@@ -171,7 +171,7 @@ async function controlDaemon(action: 'stop' | 'restart'): Promise<DaemonView> {
   return daemon.control(action)
 }
 async function copyExtensionToken(): Promise<void> {
-  clipboard.writeText(await daemon.extensionToken())
+  await clipboard.writeText(await daemon.extensionToken())
   inform(t('tokenCopied'))
 }
 function refreshTray(): void {
@@ -371,19 +371,9 @@ function createWindow(): void {
     openExternal(url)
   })
   contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
-    if (webContents.id === contents.id && details.isMainFrame && permission === 'speaker-selection')
-      return callback(true)
-    if (
-      webContents.id !== contents.id ||
-      permission !== 'media' ||
-      !details.isMainFrame ||
-      !('mediaTypes' in details) ||
-      !details.mediaTypes ||
-      details.mediaTypes.some((type) => type !== 'audio')
-    )
+    if (!appPermissionAllowed(contents.id, webContents.id, permission, details))
       return callback(false)
-    if (testMode) callback(true)
-    else if (process.platform === 'darwin')
+    if (permission === 'media' && !testMode && process.platform === 'darwin')
       void systemPreferences
         .askForMediaAccess('microphone')
         .then(callback)

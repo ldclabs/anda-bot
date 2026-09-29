@@ -18,6 +18,21 @@ it('permits application audio only in its own main frame, never camera or previe
   )
   expect(appPermissionAllowed(1, 2, 'media', { isMainFrame: true, mediaType: 'audio' })).toBe(false)
   expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: true })).toBe(false)
+  expect(appPermissionAllowed(1, 1, 'media', { isMainFrame: true, mediaTypes: ['audio'] })).toBe(
+    true
+  )
+  expect(
+    appPermissionAllowed(1, 1, 'media', { isMainFrame: true, mediaTypes: ['audio', 'video'] })
+  ).toBe(false)
+})
+
+it('lets the application main frame write, but never read, the clipboard', () => {
+  expect(appPermissionAllowed(1, 1, 'clipboard-sanitized-write', { isMainFrame: true })).toBe(true)
+  expect(appPermissionAllowed(1, 1, 'clipboard-sanitized-write', { isMainFrame: false })).toBe(
+    false
+  )
+  expect(appPermissionAllowed(1, 2, 'clipboard-sanitized-write', { isMainFrame: true })).toBe(false)
+  expect(appPermissionAllowed(1, 1, 'clipboard-read', { isMainFrame: true })).toBe(false)
 })
 
 it('keeps all six desktop language dictionaries complete', () => {

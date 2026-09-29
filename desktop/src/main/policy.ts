@@ -139,15 +139,19 @@ export function navigationSource(raw: string): string | null {
     return null
   }
 }
-/** Only the application's top-level document may request its audio capability. */
+/**
+ * Only the application's top-level document may use its audio capability or write the
+ * clipboard. Session permission checks and requests share this policy.
+ */
 export function appPermissionAllowed(
   appId: number,
   requesterId: number | undefined,
   permission: string,
-  details: { isMainFrame?: boolean; mediaType?: string }
+  details: { isMainFrame?: boolean; mediaType?: string; mediaTypes?: string[] }
 ): boolean {
   if (requesterId !== appId || !details.isMainFrame) return false
+  // A check names one media type; a request lists every type it asks for.
   return permission === 'media'
-    ? details.mediaType === 'audio'
+    ? (details.mediaTypes ?? [details.mediaType]).every((type) => type === 'audio')
     : ['speaker-selection', 'clipboard-sanitized-write'].includes(permission)
 }
