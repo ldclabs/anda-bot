@@ -7,6 +7,7 @@ import {
   pageElementSerializerKey,
   type PageElementInfo
 } from '$lib/anda/page-element'
+import { daemonStateChangedMessageType } from '$lib/service-worker/settings'
 import type {
   ChromeApi,
   ChromeContextMenuClickInfo,
@@ -437,8 +438,27 @@ describe('service worker lifecycle and routing', () => {
     const registrations = () =>
       sockets.flatMap((socket) => socket.sent).filter((m) => m.method === 'browser_register')
     await vi.waitFor(() => expect(registrations()).toHaveLength(1))
-    return { chromeApi, tab, registrations }
+    return { chromeApi, tab, registrations, sockets }
   }
+
+  it('relays daemon changes to extension pages, including after connecting', async () => {
+    const { chromeApi, sockets } = await connectedWorker()
+    const relayed = () =>
+      vi
+        .mocked(chromeApi.runtime.sendMessage)
+        .mock.calls.filter(([message]) => message.type === daemonStateChangedMessageType)
+    // Changes made while the socket was down are not replayed.
+    expect(relayed()).toHaveLength(1)
+
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'state/changed',
+        params: { instanceId: 'daemon', revision: '2' }
+      })
+    })
+    await vi.waitFor(() => expect(relayed()).toHaveLength(2))
+  })
 
   it('skips unchanged tab updates and registers changed metadata', async () => {
     const { chromeApi, tab, registrations } = await connectedWorker()

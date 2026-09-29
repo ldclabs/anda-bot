@@ -10,6 +10,7 @@ import { handlePageAudioCapture, handlePageSpeechRecognition } from '$lib/servic
 import {
   browserSession,
   connectionKey,
+  daemonStateChangedMessageType,
   defaultSettings,
   errorToCode,
   errorToMessage,
@@ -690,6 +691,8 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
       status = 'connected'
       startKeepAlive()
       resolve()
+      // Changes made while the socket was down are not replayed.
+      broadcastDaemonStateChanged()
       console.info('WebSocket connected')
     }
 
@@ -797,6 +800,10 @@ async function handleSocketMessage(data: unknown, origin: WebSocket): Promise<vo
     await queueBrowserActionRequest(message, origin)
     return
   }
+  if (message.method === 'state/changed') {
+    broadcastDaemonStateChanged()
+    return
+  }
 
   if (typeof message.id !== 'number') {
     return
@@ -814,6 +821,12 @@ async function handleSocketMessage(data: unknown, origin: WebSocket): Promise<vo
   } else {
     entry.resolve(message.result)
   }
+}
+
+// Pages read the daemon's state themselves, such as the channel list.
+function broadcastDaemonStateChanged(): void {
+  // Rejects when no extension page is open.
+  chromeApi.runtime.sendMessage({ type: daemonStateChangedMessageType }).catch(() => undefined)
 }
 
 function queueBrowserActionRequest(message: RpcResponseMessage, origin: WebSocket): Promise<void> {

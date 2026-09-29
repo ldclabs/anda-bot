@@ -1,5 +1,5 @@
 //! Startup self-check: resume interrupted source-bound conversations after a
-//! daemon restart.
+//! daemon restart, and repair the statuses recorded for their sources.
 
 use anda_core::{AgentContext, BoxError, CompletionRequest};
 use anda_db_utils::UniqueVec;
@@ -9,7 +9,7 @@ use anda_engine::{
     unix_ms,
 };
 use ic_auth_types::Xid;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     AndaBot, SessionSpec,
@@ -21,7 +21,9 @@ use super::{
     session::SessionRequestMeta,
 };
 use crate::engine::{
-    browser::ChromeBrowserTool, conversation::RequestState, system::system_runtime_prompt,
+    browser::ChromeBrowserTool,
+    conversation::{RequestState, SourceStatusRepair},
+    system::system_runtime_prompt,
 };
 
 struct StartupConversation {
@@ -55,6 +57,7 @@ impl AndaBot {
         let source_conversations = self.inner.conversations.source_conversations();
         let mut seen = HashSet::new();
         let mut candidates = Vec::new();
+        let mut repairs = HashMap::new();
 
         for (source_key, state) in source_conversations {
             if state.conv_id == 0 {
@@ -63,6 +66,16 @@ impl AndaBot {
 
             match self.latest_conversation_in_chain(state.conv_id, None).await {
                 Ok(conversation) => {
+                    if state.status != conversation.status {
+                        repairs.insert(
+                            source_key.clone(),
+                            SourceStatusRepair {
+                                observed: state,
+                                status: conversation.status.clone(),
+                                user: conversation.user,
+                            },
+                        );
+                    }
                     if seen.insert(conversation._id)
                         && conversation.updated_at + 3 * 24 * 3600 * 1000 > now_ms
                     {
@@ -80,6 +93,15 @@ impl AndaBot {
                     );
                 }
             }
+        }
+
+        if let Err(err) = self
+            .inner
+            .conversations
+            .repair_source_statuses(repairs)
+            .await
+        {
+            log::warn!("startup self-check could not repair source statuses: {err}");
         }
 
         candidates.sort_by(|left, right| {

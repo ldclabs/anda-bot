@@ -517,6 +517,14 @@ impl AndaBot {
             .conversations
             .update_conversation(conversation._id, conversation.to_changes()?)
             .await?;
+        if let Err(err) = self
+            .inner
+            .conversations
+            .sync_source_status(conversation)
+            .await
+        {
+            log::error!(conversation = conversation._id; "Failed to sync source status: {err:?}");
+        }
         self.inner
             .conversations
             .events
@@ -2376,6 +2384,54 @@ mod tests {
             .unwrap();
 
         bot.startup_self_check(mock_agent_ctx()).await;
+    }
+
+    #[tokio::test]
+    async fn startup_self_check_repairs_stale_source_statuses() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let conv = Conversation {
+            user: test_caller(),
+            status: ConversationStatus::Idle,
+            ..Default::default()
+        };
+        let conv_id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conv))
+            .await
+            .unwrap();
+        // Earlier releases recorded a source's status only when binding it.
+        let source = "cli:/tmp/finished".to_string();
+        bot.inner
+            .conversations
+            .update_source_state(
+                source.clone(),
+                SourceState {
+                    conv_id,
+                    status: ConversationStatus::Submitted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        bot.startup_self_check(mock_agent_ctx()).await;
+        let state = bot.inner.conversations.get_source_state(&source).unwrap();
+        assert_eq!(state.status, ConversationStatus::Idle);
+
+        let mut conv = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(conv_id)
+            .await
+            .unwrap();
+        conv.status = ConversationStatus::Working;
+        bot.persist_conversation_state(&conv).await.unwrap();
+        let state = bot.inner.conversations.get_source_state(&source).unwrap();
+        assert_eq!(state.status, ConversationStatus::Working);
     }
 
     #[tokio::test]

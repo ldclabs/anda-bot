@@ -81,6 +81,14 @@ pub struct SourceState {
     pub user: Option<Principal>,
 }
 
+/// A status read for a source's conversation, recorded only while the source
+/// still holds the binding and status observed before that read.
+pub struct SourceStatusRepair {
+    pub observed: SourceState,
+    pub status: ConversationStatus,
+    pub user: Principal,
+}
+
 /// Source bindings kept at most; the least recently rebound are dropped
 /// first. Every IM thread and CLI workspace is a source, so the map would
 /// otherwise grow for the daemon's lifetime, and it is saved whole.
@@ -307,6 +315,77 @@ impl ConversationsTool {
             self.events.changed(&user.to_string());
         }
         Ok(())
+    }
+
+    /// Records `conversation`'s status in the sources bound to it, so clients
+    /// can show a channel's state without loading its conversation.
+    pub async fn sync_source_status(
+        &self,
+        conversation: &anda_engine::memory::Conversation,
+    ) -> Result<(), BoxError> {
+        // Most saves keep the status; they need no save lock.
+        let stale =
+            self.source_conversation.read().values().any(|state| {
+                state.conv_id == conversation._id && state.status != conversation.status
+            });
+        if stale {
+            self.set_source_statuses(|_, state| {
+                (state.conv_id == conversation._id).then(|| conversation.status.clone())
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Repairs statuses recorded before they were kept in sync, when they
+    /// were only written as a source was rebound.
+    pub async fn repair_source_statuses(
+        &self,
+        repairs: HashMap<String, SourceStatusRepair>,
+    ) -> Result<(), BoxError> {
+        let changed = self
+            .set_source_statuses(|source, state| {
+                let repair = repairs.get(source)?;
+                (state.conv_id == repair.observed.conv_id && state.status == repair.observed.status)
+                    .then(|| repair.status.clone())
+            })
+            .await?;
+        if changed {
+            let users: HashSet<_> = repairs.values().map(|repair| repair.user).collect();
+            for user in users {
+                self.events.changed(&user.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets each source to the status `status_of` returns for it, saving the
+    /// bindings once if any changed. Returns whether they changed.
+    async fn set_source_statuses(
+        &self,
+        status_of: impl Fn(&str, &SourceState) -> Option<ConversationStatus>,
+    ) -> Result<bool, BoxError> {
+        let _guard = self.extension_save_lock.lock().await;
+        let fv = {
+            let mut map = self.source_conversation.write();
+            let mut changed = false;
+            for (source, state) in map.iter_mut() {
+                if let Some(status) = status_of(source, state)
+                    && state.status != status
+                {
+                    state.status = status;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return Ok(false);
+            }
+            Fv::serialized(&*map, None)?
+        };
+        self.store
+            .save_extension("source_conversation".to_string(), fv)
+            .await?;
+        Ok(true)
     }
 
     pub async fn delete_source_state(
@@ -994,6 +1073,63 @@ mod tests {
         assert!(!states.contains_key("source-0"));
         assert!(!states.contains_key("source-1"));
         assert!(states.contains_key("source-2"));
+    }
+
+    #[tokio::test]
+    async fn source_statuses_follow_their_conversation() {
+        let tool = test_tool().await;
+        for (source, conv_id) in [("a", 7), ("b", 7), ("c", 8)] {
+            tool.update_source_state(
+                source.into(),
+                SourceState {
+                    conv_id,
+                    status: ConversationStatus::Submitted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        // The startup scan reads the bindings before a turn records a status.
+        let observed_a = tool.get_source_state("a").unwrap();
+        let observed_c = tool.get_source_state("c").unwrap();
+
+        let conversation = Conversation {
+            _id: 7,
+            status: ConversationStatus::Idle,
+            ..Default::default()
+        };
+        tool.sync_source_status(&conversation).await.unwrap();
+        let status = |source| tool.get_source_state(source).unwrap().status;
+        assert_eq!(status("a"), ConversationStatus::Idle);
+        assert_eq!(status("b"), ConversationStatus::Idle);
+        assert_eq!(status("c"), ConversationStatus::Submitted);
+
+        let repair = |observed, status| SourceStatusRepair {
+            observed,
+            status,
+            user: Principal::anonymous(),
+        };
+        tool.repair_source_statuses(HashMap::from([
+            (
+                "a".to_string(),
+                repair(observed_a, ConversationStatus::Working),
+            ),
+            (
+                "c".to_string(),
+                repair(observed_c, ConversationStatus::Completed),
+            ),
+        ]))
+        .await
+        .unwrap();
+        // A repair must not undo a status recorded after it was read.
+        assert_eq!(status("a"), ConversationStatus::Idle);
+        assert_eq!(status("c"), ConversationStatus::Completed);
+
+        let saved: HashMap<String, SourceState> =
+            tool.store.get_extension_as("source_conversation").unwrap();
+        assert_eq!(saved["b"].status, ConversationStatus::Idle);
+        assert_eq!(saved["c"].status, ConversationStatus::Completed);
     }
 
     #[tokio::test]

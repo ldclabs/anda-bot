@@ -1,6 +1,7 @@
 import {
   browserSession,
   connectionKey,
+  daemonStateChangedMessageType,
   loadSettings,
   settingsKeys,
   defaultSettings,
@@ -32,6 +33,7 @@ import type {
   BookmarkedMessage,
   ChatAttachment,
   ChromeApi,
+  ChromeRuntimeMessageListener,
   ChromeTabChangeInfo,
   ChromeTabInfo,
   DaemonModelState,
@@ -102,6 +104,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   #channelSwitchEpoch = 0
   #tabActivatedListener?: (activeInfo: { tabId: number; windowId: number }) => void
   #tabUpdatedListener?: (tabId: number, changeInfo: ChromeTabChangeInfo, tab: ChromeTabInfo) => void
+  #runtimeMessageListener?: ChromeRuntimeMessageListener
+  #channelRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
     super()
@@ -232,9 +236,26 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     if (this.chrome && this.#tabUpdatedListener) {
       this.chrome.tabs.onUpdated.removeListener(this.#tabUpdatedListener)
     }
+    if (this.chrome && this.#runtimeMessageListener) {
+      this.chrome.runtime.onMessage.removeListener(this.#runtimeMessageListener)
+    }
+    if (this.#channelRefreshTimer) {
+      clearTimeout(this.#channelRefreshTimer)
+      this.#channelRefreshTimer = null
+    }
     for (const channel of this.channels.values()) {
       channel.destroy()
     }
+  }
+
+  // A running turn reports changes at every step; reading the list at most
+  // twice a second keeps it current without a read per change.
+  private scheduleChannelRefresh(): void {
+    if (!this.#chatEnabled || this.#channelRefreshTimer) return
+    this.#channelRefreshTimer = setTimeout(() => {
+      this.#channelRefreshTimer = null
+      if (!this.#destroyed) this.refreshChannels().catch(() => undefined)
+    }, 500)
   }
 
   async refreshChannels(): Promise<void> {
@@ -631,6 +652,16 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       }
     }
     this.chrome.storage.onChanged?.addListener?.(this.#storageListener)
+    // The worker relays the daemon's changes. Channels that are not loaded
+    // show the status from the channel list, so read it again. Content
+    // scripts (senders with a tab) cannot trigger the read.
+    this.#runtimeMessageListener = (message, sender) => {
+      if (message.type === daemonStateChangedMessageType && !sender.tab) {
+        this.scheduleChannelRefresh()
+      }
+      return false
+    }
+    this.chrome.runtime.onMessage.addListener(this.#runtimeMessageListener)
     if (typeof document !== 'undefined')
       document.addEventListener('visibilitychange', this.#visibilityListener)
     this.#tabActivatedListener = () => {

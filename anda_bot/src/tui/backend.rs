@@ -15,13 +15,26 @@ use ratatui::{
 /// and omit those covered cells at the output boundary instead.
 pub(super) struct TuiBackend<W: Write> {
     inner: CrosstermBackend<W>,
+    known_cursor: Option<Position>,
 }
 
 impl<W: Write> TuiBackend<W> {
     pub(super) fn new(writer: W) -> Self {
         Self {
             inner: CrosstermBackend::new(writer),
+            known_cursor: None,
         }
+    }
+
+    /// Answers the next cursor query with `position` instead of asking the
+    /// terminal. Only pass a position the cursor was just moved to.
+    ///
+    /// While crossterm's `EventStream` waits for input, its thread holds the
+    /// shared input reader, so a terminal query cannot read the reply and
+    /// fails after two seconds.
+    pub(super) fn with_known_cursor(mut self, position: Option<Position>) -> Self {
+        self.known_cursor = position;
+        self
     }
 }
 
@@ -79,7 +92,10 @@ impl<W: Write> Backend for TuiBackend<W> {
     }
 
     fn get_cursor_position(&mut self) -> io::Result<Position> {
-        self.inner.get_cursor_position()
+        match self.known_cursor.take() {
+            Some(position) => Ok(position),
+            None => self.inner.get_cursor_position(),
+        }
     }
 
     fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> io::Result<()> {
@@ -181,6 +197,19 @@ mod tests {
         assert!(!output.contains(&MoveTo(5, 0).to_string()), "{output:?}");
         assert!(!output.contains(&MoveTo(1, 1).to_string()), "{output:?}");
         assert!(output.contains(&MoveTo(0, 1).to_string()), "{output:?}");
+    }
+
+    #[test]
+    fn known_cursor_answers_the_query_without_asking_the_terminal() {
+        let mut output = Vec::new();
+        {
+            let mut backend =
+                TuiBackend::new(&mut output).with_known_cursor(Some(Position::new(0, 7)));
+            assert_eq!(backend.get_cursor_position().unwrap(), Position::new(0, 7));
+            assert_eq!(backend.known_cursor, None);
+        }
+        // No `ESC [ 6n` query: its reply would be stranded behind EventStream.
+        assert!(output.is_empty(), "{output:?}");
     }
 
     #[test]

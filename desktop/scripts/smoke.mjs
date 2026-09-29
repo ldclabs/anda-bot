@@ -580,7 +580,12 @@ try {
     ),
     nativeViews - 1
   )
-  await page.locator('.workspace-header').getByTitle('Resources').click()
+  // Below 1150px the panel is a drawer over the header's Resources toggle, as
+  // on 1024px-wide CI displays, so close it from the panel itself.
+  await page
+    .locator('.resource-panel > header')
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setBounds({ width: 900, height: 700 })
   )

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PollConversation } from './poll-conversation'
-import type { ChromeApi, ChromeTabInfo, QuickPrompt, SettingsState } from './types'
+import { daemonStateChangedMessageType } from '$lib/service-worker/settings'
+import type {
+  ChromeApi,
+  ChromeRuntimeMessageListener,
+  ChromeTabInfo,
+  QuickPrompt,
+  SettingsState
+} from './types'
 
 type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void
 type TabUpdatedListener = (
@@ -12,6 +19,7 @@ type TabUpdatedListener = (
 type MockChromeApi = ChromeApi & {
   __tabActivatedListeners: TabActivatedListener[]
   __tabUpdatedListeners: TabUpdatedListener[]
+  __runtimeMessageListeners: ChromeRuntimeMessageListener[]
 }
 
 function message(id: string, text: string) {
@@ -55,6 +63,7 @@ function createChromeApi(
 ): MockChromeApi {
   const tabActivatedListeners: TabActivatedListener[] = []
   const tabUpdatedListeners: TabUpdatedListener[] = []
+  const runtimeMessageListeners: ChromeRuntimeMessageListener[] = []
   const state = {
     baseUrl: 'http://127.0.0.1:8042',
     token: '',
@@ -86,7 +95,10 @@ function createChromeApi(
         }
       }),
       onMessage: {
-        addListener: vi.fn()
+        addListener: vi.fn((listener: ChromeRuntimeMessageListener) => {
+          runtimeMessageListeners.push(listener)
+        }),
+        removeListener: vi.fn()
       }
     },
     action: {
@@ -158,7 +170,8 @@ function createChromeApi(
       executeScript: vi.fn()
     },
     __tabActivatedListeners: tabActivatedListeners,
-    __tabUpdatedListeners: tabUpdatedListeners
+    __tabUpdatedListeners: tabUpdatedListeners,
+    __runtimeMessageListeners: runtimeMessageListeners
   }
 
   return chromeApi as unknown as MockChromeApi
@@ -407,6 +420,36 @@ describe('AndaSidePanelClient.bindChromeEvents', () => {
       title: 'After',
       url: 'https://after.example'
     })
+  })
+})
+
+describe('AndaSidePanelClient daemon changes', () => {
+  it('re-reads the channel list, at most twice a second, when the worker relays a change', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    vi.spyOn(client as any, 'refreshActiveTab').mockResolvedValue(null)
+    vi.spyOn(client as any, 'refreshConnectionData').mockResolvedValue(undefined)
+    const refreshChannels = vi.spyOn(client, 'refreshChannels').mockResolvedValue()
+    await client.init()
+    vi.useFakeTimers()
+
+    const [listener] = chromeApi.__runtimeMessageListeners
+    const change = { type: daemonStateChangedMessageType }
+    const worker = { id: 'extension', url: 'chrome-extension://extension/service_worker.js' }
+    // A content script runs in a tab and cannot trigger the read.
+    listener(change, { ...worker, tab: { id: 1 } }, () => undefined)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refreshChannels).not.toHaveBeenCalled()
+
+    listener(change, worker, () => undefined)
+    listener(change, worker, () => undefined)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(refreshChannels).toHaveBeenCalledTimes(1)
+
+    client.destroy()
+    expect(chromeApi.runtime.onMessage.removeListener).toHaveBeenCalledWith(listener)
   })
 })
 

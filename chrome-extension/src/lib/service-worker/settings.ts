@@ -17,6 +17,12 @@ export const defaultSettings: SettingsState = {
 
 const browserSessionStorageKey = 'browserSessionId'
 
+/**
+ * Sent by the worker to the extension's pages when the daemon reports a
+ * change for this profile's user, or after its socket reconnects.
+ */
+export const daemonStateChangedMessageType = 'anda_daemon_state_changed'
+
 export const settingsKeys = [
   'baseUrl',
   'token',

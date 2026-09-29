@@ -234,12 +234,14 @@ async fn handle_browser_websocket(
     // Register before processing requests. Snapshot reads after initialize are
     // covered by this subscription; changes during a read cause another read.
     // watch retains only the latest invalidation, bounding slow-client memory.
-    let event_forwarder = if state.app_protocol {
+    // The extension uses these to refresh its channel list.
+    let event_forwarder = {
         let mut events = state.events.subscribe(&caller.to_string());
         let writer = write_sender.clone();
         let instance = state.events.instance.clone();
         let cancel = request_tasks.clone();
-        Some(tokio::spawn(async move {
+        let app_protocol = state.app_protocol;
+        tokio::spawn(async move {
             let mut expiry = tokio::time::interval(std::time::Duration::from_secs(15));
             loop {
                 let changed = tokio::select! {
@@ -253,18 +255,23 @@ async fn handle_browser_websocket(
                 }
                 if changed {
                     let revision = events.borrow_and_update().to_string();
-                    let message = json!({"jsonrpc":"2.0", "method":"state/changed", "params": StateChanged { instance_id: instance.clone(), revision }});
-                    if writer.try_send(message.to_string()).is_err() {
-                        // Reconnect forces a fresh snapshot; never silently
-                        // lose the final invalidation or block persistence.
+                    let message = json!({"jsonrpc":"2.0", "method":"state/changed", "params": StateChanged { instance_id: instance.clone(), revision }}).to_string();
+                    // Desktop reconnects for a fresh snapshot rather than
+                    // silently lose the final invalidation. A browser only
+                    // refreshes its channel list, so it waits for queue room
+                    // instead of dropping its session and in-flight requests.
+                    let sent = if app_protocol {
+                        writer.try_send(message).is_ok()
+                    } else {
+                        writer.send(message).await.is_ok()
+                    };
+                    if !sent {
                         cancel.cancel();
                         break;
                     }
                 }
             }
-        }))
-    } else {
-        None
+        })
     };
 
     let action_write_sender = write_sender.clone();
@@ -350,9 +357,7 @@ async fn handle_browser_websocket(
 
     state.bridge.disconnect_ws_connection(connection_id);
     action_forwarder.abort();
-    if let Some(forwarder) = event_forwarder {
-        forwarder.abort();
-    }
+    event_forwarder.abort();
     writer.abort();
     request_tasks.cancel();
     Ok(())
@@ -1779,6 +1784,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let events = state.events.clone();
 
         let app = axum::Router::new()
             .route("/{id}/browser_ws", axum::routing::any(browser_websocket))
@@ -1805,6 +1811,18 @@ mod tests {
             .unwrap();
         let reply = ws.next().await.expect("a reply frame").unwrap();
         assert!(reply.is_text());
+
+        // The extension refreshes its channel list on the caller's changes.
+        events.changed("another-caller");
+        events.changed(&key.id().to_string());
+        let notification = tokio::time::timeout(std::time::Duration::from_secs(5), ws.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let notification: Value = serde_json::from_str(notification.to_text().unwrap()).unwrap();
+        assert_eq!(notification["method"], "state/changed");
+        assert_eq!(notification["params"]["instanceId"], events.instance);
 
         ws.close(None).await.ok();
     }

@@ -142,6 +142,12 @@ export type ExtensionResponse<Result = unknown> =
   | { ok: true; result?: Result; status?: string }
   | { ok: false; error: string; status?: string }
 
+export type ChromeRuntimeMessageListener = (
+  message: ExtensionMessage,
+  sender: ChromeMessageSender,
+  sendResponse: (response: ExtensionResponse) => void
+) => boolean | void
+
 export type RpcResponseMessage = {
   id?: number
   method?: string
@@ -195,13 +201,8 @@ export interface ChromeApi {
     getURL(path: string): string
     sendMessage<Result>(message: ExtensionMessage): Promise<ExtensionResponse<Result>>
     onMessage: {
-      addListener(
-        listener: (
-          message: ExtensionMessage,
-          sender: ChromeMessageSender,
-          sendResponse: (response: ExtensionResponse) => void
-        ) => boolean | void
-      ): void
+      addListener(listener: ChromeRuntimeMessageListener): void
+      removeListener(listener: ChromeRuntimeMessageListener): void
     }
   }
   management?: {

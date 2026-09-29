@@ -16,7 +16,10 @@ use crossterm::{
     },
 };
 use futures::{FutureExt, StreamExt};
-use ratatui::{Terminal, TerminalOptions, Viewport, layout::Rect};
+use ratatui::{
+    Terminal, TerminalOptions, Viewport,
+    layout::{Position, Rect},
+};
 #[cfg(unix)]
 use std::io::IsTerminal;
 
@@ -63,7 +66,8 @@ pub async fn run(
     // bottom).
     let (term_w, term_h) = size()?;
     let initial_height = dynamic_viewport_height(&app, term_w, term_h.max(1));
-    let mut terminal = create_terminal_with_height(initial_height)?;
+    // No input stream exists yet, so the shell's cursor can still be queried.
+    let mut terminal = create_terminal_with_height(initial_height, None)?;
     let run_result = run_app(&mut terminal, &mut app).await;
     let cleanup_result = cleanup_inline_viewport(&mut stdout, terminal.get_frame().area());
     drop(terminal);
@@ -162,29 +166,11 @@ async fn run_app(
         }
 
         let new_height = dynamic_viewport_height(app, term_w, term_h).clamp(1, term_h);
-        if app.pending_scrollback_purge {
-            let old_area = terminal.get_frame().area();
-            let mut stdout = io::stdout();
-            stdout.execute(MoveTo(old_area.x, old_area.y))?;
-            stdout.execute(Clear(ClearType::Purge))?;
-            stdout.execute(Clear(ClearType::FromCursorDown))?;
-            *terminal = create_terminal_with_height(new_height)?;
+        if app.pending_scrollback_purge || new_height != current_viewport_height || terminal_resized
+        {
+            reanchor_viewport(terminal, new_height, term_h, app.pending_scrollback_purge)?;
             current_viewport_height = new_height;
             app.pending_scrollback_purge = false;
-            needs_render = true;
-        }
-        if new_height != current_viewport_height || terminal_resized {
-            // Clear the previous viewport area before recreating so that the
-            // re-anchored viewport does not leave a ghost copy of the old
-            // frame above it. Anything that was already pushed into
-            // scrollback (above the viewport via `insert_before`) is
-            // preserved.
-            let old_area = terminal.get_frame().area();
-            let mut stdout = io::stdout();
-            stdout.execute(MoveTo(old_area.x, old_area.y))?;
-            stdout.execute(Clear(ClearType::FromCursorDown))?;
-            *terminal = create_terminal_with_height(new_height)?;
-            current_viewport_height = new_height;
             needs_render = true;
         }
 
@@ -250,11 +236,38 @@ async fn run_app(
     Ok(())
 }
 
+/// Recreates the inline viewport at its current origin with a new height.
+///
+/// The previous viewport area is cleared first so that the re-anchored
+/// viewport does not leave a ghost copy of the old frame above it. Anything
+/// already pushed into scrollback (above the viewport via `insert_before`) is
+/// preserved unless `purge_scrollback` drops it.
+fn reanchor_viewport(
+    terminal: &mut Terminal<TuiBackend<io::Stdout>>,
+    viewport_height: u16,
+    term_height: u16,
+    purge_scrollback: bool,
+) -> Result<(), BoxError> {
+    let origin = terminal.get_frame().area().as_position();
+    let mut stdout = io::stdout();
+    stdout.execute(MoveTo(origin.x, origin.y))?;
+    if purge_scrollback {
+        stdout.execute(Clear(ClearType::Purge))?;
+    }
+    stdout.execute(Clear(ClearType::FromCursorDown))?;
+    // The input `EventStream` is live here, so the cursor cannot be queried.
+    // It sits where MoveTo put it, clamped to a screen that may have shrunk.
+    let cursor = Position::new(origin.x, origin.y.min(term_height.saturating_sub(1)));
+    *terminal = create_terminal_with_height(viewport_height, Some(cursor))?;
+    Ok(())
+}
+
 fn create_terminal_with_height(
     viewport_height: u16,
+    known_cursor: Option<Position>,
 ) -> Result<Terminal<TuiBackend<io::Stdout>>, BoxError> {
     let mut terminal = Terminal::with_options(
-        TuiBackend::new(io::stdout()),
+        TuiBackend::new(io::stdout()).with_known_cursor(known_cursor),
         TerminalOptions {
             viewport: Viewport::Inline(viewport_height.max(1)),
         },

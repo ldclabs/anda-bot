@@ -317,7 +317,7 @@ function mockClientChrome() {
   const changed = event()
   const stored: any = { baseUrl: 'http://daemon-a', token: 'test' }
   vi.stubGlobal('chrome', {
-    runtime: { sendMessage },
+    runtime: { sendMessage, onMessage: event() },
     storage: {
       local: {
         get: async (keys: string[]) =>
