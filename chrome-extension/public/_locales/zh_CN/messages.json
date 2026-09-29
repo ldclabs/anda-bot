@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "连接设置已更改，请重新加载配置后再保存。"
+  },
+  "memoryOpenEntity": {
+    "message": "打开“$1”"
+  },
+  "memoryEntityGraph": {
+    "message": "相关对象"
+  },
+  "memoryEntityGraphHint": {
+    "message": "只画本页所列记忆涉及的对象，点击可打开。"
+  },
+  "memoryEntityGraphMore": {
+    "message": "另有 $1 个未画出。"
+  },
+  "memoryAboutYou": {
+    "message": "关于你"
+  },
+  "memoryEntityIntro": {
+    "message": "列出与它有关、你可以核对的记忆，按关系分组，最新的在前。"
+  },
+  "memoryEntityShown": {
+    "message": "本页 $1 条记忆，其中 $2 条是当前说法。"
+  },
+  "memoryEntityEarlier": {
+    "message": "较早的说法（$1）"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "还没有关于你、可以核对的记忆。"
+  },
+  "memoryEntityNotFound": {
+    "message": "没有关于它、你可以核对的记忆。"
+  },
+  "memoryEntityScanLimit": {
+    "message": "还有与它相关的记忆没有显示，加载下一页继续。"
+  },
+  "memoryBeliefTitle": {
+    "message": "“当前认知”是什么意思"
+  },
+  "memoryBeliefHint": {
+    "message": "Brain 按标准召回策略权衡关于同一件事的所有说法：更具体的上下文优先，本人陈述优先于转述，其次取最新的说法。被更新说法接替的内容会作为历史保留。"
+  },
+  "memoryBelief_accepted": {
+    "message": "当前认知"
+  },
+  "memoryBelief_contested": {
+    "message": "有冲突"
+  },
+  "memoryBelief_uncertain": {
+    "message": "不确定"
+  },
+  "memoryBelief_rejected": {
+    "message": "被否定"
+  },
+  "memoryBelief_insufficient": {
+    "message": "依据不足"
+  },
+  "memoryBelief_ended": {
+    "message": "已被更新的说法接替"
+  },
+  "memoryBelief_excluded": {
+    "message": "未计入当前认知"
+  },
+  "memoryEntities": {
+    "message": "按对象浏览"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "查找人物、项目或主题"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "支付迁移"
+  },
+  "memoryEntitySearch": {
+    "message": "查找"
+  },
+  "memoryEntitySearchHint": {
+    "message": "按名称匹配，不调用模型。只列出至少有一条你可以核对的记忆的对象。"
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "没有找到带有可核对记忆的对象。"
+  },
+  "memoryEntityPath": {
+    "message": "对象路径"
   }
 }

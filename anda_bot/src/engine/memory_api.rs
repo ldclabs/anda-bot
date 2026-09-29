@@ -22,6 +22,7 @@ use crate::{
         MemoryService,
         activity::ActivityQuery,
         catalog::RecordQuery,
+        entity::{EntityQuery, EntitySearchQuery},
         mutation::{ChangeRequest, CommitRequest},
         product::{SearchRequest, WatchQuery, WatchRequest},
     },
@@ -59,6 +60,8 @@ enum MemoryRequest {
     Activity(ActivityQuery),
     Records(RecordQuery),
     Record(String),
+    Entity(EntityQuery),
+    EntitySearch(EntitySearchQuery),
     Search(SearchRequest),
     Watches(WatchQuery),
     Watch(WatchRequest),
@@ -102,6 +105,12 @@ impl MemoryRequest {
                 Self::Records(one(params, "memory_records requires one query object.")?)
             }
             "memory_record" => Self::Record(one(params, "memory_record requires one record id.")?),
+            "memory_entity" => {
+                Self::Entity(one(params, "memory_entity requires one query object.")?)
+            }
+            "memory_entity_search" => {
+                Self::EntitySearch(one(params, "Expected one entity search query.")?)
+            }
             "memory_search" => Self::Search(one(params, "Expected one search request.")?),
             "memory_watches" if params == json!([]) => Self::Watches(WatchQuery::default()),
             "memory_watches" => Self::Watches(one(params, "Expected one watch query.")?),
@@ -195,6 +204,13 @@ impl MemoryApiState {
                     .await
                     .map(|record| json!({"schema_version":1,"record":record})),
             ),
+            MemoryRequest::Entity(query) => match service.entity(owner, query).await {
+                Ok((page, next_cursor)) => ok(json!(page), next_cursor),
+                Err(error) => service_error(error),
+            },
+            MemoryRequest::EntitySearch(query) => {
+                respond(service.entity_search(owner, query).await)
+            }
             MemoryRequest::Search(request) => respond(service.search(owner, token, request).await),
             MemoryRequest::Watches(query) => match service.watches(owner, query).await {
                 Ok(mut result) => {
@@ -332,6 +348,8 @@ impl MemoryApiState {
             .route("/daemon/memory/v1/activity", routing::get(activity))
             .route("/daemon/memory/v1/records", routing::get(records))
             .route("/daemon/memory/v1/records/{id}", routing::get(record))
+            .route("/daemon/memory/v1/entity", routing::get(entity))
+            .route("/daemon/memory/v1/entities", routing::get(entity_search))
             .route(
                 "/daemon/memory/v1/watches",
                 routing::post(create_watch).get(list_watches),
@@ -472,6 +490,10 @@ fn service_error(err: BoxError) -> Reply {
             StatusCode::NOT_FOUND,
             error("not_found", "Memory record not found."),
         ),
+        "entity_not_found" => (
+            StatusCode::NOT_FOUND,
+            error("not_found", "No memory you can see is about this entity."),
+        ),
         "unsupported_capability" => (
             StatusCode::SERVICE_UNAVAILABLE,
             error(
@@ -581,6 +603,28 @@ async fn record(
     Path(id): Path<String>,
 ) -> Response {
     owner_route(&state, &headers, Ok(MemoryRequest::Record(id))).await
+}
+
+async fn entity(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    query: Result<Query<EntityQuery>, QueryRejection>,
+) -> Response {
+    let request = query
+        .map(|Query(query)| MemoryRequest::Entity(query))
+        .map_err(|_| invalid("Invalid entity query."));
+    owner_route(&state, &headers, request).await
+}
+
+async fn entity_search(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    query: Result<Query<EntitySearchQuery>, QueryRejection>,
+) -> Response {
+    let request = query
+        .map(|Query(query)| MemoryRequest::EntitySearch(query))
+        .map_err(|_| invalid("Invalid entity search."));
+    owner_route(&state, &headers, request).await
 }
 
 async fn create_watch(
@@ -790,6 +834,54 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn memory_entity_requires_the_owner_and_a_well_formed_query() {
+        let (state, owner, other) = fixture();
+        let auth = headers(&owner, false);
+        assert_eq!(
+            state
+                .websocket_dispatch(&headers(&other, false), "memory_entity", json!([{}]))
+                .await["error"]["code"],
+            "forbidden"
+        );
+        for (method, params) in [
+            ("memory_entity", json!([{"id":"C-1","caller":"forged"}])),
+            ("memory_entity", json!([])),
+            ("memory_entity_search", json!([{"query":"x","limit":5}])),
+        ] {
+            assert_eq!(
+                state.websocket_dispatch(&auth, method, params).await["error"]["code"],
+                "invalid_request"
+            );
+        }
+        // This service has no embedded Brain to read entities from.
+        for (method, params) in [
+            ("memory_entity", json!([{"id":null}])),
+            ("memory_entity_search", json!([{"query":"x"}])),
+        ] {
+            assert_eq!(
+                state.websocket_dispatch(&auth, method, params).await["error"]["code"],
+                "unsupported_capability"
+            );
+        }
+        let url = crate::test_support::spawn_http_mock(state.into_router()).await;
+        let client = crate::util::http_client::new_reqwest_client();
+        for (path, headers, status) in [
+            ("entity?id=C-1", headers(&other, false), 403),
+            ("entity?id=C-1&caller=forged", auth.clone(), 400),
+            ("entities?query=x", headers(&other, false), 403),
+            ("entities?query=x", auth.clone(), 503),
+        ] {
+            let response = client
+                .get(format!("{url}/daemon/memory/v1/{path}"))
+                .headers(headers)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), status, "{path}");
+        }
     }
 
     #[tokio::test]

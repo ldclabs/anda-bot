@@ -78,6 +78,10 @@ describe('desktop host boundaries', () => {
       validateRpc('tool_call', [{ name: 'conversations_api', args: { type: 'ListSourceState' } }])
     ).not.toThrow()
     expect(() => validateRpc('memory_change_commit', [{ operation_id: 'op' }])).not.toThrow()
+    expect(() => validateRpc('memory_entity', [{ id: null }])).not.toThrow()
+    expect(() => validateRpc('memory_entity_search', [{ query: 'x' }])).not.toThrow()
+    // The graph page is gone; its raw Brain reads stay closed to the renderer.
+    expect(() => validateRpc('brain_kip_readonly', [{}])).toThrow('not available')
   })
   it('limits deep links to navigation and external links to safe protocols', () => {
     expect(navigationSource('anda://chat?source=desktop%3Aone')).toBe('desktop:one')

@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "Настройки подключения изменились. Перезагрузите конфигурацию перед сохранением."
+  },
+  "memoryOpenEntity": {
+    "message": "Открыть «$1»"
+  },
+  "memoryEntityGraph": {
+    "message": "Связанные объекты"
+  },
+  "memoryEntityGraphHint": {
+    "message": "Показаны только объекты из воспоминаний на этой странице. Выберите объект, чтобы открыть его."
+  },
+  "memoryEntityGraphMore": {
+    "message": "Ещё $1 не показано."
+  },
+  "memoryAboutYou": {
+    "message": "О вас"
+  },
+  "memoryEntityIntro": {
+    "message": "Воспоминания об этом объекте, которые можно проверить, сгруппированы по связям, сначала новые."
+  },
+  "memoryEntityShown": {
+    "message": "На странице воспоминаний: $1, из них актуальных: $2."
+  },
+  "memoryEntityEarlier": {
+    "message": "Более ранние утверждения ($1)"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "Воспоминаний о вас для проверки пока нет."
+  },
+  "memoryEntityNotFound": {
+    "message": "Нет воспоминаний об этом, которые вы можете проверить."
+  },
+  "memoryEntityScanLimit": {
+    "message": "Показаны ещё не все воспоминания об этом объекте. Загрузите следующую страницу."
+  },
+  "memoryBeliefTitle": {
+    "message": "Что значит «текущее представление»"
+  },
+  "memoryBeliefHint": {
+    "message": "Brain взвешивает все утверждения об одном факте по стандартной политике извлечения: сначала более конкретный контекст, затем собственные слова человека важнее пересказа, затем самое новое. Утверждение, заменённое более новым, сохраняется в истории."
+  },
+  "memoryBelief_accepted": {
+    "message": "Текущее представление"
+  },
+  "memoryBelief_contested": {
+    "message": "Есть противоречие"
+  },
+  "memoryBelief_uncertain": {
+    "message": "Не определено"
+  },
+  "memoryBelief_rejected": {
+    "message": "Отклонено"
+  },
+  "memoryBelief_insufficient": {
+    "message": "Недостаточно оснований"
+  },
+  "memoryBelief_ended": {
+    "message": "Заменено более новым утверждением"
+  },
+  "memoryBelief_excluded": {
+    "message": "Не учитывается в текущем представлении"
+  },
+  "memoryEntities": {
+    "message": "Обзор по объектам"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "Найти человека, проект или тему"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "Миграция платежей"
+  },
+  "memoryEntitySearch": {
+    "message": "Найти"
+  },
+  "memoryEntitySearchHint": {
+    "message": "Ищет по названиям без вызова модели. Показываются только объекты, о которых есть воспоминания для проверки."
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "Не найдено объектов с воспоминаниями для проверки."
+  },
+  "memoryEntityPath": {
+    "message": "Путь по объектам"
   }
 }

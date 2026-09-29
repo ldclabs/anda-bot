@@ -351,6 +351,40 @@ impl MemoryService {
         .await
     }
 
+    pub async fn entity(
+        &self,
+        caller: anda_core::Principal,
+        query: super::entity::EntityQuery,
+    ) -> Result<(super::entity::EntityPage, Option<String>), BoxError> {
+        super::entity::page(
+            &self
+                .client
+                .embedded_host()
+                .ok_or("unsupported_capability")?,
+            self.activity.as_ref().ok_or("unsupported_capability")?,
+            caller,
+            query,
+        )
+        .await
+    }
+
+    pub async fn entity_search(
+        &self,
+        caller: anda_core::Principal,
+        query: super::entity::EntitySearchQuery,
+    ) -> Result<super::entity::EntitySearchPage, BoxError> {
+        super::entity::search(
+            &self
+                .client
+                .embedded_host()
+                .ok_or("unsupported_capability")?,
+            self.activity.as_ref().ok_or("unsupported_capability")?,
+            caller,
+            query,
+        )
+        .await
+    }
+
     /// Only the transport's verified original bearer is accepted here. Never
     /// use the daemon credential for a caller's native runtime requests.
     pub async fn overview(&self, bearer: String) -> MemoryOverview {
@@ -402,6 +436,7 @@ impl MemoryService {
         let mut capabilities = [
             ("activity", "activity_projection_not_installed"),
             ("records", "native_record_contract_not_verified"),
+            ("entities", "native_record_contract_not_verified"),
             ("changes", "native_mutation_contract_not_verified"),
             ("memory_policy", "memory_policy_not_enforced"),
             ("evaluation", "evaluation_runner_not_installed"),
@@ -432,13 +467,15 @@ impl MemoryService {
             );
         }
         if self.activity.is_some() && self.client.embedded_host().is_some() {
-            capabilities.insert(
-                "records".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
+            for name in ["records", "entities"] {
+                capabilities.insert(
+                    name.into(),
+                    Capability {
+                        state: CapabilityState::Available,
+                        reason: None,
+                    },
+                );
+            }
         }
         if self.mutations.is_some() {
             capabilities.insert(

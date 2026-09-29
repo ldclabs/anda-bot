@@ -26,6 +26,12 @@ pub struct MemoryRecordView {
     pub subject_label: String,
     pub predicate_label: String,
     pub object_label: String,
+    /// The subject Concept, for opening its entity page.
+    #[serde(default)]
+    pub subject_id: Option<String>,
+    /// The object Concept; none when the object is a literal value.
+    #[serde(default)]
+    pub object_id: Option<String>,
     pub about_owner: bool,
     pub stance: String,
     pub state: String,
@@ -137,7 +143,7 @@ pub(crate) async fn get_with_resolver(
     Ok(record)
 }
 
-async fn project(
+pub(super) async fn project(
     record: anda_brain::product::MemoryRecord,
     resolver: &mut SourceResolver<'_>,
 ) -> Result<Option<MemoryRecordView>, BoxError> {
@@ -205,6 +211,8 @@ async fn project(
         subject_label: record.subject_label,
         predicate_label,
         object_label: record.object_label,
+        subject_id: concept_id(&record.subject),
+        object_id: concept_id(&record.object),
         about_owner,
         stance: record.stance,
         state: if record.storage_state == "active" {
@@ -219,9 +227,17 @@ async fn project(
     }))
 }
 
+fn concept_id(endpoint: &serde_json::Value) -> Option<String> {
+    endpoint
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| id.starts_with("C-"))
+        .map(str::to_string)
+}
+
 /// Preserve record identity and provenance when a large source quote would
 /// otherwise make its record disappear from every page.
-fn compact_display(record: &mut MemoryRecordView) -> Result<usize, BoxError> {
+pub(super) fn compact_display(record: &mut MemoryRecordView) -> Result<usize, BoxError> {
     let mut size = serde_json::to_vec(record)?.len();
     if size <= 131_072 {
         return Ok(size);
@@ -257,6 +273,8 @@ mod tests {
             subject_label: "Owner".into(),
             predicate_label: "prefers".into(),
             object_label: "short releases".into(),
+            subject_id: None,
+            object_id: None,
             about_owner: true,
             stance: "support".into(),
             state: "active".into(),

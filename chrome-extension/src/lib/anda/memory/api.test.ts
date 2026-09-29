@@ -29,6 +29,34 @@ describe('memory product API', () => {
     await expect(new MemoryApi(settings).search('preference')).rejects.toThrow('acceptance_unknown')
     expect(sendMessage).toHaveBeenCalledTimes(2)
   })
+  it('pages an entity by its cursor and looks entities up by name', async () => {
+    const page = {
+      schema_version: 1,
+      entity: { id: 'C-1', name: 'Owner', type: 'Person', about_owner: true },
+      items: [],
+      complete: false,
+      partial_reason: 'scan_limit'
+    }
+    const sendMessage = vi.fn(async (message: { method: string; params: unknown }) => ({
+      ok: true,
+      result:
+        message.method === 'memory_entity'
+          ? { result: page, next_cursor: 'next-page' }
+          : { result: { schema_version: 1, items: [page.entity] } }
+    }))
+    vi.stubGlobal('chrome', { runtime: { sendMessage } })
+    const api = new MemoryApi(settings)
+    expect(await api.entity(null)).toEqual({ ...page, next_cursor: 'next-page' })
+    await api.entity('C-1', 'next-page')
+    expect(sendMessage.mock.calls.map(([message]) => message.params)).toEqual([
+      [{ id: null, cursor: null, limit: 20 }],
+      [{ id: 'C-1', cursor: 'next-page', limit: 20 }]
+    ])
+    expect((await api.entitySearch('Owner')).items).toEqual([page.entity])
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ method: 'memory_entity_search', params: [{ query: 'Owner' }] })
+    )
+  })
   it('never converts a partial error or unknown schema into successful data', () => {
     expect(() =>
       unwrap({ error: { code: 'unavailable', message: 'failed' }, result: { schema_version: 1 } })

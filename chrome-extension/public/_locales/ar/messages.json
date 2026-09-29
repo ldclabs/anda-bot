@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "تغيّرت إعدادات الاتصال. أعد تحميل الإعدادات قبل حفظها."
+  },
+  "memoryOpenEntity": {
+    "message": "فتح $1"
+  },
+  "memoryEntityGraph": {
+    "message": "الكيانات المرتبطة"
+  },
+  "memoryEntityGraphHint": {
+    "message": "يعرض فقط الكيانات الواردة في ذكريات هذه الصفحة. اختر كيانًا لفتحه."
+  },
+  "memoryEntityGraphMore": {
+    "message": "$1 أخرى غير معروضة."
+  },
+  "memoryAboutYou": {
+    "message": "عنك"
+  },
+  "memoryEntityIntro": {
+    "message": "الذكريات التي يمكنك مراجعتها عن هذا الكيان، مجمعة حسب العلاقة والأحدث أولًا."
+  },
+  "memoryEntityShown": {
+    "message": "في هذه الصفحة $1 من الذكريات، منها $2 حالية."
+  },
+  "memoryEntityEarlier": {
+    "message": "أقوال سابقة ($1)"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "لا توجد بعد ذكريات عنك يمكن مراجعتها."
+  },
+  "memoryEntityNotFound": {
+    "message": "لا توجد ذكريات عن هذا يمكنك مراجعتها."
+  },
+  "memoryEntityScanLimit": {
+    "message": "بعض ذكريات هذا الكيان لم تُعرض بعد. حمّل الصفحة التالية للمتابعة."
+  },
+  "memoryBeliefTitle": {
+    "message": "ما معنى «الاعتقاد الحالي»"
+  },
+  "memoryBeliefHint": {
+    "message": "يوازن Brain بين كل الأقوال عن الحقيقة نفسها وفق سياسة الاستدعاء القياسية: السياق الأكثر تحديدًا أولًا، ثم أقوال الشخص نفسه قبل ما ينقله الآخرون، ثم الأحدث. ويبقى القول الذي حلّ محله قول أحدث في السجل."
+  },
+  "memoryBelief_accepted": {
+    "message": "الاعتقاد الحالي"
+  },
+  "memoryBelief_contested": {
+    "message": "متنازع عليه"
+  },
+  "memoryBelief_uncertain": {
+    "message": "غير مؤكد"
+  },
+  "memoryBelief_rejected": {
+    "message": "مرفوض"
+  },
+  "memoryBelief_insufficient": {
+    "message": "سند غير كافٍ"
+  },
+  "memoryBelief_ended": {
+    "message": "حلّ محله قول أحدث"
+  },
+  "memoryBelief_excluded": {
+    "message": "غير محتسب في الاعتقاد الحالي"
+  },
+  "memoryEntities": {
+    "message": "التصفح حسب الكيان"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "ابحث عن شخص أو مشروع أو موضوع"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "ترحيل المدفوعات"
+  },
+  "memoryEntitySearch": {
+    "message": "بحث"
+  },
+  "memoryEntitySearchHint": {
+    "message": "يطابق الأسماء دون استدعاء نموذج. تُعرض فقط الكيانات التي لها ذكرى يمكنك مراجعتها."
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "لا يوجد كيان مطابق له ذكرى يمكنك مراجعتها."
+  },
+  "memoryEntityPath": {
+    "message": "مسار الكيانات"
   }
 }

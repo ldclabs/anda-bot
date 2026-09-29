@@ -1802,3 +1802,161 @@ async fn memory_product_misrecordings_repair_and_deletions_report_their_erasure(
     );
     space.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn memory_entity_pages_show_owner_visible_claims_with_their_beliefs() {
+    use crate::brain::entity::{EntityQuery, EntitySearchQuery};
+    let fixture = memory_product_fixture("Keep release notes short").await;
+    let native = fixture.space.product_record(&fixture.id).await.unwrap();
+    let owner_id = native.actor_id.clone().unwrap();
+    command(
+        &fixture.space,
+        r#"DEFINE CONCEPT TYPE "Project" {description: "A piece of work with a goal"}"#,
+        json!({}),
+    )
+    .await;
+    command(&fixture.space, r#"DEFINE PREDICATE "involves" {description: "The project involves the person.", subject: {concept_types: ["Project"]}, object: {concept_types: ["Person"]}}"#, json!({})).await;
+    // A newer preference of the same kind takes over the fixture's; another
+    // person's unsourced claim about the owner stays out of every view.
+    let created = command(
+        &fixture.space,
+        r#"MUTATE {
+        CREATE CONCEPT ?project {TYPE "Project" NAME "Payments migration"}
+        ASSERT ?involves (?project,"involves",:owner) {by: :owner,mode:"stated",evidence: :input}
+        CREATE CONCEPT ?style {TYPE "ReleaseNoteStyle" NAME "Risk first notes"}
+        ASSERT ?newer (:owner,"prefers",?style) {by: :owner,mode:"stated",evidence: :input}
+        CREATE CONCEPT ?other {TYPE "Person" NAME "Other person"}
+        CREATE CONCEPT ?long {TYPE "ReleaseNoteStyle" NAME "Long notes"}
+        ASSERT ?hidden (:owner,"prefers",?long) {by: ?other,mode:"stated"}
+    }"#,
+        json!({"owner": owner_id, "input": native.sources[0].evidence_id}),
+    )
+    .await;
+    let handle = |name: &str| created["handles"][name].as_str().unwrap().to_string();
+    let (involves, newer, hidden, project) = (
+        handle("involves"),
+        handle("newer"),
+        handle("hidden"),
+        handle("project"),
+    );
+    let service = &fixture.service;
+    let entity = |id: Option<&str>, cursor: Option<String>, limit: Option<usize>| {
+        service.entity(
+            fixture.owner,
+            EntityQuery {
+                id: id.map(str::to_string),
+                cursor,
+                limit,
+            },
+        )
+    };
+
+    let (page, next) = entity(None, None, None).await.unwrap();
+    assert_eq!(page.entity.id, owner_id);
+    assert_eq!(page.entity.type_name, "Person");
+    assert!(page.entity.about_owner);
+    assert!(next.is_none());
+    let ids: Vec<&str> = page
+        .items
+        .iter()
+        .map(|item| item.record.id.as_str())
+        .collect();
+    assert_eq!(ids.len(), 3, "{ids:?}");
+    assert!(!ids.contains(&hidden.as_str()));
+    // Newest first: the fixture's claim is the oldest.
+    assert_eq!(ids[2], fixture.id);
+    assert!(!page.complete);
+    assert_eq!(
+        page.partial_reason.as_deref(),
+        Some("source_provenance_incomplete")
+    );
+    let claim = |id: &str| page.items.iter().find(|item| item.record.id == id).unwrap();
+    let incoming = claim(&involves);
+    assert_eq!(incoming.direction, "incoming");
+    assert_eq!(incoming.other.id.as_deref(), Some(project.as_str()));
+    assert_eq!(incoming.other.label, "Payments migration");
+    assert_eq!(
+        incoming.record.subject_id.as_deref(),
+        Some(project.as_str())
+    );
+    let current = claim(&newer);
+    assert_eq!(current.direction, "outgoing");
+    assert_eq!(current.other.label, "Risk first notes");
+    assert_eq!(current.belief.as_ref().unwrap().status, "accepted");
+    let earlier = claim(&fixture.id);
+    let belief = earlier.belief.as_ref().unwrap();
+    assert_ne!(belief.status, "accepted");
+    assert_eq!(
+        belief.excluded_reason.as_deref(),
+        Some("outside_valid_time")
+    );
+    assert_eq!(earlier.record.object_id, earlier.other.id);
+
+    // One claim a page, each exactly once; a cursor belongs to its entity.
+    let mut cursor = None;
+    let mut seen = Vec::new();
+    loop {
+        let (page, next) = entity(None, cursor, Some(1)).await.unwrap();
+        assert!(page.items.len() <= 1);
+        seen.extend(page.items.into_iter().map(|item| item.record.id));
+        match next {
+            Some(next) => {
+                assert_eq!(
+                    entity(Some(&project), Some(next.clone()), Some(1))
+                        .await
+                        .unwrap_err()
+                        .to_string(),
+                    "invalid_cursor"
+                );
+                cursor = Some(next)
+            }
+            None => break,
+        }
+    }
+    assert_eq!(seen, ids);
+
+    let (page, _) = entity(Some(&project), None, None).await.unwrap();
+    assert!(!page.entity.about_owner);
+    assert_eq!(page.entity.type_name, "Project");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].direction, "outgoing");
+    assert!(page.complete);
+    // Only hidden claims name these: neither entity is disclosed.
+    for id in [handle("long"), handle("other")] {
+        assert_eq!(
+            entity(Some(&id), None, None).await.unwrap_err().to_string(),
+            "entity_not_found"
+        );
+    }
+    assert_eq!(
+        entity(Some("P-1"), None, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "invalid_request"
+    );
+
+    let search =
+        |text: &str| service.entity_search(fixture.owner, EntitySearchQuery { query: text.into() });
+    let names = |page: crate::brain::entity::EntitySearchPage| {
+        page.items
+            .into_iter()
+            .map(|item| item.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(search("Payments").await.unwrap()),
+        ["Payments migration"]
+    );
+    // Keyword hits on visible entities remain; the hidden ones do not.
+    let found = names(search("Long notes Other person").await.unwrap());
+    assert!(found.contains(&"Risk first notes".to_string()), "{found:?}");
+    assert!(!found.contains(&"Long notes".to_string()), "{found:?}");
+    assert!(!found.contains(&"Other person".to_string()), "{found:?}");
+    assert!(names(search("Owner").await.unwrap()).contains(&"Owner".to_string()));
+    assert_eq!(
+        search("  ").await.unwrap_err().to_string(),
+        "invalid_request"
+    );
+    fixture.space.close().await.unwrap();
+}

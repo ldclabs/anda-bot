@@ -6,6 +6,9 @@
   import ChangeDialog from './ChangeDialog.svelte'
   import SetupDialog from './SetupDialog.svelte'
   import SearchPanel from './SearchPanel.svelte'
+  import EntityPage from './EntityPage.svelte'
+  import EntitySearch from './EntitySearch.svelte'
+  import RecordCard from './RecordCard.svelte'
   import { learningLabel } from './labels'
   import WatchControl from './WatchControl.svelte'
   import { ANDA_BOT_SPACE_ID } from '../brain/api'
@@ -13,7 +16,6 @@
   import type { SettingsState } from '$lib/service-worker/types'
   import {
     MemoryApi,
-    REVISION_KINDS,
     type ActivityPage,
     type ChangeKind,
     type Overview,
@@ -27,13 +29,17 @@
     ArrowUpRight,
     BrainCircuit,
     Check,
+    ChevronRight,
     Copy,
     History,
     RefreshCw
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
-  let mode = $state<'home' | 'inbox'>('home')
+  let mode = $state<'home' | 'inbox' | 'entity'>('home')
+  /** Entity pages opened from the home page, oldest first; null is the caller. */
+  let trail = $state<Array<{ id: string | null; name: string }>>([])
+  let entityRevision = $state(0)
   let settings = $state<SettingsState | null>(null)
   let overview = $state<Overview | null>(null)
   let activity = $state<ActivityPage | null>(null)
@@ -83,6 +89,10 @@
     suppressed: getMessage('memoryState_suppressed')
   }
   const label = (state: string) => stateLabels[state] || stateLabels.unavailable
+  const entitiesAvailable = $derived(overview?.capabilities.entities?.state === 'available')
+  const canChange = $derived(
+    !!changeStorageKey && overview?.capabilities.changes?.state === 'available'
+  )
 
   function stop() {
     clearTimeout(timer)
@@ -198,7 +208,21 @@
     stop()
     busy = false
     mode = next
+    if (next !== 'entity') trail = []
     if (next === 'home') void bindSettings()
+  }
+  function openEntity(id: string | null, name: string) {
+    const index = trail.findIndex((item) => item.id === id)
+    trail =
+      mode !== 'entity'
+        ? [{ id, name }]
+        : index >= 0
+          ? trail.slice(0, index + 1)
+          : [...trail, { id, name }].slice(-8)
+    if (mode !== 'entity') select('entity')
+  }
+  function editRecord(record: MemoryRecord, kind: ChangeKind) {
+    change = { record, kind, restored: false }
   }
   async function openSource(source: MemoryRecord['sources'][number]) {
     if (!source.conversation || !source.index || !source.source) return
@@ -261,6 +285,52 @@
       {#if settings}<Inbox {settings} />{/if}
     </div>
   </div>
+{:else if mode === 'entity'}
+  {@const current = trail[trail.length - 1]}
+  <div class="flex h-full min-h-0 flex-col">
+    <nav
+      class="flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border p-3"
+      aria-label={getMessage('memoryEntityPath')}
+    >
+      <button class={buttonClass('ghost', 'sm', 'shrink-0')} onclick={() => select('home')}
+        ><ArrowLeft class="size-4" />{getMessage('memoryTitle')}</button
+      >
+      {#each trail as item, index (item.id ?? '')}
+        <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        {#if index === trail.length - 1}
+          <span class="max-w-48 truncate px-1 text-sm font-medium" aria-current="page"
+            >{item.name}</span
+          >
+        {:else}
+          <button
+            class={buttonClass('ghost', 'sm', 'max-w-40 shrink-0 truncate')}
+            onclick={() => openEntity(item.id, item.name)}>{item.name}</button
+          >
+        {/if}
+      {/each}
+    </nav>
+    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-7 sm:px-10 sm:py-10">
+      {#if settings && current}
+        {#key current.id}
+          <EntityPage
+            api={new MemoryApi(settings)}
+            id={current.id}
+            revision={entityRevision}
+            changes={canChange}
+            changeDisabled={hasPendingChange}
+            onchange={editRecord}
+            onsource={openSource}
+            onopen={openEntity}
+            onloaded={(entity) => {
+              const last = trail[trail.length - 1]
+              if (last && last.id === current.id)
+                last.name = entity.about_owner ? getMessage('memoryYou') : entity.name
+            }}
+          />
+        {/key}
+      {/if}
+    </div>
+  </div>
 {:else}
   <section
     class="h-full overflow-y-auto px-5 py-7 sm:px-10 sm:py-10"
@@ -320,6 +390,12 @@
       {#if settings && overview?.capabilities.search?.state === 'available'}
         {#key changeStorageKey}<SearchPanel api={new MemoryApi(settings)} />{/key}
       {/if}
+      {#if settings && entitiesAvailable}
+        {#key changeStorageKey}<EntitySearch
+            api={new MemoryApi(settings)}
+            onopen={openEntity}
+          />{/key}
+      {/if}
       {#if hasPendingChange && changeStorageKey}<button
           class={buttonClass('outline', 'sm', 'mb-4')}
           onclick={() => {
@@ -354,103 +430,29 @@
               {recordError}
             </p>{/if}
           {#each records?.items || [] as record (record.id)}
-            <article class="border-b border-border py-5">
-              <p class="text-xs text-muted-foreground">
-                {record.about_owner ? getMessage('memoryYou') : record.subject_label} · {record.predicate_label}
-              </p>
-              <p class="mt-2 whitespace-pre-wrap break-words text-sm font-medium">
-                {record.object_label}
-              </p>
-              <p class="mt-2 text-xs text-muted-foreground">
-                {record.stance === 'support'
-                  ? getMessage('memoryClaimSupport')
-                  : record.stance === 'reject'
-                    ? getMessage('memoryClaimReject')
-                    : getMessage('memoryClaimUncertain')} · {record.state === 'active'
-                  ? getMessage('memoryRecordCurrent')
-                  : record.state === 'superseded'
-                    ? getMessage('memoryRecordSuperseded')
-                    : record.state === 'retracted'
-                      ? getMessage('memoryRecordRetracted')
-                      : record.state === 'archived'
-                        ? getMessage('memoryRecordSuppressed')
-                        : getMessage('memoryRecordUnknown')}
-              </p>
-              {#if !record.sources_complete}<p class="mt-2 text-xs text-muted-foreground">
-                  {getMessage('memorySourceUnavailable')}
-                </p>{/if}
-              {#if record.sources.length}
-                <details class="mt-3 text-xs">
-                  <summary class="cursor-pointer text-muted-foreground"
-                    >{getMessage('memorySource')} ({record.sources.length})</summary
-                  >
-                  {#each record.sources as source}
-                    <div class="mt-3">
-                      <p class="text-muted-foreground">
-                        {#if source.conversation}{getMessage('memoryConversation')} #{source.conversation}{:else}{getMessage(
-                            'memoryCorrectionSource'
-                          )}{/if}
-                      </p>
-                      <blockquote
-                        class="mt-2 whitespace-pre-wrap break-words border-l-2 border-border pl-3 leading-relaxed"
-                      >
-                        {source.text || getMessage('memorySourceUnavailable')}
-                      </blockquote>
-                      {#if source.text_truncated}<p class="mt-2 text-muted-foreground">
-                          {getMessage('memorySourceTruncated')}
-                        </p>{/if}
-                      {#if source.conversation && source.index && source.source && Number.isSafeInteger(Number(source.conversation))}
-                        <button
-                          class={buttonClass('ghost', 'xs', 'mt-2')}
-                          onclick={() => openSource(source)}
-                          >{getMessage('memoryOpenSource')}</button
-                        >
-                      {/if}
-                    </div>
-                  {/each}
-                </details>
-              {/if}
-              {#if changeStorageKey && overview?.capabilities.changes?.state === 'available'}
-                <div class="mt-3 flex gap-2">
-                  {#if REVISION_KINDS.some((kind) => record.allowed_actions.includes(kind))}<button
-                      class={buttonClass('ghost', 'xs')}
-                      disabled={hasPendingChange}
-                      onclick={() =>
-                        (change = {
-                          record,
-                          kind:
-                            REVISION_KINDS.find((kind) => record.allowed_actions.includes(kind)) ||
-                            'correct',
-                          restored: false
-                        })}>{getMessage('memoryCorrect')}</button
-                    >{/if}
-                  {#if record.allowed_actions.includes('suppress')}<button
-                      class={buttonClass('ghost', 'xs')}
-                      disabled={hasPendingChange}
-                      onclick={() => (change = { record, kind: 'suppress', restored: false })}
-                      >{getMessage('memorySuppress')}</button
-                    >{/if}
-                  {#if record.allowed_actions.includes('delete')}<button
-                      class={buttonClass('ghost', 'xs')}
-                      disabled={hasPendingChange}
-                      onclick={() => (change = { record, kind: 'delete', restored: false })}
-                      >{getMessage('memoryDelete')}</button
-                    >{/if}
-                </div>
-              {/if}
-              {#if settings && changeStorageKey && overview?.capabilities.record_watches?.state === 'available'}
-                {#key changeStorageKey}<WatchControl
-                    api={new MemoryApi(settings)}
-                    canCreate={watchesComplete && !watchError && record.state !== 'archived'}
-                    recordId={record.id}
-                    scope={changeStorageKey}
-                    existing={watches.find(
-                      (watch) => watch.target_id === record.id && watch.state !== 'cancelled'
-                    )}
-                    onchanged={() => void refresh()}
-                  />{/key}
-              {/if}
-            </article>
+            <RecordCard
+              {record}
+              changes={canChange}
+              changeDisabled={hasPendingChange}
+              onchange={(kind) => editRecord(record, kind)}
+              onsource={openSource}
+              onentity={entitiesAvailable ? openEntity : undefined}
+            >
+              {#snippet footer()}
+                {#if settings && changeStorageKey && overview?.capabilities.record_watches?.state === 'available'}
+                  {#key changeStorageKey}<WatchControl
+                      api={new MemoryApi(settings)}
+                      canCreate={watchesComplete && !watchError && record.state !== 'archived'}
+                      recordId={record.id}
+                      scope={changeStorageKey}
+                      existing={watches.find(
+                        (watch) => watch.target_id === record.id && watch.state !== 'cancelled'
+                      )}
+                      onchanged={() => void refresh()}
+                    />{/key}
+                {/if}
+              {/snippet}
+            </RecordCard>
           {/each}
           {#if watchError}<p role="alert" class="mt-3 text-xs text-destructive">
               {watchError}
@@ -564,6 +566,7 @@
       }}
       onchanged={() => {
         hasPendingChange = false
+        entityRevision++
         void refresh()
       }}
     />

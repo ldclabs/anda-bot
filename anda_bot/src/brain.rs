@@ -3,6 +3,7 @@ pub mod activity;
 mod attention;
 pub mod catalog;
 mod client;
+pub mod entity;
 mod host;
 mod journal;
 mod kip;

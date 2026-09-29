@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "Connection settings changed. Reload the configuration before saving."
+  },
+  "memoryOpenEntity": {
+    "message": "Open $1"
+  },
+  "memoryEntityGraph": {
+    "message": "Related entities"
+  },
+  "memoryEntityGraphHint": {
+    "message": "Shows only the entities in the memories listed on this page. Select one to open it."
+  },
+  "memoryEntityGraphMore": {
+    "message": "$1 more not drawn."
+  },
+  "memoryAboutYou": {
+    "message": "About you"
+  },
+  "memoryEntityIntro": {
+    "message": "Memories you can review that involve this entity, grouped by relation, newest first."
+  },
+  "memoryEntityShown": {
+    "message": "$1 memories on this page, $2 of them current."
+  },
+  "memoryEntityEarlier": {
+    "message": "Earlier statements ($1)"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "There are no memories about you to review yet."
+  },
+  "memoryEntityNotFound": {
+    "message": "There are no memories about this that you can review."
+  },
+  "memoryEntityScanLimit": {
+    "message": "Some memories about this entity are not shown yet. Load the next page to continue."
+  },
+  "memoryBeliefTitle": {
+    "message": "What “current belief” means"
+  },
+  "memoryBeliefHint": {
+    "message": "Brain weighs every statement about the same fact with its standard recall policy: more specific context first, a person's own statements over hearsay, then the most recent. A statement replaced by a newer one stays as history."
+  },
+  "memoryBelief_accepted": {
+    "message": "Current belief"
+  },
+  "memoryBelief_contested": {
+    "message": "Contested"
+  },
+  "memoryBelief_uncertain": {
+    "message": "Uncertain"
+  },
+  "memoryBelief_rejected": {
+    "message": "Rejected"
+  },
+  "memoryBelief_insufficient": {
+    "message": "Not enough support"
+  },
+  "memoryBelief_ended": {
+    "message": "Replaced by a newer statement"
+  },
+  "memoryBelief_excluded": {
+    "message": "Not counted in the current belief"
+  },
+  "memoryEntities": {
+    "message": "Browse by entity"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "Find a person, project or topic"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "Payments migration"
+  },
+  "memoryEntitySearch": {
+    "message": "Find"
+  },
+  "memoryEntitySearchHint": {
+    "message": "Matches names without calling a model. Only entities with a memory you can review are listed."
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "No entity with a memory you can review matched."
+  },
+  "memoryEntityPath": {
+    "message": "Entity path"
   }
 }

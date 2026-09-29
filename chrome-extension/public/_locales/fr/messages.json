@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "La connexion a changé. Rechargez la configuration avant de l’enregistrer."
+  },
+  "memoryOpenEntity": {
+    "message": "Ouvrir $1"
+  },
+  "memoryEntityGraph": {
+    "message": "Entités liées"
+  },
+  "memoryEntityGraphHint": {
+    "message": "Ne montre que les entités des souvenirs de cette page. Sélectionnez-en une pour l’ouvrir."
+  },
+  "memoryEntityGraphMore": {
+    "message": "$1 autres non représentées."
+  },
+  "memoryAboutYou": {
+    "message": "À propos de vous"
+  },
+  "memoryEntityIntro": {
+    "message": "Les souvenirs vérifiables qui concernent cette entité, regroupés par relation, les plus récents d’abord."
+  },
+  "memoryEntityShown": {
+    "message": "$1 souvenirs sur cette page, dont $2 actuels."
+  },
+  "memoryEntityEarlier": {
+    "message": "Déclarations antérieures ($1)"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "Il n’y a pas encore de souvenir vous concernant à vérifier."
+  },
+  "memoryEntityNotFound": {
+    "message": "Aucun souvenir vérifiable ne concerne cet élément."
+  },
+  "memoryEntityScanLimit": {
+    "message": "D’autres souvenirs sur cette entité ne sont pas encore affichés. Chargez la page suivante pour continuer."
+  },
+  "memoryBeliefTitle": {
+    "message": "Ce que signifie « croyance actuelle »"
+  },
+  "memoryBeliefHint": {
+    "message": "Brain pèse toutes les déclarations sur un même fait avec sa politique de rappel standard : d’abord le contexte le plus précis, puis les déclarations de la personne elle-même plutôt que les propos rapportés, puis la plus récente. Une déclaration remplacée par une plus récente est conservée dans l’historique."
+  },
+  "memoryBelief_accepted": {
+    "message": "Croyance actuelle"
+  },
+  "memoryBelief_contested": {
+    "message": "Contesté"
+  },
+  "memoryBelief_uncertain": {
+    "message": "Incertain"
+  },
+  "memoryBelief_rejected": {
+    "message": "Rejeté"
+  },
+  "memoryBelief_insufficient": {
+    "message": "Appui insuffisant"
+  },
+  "memoryBelief_ended": {
+    "message": "Remplacé par une déclaration plus récente"
+  },
+  "memoryBelief_excluded": {
+    "message": "Non pris en compte dans la croyance actuelle"
+  },
+  "memoryEntities": {
+    "message": "Parcourir par entité"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "Trouver une personne, un projet ou un sujet"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "Migration des paiements"
+  },
+  "memoryEntitySearch": {
+    "message": "Trouver"
+  },
+  "memoryEntitySearchHint": {
+    "message": "Compare les noms sans appeler de modèle. Seules les entités ayant un souvenir vérifiable sont listées."
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "Aucune entité avec un souvenir vérifiable ne correspond."
+  },
+  "memoryEntityPath": {
+    "message": "Chemin des entités"
   }
 }

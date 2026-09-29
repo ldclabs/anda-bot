@@ -54,6 +54,8 @@ const memoryMethods = new Set([
   'memory_activity',
   'memory_records',
   'memory_record',
+  'memory_entity',
+  'memory_entity_search',
   'memory_search',
   'memory_watches',
   'memory_watch',

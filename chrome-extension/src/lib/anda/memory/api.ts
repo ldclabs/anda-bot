@@ -62,6 +62,10 @@ export interface MemoryRecord {
   subject_label: string
   predicate_label: string
   object_label: string
+  /** The subject Concept, for opening its entity page. */
+  subject_id?: string | null
+  /** The object Concept; none when the object is a literal value. */
+  object_id?: string | null
   about_owner: boolean
   stance: string
   state: string
@@ -84,6 +88,41 @@ export interface RecordPage {
   complete: boolean
   partial_reason: string | null
   next_cursor: string | null
+}
+
+export interface MemoryEntity {
+  id: string
+  name: string
+  /** The Concept type's local name, such as `Person`. */
+  type: string
+  about_owner: boolean
+}
+/** The Proposition's projection under the standard recall policy.
+ * `excluded_reason` says why this claim itself did not count, e.g.
+ * `outside_valid_time` once a newer statement took over. */
+export interface MemoryBelief {
+  status: 'accepted' | 'rejected' | 'contested' | 'uncertain' | 'insufficient' | string
+  excluded_reason: string | null
+}
+export interface EntityClaim {
+  /** `outgoing` when the entity is the subject, `incoming` when the object. */
+  direction: 'outgoing' | 'incoming'
+  /** The other end; a literal value has no id. */
+  other: { id: string | null; label: string }
+  belief: MemoryBelief | null
+  record: MemoryRecord
+}
+export interface EntityPage {
+  schema_version: number
+  entity: MemoryEntity
+  items: EntityClaim[]
+  complete: boolean
+  partial_reason: string | null
+  next_cursor: string | null
+}
+export interface EntitySearchPage {
+  schema_version: number
+  items: MemoryEntity[]
 }
 
 /** `correct`: the owner's claim was wrong. `world_change`: the world moved
@@ -261,6 +300,22 @@ export class MemoryApi {
   async records(cursor: string | null = null, signal?: AbortSignal): Promise<RecordPage> {
     const envelope = await this.read<RecordPage>('memory_records', [{ cursor, limit: 20 }], signal)
     return { ...unwrap(envelope), next_cursor: envelope.next_cursor ?? null }
+  }
+  /** One entity's claims, newest first. A null id is the caller. */
+  async entity(
+    id: string | null,
+    cursor: string | null = null,
+    signal?: AbortSignal
+  ): Promise<EntityPage> {
+    const envelope = await this.read<EntityPage>(
+      'memory_entity',
+      [{ id, cursor, limit: 20 }],
+      signal
+    )
+    return { ...unwrap(envelope), next_cursor: envelope.next_cursor ?? null }
+  }
+  async entitySearch(query: string, signal?: AbortSignal): Promise<EntitySearchPage> {
+    return unwrap(await this.read<EntitySearchPage>('memory_entity_search', [{ query }], signal))
   }
   async activity(
     cursor: string | null = null,

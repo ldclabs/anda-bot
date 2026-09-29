@@ -1579,5 +1579,86 @@
   },
   "configConnectionChanged": {
     "message": "La conexión ha cambiado. Vuelva a cargar la configuración antes de guardarla."
+  },
+  "memoryOpenEntity": {
+    "message": "Abrir $1"
+  },
+  "memoryEntityGraph": {
+    "message": "Entidades relacionadas"
+  },
+  "memoryEntityGraphHint": {
+    "message": "Solo muestra las entidades de los recuerdos de esta página. Selecciona una para abrirla."
+  },
+  "memoryEntityGraphMore": {
+    "message": "$1 más sin dibujar."
+  },
+  "memoryAboutYou": {
+    "message": "Sobre ti"
+  },
+  "memoryEntityIntro": {
+    "message": "Recuerdos que puedes revisar sobre esta entidad, agrupados por relación y con los más recientes primero."
+  },
+  "memoryEntityShown": {
+    "message": "$1 recuerdos en esta página, $2 de ellos vigentes."
+  },
+  "memoryEntityEarlier": {
+    "message": "Afirmaciones anteriores ($1)"
+  },
+  "memoryEntitySelfEmpty": {
+    "message": "Todavía no hay recuerdos sobre ti para revisar."
+  },
+  "memoryEntityNotFound": {
+    "message": "No hay recuerdos sobre esto que puedas revisar."
+  },
+  "memoryEntityScanLimit": {
+    "message": "Aún quedan recuerdos de esta entidad por mostrar. Carga la página siguiente para continuar."
+  },
+  "memoryBeliefTitle": {
+    "message": "Qué significa «creencia actual»"
+  },
+  "memoryBeliefHint": {
+    "message": "Brain pondera todas las afirmaciones sobre un mismo hecho con su política de recuperación estándar: primero el contexto más específico, las afirmaciones de la propia persona antes que lo dicho por terceros y, después, la más reciente. Una afirmación reemplazada por otra más nueva se conserva como historial."
+  },
+  "memoryBelief_accepted": {
+    "message": "Creencia actual"
+  },
+  "memoryBelief_contested": {
+    "message": "En disputa"
+  },
+  "memoryBelief_uncertain": {
+    "message": "Incierto"
+  },
+  "memoryBelief_rejected": {
+    "message": "Rechazado"
+  },
+  "memoryBelief_insufficient": {
+    "message": "Sin respaldo suficiente"
+  },
+  "memoryBelief_ended": {
+    "message": "Reemplazado por una afirmación más reciente"
+  },
+  "memoryBelief_excluded": {
+    "message": "No cuenta en la creencia actual"
+  },
+  "memoryEntities": {
+    "message": "Explorar por entidad"
+  },
+  "memoryEntitySearchLabel": {
+    "message": "Busca una persona, un proyecto o un tema"
+  },
+  "memoryEntitySearchPlaceholder": {
+    "message": "Migración de pagos"
+  },
+  "memoryEntitySearch": {
+    "message": "Buscar"
+  },
+  "memoryEntitySearchHint": {
+    "message": "Compara nombres sin llamar a un modelo. Solo aparecen entidades con algún recuerdo que puedas revisar."
+  },
+  "memoryEntitySearchEmpty": {
+    "message": "Ninguna entidad con recuerdos que puedas revisar coincide."
+  },
+  "memoryEntityPath": {
+    "message": "Ruta de entidades"
   }
 }
