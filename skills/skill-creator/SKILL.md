@@ -68,7 +68,7 @@ work may only need example prompts and human review.
 Before editing, inspect nearby skills and any repository instructions. Prefer
 the existing style and local tool names. For Anda Bot skills:
 
-- Use `shell`, `read_file`, `search_file`, `note`, `tools_select`, and available
+- Use `shell`, `read_file`, `search_file`, `tools_select`, and available
   subagents only when those tools are available to the skill.
 - Mention `/skill skill-name message` as the explicit user invocation path.
 - For CLI runs, use `anda agent run --prompt "..."`.

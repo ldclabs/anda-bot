@@ -100,7 +100,6 @@ model:
       model: "claude-haiku-4-5"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
-      effort: high
       context_window: 200000
       max_output: 64000
       labels: ["flash", "memory"]

@@ -96,9 +96,9 @@ impl Tool<BaseCtx> for CreateCronTool {
 
     fn description(&self) -> String {
         concat!(
-            "Creates a scheduled cron job with the specified parameters. ",
-            "Example 1: {\"job_kind\":\"shell\",\"job\":\"echo hello\",\"schedule_kind\":\"cron\",\"schedule\":\"0 9 * * 1-5\",\"tz\":\"Asia/Shanghai\"}. ",
-            "Example 2: {\"job_kind\":\"agent\",\"job\":\"Send the daily summary to me\",\"schedule_kind\":\"every\",\"schedule\":\"30m\",\"name\":\"daily-summary\"}.",
+            "Creates a scheduled job that runs a shell command (job_kind=shell) or submits a prompt to the agent runtime (job_kind=agent). ",
+            "schedule_kind picks a cron expression, a one-time RFC3339 timestamp (at), a repeating interval (every), or a single run after a delay (once); ",
+            "the parameter descriptions give each value format. ",
             "Relevant tools: update_cron_job, manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_select."
         )
         .to_string()
@@ -410,7 +410,11 @@ impl Tool<BaseCtx> for ManageCronJobTool {
     fn description(&self) -> String {
         concat!(
             "Manages an existing cron job by action. ",
-            "Supported actions are get, pause, resume, and remove."
+            "Supported actions are get, pause, resume, and remove. ",
+            "get returns the full job, including last_result and untruncated fields. ",
+            "pause stops future runs until resume. ",
+            "remove deletes the job definition permanently (it cannot be resumed) but keeps its run history for list_cron_runs; removing an unknown id succeeds. ",
+            "Use update_cron_job to change a job's command, prompt, or schedule."
         )
         .to_string()
     }

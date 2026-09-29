@@ -203,6 +203,10 @@ mod tests {
         assert!(SELF_INSTRUCTIONS.contains("tools_select"));
         assert!(SELF_INSTRUCTIONS.contains(r#"{ "group": "group_id" }"#));
         assert!(SELF_INSTRUCTIONS.contains("Never invent tool parameters"));
+        assert!(
+            SELF_INSTRUCTIONS
+                .contains("partial constructions do not meet terminal success criteria")
+        );
     }
 
     #[test]

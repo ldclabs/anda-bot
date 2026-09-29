@@ -2,7 +2,7 @@
 name: auto-research
 description: Long-horizon research and implementation loop for Anda Bot. Use when a task should keep moving through registered tools such as goal, subagents_manager, cron scheduling tools, file tools, and file-backed state instead of ending after one response; especially for autonomous research, multi-hour audits, repeated experiments, stall recovery, or unattended follow-up.
 execution: subagent
-allowed-tools: shell, read_file, write_file, edit_file, search_file, note, todo, subagents_manager, create_cron_job, list_cron_jobs, update_cron_job, manage_cron_job, list_cron_runs, recall_memory, skills_manager, tools_groups, tools_select
+allowed-tools: shell, read_file, write_file, edit_file, search_file, subagents_manager, create_cron_job, list_cron_jobs, update_cron_job, manage_cron_job, list_cron_runs, recall_memory, skills_manager, tools_groups, tools_select
 metadata:
   source: https://victorchen96.github.io/auto_research/framework.html
   type: Agent Framework
@@ -22,8 +22,8 @@ blocked.
 
 ## Operating Rules
 
-- Ledger first: persist state in files, not conversation memory. Brain and notes
-  may provide context, but they do not replace the ledger.
+- Ledger first: persist state in files, not conversation memory. Brain memory
+  may provide context, but it does not replace the ledger.
 - Ready means execute: once setup is sufficient, start the next work packet,
   check, retry, or monitor without asking for routine confirmation.
 - Autonomy with safety: decide locally unless the next action needs missing

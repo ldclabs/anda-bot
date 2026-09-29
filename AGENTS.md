@@ -12,6 +12,7 @@ The main binary is `anda`, implemented by the Rust package `anda_bot`.
 The repository also contains:
 
 - `chrome-extension/`: Svelte + TypeScript Chrome Side Panel client.
+- `desktop/`: Electron + Svelte desktop client.
 - `website/`: SvelteKit marketing/support site.
 - `docsite/`: Docusaurus documentation site with localized docs.
 - `skills/`: runtime skill packages distributed with the project.
@@ -58,8 +59,8 @@ The repository also contains:
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
 - Source builds track the KIP 2.0 stack (Brain 0.13 with its Memory Interface,
-  Nexus/DB/KIP 0.14, Core/Engine 0.16). Brain 0.13.2, Engine 0.16.3 and the rest
-  of the shared stack resolve from crates.io; the commented `[patch.crates-io]`
+  Nexus/DB/KIP 0.14, Core/Engine 0.16). The whole shared stack resolves from
+  crates.io (exact versions live in `Cargo.lock`); the commented `[patch.crates-io]`
   entries support sibling-checkout development. Keep a single DB/core type
   identity and verify Cargo metadata before changing patches.
 - With the embedded host, Formation windows are Memory Interface `observe`
@@ -113,7 +114,7 @@ Channel code has security and routing implications. Preserve these invariants:
   `pnpm-workspace.yaml`.
 - Prefer `pnpm --dir <subproject> ...` commands because package names may not be
   stable enough for filter-based commands.
-- `website/` and `chrome-extension/` are Svelte projects. Follow existing
+- `website/`, `chrome-extension/`, and `desktop/` are Svelte projects. Follow existing
   component, store, and styling conventions.
 - `docsite/` is Docusaurus. Keep install commands, release URLs, channel
   examples, and Brain terminology aligned with the top-level READMEs.
@@ -155,6 +156,14 @@ pnpm --dir website check
 pnpm --dir website test
 pnpm --dir website lint
 pnpm --dir website build
+```
+
+Desktop:
+
+```bash
+pnpm --dir desktop check
+pnpm --dir desktop test
+pnpm --dir desktop build
 ```
 
 Docs:

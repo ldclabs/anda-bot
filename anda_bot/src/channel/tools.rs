@@ -67,7 +67,6 @@ impl Tool<BaseCtx> for SendImMessageTool {
             "Sends a message to a recipient on a configured IM channel (Telegram, WeChat, Discord, Lark), ",
             "independent of where the current conversation came from. ",
             "Use list_im_channels first to discover channel ids and valid recipient ids from recent traffic. ",
-            "Example: {\"channel\":\"wechat:personal\",\"recipient\":\"wxid_abc\",\"content\":\"hello\",\"thread\":null}. ",
             "Relevant tools: list_im_channels."
         )
         .to_string()

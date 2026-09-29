@@ -39,7 +39,7 @@ If `claude auth status --text` fails, ask the user to run `claude auth login`, `
 
 - Use `claude -p` for every delegated task.
 - Do not run bare `claude`, `claude "query"`, tmux, slash commands, `/review`, `/compact`, interactive permission flows, or anything that waits for keyboard input.
-- Do not use `--tmux`, `-w --tmux`, or PTY orchestration from older Claude Code guides.
+- Do not use `--tmux`, `-w --tmux`, or any other PTY orchestration.
 - Pass the task through stdin or a carefully quoted prompt. Stdin is safer for long task descriptions.
 - Set `--max-turns` so the agent cannot run indefinitely.
 - Use `--allowedTools` to make non-interactive tool use explicit. Keep tools narrower for review-only work.

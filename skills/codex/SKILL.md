@@ -15,7 +15,7 @@ This skill is written for `shell` tool. Assume there is no PTY. Do not use inter
 
 - Use `codex exec` for every delegated task.
 - Do not run bare `codex`, `codex resume`, app-server flows, desktop app flows, tmux, or commands that wait for keyboard input.
-- Do not pass PTY-only options. If older guidance says `pty=true`, ignore it in the agent.
+- Do not pass PTY-only options such as `pty=true`.
 - Place global flags after the subcommand, for example `codex exec --cd "$PROJECT" ...`.
 - Prefer `--sandbox workspace-write --ask-for-approval never` for implementation tasks. This keeps edits inside the workspace and avoids approval prompts that the shell cannot answer.
 - Use `--sandbox read-only` for review, diagnosis, or planning tasks.

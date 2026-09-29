@@ -1,17 +1,17 @@
 ---
 name: deep-research
-description: Use this skill for ANY question requiring web research. Trigger on queries like "what is X", "explain X", "compare X and Y", "research X", or before content generation tasks. Provides systematic multi-angle research methodology instead of single superficial searches. Use this proactively when the user's question needs online information.
+description: Multi-angle web research methodology. Use proactively when an answer or a piece of content (report, article, slides, documentation) depends on current, specialized, or contested information that has to be gathered online and a single search would not cover it. Not needed for questions the conversation, local files, or stable general knowledge already answer.
 ---
 
 # Deep Research Skill
 
 ## Overview
 
-This skill provides a systematic methodology for conducting thorough web research. **Load this skill BEFORE starting any content generation task** to ensure you gather sufficient information from multiple angles, depths, and sources.
+This skill provides a methodology for web research that gathers information from multiple angles, depths, and sources before you write.
 
 ## When to Use This Skill
 
-**Always load this skill when:**
+Use it for:
 
 ### Research Questions
 - User asks "what is X", "explain X", "research X", "investigate X"
@@ -28,7 +28,7 @@ This skill provides a systematic methodology for conducting thorough web researc
 
 ## Core Principle
 
-**Never generate content based solely on general knowledge.** The quality of your output directly depends on the quality and quantity of research conducted beforehand. A single search query is NEVER enough.
+Ground current, specialized, or contested claims in sources you have actually read, because general knowledge goes stale. A multi-faceted topic needs several searches from different angles, not one.
 
 ## Research Methodology
 
@@ -44,7 +44,7 @@ Example:
 ```
 Topic: "AI in healthcare"
 Initial searches:
-- "AI healthcare applications 2024"
+- "AI healthcare applications [current year]"
 - "artificial intelligence medical diagnosis"
 - "healthcare AI market trends"
 
@@ -89,7 +89,7 @@ Ensure comprehensive coverage by seeking diverse information types:
 | **Facts & Data** | Concrete evidence | "statistics", "data", "numbers", "market size" |
 | **Examples & Cases** | Real-world applications | "case study", "example", "implementation" |
 | **Expert Opinions** | Authority perspectives | "expert analysis", "interview", "commentary" |
-| **Trends & Predictions** | Future direction | "trends 2024", "forecast", "future of" |
+| **Trends & Predictions** | Future direction | "trends [current year]", "forecast", "future of" |
 | **Comparisons** | Context and alternatives | "vs", "comparison", "alternatives" |
 | **Challenges & Criticisms** | Balanced view | "challenges", "limitations", "criticism" |
 
@@ -112,7 +112,7 @@ Before proceeding to content generation, verify:
 ```
 # Be specific with context
 ❌ "AI trends"
-✅ "enterprise AI adoption trends 2024"
+✅ "enterprise AI adoption trends [current year]"
 
 # Include authoritative source hints
 "[topic] research paper"
@@ -124,17 +124,17 @@ Before proceeding to content generation, verify:
 "[topic] statistics"
 "[topic] expert interview"
 
-# Use temporal qualifiers — always use the ACTUAL current year from <current_date>
-"[topic] 2026"   # ← replace with real current year, never hardcode a past year
+# Use temporal qualifiers — take the year from Current Datetime in your runtime context
+"[topic] [current year]"
 "[topic] latest"
 "[topic] recent developments"
 ```
 
 ### Temporal Awareness
 
-**Always check `<current_date>` in your context before forming ANY search query.**
+Read the `Current Datetime` line of your runtime context before forming a time-sensitive search query.
 
-`<current_date>` gives you the full date: year, month, day, and weekday (e.g. `2026-02-28, Saturday`). Use the right level of precision depending on what the user is asking:
+It gives the local date, hour, and UTC offset (e.g. `2026-02-28 09AM +08:00`); work out the weekday yourself when a query needs it. Use the right level of precision depending on what the user is asking:
 
 | User intent | Temporal precision needed | Example query |
 |---|---|---|
