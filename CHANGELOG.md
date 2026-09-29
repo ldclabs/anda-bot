@@ -33,6 +33,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **Desktop runtime updates and login menus**: runtime installation now stops the drained service on every platform so a slow download cannot outlast maintenance and admit tasks before a restart. Menu actions that open the first window after a hidden login start wait for the renderer to initialize. Desktop release signing selects each platform's credentials independently, so Windows credentials cannot enable macOS signing by mistake.
 - **Homebrew installs are not self-updated**: `anda update` renamed the new binary over Homebrew's `bin/` symlink, breaking `brew upgrade`. Homebrew installs now report that `brew upgrade anda` is needed (curated skills still update with `anda update --skills`).
 - **Desktop installer on Windows**: the NSIS install, update and uninstall checks stopped every process whose path merely started with the install directory, so `...\Programs\Anda` also terminated the CLI daemon and launcher in `...\Programs\AndaBot`. They now match the install directory itself.
 - **Goal verdicts stay in the conversation**: the supervisor's "Goal completed" message is saved with the conversation instead of disappearing at the next save, and Formation always cites the saved conversation record, so message-level memory sources stay verifiable for special (`$system`) messages too. A turn's history is written once per save instead of being rewritten separately for Formation.

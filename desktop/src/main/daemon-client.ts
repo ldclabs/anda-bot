@@ -518,7 +518,7 @@ export class DaemonClient extends EventEmitter {
       )
     return response.json()
   }
-  /** Stops a drained daemon so its executable can be replaced (Windows). */
+  /** Stops a drained daemon before installation can outlast its maintenance lease. */
   async stopForUpdate(token: string): Promise<void> {
     this.manuallyStopped = true
     await this.maintenance('shutdown', token)
@@ -566,11 +566,11 @@ export class DaemonClient extends EventEmitter {
       await new Promise((resolve) => setTimeout(resolve, 200))
     }
   }
-  /** Starts or restarts the daemon after its runtime changed. */
-  async startRuntime(restart: boolean): Promise<DaemonView> {
+  /** Starts the stopped daemon after its runtime changed or an install failed. */
+  async startRuntime(): Promise<DaemonView> {
     this.manuallyStopped = true
     this.disconnect()
-    await this.command([restart ? 'restart' : 'start'])
+    await this.command(['start'])
     this.store.state.daemonStopped = false
     await this.store.save()
     return this.connect()

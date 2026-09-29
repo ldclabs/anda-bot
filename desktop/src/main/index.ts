@@ -86,6 +86,8 @@ let updater: DesktopUpdater
 let quitPrompt = false
 let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
+let rendererReady = false
+let pendingMenuAction: 'new-chat' | 'settings' | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
 const firstReconnectDelay = 10_000
 let reconnectDelay = firstReconnectDelay
@@ -220,7 +222,8 @@ function openExternal(url: unknown): void {
 }
 function menuAction(value: 'new-chat' | 'settings'): void {
   show()
-  emit({ type: 'menu', value })
+  if (rendererReady) emit({ type: 'menu', value })
+  else pendingMenuAction = value
 }
 function showLogs(): Promise<string> {
   return shell.openPath(join(home, 'logs'))
@@ -306,6 +309,7 @@ autoUpdater.on('before-quit-for-update', () => {
 })
 
 function createWindow(): void {
+  rendererReady = false
   const saved = store?.state.windowBounds
   const valid =
     saved &&
@@ -400,6 +404,7 @@ function createWindow(): void {
   })
   window.on('closed', () => {
     window = null
+    rendererReady = false
   })
   window.once('ready-to-show', () => {
     if (!process.argv.includes('--hidden')) window?.show()
@@ -410,7 +415,11 @@ function createWindow(): void {
       pendingNavigation = null
     }
   })
+  contents.on('did-start-loading', () => {
+    rendererReady = false
+  })
   contents.on('render-process-gone', () => {
+    rendererReady = false
     void dialog
       .showMessageBox({
         type: 'error',
@@ -661,6 +670,13 @@ async function setup(): Promise<void> {
     return git.request(request)
   })
   handle('anda:bootstrap', bootstrap)
+  handle('anda:ready', () => {
+    rendererReady = true
+    if (pendingMenuAction) {
+      emit({ type: 'menu', value: pendingMenuAction })
+      pendingMenuAction = null
+    }
+  })
   handle('anda:connect', () => connectNow())
   handle('anda:control', async (action) => {
     if (!['stop', 'restart'].includes(action)) throw new Error('Invalid daemon action')

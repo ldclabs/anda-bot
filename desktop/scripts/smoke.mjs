@@ -340,9 +340,18 @@ let app
 try {
   app = await electron.launch({
     executablePath: electronPath,
-    args: [resolve('.')],
+    args: [resolve('.'), '--hidden'],
     env,
     timeout: 30_000
+  })
+  // Login starts without a renderer. The first menu action must survive creating it.
+  await app.evaluate(async ({ Menu, BrowserWindow }) => {
+    while (!Menu.getApplicationMenu()) await new Promise((resolve) => setTimeout(resolve, 20))
+    if (BrowserWindow.getAllWindows().length) throw new Error('Login start opened a window')
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'File')
+      .submenu.items.find((item) => item.label === 'Settings')
+      .click()
   })
   const page = await app.firstWindow()
   app.process().stderr?.on('data', (data) => {
@@ -352,6 +361,13 @@ try {
   page.on('pageerror', (error) => {
     errors.push(error.message)
     console.error('Renderer error:', error.message)
+  })
+  await page.locator('.settings-page').waitFor({ timeout: 30_000 })
+  await app.evaluate(({ Menu }) => {
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'File')
+      .submenu.items.find((item) => item.label === 'New Chat')
+      .click()
   })
   await page.getByText('What would you like to do?', { exact: true }).waitFor({ timeout: 30_000 })
   await page.screenshot({ path: join(screenshotDir, '01-welcome.png') })
@@ -585,7 +601,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: Electron IPC/WS, receipt-backed chat including renderer reload, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, full automation editing, approvals, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {

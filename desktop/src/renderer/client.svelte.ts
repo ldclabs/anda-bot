@@ -218,6 +218,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       if (this.authorized && !this.connection.liveEvents)
         void this.refreshChannels().catch(() => {})
     }, 15_000)
+    // Native menu actions may have created this window before its listener existed.
+    await window.anda.ready()
   }
   private requestExtra(source = this.activeSource): Record<string, unknown> {
     const workspace =

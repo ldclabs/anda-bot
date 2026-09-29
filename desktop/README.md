@@ -33,11 +33,11 @@ The app's tray is Anda's only tray. It shows whether the service runs, restarts 
 
 ### Updates / 更新
 
-- **The `anda` runtime** updates through its own release channel. The app checks every six hours (and on *Check for updates*); a downloaded release shows in the tray. Installing it pauses new tasks, waits for active ones, replaces `anda` and restarts the service; a busy service keeps the download for later, and a failed install brings the previous service back. Homebrew installs report that `brew upgrade anda` is needed.
+- **The `anda` runtime** updates through its own release channel. The app checks every six hours (and on *Check for updates*); a downloaded release shows in the tray. Installing it pauses new tasks, waits for active ones, stops the service, replaces `anda` and starts the service again. The service stays stopped throughout installation, even if downloads outlast the maintenance lease. A busy service keeps the download for later, and a failed install brings the service back. Homebrew installs report that `brew upgrade anda` is needed.
 - **The desktop app** updates with electron-updater from the GitHub release feed in signed builds. The service keeps running, because its executable lives outside the app; only open terminals must be closed first. Unsigned builds have no feed and are reinstalled manually.
 - Uninstalling the desktop leaves the shared `anda`, its data and its login entry in place; remove them like a script install (`anda autostart uninstall`, then delete the install directory).
 
-`anda` runtime 通过自己的发布通道更新：托盘提示可安装时，会先暂停新任务、等待活动任务完成，再替换 `anda` 并重启服务。桌面应用本身在签名版中通过 GitHub Release 更新，更新时服务继续运行。卸载桌面端不会删除共享的 `anda`、数据和登录项。
+`anda` runtime 通过自己的发布通道更新：托盘提示可安装时，会先暂停新任务、等待活动任务完成，停止服务后再替换 `anda` 并启动服务。即使下载超过维护租约期限，服务在整个安装期间也保持停止；安装失败时会恢复服务。桌面应用本身在签名版中通过 GitHub Release 更新，更新时服务继续运行。卸载桌面端不会删除共享的 `anda`、数据和登录项。
 
 ## Build
 

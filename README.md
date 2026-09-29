@@ -56,7 +56,7 @@ The desktop, your terminal and the Chrome extension share one `anda` and one dae
 
 The desktop tray replaces the retired Anda Bot menu bar launcher. Installing Anda Desktop, rerunning an install script or updating an old launcher removes the launcher's login entry, app bundle and shortcuts, and keeps the daemon starting at login if the launcher did.
 
-The tray and **Settings → Check for updates** install new `anda` releases after active tasks finish, then restart the service; the desktop app updates separately (signed release builds) without stopping the service. The tray also restarts the service, copies a Chrome extension token and opens the logs.
+The tray and **Settings → Check for updates** wait for active tasks to finish, stop the service while installing a new `anda` release, then start it again; the desktop app updates separately (signed release builds) without stopping the service. The tray also restarts the service, copies a Chrome extension token and opens the logs.
 
 The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. The workbench includes server-pushed chat updates with durable submission receipts, an isolated embedded browser with agent tools, interactive terminals, Git changes/commits and recoverable worktrees, and an audio self-test page. Chrome automation remains available through the extension. Config editing is owner-only and rejects stale saves; `anda validate-config` validates YAML from stdin without initializing a home or daemon.
 

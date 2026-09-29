@@ -85,6 +85,7 @@ export interface DesktopBridge {
   git<Result>(request: GitRequest): Promise<Result>
   terminal<Result>(request: TerminalRequest): Promise<Result>
   bootstrap(): Promise<Bootstrap>
+  ready(): Promise<void>
   connect(): Promise<DaemonView>
   control(action: 'stop' | 'restart'): Promise<DaemonView>
   rpc<Result>(method: string, params: unknown[], submissionId?: string): Promise<Result>

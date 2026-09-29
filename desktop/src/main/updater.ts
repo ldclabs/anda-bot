@@ -99,7 +99,6 @@ export class DesktopUpdater {
     const daemon = this.daemon
     if (!daemon.view.connected && !daemon.manuallyStopped) await daemon.connect()
     const running = daemon.view.connected
-    const windows = process.platform === 'win32'
     this.emit('Waiting for active tasks to finish…')
     await installRuntimeUpdate({
       running,
@@ -109,14 +108,16 @@ export class DesktopUpdater {
         await daemon.maintenance('release', token)
       },
       install: async (lease) => {
-        // A running executable can only be replaced on Windows once it stops.
-        if (windows && lease) await daemon.stopForUpdate(lease)
+        // Stop while the lease is valid: CLI downloads can outlast its 90 seconds.
+        if (lease) await daemon.stopForUpdate(lease)
         await daemon.applyRuntimeUpdate()
-        if (running) await daemon.startRuntime(!windows)
+        if (running) await daemon.startRuntime()
       },
       recover: async (lease) => {
-        if (daemon.view.connected && lease) await daemon.maintenance('release', lease)
-        else if (running) await daemon.startRuntime(false)
+        if (daemon.view.connected && lease) {
+          await daemon.maintenance('release', lease)
+          daemon.manuallyStopped = false
+        } else if (running) await daemon.startRuntime()
       },
       wait: () => new Promise((resolve) => setTimeout(resolve, 5000))
     })

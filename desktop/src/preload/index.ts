@@ -6,6 +6,7 @@ const api: DesktopBridge = {
   git: (request) => ipcRenderer.invoke('anda:git', request),
   terminal: (request) => ipcRenderer.invoke('anda:terminal', request),
   bootstrap: () => ipcRenderer.invoke('anda:bootstrap'),
+  ready: () => ipcRenderer.invoke('anda:ready'),
   connect: () => ipcRenderer.invoke('anda:connect'),
   control: (action) => ipcRenderer.invoke('anda:control', action),
   rpc: (method, params, submissionId) =>
