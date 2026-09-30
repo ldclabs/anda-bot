@@ -1,5 +1,14 @@
+import { setNativeMessages } from '$lib/i18n'
 import { describe, expect, it } from 'vitest'
-import { normalizeConfigDraft, parseConfigDraft, renderConfigYaml } from './schema'
+import {
+  ensureObject,
+  getObject,
+  objectArray,
+  modelProviderFields,
+  normalizeConfigDraft,
+  parseConfigDraft,
+  renderConfigYaml
+} from './schema'
 
 const baseDraft = {
   addr: '127.0.0.1:8042',
@@ -238,4 +247,44 @@ describe('config array row identity', () => {
     expect(moved).toContain('future_option: enabled # Bob hint')
     expect(moved).toContain('private_hint: alice-only # Alice hint')
   })
+})
+
+describe('configuration rendering reads', () => {
+  it('reads absent fields without mutating legacy providers or frozen state', () => {
+    const provider = Object.freeze({ family: 'openai', model: 'legacy' })
+    expect(getObject(provider, 'auth', { type: 'api_key' })).toEqual({ type: 'api_key' })
+    expect(getObject(provider, 'missing')).toEqual({})
+    expect(objectArray(provider, 'missing')).toEqual([])
+    expect(Object.keys(provider)).toEqual(['family', 'model'])
+  })
+
+  it('only persists an authorization object when editing it', () => {
+    const draft = parseConfigDraft(
+      'model:\n  providers:\n    - family: openai\n      model: legacy\n'
+    )!
+    const provider = objectArray(getObject(draft, 'model'), 'providers')[0]
+    const initial = { type: 'api_key' }
+    expect(getObject(provider, 'auth', initial).type).toBe('api_key')
+    expect(renderConfigYaml(draft, '')).not.toContain('auth:')
+    const auth = ensureObject(provider, 'auth', initial)
+    auth.type = 'chatgpt'
+    auth.profile = 'saved-account'
+    expect(getObject(provider, 'auth')).toBe(auth)
+    expect(initial.type).toBe('api_key')
+    const rendered = renderConfigYaml(draft, '')
+    expect(rendered).toContain('type: chatgpt')
+    expect(rendered).toContain('profile: saved-account')
+  })
+})
+
+it('resolves model field labels after native translations are installed', () => {
+  setNativeMessages('en', {})
+  const auth = modelProviderFields.find((field) => field.key === 'auth')!
+  setNativeMessages('zh_CN', {
+    chatgptAuthorization: { message: '授权方式' },
+    chatgptAccount: { message: 'ChatGPT 账号' }
+  })
+  expect(auth.label).toBe('授权方式')
+  expect(auth.fields!.find((field) => field.key === 'profile')!.label).toBe('ChatGPT 账号')
+  setNativeMessages('en', {})
 })

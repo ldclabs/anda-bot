@@ -1687,5 +1687,11 @@
   },
   "chatgptAuthorization": {
     "message": "التفويض"
+  },
+  "chatgptSaveConfigFirst": {
+    "message": "احفظ تغييرات الإعدادات أو أعد تحميلها قبل التبديل إلى نموذج ChatGPT."
+  },
+  "chatgptModel": {
+    "message": "نموذج ChatGPT"
   }
 }

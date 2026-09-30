@@ -16,6 +16,7 @@ export interface FieldSchema {
   placeholder?: string
   nullable?: boolean
   fields?: FieldSchema[]
+  initialValue?: JsonObject
 }
 
 export const runtimeFields: FieldSchema[] = [
@@ -56,45 +57,106 @@ export const userFields: FieldSchema[] = [
 export const modelProviderFields: FieldSchema[] = [
   {
     key: 'family',
-    label: getMessage('configFieldFamily') || 'Family',
+    get label() {
+      return getMessage('configFieldFamily') || 'Family'
+    },
     kind: 'select',
     options: ['anthropic', 'openai', 'openai-response', 'gemini']
   },
-  { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
-  { key: 'api_base', label: getMessage('configFieldAPIBase') || 'API base', kind: 'text' },
-  { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+  {
+    key: 'model',
+    get label() {
+      return getMessage('configFieldModel') || 'Model'
+    },
+    kind: 'text'
+  },
+  {
+    key: 'api_base',
+    get label() {
+      return getMessage('configFieldAPIBase') || 'API base'
+    },
+    kind: 'text'
+  },
+  {
+    key: 'api_key',
+    get label() {
+      return getMessage('configFieldAPIKey') || 'API key'
+    },
+    kind: 'secret'
+  },
   {
     key: 'auth',
-    label: getMessage('chatgptAuthorization'),
+    get label() {
+      return getMessage('chatgptAuthorization')
+    },
     kind: 'object',
+    initialValue: { type: 'api_key' },
     fields: [
       {
         key: 'type',
-        label: getMessage('chatgptAuthorization'),
+        get label() {
+          return getMessage('chatgptAuthorization')
+        },
         kind: 'select',
         options: ['api_key', 'chatgpt']
       },
-      { key: 'profile', label: getMessage('chatgptAccount'), kind: 'text' }
+      {
+        key: 'profile',
+        get label() {
+          return getMessage('chatgptAccount')
+        },
+        kind: 'text'
+      }
     ]
   },
   {
     key: 'effort',
-    label: getMessage('configFieldEffort') || 'Effort',
+    get label() {
+      return getMessage('configFieldEffort') || 'Effort'
+    },
     kind: 'select',
     options: ['minimal', 'low', 'medium', 'high']
   },
   {
     key: 'context_window',
-    label: getMessage('configFieldContextWindow') || 'Context window',
+    get label() {
+      return getMessage('configFieldContextWindow') || 'Context window'
+    },
     kind: 'number'
   },
-  { key: 'max_output', label: getMessage('configFieldMaxOutput') || 'Max output', kind: 'number' },
-  { key: 'labels', label: getMessage('configFieldLabels') || 'Labels', kind: 'string-list' },
-  { key: 'stream', label: getMessage('configFieldStream') || 'Stream', kind: 'boolean' },
-  { key: 'disabled', label: getMessage('configFieldDisabled') || 'Disabled', kind: 'boolean' },
+  {
+    key: 'max_output',
+    get label() {
+      return getMessage('configFieldMaxOutput') || 'Max output'
+    },
+    kind: 'number'
+  },
+  {
+    key: 'labels',
+    get label() {
+      return getMessage('configFieldLabels') || 'Labels'
+    },
+    kind: 'string-list'
+  },
+  {
+    key: 'stream',
+    get label() {
+      return getMessage('configFieldStream') || 'Stream'
+    },
+    kind: 'boolean'
+  },
+  {
+    key: 'disabled',
+    get label() {
+      return getMessage('configFieldDisabled') || 'Disabled'
+    },
+    kind: 'boolean'
+  },
   {
     key: 'bearer_auth',
-    label: getMessage('configFieldBearerAuth') || 'Bearer auth',
+    get label() {
+      return getMessage('configFieldBearerAuth') || 'Bearer auth'
+    },
     kind: 'boolean'
   }
 ]
@@ -482,13 +544,13 @@ export function asObject(value: Json | undefined): JsonObject {
   return {}
 }
 
-export function getObject(target: JsonObject, key: string): JsonObject {
+/** Read helpers are also called from Svelte derived values and template snippets. */
+export function getObject(target: JsonObject, key: string, fallback: JsonObject = {}): JsonObject {
   const value = target[key]
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as JsonObject
   }
-  target[key] = {}
-  return target[key] as JsonObject
+  return fallback
 }
 
 export function optionalObject(target: JsonObject, key: string): JsonObject | null {
@@ -496,8 +558,13 @@ export function optionalObject(target: JsonObject, key: string): JsonObject | nu
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : null
 }
 
-export function ensureObject(target: JsonObject, key: string): JsonObject {
-  return getObject(target, key)
+export function ensureObject(
+  target: JsonObject,
+  key: string,
+  initialValue: JsonObject = {}
+): JsonObject {
+  if (!optionalObject(target, key)) target[key] = cloneJson(initialValue)
+  return target[key] as JsonObject
 }
 
 export function ensureArray(target: JsonObject, key: string): Json[] {
@@ -508,7 +575,8 @@ export function ensureArray(target: JsonObject, key: string): Json[] {
 }
 
 export function objectArray(target: JsonObject, key: string): JsonObject[] {
-  return ensureArray(target, key).filter(
+  const items = target[key]
+  return (Array.isArray(items) ? items : []).filter(
     (item): item is JsonObject => Boolean(item) && typeof item === 'object' && !Array.isArray(item)
   )
 }

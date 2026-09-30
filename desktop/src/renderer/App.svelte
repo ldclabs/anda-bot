@@ -14,7 +14,6 @@
   import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
   import ConfigApp from '$extension/ConfigApp.svelte'
-  import ChatGptSettings from '$lib/anda/chatgpt/ChatGptSettings.svelte'
   import ChatGptUsage from '$lib/anda/chatgpt/ChatGptUsage.svelte'
   import {
     BrainCircuit,
@@ -661,17 +660,16 @@
       {#if settingsTab === 'audio'}<AudioPanel {client} />{:else if settingsTab === 'config'}<div
           class="management-page"
         >
-          <ConfigApp embedded />
+          <ConfigApp
+            embedded
+            onModelsChanged={async () => {
+              await window.anda.connect()
+              if (client.authorized) await client.refreshModelState()
+            }}
+          />
         </div>{:else}<div class="settings-page">
           <h1>{t('general')}</h1>
           <p class="muted">Anda Desktop · {client.connection.home}</p>
-          <ChatGptSettings
-            settings={client.settings}
-            onModelSelected={async () => {
-              await new Promise((resolve) => setTimeout(resolve, 1500))
-              await window.anda.connect()
-            }}
-          />
           <div class="setting-row">
             <span>{t('theme')}</span><DropdownMenu
               items={themeItems}

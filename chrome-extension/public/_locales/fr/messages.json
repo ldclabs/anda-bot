@@ -1687,5 +1687,11 @@
   },
   "chatgptAuthorization": {
     "message": "Autorisation"
+  },
+  "chatgptSaveConfigFirst": {
+    "message": "Enregistrez ou rechargez vos modifications de configuration avant de choisir un modèle ChatGPT."
+  },
+  "chatgptModel": {
+    "message": "Modèle ChatGPT"
   }
 }

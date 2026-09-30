@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import assert from 'node:assert/strict'
+import { parseDocument } from 'yaml'
 import { testTone } from '../src/renderer/audio-test.ts'
 
 const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-smoke-'))
@@ -75,6 +76,8 @@ function browserAction(source, args) {
     )
   })
 }
+let configContent =
+  'addr: 127.0.0.1:8042\nmodel:\n  active: legacy-model\n  providers:\n    - family: openai\n      model: legacy-model\n      api_base: https://example.invalid/v1\n      api_key: test-key\n'
 let chatgptConnected = true
 let chatgptSelected = false
 const server = createServer((req, res) => {
@@ -105,6 +108,9 @@ const server = createServer((req, res) => {
       if (request.method === 'model_select') {
         assert.equal(request.params.profile_id, 'test-account')
         chatgptSelected = true
+        const config = parseDocument(configContent)
+        config.setIn(['model', 'active'], 'chatgpt:test-account:test-plan-model')
+        configContent = config.toString()
         result = { active_model: 'chatgpt:test-account:test-plan-model' }
       }
       if (request.method === 'logout') {
@@ -127,7 +133,7 @@ const server = createServer((req, res) => {
   res.end(
     JSON.stringify({
       path: '/isolated/config.yaml',
-      content: 'addr: 127.0.0.1:8042\n',
+      content: configContent,
       config: { addr: '127.0.0.1:8042' },
       revision: 'test-revision'
     })
@@ -193,7 +199,7 @@ wsServer.on('connection', (ws, request) => {
         : {}
     if (method === 'model_names')
       result = {
-        active_model: 'Local test model',
+        active_model: chatgptSelected ? 'chatgpt:test-account:test-plan-model' : 'Local test model',
         model_names: ['Local test model']
       }
     else if (method === 'capabilities')
@@ -415,6 +421,46 @@ try {
   }
   page.on('pageerror', pageError)
   await page.locator('.settings-page').waitFor({ timeout: 30_000 })
+  await page
+    .locator('.settings-tabs')
+    .getByRole('button', { name: 'Agent configuration', exact: true })
+    .click()
+  await page.getByRole('heading', { name: 'Runtime', exact: true }).waitFor()
+  await page.getByRole('button', { name: /^Models/ }).click()
+  await page.getByRole('heading', { name: 'Models', exact: true }).waitFor({ timeout: 5000 })
+  assert.equal(
+    await page.getByRole('button', { name: /^Models/ }).getAttribute('aria-current'),
+    'page'
+  )
+  assert.equal(await page.getByRole('heading', { name: 'Runtime', exact: true }).count(), 0)
+  const modelPanel = page.getByRole('region', { name: 'Models', exact: true })
+  await modelPanel.getByRole('region', { name: 'ChatGPT plan', exact: true }).waitFor()
+  const yamlSource = page.locator('textarea').last()
+  assert.ok(
+    !(await yamlSource.inputValue()).includes('auth:'),
+    'Opening Models must not materialize absent auth fields'
+  )
+  // Edit a missing nested auth object, then return without losing the draft.
+  const profileInput = modelPanel
+    .locator('[data-provider-index="0"]')
+    .getByText('ChatGPT account', { exact: true })
+    .locator('..')
+    .locator('input')
+  await profileInput.fill('draft-profile')
+  assert.ok((await yamlSource.inputValue()).includes('profile: draft-profile'))
+  assert.ok((await yamlSource.inputValue()).includes('type: api_key'))
+  assert.equal(
+    await modelPanel.getByRole('button', { name: 'Use selected model', exact: true }).isDisabled(),
+    true
+  )
+  await page.getByRole('button', { name: /^Runtime/ }).click()
+  assert.equal(await page.getByRole('region', { name: 'ChatGPT plan', exact: true }).count(), 0)
+  await page.getByRole('button', { name: /^Models/ }).click()
+  await page.getByRole('heading', { name: 'Models', exact: true }).waitFor()
+  assert.equal(await profileInput.inputValue(), 'draft-profile')
+
+  await page.locator('.settings-tabs').getByRole('button', { name: 'General', exact: true }).click()
+
   // Capture the actual tray menu on its next refresh, without a production test hook.
   await app.evaluate(({ Tray }) => {
     const setContextMenu = Tray.prototype.setContextMenu
@@ -540,18 +586,49 @@ try {
   assert.equal(await page.getByText('Side reply after renderer reload', { exact: true }).count(), 1)
   await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
   await page.getByRole('heading', { name: 'General', exact: true }).waitFor()
+  assert.equal(await page.getByRole('region', { name: 'ChatGPT plan', exact: true }).count(), 0)
+  await page
+    .locator('.settings-tabs')
+    .getByRole('button', { name: 'Agent configuration', exact: true })
+    .click()
+  await page.getByRole('heading', { name: 'Runtime', exact: true }).waitFor()
+  assert.equal(await page.getByRole('region', { name: 'ChatGPT plan', exact: true }).count(), 0)
+  await page.getByRole('button', { name: /^Models/ }).click()
+  await page.getByRole('heading', { name: 'Models', exact: true }).waitFor()
   const chatgptCard = page.getByRole('region', { name: 'ChatGPT plan', exact: true })
   await chatgptCard.getByRole('button', { name: 'Use selected model', exact: true }).waitFor()
   await chatgptCard.getByRole('button', { name: 'Use selected model', exact: true }).click()
   await chatgptCard.getByText('Using ChatGPT plan', { exact: true }).waitFor()
   assert.equal(chatgptSelected, true)
+  await page.waitForFunction(
+    () =>
+      document.querySelector('#config-panel input[type="text"]')?.value ===
+      'chatgpt:test-account:test-plan-model'
+  )
+
   await page.screenshot({ path: join(screenshotDir, '15-chatgpt-settings.png') })
   await page.setViewportSize({ width: 760, height: 740 })
+  await page.getByRole('heading', { name: 'Models', exact: true }).scrollIntoViewIfNeeded()
+  const narrowForm = await page.getByRole('region', { name: 'Models', exact: true }).boundingBox()
+  assert.ok(
+    narrowForm && narrowForm.height > 300,
+    'Models form must not collapse in a narrow window'
+  )
+  const narrowViewport = page.viewportSize()
+  assert.ok(
+    narrowForm.x + narrowForm.width <= narrowViewport.width + 1,
+    'Models form must fit the window width'
+  )
+  await chatgptCard
+    .getByRole('button', { name: 'Use selected model', exact: true })
+    .scrollIntoViewIfNeeded()
+
   await page.screenshot({ path: join(screenshotDir, '16-chatgpt-narrow.png') })
   await page.setViewportSize({ width: 1280, height: 850 })
   await chatgptCard.getByRole('button', { name: 'Sign out', exact: true }).click()
   await chatgptCard.getByRole('button', { name: 'Reconnect / enable plan', exact: true }).waitFor()
   assert.equal(chatgptConnected, false)
+  await page.locator('.settings-tabs').getByRole('button', { name: 'General', exact: true }).click()
   await page.screenshot({ path: join(screenshotDir, '03-settings.png') })
   await page.locator('.settings-tabs').getByRole('button', { name: 'Audio', exact: true }).click()
   // The meter counts wall-clock time, but the recorder emits nothing until its
@@ -895,7 +972,7 @@ try {
   }
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   // Startup may fail before any window exists. Diagnostics must not replace

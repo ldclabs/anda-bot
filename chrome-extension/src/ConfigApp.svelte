@@ -29,6 +29,7 @@
     createTranscriptionProvider,
     createTtsProvider,
     createUser,
+    ensureObject,
     getObject,
     modelProviderFields,
     normalizeConfigDraft,
@@ -53,7 +54,10 @@
 
   type SectionId = 'runtime' | 'models' | 'tts' | 'transcription' | 'channels' | 'users'
 
-  let { embedded = false }: { embedded?: boolean } = $props()
+  let {
+    embedded = false,
+    onModelsChanged
+  }: { embedded?: boolean; onModelsChanged?: () => void | Promise<void> } = $props()
 
   const sections: { id: SectionId; label: string; detail: string }[] = [
     {
@@ -139,6 +143,26 @@
       errorMessage = errorToMessage(error)
       loading = false
     }
+  }
+
+  async function selectSection(section: SectionId) {
+    activeSection = section
+    await tick()
+    if (formPanel) formPanel.scrollTop = 0
+  }
+
+  async function chatgptModelSelected() {
+    const version = editVersion
+    const response = await new DaemonConfigApi(settings).load()
+    // A model selection updates config.yaml immediately. Preserve edits made
+    // while the request was running and their original conflict-check revision.
+    if (!dirty && version === editVersion) {
+      draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
+      source = response.content
+      configPath = response.path
+      configRevision = response.revision
+    }
+    await onModelsChanged?.()
   }
 
   function markFormDirty() {
@@ -273,7 +297,11 @@
   }
 </script>
 
-{#snippet fieldControl(target: JsonObject, field: FieldSchema)}
+{#snippet fieldControl(
+  target: JsonObject,
+  field: FieldSchema,
+  editableTarget: () => JsonObject = () => target
+)}
   <div data-slot="field" class={fieldClass('gap-1.5')}>
     <label
       class={fieldLabelClass('text-xs font-bold text-muted-foreground')}
@@ -290,7 +318,7 @@
           type="checkbox"
           class="size-4 accent-foreground"
           checked={booleanValue(target, field.key)}
-          onchange={(event) => updateBoolean(target, field, event)}
+          onchange={(event) => updateBoolean(editableTarget(), field, event)}
         />
         <span class="text-muted-foreground"
           >{booleanValue(target, field.key)
@@ -302,7 +330,7 @@
       <DropdownMenu
         items={(field.options || []).map((option) => ({ value: option, label: option }))}
         value={stringValue(target, field.key)}
-        onSelect={(value) => updateString(target, field, value)}
+        onSelect={(value) => updateString(editableTarget(), field, value)}
         ariaLabel={field.label}
       />
     {:else if field.kind === 'number'}
@@ -311,7 +339,7 @@
         type="number"
         value={numberValue(target, field.key)}
         placeholder={field.nullable ? getMessage('configOptionalPlaceholder') : undefined}
-        oninput={(event) => updateNumber(target, field, event)}
+        oninput={(event) => updateNumber(editableTarget(), field, event)}
       />
     {:else if field.kind === 'string-list'}
       <textarea
@@ -319,11 +347,13 @@
         spellcheck={false}
         placeholder={getMessage('configOneItemPerLine')}
         value={stringListValue(target, field.key)}
-        oninput={(event) => updateStringList(target, field, event)}></textarea>
+        oninput={(event) => updateStringList(editableTarget(), field, event)}></textarea>
     {:else if field.kind === 'object'}
       <div class="grid gap-3 rounded-md border bg-muted/20 p-3">
         {#each field.fields || [] as child}
-          {@render fieldControl(getObject(target, field.key), child)}
+          {@render fieldControl(getObject(target, field.key, field.initialValue), child, () =>
+            ensureObject(editableTarget(), field.key, field.initialValue)
+          )}
         {/each}
       </div>
     {:else}
@@ -335,7 +365,7 @@
         value={stringValue(target, field.key)}
         placeholder={field.placeholder ||
           (field.nullable ? getMessage('configOptionalPlaceholder') : undefined)}
-        oninput={(event) => updateString(target, field, event.currentTarget.value)}
+        oninput={(event) => updateString(editableTarget(), field, event.currentTarget.value)}
       />
     {/if}
   </div>
@@ -381,9 +411,6 @@
     ? 'flex h-full min-h-0 flex-col bg-background text-foreground'
     : 'min-h-screen bg-background text-foreground'}
 >
-  <div class="mx-auto w-full max-w-7xl p-4">
-    <ChatGptSettings {settings} onModelSelected={loadConfig} />
-  </div>
   {#if !embedded}
     <header class="border-b bg-muted/25">
       <div
@@ -437,11 +464,13 @@
 
   <main
     class={embedded
-      ? 'grid min-h-0 flex-1 gap-4 overflow-hidden p-3 lg:grid-cols-[15rem_minmax(0,1fr)_minmax(24rem,0.8fr)]'
-      : 'mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-5 lg:h-[calc(100vh-6rem)] lg:min-h-0 lg:grid-cols-[15rem_minmax(0,1fr)_minmax(24rem,0.8fr)]'}
+      ? 'grid min-h-0 flex-1 content-start items-start gap-4 overflow-y-auto p-3 lg:grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:content-stretch xl:items-stretch xl:overflow-hidden'
+      : 'mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[12rem_minmax(0,1fr)] xl:h-[calc(100vh-6rem)] xl:min-h-0 xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:items-stretch'}
   >
     <aside class="min-w-0 lg:sticky lg:top-4 lg:self-start">
-      <nav class="grid gap-1 rounded-lg border bg-background p-1 shadow-xs">
+      <nav
+        class="grid grid-cols-2 gap-1 rounded-lg border bg-background p-1 shadow-xs sm:grid-cols-3 lg:grid-cols-1"
+      >
         {#each sections as section}
           <button
             type="button"
@@ -450,7 +479,9 @@
                 ? 'bg-muted text-foreground shadow-xs'
                 : 'text-muted-foreground hover:bg-muted/55 hover:text-foreground'
             }`}
-            onclick={() => (activeSection = section.id)}
+            aria-current={activeSection === section.id ? 'page' : undefined}
+            aria-controls="config-panel"
+            onclick={() => void selectSection(section.id)}
           >
             <span class="truncate text-sm font-bold">{section.label}</span>
             <span class="truncate text-[10px] font-medium">{section.detail}</span>
@@ -460,7 +491,9 @@
     </aside>
 
     <section
-      class="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-background shadow-xs lg:h-full"
+      id="config-panel"
+      aria-label={sections.find((section) => section.id === activeSection)?.label}
+      class="flex min-w-0 flex-col rounded-lg border bg-background shadow-xs xl:h-full xl:min-h-0 xl:overflow-hidden"
     >
       {#if loading}
         <div class="grid min-h-80 place-items-center gap-2 p-8 text-muted-foreground">
@@ -469,7 +502,7 @@
         </div>
       {:else}
         <div
-          class="scrollbar-slim grid min-h-0 flex-1 auto-rows-max content-start gap-6 overflow-y-auto p-4 sm:p-5"
+          class="scrollbar-slim grid auto-rows-max content-start gap-6 p-4 sm:p-5 xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
           bind:this={formPanel}
         >
           {#if activeSection === 'runtime'}
@@ -491,6 +524,11 @@
                   kind: 'text'
                 })}
               </div>
+              <ChatGptSettings
+                {settings}
+                modelSelectionDisabled={dirty || saving}
+                onModelSelected={chatgptModelSelected}
+              />
               {@render arraySection(
                 getMessage('configProviders'),
                 getMessage('configProvidersDescription'),
@@ -686,7 +724,7 @@
       {/if}
     </section>
 
-    <aside class="min-w-0 lg:sticky lg:top-4 lg:self-start">
+    <aside class="min-w-0 lg:col-start-2 xl:sticky xl:top-4 xl:col-start-auto xl:self-start">
       <div class="grid overflow-hidden rounded-lg border bg-background shadow-xs">
         <div class="flex items-center justify-between gap-3 border-b bg-muted/25 px-3 py-2">
           <div class="flex min-w-0 items-center gap-2">

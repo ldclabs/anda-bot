@@ -136,7 +136,7 @@ anda auth use <profile-id> <model-slug>
 anda auth logout <profile-id>
 ```
 
-在 Anda 桌面端或扩展的设置中点击 **Continue with ChatGPT**，完成浏览器授权，再选择“使用所选模型”。TUI 中可按 **Ctrl+G** 登录；CLI/TUI 默认选用账号模型目录中的首个模型，CLI 可通过 `--model <slug>` 指定。模型未配置时 daemon 只运行经过身份验证的设置服务；选择模型后才启动 Brain、渠道和 cron。三端共享同一 `ANDA_HOME` 下的账号和刷新状态，凭证加密保存于 `chatgpt/accounts.cose`，不写入配置文件或浏览器存储。
+在 Anda 桌面端打开 **设置 → Agent 配置 → 模型**；在扩展中打开配置页的“模型”分区，或侧边栏设置中的模型区域。点击 **Continue with ChatGPT**，完成浏览器授权，再选择“使用所选模型”。TUI 中可按 **Ctrl+G** 登录；CLI/TUI 默认选用账号模型目录中的首个模型，CLI 可通过 `--model <slug>` 指定。模型未配置时 daemon 只运行经过身份验证的设置服务；选择模型后才启动 Brain、渠道和 cron。三端共享同一 `ANDA_HOME` 下的账号和刷新状态，凭证加密保存于 `chatgpt/accounts.cose`，不写入配置文件或浏览器存储。
 
 切换 ChatGPT 套餐模型需要先等待运行中的任务和子代理空闲。ChatGPT 套餐 provider 仅供本地 owner 使用；启用此类 provider 时，其他用户及外部 IM 请求会被拒绝。音视频和转录仍需独立 provider。额度耗尽不会自动切换到收费 API key，可前往 [ChatGPT 用量设置](https://chatgpt.com/settings/usage) 管理。旧版 `.codex/auth.json` 配置仍兼容，但新接入应使用上述正式登录流程。
 

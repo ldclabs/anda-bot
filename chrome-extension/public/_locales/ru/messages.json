@@ -1687,5 +1687,11 @@
   },
   "chatgptAuthorization": {
     "message": "Авторизация"
+  },
+  "chatgptSaveConfigFirst": {
+    "message": "Сохраните изменения конфигурации или загрузите её заново перед переключением на модель ChatGPT."
+  },
+  "chatgptModel": {
+    "message": "Модель ChatGPT"
   }
 }

@@ -1687,5 +1687,11 @@
   },
   "chatgptAuthorization": {
     "message": "授权方式"
+  },
+  "chatgptSaveConfigFirst": {
+    "message": "请先保存配置更改或重新加载配置，再切换到 ChatGPT 模型。"
+  },
+  "chatgptModel": {
+    "message": "ChatGPT 模型"
   }
 }

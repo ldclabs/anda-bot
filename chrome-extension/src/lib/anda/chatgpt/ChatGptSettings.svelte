@@ -13,8 +13,13 @@
   } from './api'
   let {
     settings,
-    onModelSelected
-  }: { settings: SettingsState; onModelSelected?: () => void | Promise<void> } = $props()
+    onModelSelected,
+    modelSelectionDisabled = false
+  }: {
+    settings: SettingsState
+    onModelSelected?: () => void | Promise<void>
+    modelSelectionDisabled?: boolean
+  } = $props()
   let accounts = $state<ChatGptAccounts>({ accounts: [], needs_setup: false })
   let profile = $state('')
   let models = $state<ChatGptModel[]>([])
@@ -105,6 +110,7 @@
     busy = false
   }
   async function useModel() {
+    if (modelSelectionDisabled) return
     await action(async () => {
       await chatgptRequest(settings, {
         method: 'model_select',
@@ -133,7 +139,7 @@
   aria-label={getMessage('chatgptTitle')}
 >
   <div class="grid gap-1">
-    <h2 class="text-sm font-semibold">{getMessage('chatgptTitle')}</h2>
+    <h3 class="text-sm font-semibold">{getMessage('chatgptTitle')}</h3>
     <p class="text-xs text-muted-foreground">{getMessage('chatgptDescription')}</p>
   </div>
   {#if accounts.accounts.length}
@@ -160,7 +166,7 @@
       </p>{/if}
     {#if models.length}
       <label class="grid gap-1 text-xs"
-        >{getMessage('activeModel')}
+        >{getMessage('chatgptModel')}
         <select class={inputClass('w-full')} bind:value={model} disabled={busy}
           >{#each models as option}<option value={option.slug}>{option.display_name}</option
             >{/each}</select
@@ -178,7 +184,7 @@
       >
       {#if models.length}<button
           class={buttonClass('outline', 'sm')}
-          disabled={busy || !model}
+          disabled={busy || !model || modelSelectionDisabled}
           onclick={() => void useModel()}>{getMessage('chatgptUseModel')}</button
         >{/if}
       {#if selected.connected}<button
@@ -204,6 +210,11 @@
       >{getMessage('chatgptManageUsage')}</button
     >
   </div>
+  {#if modelSelectionDisabled}
+    <p class="text-xs text-muted-foreground" role="status">
+      {getMessage('chatgptSaveConfigFirst')}
+    </p>
+  {/if}
   {#if flow}<div class="flex flex-wrap items-center gap-2 text-xs">
       <span>{getMessage('chatgptWaiting')}</span><button
         class={buttonClass('ghost', 'sm')}
