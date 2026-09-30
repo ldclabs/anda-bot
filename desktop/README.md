@@ -4,9 +4,9 @@ Electron + Svelte desktop client for the local Anda daemon. Chat messages, appro
 
 ## Installation / 安装
 
-Download `Anda-mac-arm64.dmg`, `Anda-mac-x64.dmg` or `Anda-win-x64.exe` from the latest GitHub release (or `brew install --cask ldclabs/tap/anda-desktop`). On macOS drag **Anda.app** into Applications; on Windows run the installer. Node.js, pnpm and Rust are not required.
+Download `Anda-mac-arm64.dmg` or `Anda-win-x64.exe` from the latest GitHub release (or `brew install --cask ldclabs/tap/anda-desktop`). New macOS releases support Apple Silicon only; Intel Mac users can build from source. On macOS drag **Anda.app** into Applications; on Windows run the installer. Node.js, pnpm and Rust are not required to use release packages.
 
-从最新 GitHub Release 下载 `Anda-mac-arm64.dmg`、`Anda-mac-x64.dmg` 或 `Anda-win-x64.exe`（或 `brew install --cask ldclabs/tap/anda-desktop`）。macOS 将 **Anda.app** 拖入“应用程序”，Windows 运行安装程序即可，无需安装开发工具。
+从最新 GitHub Release 下载 `Anda-mac-arm64.dmg` 或 `Anda-win-x64.exe`（或 `brew install --cask ldclabs/tap/anda-desktop`）。新的 macOS 发布包仅支持 Apple Silicon；Intel Mac 用户可从源码构建。macOS 将 **Anda.app** 拖入“应用程序”，Windows 运行安装程序即可，使用发布包无需安装开发工具。
 
 ### One runtime / 同一个 runtime
 
@@ -51,7 +51,7 @@ pnpm --dir desktop build
 pnpm --dir desktop package
 ```
 
-`package` builds `anda` with `cargo build --release --locked`, copies it and the curated `skills/` into the application's resources, and creates the local platform's installers under `desktop/release/`. `package:dir` produces an unpacked application. For a CI-built runtime, set `ANDA_DESKTOP_RUNTIME` to that executable before packaging; its version and SHA-256 are recorded in a manifest. Do not commit runtime binaries, installers, or test screenshots.
+`package` builds `anda` with `cargo build --release --locked`, copies it and the curated `skills/` into the application's resources, and creates the local platform's installers under `desktop/release/`. `package:dir` produces an unpacked application. To reuse a prebuilt runtime, set `ANDA_DESKTOP_RUNTIME` to that executable before packaging; its version and SHA-256 are recorded in a manifest. CI requires this variable and fails if it is missing instead of rebuilding Rust. Local packaging still builds the runtime when the variable is unset. Do not commit runtime binaries, installers, or test screenshots.
 
 For development:
 
@@ -96,7 +96,9 @@ Normal chat speech can also be stopped from the composer. Input drafts are prese
 
 ## Release
 
-`.github/workflows/release.yml` builds the desktop for macOS arm64, macOS x64 and Windows x64 from the same release's `anda` binaries and attaches `Anda-mac-*.dmg/.zip`, `Anda-win-x64.exe`, blockmaps, checksums and update metadata (the two macOS `latest-mac.yml` files are merged by `scripts/merge-desktop-update-metadata.mjs`). `scripts/publish-homebrew.sh` publishes the `anda-desktop` cask, which depends on the `anda` formula. `.github/workflows/desktop.yml` checks the desktop app and the Chrome extension on macOS and Windows for pull requests and pushes to `main`: type checks, unit tests, native Electron tests, an unsigned local package and NSIS install/uninstall checks. That package bundles an unoptimized `anda` (`cargo build --profile ci`, passed through `ANDA_DESKTOP_RUNTIME`) to keep the job short, so the workflow uploads only the Electron test screenshots, never the installers; the Rust tests run in `test.yml`.
+`.github/workflows/release.yml` builds the desktop for macOS arm64 and Windows x64 from the same release's `anda` binaries and attaches `Anda-mac-arm64.dmg/.zip`, `Anda-win-x64.exe`, blockmaps, checksums and update metadata. The desktop job installs only desktop/Chrome extension dependencies and reuses the downloaded runtime through the job-wide `ANDA_DESKTOP_RUNTIME`; it never compiles Rust. With a single macOS architecture, `latest-mac.yml` is published directly. `scripts/publish-homebrew.sh` reads the release's local checksums and publishes the Apple Silicon `anda-desktop` cask, which depends on the `anda` formula; the formula supports macOS arm64 and Linux arm64/x86_64.
+
+`.github/workflows/desktop.yml` checks the desktop app and the Chrome extension on macOS and Windows for pull requests and pushes to `main`: type checks, unit tests, native Electron tests, an unsigned local package and NSIS install/uninstall checks. That package bundles an unoptimized `anda` (`cargo build --profile ci`, passed through `ANDA_DESKTOP_RUNTIME`) to keep the job short, so the workflow uploads only the Electron test screenshots, never the installers; the Rust tests run in `test.yml`.
 
 For signed builds, configure the protected `desktop-release` environment: `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD`, `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`, and the public variable `ANDA_WINDOWS_PUBLISHER`. The macOS certificate and Apple credentials also sign and notarize the `anda-macos-*` and `anda_launcher-macos-*` release binaries (`scripts/sign-macos-binaries.sh`) before the desktop bundles them. Without certificates the release job builds unsigned packages with the local configuration and no update feed.
 

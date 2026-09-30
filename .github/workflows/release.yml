@@ -39,14 +39,6 @@ jobs:
             exe_ext: ".exe"
             cross: false
             build_dir: target
-          - os: macos-15-intel
-            target: macos-x86_64
-            rust_target: x86_64-apple-darwin
-            goos: darwin
-            goarch: amd64
-            exe_ext: ""
-            cross: false
-            build_dir: target
           - os: macos-latest
             target: macos-arm64
             rust_target: aarch64-apple-darwin
@@ -97,7 +89,7 @@ jobs:
           cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda
           # anda_launcher is now the transitional binary that retires the old
           # tray; older launchers and `anda update` still download it.
-          if [[ "${{ matrix.target }}" == windows-* || "${{ matrix.target }}" == macos-* ]]; then
+          if [[ "$RUNNER_OS" == Windows || "$RUNNER_OS" == macOS ]]; then
             cargo build --release --locked --target ${{ matrix.rust_target }} --bin anda_launcher
           fi
 
@@ -114,7 +106,7 @@ jobs:
         run: |
           mkdir -p release
           cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda${{ matrix.exe_ext }}" "release/anda-${{ matrix.target }}${{ matrix.exe_ext }}"
-          if [[ "${{ matrix.target }}" == windows-* || "${{ matrix.target }}" == macos-* ]]; then
+          if [[ "$RUNNER_OS" == Windows || "$RUNNER_OS" == macOS ]]; then
             cp "${{ matrix.build_dir }}/${{ matrix.rust_target }}/release/anda_launcher${{ matrix.exe_ext }}" "release/anda_launcher-${{ matrix.target }}${{ matrix.exe_ext }}"
           fi
 
@@ -218,8 +210,6 @@ jobs:
         include:
           - os: macos-latest
             target: macos-arm64
-          - os: macos-15-intel
-            target: macos-x86_64
     runs-on: ${{ matrix.os }}
     environment: desktop-release
     steps:
@@ -308,15 +298,15 @@ jobs:
           - os: macos-latest
             target: macos-arm64
             exe_ext: ""
-          - os: macos-15-intel
-            target: macos-x86_64
-            exe_ext: ""
           - os: windows-latest
             target: windows-x86_64
             exe_ext: ".exe"
     runs-on: ${{ matrix.os }}
     # Signing and notarization secrets live in this protected environment.
     environment: desktop-release
+    # Every packaging step must reuse this release's runtime, never rebuild it.
+    env:
+      ANDA_DESKTOP_RUNTIME: ${{ github.workspace }}/runtime/anda-${{ matrix.target }}${{ matrix.exe_ext }}
     steps:
       - uses: actions/checkout@v6
 
@@ -328,8 +318,10 @@ jobs:
         with:
           version: "11.7.0"
 
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+      # The desktop imports Chrome extension components; the website and
+      # docsite dependencies are not needed for packaging.
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile --filter "./desktop..." --filter "./chrome-extension..."
 
       # The desktop bundles the exact anda binary this release publishes; the
       # app installs it at the shared CLI location instead of running it.
@@ -341,8 +333,6 @@ jobs:
 
       - name: Prepare bundled runtime
         shell: bash
-        env:
-          ANDA_DESKTOP_RUNTIME: ${{ github.workspace }}/runtime/anda-${{ matrix.target }}${{ matrix.exe_ext }}
         run: |
           chmod +x "$ANDA_DESKTOP_RUNTIME"
           pnpm --dir desktop build
@@ -388,9 +378,9 @@ jobs:
         run: |
           mkdir -p desktop-release
           cp desktop/release/Anda-* desktop-release/
-          # Each macOS architecture writes latest-mac.yml; the release job merges them.
+          # Only Apple Silicon is published, so there is one macOS update feed.
           if [ -f desktop/release/latest-mac.yml ]; then
-            cp desktop/release/latest-mac.yml "desktop-release/latest-mac-${{ matrix.target }}.yml"
+            cp desktop/release/latest-mac.yml desktop-release/latest-mac.yml
           fi
           if [ -f desktop/release/latest.yml ]; then
             cp desktop/release/latest.yml desktop-release/latest.yml
@@ -431,9 +421,6 @@ jobs:
           pattern: release-*
           merge-multiple: true
           path: release
-
-      - name: Merge desktop update metadata
-        run: node scripts/merge-desktop-update-metadata.mjs release
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

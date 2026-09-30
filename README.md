@@ -48,9 +48,11 @@ This allows users to establish a natural feedback loop: state facts or preferenc
 
 Anda Desktop is the chat window, workbench and tray for your local Anda. Download it from the [latest release](https://github.com/ldclabs/anda-bot/releases/latest):
 
-- macOS Apple Silicon: `Anda-mac-arm64.dmg`; Intel: `Anda-mac-x64.dmg`
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`
 - Windows x64: `Anda-win-x64.exe`
 - Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (installs the `anda` formula too)
+
+New macOS CLI and desktop releases are available for Apple Silicon only. Intel Mac users can build from source.
 
 The desktop, your terminal and the Chrome extension share one `anda` and one daemon. On start, Anda Desktop keeps an existing install (from the install script, `ANDA_INSTALL_DIR` or Homebrew), or installs its bundled `anda` and curated skills where the install scripts put them: `~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows. A newer CLI is never downgraded, and Homebrew installs are updated with `brew upgrade`. The first run asks whether Anda should start at login; the tray then keeps the service running while the window is closed.
 

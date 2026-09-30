@@ -364,7 +364,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'Intel Mac: download Anda-mac-x64.dmg from the latest release. Command line only: use the install script.',
+					note: 'New macOS releases support Apple Silicon only; Intel Mac users can build from source. Command line only: use the install script.',
 					steps: ['Install app', 'Enter model settings', 'Pair browser']
 				},
 				windows: {
@@ -624,7 +624,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'Intel Mac 请从最新发布版下载 Anda-mac-x64.dmg。只需要命令行时，可使用安装脚本。',
+					note: '新的 macOS 发布包仅支持 Apple Silicon；Intel Mac 用户可从源码构建。只需要命令行时，可使用安装脚本。',
 					steps: ['安装应用', '配置模型', '连接浏览器']
 				},
 				windows: {
@@ -897,7 +897,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'Mac con Intel: descargue Anda-mac-x64.dmg desde la última versión. Solo línea de comandos: use el script de instalación.',
+					note: 'Las nuevas versiones para macOS solo admiten Apple Silicon; en Mac con Intel puede compilar desde el código fuente. Solo línea de comandos: use el script de instalación.',
 					steps: ['Instalar app', 'Configurar modelo', 'Emparejar navegador']
 				},
 				windows: {
@@ -1172,7 +1172,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'Mac Intel : téléchargez Anda-mac-x64.dmg depuis la dernière version. Ligne de commande seule : utilisez le script d’installation.',
+					note: 'Les nouvelles versions macOS sont réservées à Apple Silicon ; sur Mac Intel, compilez depuis les sources. Ligne de commande seule : utilisez le script d’installation.',
 					steps: ['Installer l’app', 'Configurer le modèle', 'Appairer le navigateur']
 				},
 				windows: {
@@ -1442,7 +1442,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'Mac на Intel: скачайте Anda-mac-x64.dmg со страницы последнего релиза. Только командная строка — используйте скрипт установки.',
+					note: 'Новые сборки для macOS доступны только для Apple Silicon; на Mac с Intel можно собрать из исходного кода. Только командная строка — используйте скрипт установки.',
 					steps: ['Установить приложение', 'Настроить модель', 'Связать с браузером']
 				},
 				windows: {
@@ -1707,7 +1707,7 @@ export const landingCopy: Record<Locale, LandingCopy> = {
 					download: macInstallerFileName,
 					command: desktopCaskCommand,
 					commandLabel: 'Homebrew',
-					note: 'لأجهزة Mac بمعالج Intel: نزّل Anda-mac-x64.dmg من أحدث إصدار. لسطر الأوامر فقط: استخدم سكريبت التثبيت.',
+					note: 'إصدارات macOS الجديدة تدعم Apple Silicon فقط؛ يمكن لمستخدمي Mac بمعالج Intel البناء من المصدر. لسطر الأوامر فقط: استخدم سكريبت التثبيت.',
 					steps: ['تثبيت التطبيق', 'إعداد النموذج', 'ربط المتصفح']
 				},
 				windows: {

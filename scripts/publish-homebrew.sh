@@ -10,6 +10,7 @@
 #   HOMEBREW_TAP_REPO   Defaults to ldclabs/homebrew-tap
 #   HOMEBREW_TAP_BRANCH Defaults to main
 #   HOMEBREW_TAP_DIR    Existing local tap checkout to update instead of cloning
+#   CHECKSUM_DIR        Read release checksums locally instead of downloading
 #   DRY_RUN=1           Print the generated formula and skip git operations
 
 set -eu
@@ -47,11 +48,17 @@ normalize_tag() {
 
 fetch_checksum() {
     ASSET_NAME="$1"
-    CHECKSUM_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}.sha256"
-    HASH=$(curl -fsSL "$CHECKSUM_URL" | awk '{print $1}' | tr -d '\r\n')
+    if [ -n "${CHECKSUM_DIR:-}" ]; then
+        CHECKSUM_SOURCE="${CHECKSUM_DIR}/${ASSET_NAME}.sha256"
+        [ -f "$CHECKSUM_SOURCE" ] || error "Missing checksum: ${CHECKSUM_SOURCE}"
+        HASH=$(awk '{print $1}' "$CHECKSUM_SOURCE" | tr -d '\r\n')
+    else
+        CHECKSUM_SOURCE="https://github.com/${REPO}/releases/download/${TAG}/${ASSET_NAME}.sha256"
+        HASH=$(curl -fsSL "$CHECKSUM_SOURCE" | awk '{print $1}' | tr -d '\r\n')
+    fi
 
     if [ -z "$HASH" ]; then
-        error "Could not read checksum from ${CHECKSUM_URL}"
+        error "Could not read checksum from ${CHECKSUM_SOURCE}"
     fi
 
     printf '%s\n' "$HASH"
@@ -65,22 +72,13 @@ class ${FORMULA_CLASS} < Formula
   license "Apache-2.0"
 
   on_macos do
-    if Hardware::CPU.arm?
-      url "${BASE_URL}/anda-macos-arm64", using: :nounzip
-      sha256 "${MACOS_ARM64_SHA}"
+    depends_on arch: :arm64
+    url "${BASE_URL}/anda-macos-arm64", using: :nounzip
+    sha256 "${MACOS_ARM64_SHA}"
 
-      resource "anda_launcher" do
-        url "${BASE_URL}/anda_launcher-macos-arm64", using: :nounzip
-        sha256 "${LAUNCHER_MACOS_ARM64_SHA}"
-      end
-    else
-      url "${BASE_URL}/anda-macos-x86_64", using: :nounzip
-      sha256 "${MACOS_X86_64_SHA}"
-
-      resource "anda_launcher" do
-        url "${BASE_URL}/anda_launcher-macos-x86_64", using: :nounzip
-        sha256 "${LAUNCHER_MACOS_X86_64_SHA}"
-      end
+    resource "anda_launcher" do
+      url "${BASE_URL}/anda_launcher-macos-arm64", using: :nounzip
+      sha256 "${LAUNCHER_MACOS_ARM64_SHA}"
     end
   end
 
@@ -141,19 +139,18 @@ EOF
 write_cask() {
     cat <<EOF
 cask "${CASK_NAME}" do
-  arch arm: "arm64", intel: "x64"
-
   version "${VERSION}"
-  sha256 arm:   "${DESKTOP_MACOS_ARM64_SHA}",
-         intel: "${DESKTOP_MACOS_X64_SHA}"
+  sha256 "${DESKTOP_MACOS_ARM64_SHA}"
 
-  url "https://github.com/${REPO}/releases/download/v#{version}/Anda-mac-#{arch}.dmg"
+  url "https://github.com/${REPO}/releases/download/v#{version}/Anda-mac-arm64.dmg"
   name "Anda"
   desc "Desktop workspace and tray for the Anda local AI agent"
-  homepage "https://anda.bot"
+  homepage "https://anda.bot/"
 
   auto_updates true
+  depends_on arch: :arm64
   depends_on formula: "${FORMULA_NAME}"
+  depends_on :macos
 
   app "Anda.app"
 
@@ -165,7 +162,9 @@ end
 EOF
 }
 
-need_cmd curl
+if [ -z "${CHECKSUM_DIR:-}" ]; then
+    need_cmd curl
+fi
 need_cmd awk
 need_cmd git
 
@@ -176,14 +175,11 @@ BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
 info "Generating Homebrew formula for ${REPO} ${TAG}..."
 
 MACOS_ARM64_SHA=$(fetch_checksum "anda-macos-arm64")
-MACOS_X86_64_SHA=$(fetch_checksum "anda-macos-x86_64")
 LAUNCHER_MACOS_ARM64_SHA=$(fetch_checksum "anda_launcher-macos-arm64")
-LAUNCHER_MACOS_X86_64_SHA=$(fetch_checksum "anda_launcher-macos-x86_64")
 LINUX_ARM64_SHA=$(fetch_checksum "anda-linux-arm64")
 LINUX_X86_64_SHA=$(fetch_checksum "anda-linux-x86_64")
 # Desktop packages are optional: a release without them publishes no cask.
 DESKTOP_MACOS_ARM64_SHA=$( (fetch_checksum "Anda-mac-arm64.dmg") 2>/dev/null || true)
-DESKTOP_MACOS_X64_SHA=$( (fetch_checksum "Anda-mac-x64.dmg") 2>/dev/null || true)
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -191,7 +187,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 FORMULA_TMP="${TMPDIR}/${FORMULA_NAME}.rb"
 write_formula > "$FORMULA_TMP"
 CASK_TMP=""
-if [ -n "$DESKTOP_MACOS_ARM64_SHA" ] && [ -n "$DESKTOP_MACOS_X64_SHA" ]; then
+if [ -n "$DESKTOP_MACOS_ARM64_SHA" ]; then
     CASK_TMP="${TMPDIR}/${CASK_NAME}.rb"
     write_cask > "$CASK_TMP"
 else

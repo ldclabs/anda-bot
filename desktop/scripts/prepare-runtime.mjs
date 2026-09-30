@@ -6,10 +6,13 @@ import { execFileSync } from 'node:child_process'
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const repository = resolve(desktop, '..')
+let source = process.env.ANDA_DESKTOP_RUNTIME
+if (process.env.CI && !source) {
+  throw new Error('Set ANDA_DESKTOP_RUNTIME to the prebuilt anda binary when packaging in CI')
+}
 process.env.electron_config_cache ||= resolve(repository, 'node_modules/.cache/electron')
 await import('electron') // Electron 44+ downloads its runtime on first import.
 const executable = process.platform === 'win32' ? 'anda.exe' : 'anda'
-let source = process.env.ANDA_DESKTOP_RUNTIME
 if (!source) {
   execFileSync('cargo', ['build', '--release', '--locked', '-p', 'anda_bot', '--bin', 'anda'], {
     cwd: repository,

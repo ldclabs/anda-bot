@@ -48,9 +48,11 @@ Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积
 
 Anda 桌面端是本地 Anda 的聊天窗口、工作台和托盘。请从 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载：
 
-- macOS Apple Silicon：`Anda-mac-arm64.dmg`；Intel：`Anda-mac-x64.dmg`
+- macOS Apple Silicon：`Anda-mac-arm64.dmg`
 - Windows x64：`Anda-win-x64.exe`
 - Homebrew：`brew install --cask ldclabs/tap/anda-desktop`（会同时安装 `anda` formula）
+
+新的 macOS 命令行和桌面发布包仅提供 Apple Silicon 版本。Intel Mac 用户可从源码构建。
 
 桌面端、终端和 Chrome 扩展共用同一个 `anda` 和同一个 daemon。桌面端启动时会沿用已有安装（安装脚本、`ANDA_INSTALL_DIR` 或 Homebrew 安装的 anda）；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置：macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`。较新的 CLI 不会被降级，Homebrew 安装通过 `brew upgrade` 更新。首次运行会询问是否登录时启动 Anda；关闭窗口后，托盘会让服务继续运行。
 
