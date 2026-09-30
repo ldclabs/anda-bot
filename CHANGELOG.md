@@ -4,6 +4,28 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-09-30
+
+### Added
+
+- **Desktop update dialog**: **Check for updates** in the tray or **Settings** opens a dialog at once that shows the check, download and install progress and keeps the result or error until you dismiss it, even when the window was hidden or had not been opened yet. Closing the dialog leaves the update running, and clicking again shows its current progress. Before, the result arrived as a chat message or a system notification. The dialog's labels and check messages follow the desktop's UI language.
+- **Automatic desktop update checks**: signed Anda Desktop releases check their update feed one minute after launch and then six hours after each check, with the window closed or the service stopped too; before, only the `anda` runtime was checked on a schedule. A new version appears in the tray and is announced once per version while the app runs; a check with no update or a network failure stays quiet. Downloading and installing still ask first. Development and unsigned builds skip these checks.
+
+### Changed
+
+- **macOS releases are Apple Silicon only**: releases no longer carry `anda-macos-x86_64`, `anda_launcher-macos-x86_64`, `Anda-mac-x64.dmg` or its update files, and `latest-mac.yml` lists only the arm64 build. On an Intel Mac, `anda update` and the daemon's automatic update report an unsupported target instead of failing on a missing download, and `install.sh` says to build from source; on Apple Silicon, `install.sh` now picks the arm64 build when its shell runs under Rosetta. The Homebrew `anda` formula and `anda-desktop` cask require arm64, and the cask declares macOS. The READMEs, install docs in every language and the website's download notes say Intel Macs build from source.
+- **Release packaging reuses the release's `anda`**: each desktop package bundles the `anda` binary built earlier in the same release; a CI build without it fails instead of compiling a different one. Packaging installs only the desktop and Chrome extension dependencies, and the Homebrew formula and cask are generated from the release's own checksums, with the cask's `homepage` corrected so the tap's checks pass.
+- **Docs site logo**: the navbar logo and favicon of the documentation site are the website's Anda head mark instead of the older square logo.
+- **Version 0.13.1**: the `anda_bot` crate, its lockfile entry and Anda Desktop advertise 0.13.1. The Chrome extension is unchanged and stays at 0.13.0.
+
+### Fixed
+
+- **Closing a fullscreen window on macOS**: hiding a native fullscreen window left an empty Space behind. Closing it now leaves fullscreen first and hides the window once that finishes; a second close during the exit is absorbed, and reopening from the Dock or tray during the exit cancels the hide. The window keeps its chats and unsent drafts.
+
+### Upgrade notes
+
+- 0.13.0 is the last release with Intel Mac builds. On an Intel Mac, `anda update` and the daemon's automatic update in 0.13.0 or earlier fail to download 0.13.1, Anda Desktop 0.13.0 offers 0.13.1 but cannot download it ("ZIP file not provided"), and Homebrew refuses the arm64-only formula and cask. Stay on 0.13.0 or build `anda` from source.
+
 ## [0.13.0] — 2026-09-30
 
 ### Added
