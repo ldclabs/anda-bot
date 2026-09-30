@@ -98,10 +98,6 @@ body {
   color: var(--ifm-navbar-link-hover-color);
 }
 
-.navbar__logo img {
-  border-radius: 8px;
-}
-
 .navbar__title {
   font-weight: 800;
 }
