@@ -64,17 +64,21 @@ fetch_checksum() {
     printf '%s\n' "$HASH"
 }
 
+# Homebrew style rejects url/sha256 directly inside on_macos, so the macOS
+# arm64 binary is the top-level url and on_linux overrides it per arch. Intel
+# Macs still resolve a url and get the arm64 requirement error, rather than
+# "formula requires at least a URL".
 write_formula() {
     cat <<EOF
 class ${FORMULA_CLASS} < Formula
   desc "Local AI agent with a long-term memory brain"
   homepage "https://github.com/${REPO}"
+  url "${BASE_URL}/anda-macos-arm64", using: :nounzip
+  sha256 "${MACOS_ARM64_SHA}"
   license "Apache-2.0"
 
   on_macos do
     depends_on arch: :arm64
-    url "${BASE_URL}/anda-macos-arm64", using: :nounzip
-    sha256 "${MACOS_ARM64_SHA}"
 
     resource "anda_launcher" do
       url "${BASE_URL}/anda_launcher-macos-arm64", using: :nounzip
@@ -83,10 +87,11 @@ class ${FORMULA_CLASS} < Formula
   end
 
   on_linux do
-    if Hardware::CPU.arm?
+    on_arm do
       url "${BASE_URL}/anda-linux-arm64", using: :nounzip
       sha256 "${LINUX_ARM64_SHA}"
-    else
+    end
+    on_intel do
       url "${BASE_URL}/anda-linux-x86_64", using: :nounzip
       sha256 "${LINUX_X86_64_SHA}"
     end
