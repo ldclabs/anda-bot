@@ -496,51 +496,69 @@ describe('Channel.sendPrompt', () => {
     expect(backend.statusUpdates[backend.statusUpdates.length - 1]).toBe('request failed')
   })
 
-  it('registers a folder chat again before each turn, but not to stop or cancel', async () => {
-    const backend = createBackend({
-      agentRun: async () => ({
-        content: '',
-        usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
+  it.each([
+    ['extension RPC', 'cli:/tmp/project/', '/tmp/project', false],
+    ['desktop CLI chat', 'cli:/tmp/project/', '/tmp/project', true],
+    ['desktop folder chat', 'desktop:chat-1', '/tmp/desktop-project', true]
+  ] as const)(
+    'registers again after grants are lost in %s',
+    async (_, source, workspace, native) => {
+      const grants = new Set<string>()
+      const events: string[] = []
+      const backend = createBackend({
+        registerWorkspace: async (path) => {
+          // Registration must finish before the submission starts.
+          await Promise.resolve()
+          grants.add(path)
+          events.push(`register ${path}`)
+        },
+        agentRun: async ({ prompt }) => {
+          if (prompt !== '/stop' && prompt !== '/cancel') {
+            expect(grants.has(workspace)).toBe(true)
+          }
+          events.push(`run ${prompt}`)
+          return {
+            content: '',
+            usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
+          }
+        }
       })
-    })
-    const channel = new Channel('cli:/tmp/project/', backend.api)
+      if (source.startsWith('desktop:')) {
+        backend.api.requestExtra = async () => ({ conversation: 0, workspace })
+      }
+      if (native) {
+        backend.api.agentRun = vi.fn(async (input) => {
+          expect(input.meta).toMatchObject({ source, workspace })
+          return { output: await backend.agentRun(input) }
+        })
+      }
+      const channel = new Channel(source, backend.api)
 
-    try {
-      // A daemon restarted since the chat was opened has forgotten the folder.
-      await channel.sendPrompt('hello', [])
-      await channel.sendPrompt('/stop', [])
-      await channel.sendPrompt('/cancel', [])
+      try {
+        await channel.sendPrompt('hello', [])
+        // Restart/expiry drops the daemon's grants while the same chat stays open.
+        grants.clear()
+        await channel.sendPrompt('again', [])
+        // Control commands must still reach the daemon without a live grant.
+        grants.clear()
+        await channel.sendPrompt('/stop', [])
+        await channel.sendPrompt('/cancel', [])
 
-      expect(backend.registered).toEqual(['/tmp/project'])
-      expect(backend.rpcCalls.map((call) => call.method)).toEqual([
-        'register_workspace',
-        'agent_run',
-        'agent_run',
-        'agent_run'
-      ])
-    } finally {
-      channel.destroy()
+        expect(backend.registered).toEqual([workspace, workspace])
+        expect(events).toEqual([
+          `register ${workspace}`,
+          'run hello',
+          `register ${workspace}`,
+          'run again',
+          'run /stop',
+          'run /cancel'
+        ])
+        if (native) expect(backend.api.agentRun).toHaveBeenCalledTimes(4)
+      } finally {
+        channel.destroy()
+      }
     }
-  })
-
-  it('registers the workspace a desktop chat was started in', async () => {
-    const backend = createBackend({
-      agentRun: async () => ({
-        content: '',
-        usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
-      })
-    })
-    backend.api.requestExtra = async () => ({ conversation: 0, workspace: '/tmp/desktop-project' })
-    const channel = new Channel('desktop:chat-1', backend.api)
-
-    try {
-      await channel.sendPrompt('hello', [])
-
-      expect(backend.registered).toEqual(['/tmp/desktop-project'])
-    } finally {
-      channel.destroy()
-    }
-  })
+  )
 
   it('keeps the prompt unsent when its folder cannot be registered', async () => {
     const backend = createBackend({

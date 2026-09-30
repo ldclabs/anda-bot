@@ -40,7 +40,7 @@ pub struct AgentRunCommand {
     #[arg(long)]
     prompt_file: Option<PathBuf>,
 
-    /// Authoritative workspace for file and shell tools.
+    /// Workspace for this request; registers it for native shell commands.
     #[arg(long)]
     workspace: Option<PathBuf>,
 
@@ -168,6 +168,14 @@ fn apply_agent_meta_defaults(
             .entry(keys::WORKSPACE.to_string())
             .or_insert_with(|| json!(workspace.to_string_lossy().to_string()));
     }
+    // Match the conversation router's default source using the effective
+    // workspace, including an explicit --meta override. Shell authorization
+    // reads request metadata directly rather than the router's derived state.
+    if let Some(workspace) = meta.get_extra_as::<String>(keys::WORKSPACE) {
+        meta.extra
+            .entry(keys::SOURCE.to_string())
+            .or_insert_with(|| json!(format!("cli:{workspace}")));
+    }
 
     if let Some(session_id) = session_id.filter(|session_id| !session_id.trim().is_empty()) {
         meta.extra
@@ -183,7 +191,7 @@ async fn run_agent_to_completion(
     poll_interval: Duration,
 ) -> Result<AgentOutput, BoxError> {
     let operation = async {
-        let initial = client.agent_run(input).await?;
+        let initial = client.agent_run_in_cli_workspace(input).await?;
         wait_for_agent_output(client, initial, poll_interval).await
     };
     match timeout {
@@ -375,6 +383,30 @@ mod tests {
     }
 
     #[test]
+    fn agent_meta_defaults_bind_source_to_the_effective_workspace() {
+        for (explicit, expected) in [(None, "/tmp/project"), (Some("/tmp/custom"), "/tmp/custom")] {
+            let mut meta = RequestMeta::default();
+            if let Some(workspace) = explicit {
+                meta.extra.insert(keys::WORKSPACE.into(), json!(workspace));
+            }
+            apply_agent_meta_defaults(&mut meta, Some(Path::new("/tmp/project")), None);
+            assert_eq!(
+                meta.get_extra_as::<String>(keys::WORKSPACE).as_deref(),
+                Some(expected)
+            );
+            assert_eq!(
+                meta.get_extra_as::<String>(keys::SOURCE),
+                Some(format!("cli:{expected}"))
+            );
+        }
+
+        let mut meta = RequestMeta::default();
+        apply_agent_meta_defaults(&mut meta, None, None);
+        assert!(!meta.extra.contains_key(keys::SOURCE));
+        assert!(!meta.extra.contains_key(keys::WORKSPACE));
+    }
+
+    #[test]
     fn upsert_conversation_updates_tail_without_growing_chain() {
         let mut conversations = Vec::new();
         let mut seen = HashSet::new();
@@ -458,11 +490,34 @@ mod tests {
     use axum::{Router, extract::State, routing};
     use std::{collections::HashMap, sync::Arc};
 
+    struct AgentGateway {
+        conversations: HashMap<u64, Conversation>,
+        grants: crate::engine::CliWorkspaceGrants,
+    }
+
     async fn agent_gateway_handler(
-        State(state): State<Arc<HashMap<u64, Conversation>>>,
+        State(state): State<Arc<AgentGateway>>,
         axum::Json(request): axum::Json<anda_core::http::RPCRequest>,
     ) -> axum::Json<serde_json::Value> {
         let rpc: anda_core::http::RPCResponse = if request.method == "agent_run" {
+            let (input,): (AgentInput,) = serde_json::from_slice(&request.params).unwrap();
+            if let Some(meta) = input.meta
+                && let Some(workspace) = meta.get_extra_as::<PathBuf>(keys::WORKSPACE)
+            {
+                // Exercise the same authorization used by shell: registration
+                // must already exist and source must identify this directory.
+                assert_eq!(
+                    state
+                        .grants
+                        .authorize_cron_workspace(
+                            &anda_core::Principal::management_canister(),
+                            &meta
+                        )
+                        .await
+                        .unwrap(),
+                    Some(workspace.canonicalize().unwrap())
+                );
+            }
             let output = AgentOutput {
                 conversation: Some(1),
                 ..Default::default()
@@ -472,7 +527,7 @@ mod tests {
             let (input,): (ToolInput<serde_json::Value>,) =
                 serde_json::from_slice(&request.params).unwrap();
             let id = input.args["_id"].as_u64().unwrap_or_default();
-            let conversation = state.get(&id).expect("known conversation");
+            let conversation = state.conversations.get(&id).expect("known conversation");
             let result = if input.args["type"] == "GetConversationDelta" {
                 serde_json::to_value(conversation.clone().into_delta(
                     input.args["messages_offset"].as_u64().unwrap() as usize,
@@ -495,7 +550,28 @@ mod tests {
     async fn spawn_agent_gateway(conversations: HashMap<u64, Conversation>) -> gateway::Client {
         let app = Router::new()
             .route("/engine/default", routing::post(agent_gateway_handler))
-            .with_state(Arc::new(conversations));
+            .route(
+                "/daemon/cli-workspace",
+                routing::post(
+                    |State(state): State<Arc<AgentGateway>>,
+                     axum::Json(request): axum::Json<serde_json::Value>| async move {
+                        let workspace: PathBuf =
+                            serde_json::from_value(request["workspace"].clone()).unwrap();
+                        state
+                            .grants
+                            .register(&workspace)
+                            .await
+                            .map(|workspace| axum::Json(json!({ "workspace": workspace })))
+                            .map_err(|err| (axum::http::StatusCode::BAD_REQUEST, err.to_string()))
+                    },
+                ),
+            )
+            .with_state(Arc::new(AgentGateway {
+                conversations,
+                grants: crate::engine::CliWorkspaceGrants::new(
+                    anda_core::Principal::management_canister(),
+                ),
+            }));
         let base_url = crate::test_support::spawn_http_mock(app).await;
         gateway::Client::new(base_url, "token".to_string())
     }
@@ -535,7 +611,7 @@ mod tests {
                 name: String::new(),
                 prompt: Some("do the thing".to_string()),
                 prompt_file: None,
-                workspace: Some(PathBuf::from("relative-ws")),
+                workspace: Some(dir.path().to_path_buf()),
                 session_id: Some("session-1".to_string()),
                 meta: Some(r#"{"user":"alice"}"#.to_string()),
                 output_json: Some(output_path.clone()),
@@ -548,6 +624,29 @@ mod tests {
 
         let written = std::fs::read_to_string(output_path).unwrap();
         assert!(written.contains("final answer 1"));
+    }
+
+    #[tokio::test]
+    async fn run_once_rejects_an_unresolvable_workspace_before_submission() {
+        let client = spawn_agent_gateway(HashMap::new()).await;
+        let dir = tempfile::tempdir().unwrap();
+        let mut meta = RequestMeta::default();
+        apply_agent_meta_defaults(&mut meta, Some(&dir.path().join("missing")), None);
+        let mut input = AgentInput::new(String::new(), "hello".into());
+        input.meta = Some(meta);
+
+        let err = run_agent_to_completion(
+            &client,
+            &input,
+            Some(Duration::from_secs(5)),
+            Duration::from_millis(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("cannot resolve workspace"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

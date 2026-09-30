@@ -392,6 +392,8 @@ MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS
 
 Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。Shell 命令在短暂的前台等待（默认 10 秒，最多 30 秒）后仍未结束时，会转入后台继续运行，最长 24 小时：输出会回报到对话中，agent 可以用 `shell_session` 查询或停止它，`/stop` 会取消它。交互式 CLI 连接时，会使用本机 owner 身份向 daemon 注册启动目录；该 CLI 会话的原生 Shell 命令从已注册的目录运行。进入 Chrome 扩展或 Anda 桌面端中的文件目录会话时，客户端也会注册该目录，此会话的 Shell 命令从该目录启动。daemon 只在内存中保留这些注册，最长 24 小时，重启后即失效，因此各客户端每次发送消息时都会重新注册该目录。其他来源不能只靠请求元数据指定任意 Shell 目录。文件工具仍只能访问已配置的工作区。附件理解也可读取 owner 已注册且授权尚未过期的目录；请求元数据本身不能授权新目录。
 
+单次请求可使用 `anda agent run --workspace . --prompt "总结这个项目"`，CLI 会在提交提示词前注册目录，并默认使用对应的 `cli:<path>` source。`--workspace` 的相对路径基于 CLI 当前目录解析。`--meta` 中显式指定的 `source`、`workspace` 仍然优先；文件工具仍受已配置工作区限制。
+
 用户可将自定义运行时技能放入 `~/.anda/skills`。发布版内置技能会安装到 `~/.anda/bundled-skills`，而在 `~/.agents/skills` 下的跨 Agent 技能可在 Dashboard 中导入到个人库。内置的 Cron 任务调度器支持安排未来的 Shell 任务或 Agent 提示词，并保留运行历史。
 
 ## 本地数据与隐私
