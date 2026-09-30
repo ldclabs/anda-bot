@@ -61,6 +61,12 @@ export interface Bootstrap {
   platform: string
   version: string
   pending: PendingSubmission[]
+  update: UpdateStatus | null
+  updateRequested: boolean
+}
+export interface UpdateStatus {
+  phase: 'running' | 'complete' | 'error'
+  message: string
 }
 export interface PendingSubmission {
   id: string
@@ -76,6 +82,7 @@ export interface NativeEvent {
     | 'connection'
     | 'menu'
     | 'update'
+    | 'update-status'
     | 'submissions'
     | 'state'
     | 'terminal'

@@ -357,16 +357,74 @@ try {
       .submenu.items.find((item) => item.label === 'Settings')
       .click()
   })
-  const page = await app.firstWindow()
+  let page = await app.firstWindow()
   app.process().stderr?.on('data', (data) => {
     if (/audio|media|permission/i.test(data.toString())) console.error(data.toString().trim())
   })
   const errors = []
-  page.on('pageerror', (error) => {
+  const pageError = (error) => {
     errors.push(error.message)
     console.error('Renderer error:', error.message)
-  })
+  }
+  page.on('pageerror', pageError)
   await page.locator('.settings-page').waitFor({ timeout: 30_000 })
+  // Capture the actual tray menu on its next refresh, without a production test hook.
+  await app.evaluate(({ Tray }) => {
+    const setContextMenu = Tray.prototype.setContextMenu
+    Tray.prototype.setContextMenu = function (menu) {
+      globalThis.smokeTrayMenu = menu
+      Tray.prototype.setContextMenu = setContextMenu
+      return setContextMenu.call(this, menu)
+    }
+  })
+  await page.evaluate(() => window.anda.preferences({ language: 'en' }))
+  // A tray-only session has no renderer to receive the initial progress/result.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].destroy())
+  const updateWindow = app.waitForEvent('window')
+  await app.evaluate(() => {
+    globalThis.smokeTrayMenu.items.find((item) => item.label === 'Check for updates').click()
+  })
+  page = await updateWindow
+  page.on('pageerror', pageError)
+  const updateDialog = page.getByRole('dialog', { name: 'Check for updates' })
+  await updateDialog.getByText('Update failed', { exact: true }).waitFor()
+  // Mock tests disable native CLI commands: the real check must surface that failure.
+  await updateDialog.getByText('Native daemon commands are disabled in mock tests').waitFor()
+  assert.equal(
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()),
+    true
+  )
+  await page.screenshot({ path: join(screenshotDir, '12-update-error.png') })
+  // Exercise progress and result rendering through the native event contract.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].webContents.send('anda:event', {
+      type: 'update-status',
+      value: { phase: 'running', message: 'Checking Anda Desktop updates…' }
+    })
+  })
+  await updateDialog.getByText('Checking for updates…', { exact: true }).waitFor()
+  assert.equal(
+    await updateDialog.getByRole('button', { name: 'Check for updates', exact: true }).count(),
+    0
+  )
+  await page.screenshot({ path: join(screenshotDir, '13-update-progress.png') })
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].webContents.send('anda:event', {
+      type: 'update-status',
+      value: { phase: 'complete', message: 'Anda Desktop is up to date.' }
+    })
+  })
+  await updateDialog.getByText('Update result', { exact: true }).waitFor()
+  await updateDialog.getByText('Anda Desktop is up to date.').waitFor()
+  await updateDialog.getByRole('button', { name: 'Close', exact: true }).click()
+  // The same action also reopens a hidden window and shows its next result.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0].close()
+    globalThis.smokeTrayMenu.items.find((item) => item.label === 'Check for updates').click()
+    delete globalThis.smokeTrayMenu
+  })
+  await updateDialog.getByText('Update failed', { exact: true }).waitFor()
+  await updateDialog.getByRole('button', { name: 'Close', exact: true }).click()
   await app.evaluate(({ Menu }) => {
     Menu.getApplicationMenu()
       .items.find((item) => item.label === 'File')
@@ -706,6 +764,12 @@ try {
   await page.getByRole('menuitem', { name: '简体中文' }).click()
   await page.getByText('最近', { exact: true }).waitFor({ timeout: 15_000 })
   await page.screenshot({ path: join(screenshotDir, '07-chinese.png') })
+  await page.locator('.sidebar-bottom').getByText('设置', { exact: true }).click()
+  await page.getByRole('button', { name: '检查更新', exact: true }).click()
+  const chineseUpdate = page.getByRole('dialog', { name: '检查更新' })
+  await chineseUpdate.getByText('更新失败', { exact: true }).waitFor()
+  await page.screenshot({ path: join(screenshotDir, '14-update-chinese-narrow.png') })
+  await chineseUpdate.getByRole('button', { name: '关闭', exact: true }).click()
   const secrets = await page.evaluate(() =>
     JSON.stringify({
       storage: { ...localStorage },
@@ -713,9 +777,72 @@ try {
     })
   )
   assert.ok(!secrets.includes('desktop-test-token'))
+  // Exercise native window transitions after the renderer and browser checks.
+  await app.evaluate(({ Menu }) => {
+    Menu.getApplicationMenu()
+      .items.find((item) => item.label === 'File')
+      .submenu.items.find((item) => item.label === 'New Chat')
+      .click()
+  })
+  await editor.fill('Draft survives closing the window')
+  const closeModes =
+    process.platform === 'darwin' ? ['windowed', 'fullscreen', 'reopen-during-exit'] : ['windowed']
+  for (const mode of closeModes) {
+    const closed = await app.evaluate(async ({ app, BrowserWindow }, mode) => {
+      const window = BrowserWindow.getAllWindows()[0]
+      const fullScreen = mode !== 'windowed'
+      const waitFor = (event) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            window.removeListener(event, done)
+            reject(new Error(`Window did not emit ${event}`))
+          }, 10_000)
+          const done = () => {
+            clearTimeout(timer)
+            resolve()
+          }
+          window.once(event, done)
+        })
+      if (fullScreen) {
+        const entered = waitFor('enter-full-screen')
+        window.setFullScreen(true)
+        await entered
+      }
+      // macOS also emits hide while animating between Spaces. Wait for the
+      // fullscreen exit before checking the final visibility of the window.
+      const closed = waitFor(fullScreen ? 'leave-full-screen' : 'hide')
+      window.close()
+      // A second click during the native transition must not hide it early.
+      if (fullScreen) window.close()
+      if (mode === 'reopen-during-exit') app.emit('activate')
+      await closed
+      const result = {
+        hidden: !window.isVisible(),
+        fullScreen: window.isFullScreen(),
+        destroyed: window.isDestroyed()
+      }
+      // Dock activation must reopen the same renderer, preserving its draft.
+      app.emit('activate')
+      return {
+        ...result,
+        reopened: window.isVisible() && BrowserWindow.getAllWindows()[0] === window
+      }
+    }, mode)
+    assert.deepEqual(
+      closed,
+      {
+        hidden: mode !== 'reopen-during-exit',
+        fullScreen: false,
+        destroyed: false,
+        reopened: true
+      },
+      `Close and reopen (${mode})`
+    )
+    assert.equal(await editor.inputValue(), 'Draft survives closing the window')
+  }
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {

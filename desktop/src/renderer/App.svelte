@@ -48,9 +48,21 @@
   import BrowserPanel from './BrowserPanel.svelte'
   import AudioPanel from './AudioPanel.svelte'
   import LocaleSwitcher from './LocaleSwitcher.svelte'
+  import UpdateDialog from './UpdateDialog.svelte'
   let { client }: { client: DesktopClient } = $props()
   provideAndaClient(untrack(() => client))
   const t = (key: Label) => label(client.preferences.language, key)
+  async function checkUpdate(): Promise<void> {
+    client.updateDialogOpen = true
+    try {
+      await window.anda.checkUpdate()
+    } catch (error) {
+      client.updateStatus = {
+        phase: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      }
+    }
+  }
   let pageVisible = $state(!document.hidden)
   let collapsed = $state(false)
   let rightOpen = $state(false)
@@ -720,16 +732,7 @@
                   client.fail(error)
                 }
               }}>{t('stopDaemon')}</button
-            ><button
-              onclick={async () => {
-                try {
-                  client.systemMessage = { kind: 'info', text: await window.anda.checkUpdate() }
-                } catch (error) {
-                  client.fail(error)
-                }
-                client.view = 'chat'
-              }}>{t('update')}</button
-            >
+            ><button onclick={() => void checkUpdate()}>{t('update')}</button>
           </div>
         </div>{/if}
     {/if}
@@ -850,3 +853,11 @@
       </div>
     </div>
   </div>{/if}
+{#if client.updateDialogOpen}
+  <UpdateDialog
+    status={client.updateStatus}
+    language={client.preferences.language}
+    onclose={() => (client.updateDialogOpen = false)}
+    oncheck={() => void checkUpdate()}
+  />
+{/if}

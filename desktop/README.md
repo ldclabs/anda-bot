@@ -25,19 +25,28 @@ All daemon commands then use that shared `anda`, so the desktop, terminals and t
 The app's tray is Anda's only tray. It shows whether the service runs, restarts it, installs `anda` updates, copies a 30-day Chrome extension token and opens the logs. The first run asks whether to start Anda at login (**Settings → Launch at login**); a login start stays in the tray without opening a window and starts the service.
 
 - Closing the window keeps the tray, terminals and notifications. **Quit Anda Desktop** leaves the service running, but asks before ending active user terminals. An explicit stop in Settings is remembered across restarts until you reconnect.
+- On macOS, closing a fullscreen window first exits fullscreen, then hides it. Reopen it from the Dock or tray to continue with the same chats and drafts.
 - Automatic reconnects never start a service that was stopped elsewhere (for example with `anda stop`); opening the app, *Reconnect* or sending a message does.
 - The app mirrors its UI language to `~/.anda/launcher/ui.json`, which the daemon uses for approval cards and the Chrome extension follows.
 - If configuration is incomplete, open **Settings → Agent configuration**. Offline saves are validated by the Rust parser before replacing the file; a private `config.yaml.desktop-backup` is preserved.
 - Imported IM channel conversations are read-only; start a local chat to respond without changing the original sender or reply route.
 - Chrome page automation continues to require the Chrome extension. Electron does not share Chrome's tabs or login state.
 
+macOS 全屏时点击关闭按钮，会先退出全屏再隐藏窗口；从 Dock 或托盘重新打开后，可继续使用原来的聊天和草稿。关闭窗口会保留后台服务、终端和通知。
+
 ### Updates / 更新
 
+**Check for updates** in the tray or Settings opens a desktop dialog immediately. It shows check/download/install progress and keeps the result or error visible until dismissed, including when the main window was hidden or had not been opened. Closing the dialog leaves the operation running; repeated clicks show its current progress.
+
+点击托盘或设置中的「检查更新」会立即打开桌面弹窗，显示检查、下载、安装进度，并保留结果或失败原因，即使主窗口隐藏或尚未打开也能看到。关闭弹窗不会中断操作；重复点击会显示当前进度。
+
 - **The `anda` runtime** updates through its own release channel. The app checks every six hours (and on *Check for updates*); a downloaded release shows in the tray. Installing it pauses new tasks, waits for active ones, stops the service, replaces `anda` and starts the service again. The service stays stopped throughout installation, even if downloads outlast the maintenance lease. A busy service keeps the download for later, and a failed install brings the service back. Homebrew installs report that `brew upgrade anda` is needed.
-- **The desktop app** updates with electron-updater from the GitHub release feed in signed builds. The service keeps running, because its executable lives outside the app; only open terminals must be closed first. Unsigned builds have no feed and are reinstalled manually.
+- **The desktop app** checks its GitHub release feed in the background one minute after launch, then every six hours after a check completes. This runs even when the window is closed or the runtime was stopped. A new version appears in the tray and is announced once per version per app session; checks with no update or a network failure stay quiet. Downloads and installation require confirmation through the update dialog. The service keeps running; only open terminals must be closed before installing. Only signed release builds have a desktop update feed; development and unsigned builds skip these checks and are updated manually.
 - Uninstalling the desktop leaves the shared `anda`, its data and its login entry in place; remove them like a script install (`anda autostart uninstall`, then delete the install directory).
 
 `anda` runtime 通过自己的发布通道更新：托盘提示可安装时，会先暂停新任务、等待活动任务完成，停止服务后再替换 `anda` 并启动服务。即使下载超过维护租约期限，服务在整个安装期间也保持停止；安装失败时会恢复服务。桌面应用本身在签名版中通过 GitHub Release 更新，更新时服务继续运行。卸载桌面端不会删除共享的 `anda`、数据和登录项。
+
+桌面客户端会在启动 1 分钟后自动检查更新，之后每次检查完成后间隔 6 小时再检查；关闭窗口或停止后台服务不会停止桌面客户端的检查。发现新版本时会添加托盘更新入口，并在每次启动期间对同一版本仅提醒一次；没有更新或网络检查失败时保持安静，等待下次检查。下载和安装需要用户在更新弹窗中确认。开发版和未配置签名更新通道的版本不进行桌面客户端自动检查，需要手动安装新版。
 
 ## Build
 

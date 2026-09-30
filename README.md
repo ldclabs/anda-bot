@@ -60,6 +60,8 @@ The desktop tray replaces the retired Anda Bot menu bar launcher. Installing And
 
 The tray and **Settings → Check for updates** wait for active tasks to finish, stop the service while installing a new `anda` release, then start it again; the desktop app updates separately (signed release builds) without stopping the service. The tray also restarts the service, copies a Chrome extension token and opens the logs.
 
+Signed desktop releases automatically check for app updates one minute after launch, then every six hours after each check finishes, even with the window closed or the service stopped. New versions appear in the tray; downloads and installation still require confirmation. Checks with no update or a network failure stay quiet.
+
 The desktop client shares chat, memory, skills, bookmarks and configuration components with the Chrome extension. The workbench includes server-pushed chat updates with durable submission receipts, an isolated embedded browser with agent tools, interactive terminals, Git changes/commits and recoverable worktrees, and an audio self-test page. Chrome automation remains available through the extension. Config editing is owner-only and rejects stale saves; `anda validate-config` validates YAML from stdin without initializing a home or daemon.
 
 Release packages are signed and notarized when the release environment provides credentials; otherwise they are unsigned and have no in-app update feed. To build a local installer, run `pnpm install --filter @anda/desktop...` and `pnpm --dir desktop package`; see [desktop installation, development and validation](desktop/README.md) and the [implementation and validation record](docs/desktop-client-implementation.md).

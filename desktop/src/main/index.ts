@@ -79,6 +79,7 @@ const hasLock = app.requestSingleInstanceLock()
 if (!hasLock) app.quit()
 
 let window: BrowserWindow | null = null
+let hideAfterFullScreen = false
 let tray: Tray | null = null
 let quitting = false
 let stateLoaded = false
@@ -93,7 +94,7 @@ let quitPrompt = false
 let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
 let rendererReady = false
-let pendingMenuAction: 'new-chat' | 'settings' | null = null
+let pendingMenuAction: 'new-chat' | 'settings' | 'updates' | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
 const firstReconnectDelay = 10_000
 let reconnectDelay = firstReconnectDelay
@@ -184,10 +185,6 @@ function refreshTray(): void {
   if (!tray) return
   const view = daemon.view
   const release = updater?.runtimeRelease
-  const runUpdate = (action: () => Promise<string>) =>
-    void action().then(inform, (error) =>
-      inform(error instanceof Error ? error.message : String(error))
-    )
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: t('openAnda'), click: show },
@@ -206,6 +203,14 @@ function refreshTray(): void {
             click: () => runUpdate(() => updater.installRuntime())
           }
         : { label: t('update'), click: () => runUpdate(() => updater.check()) },
+      ...(updater?.desktopRelease
+        ? [
+            {
+              label: t('desktopUpdateAvailable').replace('{version}', updater.desktopRelease),
+              click: () => runUpdate(() => updater.checkDesktop())
+            }
+          ]
+        : []),
       {
         label: t('extensionToken'),
         click: () =>
@@ -226,7 +231,12 @@ function openExternal(url: unknown): void {
     /* Non-web schemes never launch. */
   }
 }
-function menuAction(value: 'new-chat' | 'settings'): void {
+function runUpdate(action: () => Promise<string>): Promise<string> {
+  menuAction('updates')
+  // The updater publishes progress and retains the result for a loading renderer.
+  return action().catch((error) => (error instanceof Error ? error.message : String(error)))
+}
+function menuAction(value: 'new-chat' | 'settings' | 'updates'): void {
   show()
   if (rendererReady) emit({ type: 'menu', value })
   else pendingMenuAction = value
@@ -241,6 +251,7 @@ function titleBarOverlay(): Electron.TitleBarOverlayOptions {
 }
 function show(): void {
   if (!stateLoaded) return
+  hideAfterFullScreen = false
   if (!window) createWindow()
   if (window?.isMinimized()) window.restore()
   window?.show()
@@ -292,6 +303,7 @@ app.on('before-quit', (event) => {
     return
   }
   quitting = true
+  updater?.stop()
   browser?.destroy()
   clearTimeout(reconnectTimer)
   clearTimeout(boundsTimer)
@@ -312,6 +324,7 @@ app.on('window-all-closed', () => {
 // would keep the update (and the stopped runtime) waiting indefinitely.
 autoUpdater.on('before-quit-for-update', () => {
   quitting = true
+  updater?.stop()
 })
 
 function createWindow(): void {
@@ -392,14 +405,32 @@ function createWindow(): void {
   contents.session.on('will-download', (_event, item) => {
     if (!/^blob:|^data:/.test(item.getURL())) item.cancel()
   })
-  window.on('close', (event) => {
-    if (!quitting) {
-      event.preventDefault()
-      window?.hide()
+  const mainWindow = window
+  let leavingFullScreenForClose = false
+  mainWindow.on('leave-full-screen', () => {
+    leavingFullScreenForClose = false
+    if (!hideAfterFullScreen) return
+    hideAfterFullScreen = false
+    if (!quitting && !mainWindow.isDestroyed()) mainWindow.hide()
+  })
+  mainWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    if (leavingFullScreenForClose) {
+      hideAfterFullScreen = true
+      return
     }
+    if (process.platform === 'darwin' && mainWindow.isFullScreen()) {
+      // Hiding a native fullscreen window leaves an empty macOS Space behind.
+      // Wait for the asynchronous exit before hiding; show() cancels the hide.
+      hideAfterFullScreen = true
+      leavingFullScreenForClose = true
+      mainWindow.setFullScreen(false)
+    } else mainWindow.hide()
   })
   window.on('closed', () => {
     window = null
+    hideAfterFullScreen = false
     rendererReady = false
   })
   window.once('ready-to-show', () => {
@@ -510,13 +541,19 @@ function validatePreferences(patch: Partial<Preferences>): void {
 }
 
 async function bootstrap(): Promise<Bootstrap> {
-  const state = daemon.manuallyStopped ? daemon.view : await daemon.connect()
+  const updateRequested = pendingMenuAction === 'updates'
+  // The update dialog must not wait for a slow or unavailable daemon connection.
+  // Opening the window still starts the service; connection events update the renderer.
+  if (updateRequested && !daemon.manuallyStopped) void daemon.connect().catch(() => {})
+  const state = updateRequested || daemon.manuallyStopped ? daemon.view : await daemon.connect()
   return {
     daemon: state,
     preferences: store.state.preferences,
     platform: process.platform,
     version: app.getVersion(),
-    pending: store.state.pending
+    pending: store.state.pending,
+    update: updater.status,
+    updateRequested
   }
 }
 
@@ -589,11 +626,12 @@ async function setup(): Promise<void> {
     daemon,
     store,
     () => terminals.running,
-    (value) => emit({ type: 'update', value }),
-    refreshTray
+    inform,
+    refreshTray,
+    (value) => emit({ type: 'update-status', value })
   )
   void updater.recover().catch((error) => emit({ type: 'update', value: String(error) }))
-  if (!testMode) updater.startRuntimeChecks()
+  if (!testMode) updater.startAutomaticChecks()
   handle('anda:browser', (request) => browser.request(request))
   daemon.on('browser-action', async (message) => {
     const command = message.params
@@ -663,6 +701,8 @@ async function setup(): Promise<void> {
   handle('anda:bootstrap', bootstrap)
   handle('anda:ready', () => {
     rendererReady = true
+    // Replay the latest status: a check may finish between bootstrap and ready.
+    if (updater.status) emit({ type: 'update-status', value: updater.status })
     if (pendingMenuAction) {
       emit({ type: 'menu', value: pendingMenuAction })
       pendingMenuAction = null
@@ -817,7 +857,7 @@ async function setup(): Promise<void> {
     }
   })
   handle('anda:logs', showLogs)
-  handle('anda:update', () => updater.check())
+  handle('anda:update', () => runUpdate(() => updater.check()))
   handle('anda:extension-token', copyExtensionToken)
   const menu: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),

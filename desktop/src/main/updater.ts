@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { DaemonClient, downloadedRelease, type RuntimeUpdateState } from './daemon-client'
 import { DesktopStore } from './store'
 import { installRuntimeUpdate } from './update-machine'
+import type { UpdateStatus } from '../shared/contract'
+import { label, type Label } from '../renderer/labels'
 
-const runtimeCheckInterval = 6 * 3600_000
+const updateCheckInterval = 6 * 3600_000
 
 /**
  * Two independent updates. The shared `anda` runtime updates through its own
@@ -17,41 +19,108 @@ const runtimeCheckInterval = 6 * 3600_000
 export class DesktopUpdater {
   installing = false
   runtime?: RuntimeUpdateState
+  status: UpdateStatus | null = null
   private busy = false
   private downloaded?: string
+  private availableApp?: string
+  private notifiedApp = new Set<string>()
+  private backgroundCheck?: Promise<void>
+  private automaticChecksStarted = false
   private timer?: NodeJS.Timeout
   constructor(
     private daemon: DaemonClient,
     private store: DesktopStore,
     private runningTerminals: () => number,
     private emit: (message: string) => void,
-    private changed: () => void
+    private changed: () => void,
+    private statusChanged: (status: UpdateStatus) => void = () => {}
   ) {
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.allowPrerelease = false
     autoUpdater.on('download-progress', (progress) =>
-      emit(`Downloading update: ${Math.round(progress.percent)}%`)
+      this.progress(`Downloading update: ${Math.round(progress.percent)}%`)
     )
     autoUpdater.on('error', (error) => {
       this.installing = false
+      // Background failures stay quiet; a running operation reports its own error.
+      if (this.backgroundCheck || this.busy) return
+      // Asynchronous failures, such as quitAndInstall, arrive after the operation finished.
+      this.setStatus({ phase: 'error', message: error.message })
       emit(`Update failed: ${error.message}`)
     })
+  }
+  private t(key: Label): string {
+    return label(this.store.state.preferences?.language || 'en', key)
+  }
+  private progress(message: string): void {
+    this.setStatus({ phase: 'running', message })
+  }
+  private setStatus(status: UpdateStatus): void {
+    this.status = status
+    this.statusChanged(status)
+  }
+  private async run(action: () => Promise<{ message: string; failed?: boolean }>): Promise<string> {
+    if (this.busy) return 'An update operation is already in progress.'
+    this.busy = true
+    this.progress(this.t('checkingUpdates'))
+    try {
+      // A user can open the dialog while the scheduled check is still running.
+      // Finish that check before starting another check or an installation.
+      if (this.backgroundCheck) await this.backgroundCheck
+      const { message, failed } = await action()
+      this.setStatus({ phase: failed ? 'error' : 'complete', message })
+      return message
+    } catch (error) {
+      this.setStatus({
+        phase: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      })
+      throw error
+    } finally {
+      this.busy = false
+    }
   }
   /** The runtime release that is downloaded and ready to install, if any. */
   get runtimeRelease(): string | null {
     return downloadedRelease(this.runtime)
   }
-  /** Checks for runtime releases now and then at the updater's interval. */
-  startRuntimeChecks(): void {
-    const tick = () => {
-      if (!this.daemon.manuallyStopped && !this.busy) void this.checkRuntime(false).catch(() => {})
-      this.timer = setTimeout(tick, runtimeCheckInterval)
+  get desktopRelease(): string | null {
+    return this.downloaded || this.availableApp || null
+  }
+  /** Checks both release channels quietly, starting one minute after launch. */
+  startAutomaticChecks(): void {
+    if (this.automaticChecksStarted) return
+    this.automaticChecksStarted = true
+    const tick = async () => {
+      try {
+        if (!this.busy && !this.installing) {
+          // Neither a stopped runtime nor a failed runtime check blocks desktop updates.
+          this.backgroundCheck = Promise.allSettled([
+            this.daemon.manuallyStopped ? Promise.resolve() : this.checkRuntime(false),
+            this.checkAppAutomatically()
+          ]).then(() => {})
+          await this.backgroundCheck
+        }
+      } finally {
+        this.backgroundCheck = undefined
+        if (this.automaticChecksStarted) this.timer = setTimeout(tick, updateCheckInterval)
+      }
     }
     this.timer = setTimeout(tick, 60_000)
   }
   stop(): void {
+    this.automaticChecksStarted = false
     clearTimeout(this.timer)
+  }
+  private async checkAppAutomatically(): Promise<void> {
+    if (this.downloaded || (await this.appUpdateUnavailable())) return
+    const result = await this.findAppUpdate()
+    if (!this.automaticChecksStarted || !result.isUpdateAvailable) return
+    const version = result.updateInfo.version
+    if (this.notifiedApp.has(version)) return
+    this.notifiedApp.add(version)
+    this.emit(this.t('desktopUpdateAvailable').replace('{version}', version))
   }
   private async checkRuntime(force: boolean): Promise<RuntimeUpdateState> {
     this.runtime = await this.daemon.runtimeUpdateState(force)
@@ -60,33 +129,36 @@ export class DesktopUpdater {
   }
   /** Settings and the tray: install a ready runtime, else check both channels. */
   async check(): Promise<string> {
-    if (this.busy) return 'An update operation is already in progress.'
-    this.busy = true
-    try {
+    return this.run(async () => {
+      this.progress(this.t('checkingRuntime'))
       const runtime = await this.checkRuntime(true)
       const release = downloadedRelease(runtime)
-      if (release) return await this.promptRuntime(release)
+      if (release) return { message: await this.promptRuntime(release) }
       const runtimeMessage = runtime.error
         ? `Anda runtime: ${runtime.error}`
-        : `Anda runtime ${runtime.current_tag} is up to date.`
-      return `${runtimeMessage} ${await this.checkApp()}`
-    } finally {
-      this.busy = false
-    }
+        : this.t('runtimeUpToDate').replace('{version}', runtime.current_tag)
+      this.progress(this.t('checkingDesktop'))
+      return {
+        message: `${runtimeMessage}\n\n${await this.checkApp()}`,
+        failed: Boolean(runtime.error)
+      }
+    })
   }
   /** The tray's install action for an already downloaded runtime release. */
   async installRuntime(): Promise<string> {
     const release = this.runtimeRelease
     if (!release) return this.check()
-    if (this.busy) return 'An update operation is already in progress.'
-    this.busy = true
-    try {
-      return await this.promptRuntime(release)
-    } finally {
-      this.busy = false
-    }
+    return this.run(async () => ({ message: await this.promptRuntime(release) }))
+  }
+  /** Opens a known desktop update independently of the runtime's update state. */
+  async checkDesktop(): Promise<string> {
+    return this.run(async () => {
+      this.progress(this.t('checkingDesktop'))
+      return { message: await this.checkApp() }
+    })
   }
   private async promptRuntime(release: string): Promise<string> {
+    this.progress(`Anda ${release} is ready to install.`)
     const choice = await dialog.showMessageBox({
       type: 'question',
       message: `Install Anda ${release} and restart the service?`,
@@ -99,7 +171,7 @@ export class DesktopUpdater {
     const daemon = this.daemon
     if (!daemon.view.connected && !daemon.manuallyStopped) await daemon.connect()
     const running = daemon.view.connected
-    this.emit('Waiting for active tasks to finish…')
+    this.progress('Waiting for active tasks to finish…')
     await installRuntimeUpdate({
       running,
       begin: () => daemon.maintenance('begin'),
@@ -108,6 +180,7 @@ export class DesktopUpdater {
         await daemon.maintenance('release', token)
       },
       install: async (lease) => {
+        this.progress(`Installing Anda ${release}…`)
         // Stop while the lease is valid: CLI downloads can outlast its 90 seconds.
         if (lease) await daemon.stopForUpdate(lease)
         await daemon.applyRuntimeUpdate()
@@ -125,19 +198,30 @@ export class DesktopUpdater {
     this.changed()
     return `Anda ${release} is installed.`
   }
-  private async checkApp(): Promise<string> {
-    if (!app.isPackaged) return 'Desktop updates are available only in release builds.'
+  private async appUpdateUnavailable(): Promise<string | null> {
+    if (!app.isPackaged) return this.t('desktopUpdatesReleaseOnly')
     let configured = false
     try {
       configured =
         JSON.parse(await readFile(join(process.resourcesPath, 'release-channel.json'), 'utf8'))
           .signed === true
     } catch {}
-    if (!configured)
-      return 'This desktop build has no signed update channel; install the next package manually.'
+    return configured ? null : this.t('desktopUpdatesManual')
+  }
+  private async findAppUpdate() {
+    const result = await autoUpdater.checkForUpdates()
+    if (!result) throw new Error(this.t('desktopUpdateCheckUnavailable'))
+    this.availableApp = result.isUpdateAvailable ? result.updateInfo.version : undefined
+    this.changed()
+    return result
+  }
+  private async checkApp(): Promise<string> {
+    const unavailable = await this.appUpdateUnavailable()
+    if (unavailable) return unavailable
     if (!this.downloaded) {
-      const result = await autoUpdater.checkForUpdates()
-      if (!result?.isUpdateAvailable) return 'Anda Desktop is up to date.'
+      const result = await this.findAppUpdate()
+      if (!result.isUpdateAvailable) return this.t('desktopUpToDate')
+      this.progress(`Anda Desktop ${result.updateInfo.version} is available.`)
       const choice = await dialog.showMessageBox({
         type: 'question',
         message: `Download Anda Desktop ${result.updateInfo.version}?`,
@@ -146,9 +230,11 @@ export class DesktopUpdater {
         cancelId: 0
       })
       if (choice.response !== 1) return 'Desktop update available; download postponed.'
+      this.progress(`Downloading Anda Desktop ${result.updateInfo.version}…`)
       await autoUpdater.downloadUpdate()
       this.downloaded = result.updateInfo.version
     }
+    this.progress(`Anda Desktop ${this.downloaded} is ready to install.`)
     if (this.runningTerminals())
       return 'Desktop update downloaded. Close your terminal sessions before installing.'
     const choice = await dialog.showMessageBox({
@@ -162,6 +248,7 @@ export class DesktopUpdater {
     if (choice.response !== 1)
       return 'Desktop update downloaded. Choose Check for updates when ready to install.'
     this.installing = true
+    this.progress('Installing Anda Desktop…')
     this.store.state.updateIntent = {
       previous: app.getVersion(),
       target: this.downloaded,

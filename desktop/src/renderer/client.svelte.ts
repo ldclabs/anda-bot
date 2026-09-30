@@ -30,6 +30,7 @@ import {
   type Preferences,
   type DaemonView,
   type PendingSubmission,
+  type UpdateStatus,
   type ChatEntry
 } from '../shared/contract'
 import en from '../../../chrome-extension/public/_locales/en/messages.json'
@@ -55,6 +56,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   sending = $state(false)
   status = $state('connecting')
   systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
+  updateStatus = $state<UpdateStatus | null>(null)
+  updateDialogOpen = $state(false)
   activeChannel = $state<Channel | null>(null)
   modelState = $state<ModelState>({ activeModel: null, modelNames: [] })
   view = $state('chat')
@@ -156,6 +159,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     document.documentElement.dataset.platform = bootstrap.platform
     this.connection = bootstrap.daemon
     this.pending = bootstrap.pending
+    this.updateStatus = bootstrap.update
+    this.updateDialogOpen = bootstrap.updateRequested || bootstrap.update?.phase === 'running'
     const language = normalizeUiLanguage(this.preferences.language || navigator.language) || 'en'
     this.preferences.language = language
     setNativeMessages(language, translations[language])
@@ -186,6 +191,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         if (this.authorized && !was) void this.refresh().catch((error) => this.fail(error))
       } else if (event.type === 'update') {
         this.systemMessage = { kind: 'info', text: String(event.value) }
+      } else if (event.type === 'update-status') {
+        this.updateStatus = event.value as UpdateStatus
       } else if (event.type === 'preferences') {
         this.preferences = event.value as Preferences
       } else if (event.type === 'state') {
@@ -205,6 +212,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       else if (event.type === 'menu') {
         if (event.value === 'new-chat') this.newChat()
         if (event.value === 'settings') this.view = 'settings'
+        if (event.value === 'updates') this.updateDialogOpen = true
       }
     })
     await this.quickPrompts.load()
