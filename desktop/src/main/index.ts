@@ -864,8 +864,18 @@ async function setup(): Promise<void> {
     {
       label: 'File',
       submenu: [
-        { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: () => menuAction('new-chat') },
-        { label: 'Settings', accelerator: 'CmdOrCtrl+,', click: () => menuAction('settings') },
+        {
+          id: 'anda-new-chat',
+          label: 'New Chat',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => menuAction('new-chat')
+        },
+        {
+          id: 'anda-settings',
+          label: 'Settings',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => menuAction('settings')
+        },
         { type: 'separator' },
         { role: 'close' },
         ...(process.platform !== 'darwin' ? [{ role: 'quit' as const }] : [])

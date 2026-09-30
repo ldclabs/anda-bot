@@ -341,6 +341,7 @@ const env = {
 delete env.ELECTRON_RUN_AS_NODE
 let app
 let userClipboard
+let electronStderr = ''
 try {
   app = await electron.launch({
     executablePath: electronPath,
@@ -348,19 +349,25 @@ try {
     env,
     timeout: 30_000
   })
+  app.process().stderr?.on('data', (data) => {
+    const text = data.toString()
+    electronStderr = (electronStderr + text).slice(-64 * 1024)
+    if (/audio|media|permission/i.test(text)) console.error(text.trim())
+  })
   // Login starts without a renderer. The first menu action must survive creating it.
   await app.evaluate(async ({ Menu, BrowserWindow }) => {
-    while (!Menu.getApplicationMenu()) await new Promise((resolve) => setTimeout(resolve, 20))
+    // Electron creates its default menu before Anda's async setup finishes.
+    // Wait for our item, not merely a non-null application menu.
+    const deadline = Date.now() + 10_000
+    let settings
+    while (!(settings = Menu.getApplicationMenu()?.getMenuItemById('anda-settings'))) {
+      if (Date.now() >= deadline) throw new Error('Anda Settings menu did not become ready')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
     if (BrowserWindow.getAllWindows().length) throw new Error('Login start opened a window')
-    Menu.getApplicationMenu()
-      .items.find((item) => item.label === 'File')
-      .submenu.items.find((item) => item.label === 'Settings')
-      .click()
+    settings.click()
   })
   let page = await app.firstWindow()
-  app.process().stderr?.on('data', (data) => {
-    if (/audio|media|permission/i.test(data.toString())) console.error(data.toString().trim())
-  })
   const errors = []
   const pageError = (error) => {
     errors.push(error.message)
@@ -426,10 +433,7 @@ try {
   await updateDialog.getByText('Update failed', { exact: true }).waitFor()
   await updateDialog.getByRole('button', { name: 'Close', exact: true }).click()
   await app.evaluate(({ Menu }) => {
-    Menu.getApplicationMenu()
-      .items.find((item) => item.label === 'File')
-      .submenu.items.find((item) => item.label === 'New Chat')
-      .click()
+    Menu.getApplicationMenu().getMenuItemById('anda-new-chat').click()
   })
   await page.getByText('What would you like to do?', { exact: true }).waitFor({ timeout: 30_000 })
   await page.screenshot({ path: join(screenshotDir, '01-welcome.png') })
@@ -779,10 +783,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   // Exercise native window transitions after the renderer and browser checks.
   await app.evaluate(({ Menu }) => {
-    Menu.getApplicationMenu()
-      .items.find((item) => item.label === 'File')
-      .submenu.items.find((item) => item.label === 'New Chat')
-      .click()
+    Menu.getApplicationMenu().getMenuItemById('anda-new-chat').click()
   })
   await editor.fill('Draft survives closing the window')
   const closeModes =
@@ -845,12 +846,24 @@ try {
     'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
-  if (app) {
-    const page = await app.firstWindow()
-    await page.screenshot({ path: join(screenshotDir, 'failure.png') }).catch(() => {})
+  // Startup may fail before any window exists. Diagnostics must not replace
+  // that original failure with a second firstWindow() timeout.
+  console.error('Electron smoke test failed:', error)
+  await writeFile(
+    join(screenshotDir, 'failure.txt'),
+    `${error?.stack || error}\n\n${electronStderr}`
+  ).catch(() => {})
+  const page = app?.windows().find((window) => !window.isClosed())
+  if (page) {
+    await page
+      .screenshot({ path: join(screenshotDir, 'failure.png'), timeout: 5000 })
+      .catch(() => {})
     console.error(
       'Visible failure:',
-      await page.locator('.status-banner, .workbench-error').allTextContents()
+      await page
+        .locator('.status-banner, .workbench-error')
+        .allTextContents()
+        .catch(() => [])
     )
   }
   throw error
