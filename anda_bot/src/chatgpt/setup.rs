@@ -47,12 +47,19 @@ async fn config(
     if !authorized(&api, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    match crate::util::text::read_text_file(&crate::config::Config::file_path(&api.home)).await {
-        Ok(content) => {
-            let config: serde_json::Value = serde_saphyr::from_str(&content).unwrap_or_default();
-            Json(json!({"path":crate::config::Config::file_path(&api.home),"revision":revision(&content),"content":content,"config":config,"needs_setup":true})).into_response()
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    let path = crate::config::Config::file_path(&api.home);
+    let content = match read_config(&path).await {
+        Ok(content) => content.unwrap_or_else(|| crate::config::Config::default_template().into()),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let config: serde_json::Value = serde_saphyr::from_str(&content).unwrap_or_default();
+    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":true})).into_response()
+}
+async fn read_config(path: &std::path::Path) -> std::io::Result<Option<String>> {
+    match crate::util::text::read_text_file(path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
     }
 }
 #[derive(Deserialize)]
@@ -68,16 +75,20 @@ async fn update_config(
     if !authorized(&api, &headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let content = crate::engine::normalize_config_file_content(update.content);
     let _guard = api.config_lock.lock().await;
     let path = crate::config::Config::file_path(&api.home);
-    let original = match crate::util::text::read_text_file(&path).await {
+    let original = match read_config(&path).await {
         Ok(v) => v,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    let current = original
+        .as_deref()
+        .unwrap_or(crate::config::Config::default_template());
     if update
         .expected_revision
         .as_ref()
-        .is_some_and(|r| r != &revision(&original))
+        .is_some_and(|r| r != &revision(current))
     {
         return (
             StatusCode::CONFLICT,
@@ -85,20 +96,23 @@ async fn update_config(
         )
             .into_response();
     }
-    let config = match crate::config::Config::from_contents(&update.content) {
+    let config = match crate::config::Config::from_contents(&content) {
         Ok(c) => c,
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-    if let Err(e) =
-        super::store::atomic_write(&path.with_extension("yaml.setup.bak"), original.as_bytes())
-            .and_then(|_| super::store::atomic_write(&path, update.content.as_bytes()))
-    {
+    let backup = match &original {
+        Some(original) if original != &content => {
+            super::store::atomic_write(&path.with_extension("yaml.setup.bak"), original.as_bytes())
+        }
+        _ => Ok(()),
+    };
+    if let Err(e) = backup.and_then(|_| super::store::atomic_write(&path, content.as_bytes())) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     if config.setup_issues().is_empty() {
         api.setup_complete.cancel();
     }
-    Json(json!({"path":path,"content":update.content,"revision":revision(&update.content),"config":config,"needs_setup":!config.setup_issues().is_empty()})).into_response()
+    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":!config.setup_issues().is_empty()})).into_response()
 }
 async fn shutdown(
     State((api, cancel)): State<(ChatGptApi, tokio_util::sync::CancellationToken)>,
@@ -110,10 +124,7 @@ async fn shutdown(
     cancel.cancel();
     Json(json!({"ok":true})).into_response()
 }
+// The same revision as the full daemon and Anda Desktop's offline editor.
 fn revision(content: &str) -> String {
-    use sha3::Digest;
-    sha3::Sha3_256::digest(content.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::engine::daemon_config_revision(content)
 }

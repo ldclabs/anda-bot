@@ -325,11 +325,12 @@ impl ChatGptService {
                 f.cancel.cancel();
                 return Err("authorization declined".into());
             }
-            let client_id = if f.client_id != "dynamic_agent_client" {
+            let checked: Result<String, &str> = if f.client_id != "dynamic_agent_client" {
                 if query.client_id.as_deref().is_some_and(|v| v != f.client_id) {
-                    return Err("callback client ID does not match this account".into());
+                    Err("callback client ID does not match this account")
+                } else {
+                    Ok(f.client_id.clone())
                 }
-                f.client_id.clone()
             } else {
                 query
                     .client_id
@@ -341,11 +342,25 @@ impl ChatGptService {
                             && v.chars()
                                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                     })
-                    .ok_or("registration did not return an issued client ID")?
-            };
-            if query.code.as_ref().is_none_or(|v| v.is_empty()) {
-                return Err("missing authorization code".into());
+                    .ok_or("registration did not return an issued client ID")
             }
+            .and_then(|client_id| {
+                if query.code.as_ref().is_none_or(|v| v.is_empty()) {
+                    Err("missing authorization code")
+                } else {
+                    Ok(client_id)
+                }
+            });
+            // The state matched, so this callback ends the attempt either way.
+            let client_id = match checked {
+                Ok(client_id) => client_id,
+                Err(error) => {
+                    f.view.status = "failed".into();
+                    f.view.error = Some(error.into());
+                    f.cancel.cancel();
+                    return Err(error.into());
+                }
+            };
             f.client_id = client_id.clone();
             f.view.status = "exchanging".into();
             (
@@ -551,16 +566,29 @@ impl ChatGptService {
             let token = decode::<TokenResponse>(response).await;
             match token {
                 Ok(token) => {
-                    if let Some(id_token) = &token.id_token
-                        && self.verify_identity(id_token, &client_id, None).await?.sub != subject
-                    {
+                    let verified = match &token.id_token {
+                        Some(id_token) => self
+                            .verify_identity(id_token, &client_id, None)
+                            .await
+                            .map(|identity| identity.sub),
+                        None => Ok(subject.clone()),
+                    };
+                    if verified.as_ref().is_ok_and(|sub| *sub != subject) {
                         return Err("refreshed token belongs to another account".into());
                     }
-                    let updated = tokens_from_response(token, Some(&old))?;
+                    let mut updated = tokens_from_response(token, Some(&old))?;
+                    if verified.is_err() {
+                        // The old refresh token is already spent. Keep the rotated one, but
+                        // never use an unverified access token: the next call refreshes again.
+                        updated.access_token.clear();
+                        updated.id_token = old.id_token.clone();
+                        updated.expires_at = 0;
+                    }
                     let mut next = accounts.clone();
                     next.profiles.get_mut(id).unwrap().tokens = Some(updated);
                     self.store.save(&next)?;
                     *accounts = next;
+                    verified?;
                 }
                 Err(error) => {
                     if error.downcast_ref::<ProviderError>().is_some_and(|e| {
@@ -709,16 +737,26 @@ impl ChatGptService {
     }
 
     pub async fn logout(&self, id: &str) -> Result<serde_json::Value, BoxError> {
-        let mut accounts = self.accounts.lock().await;
-        let profile = accounts
-            .profiles
-            .get(id)
-            .ok_or("ChatGPT account not found")?;
+        // Clear local tokens first so no refresh can rotate them, then revoke without
+        // holding the account lock across network calls.
+        let (tokens, client_id) = {
+            let mut accounts = self.accounts.lock().await;
+            let profile = accounts
+                .profiles
+                .get(id)
+                .ok_or("ChatGPT account not found")?;
+            let taken = (profile.tokens.clone(), profile.client_id.clone());
+            let mut next = accounts.clone();
+            next.profiles.get_mut(id).unwrap().tokens = None;
+            self.store.save(&next)?;
+            *accounts = next;
+            taken
+        };
         if let Some(cancel) = self.sessions.lock().await.remove(id) {
             cancel.cancel();
         }
-        let mut revoked = profile.tokens.is_none();
-        if let Some(tokens) = &profile.tokens
+        let mut revoked = tokens.is_none();
+        if let Some(tokens) = &tokens
             && let Ok(discovery) = self.discovery().await
         {
             for attempt in 0..2 {
@@ -729,7 +767,7 @@ impl ChatGptService {
                     .form(&[
                         ("token", tokens.refresh_token.as_str()),
                         ("token_type_hint", "refresh_token"),
-                        ("client_id", profile.client_id.as_str()),
+                        ("client_id", client_id.as_str()),
                     ])
                     .send()
                     .await;
@@ -745,10 +783,6 @@ impl ChatGptService {
                 }
             }
         }
-        let mut next = accounts.clone();
-        next.profiles.get_mut(id).unwrap().tokens = None;
-        self.store.save(&next)?;
-        *accounts = next;
         Ok(serde_json::json!({"revocation_confirmed":revoked,"usage_url":USAGE_URL}))
     }
 }

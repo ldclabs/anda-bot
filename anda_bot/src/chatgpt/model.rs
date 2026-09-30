@@ -233,10 +233,13 @@ fn pair_tool_calls(request: &mut CompletionRequest) {
                     .push_back(id.clone());
             }
             ContentPart::ToolOutput { name, call_id, .. } => {
-                if let Some(id) = pending.get_mut(name).and_then(VecDeque::pop_front)
-                    && call_id.is_none()
-                {
-                    *call_id = Some(id);
+                let Some(queue) = pending.get_mut(name) else {
+                    continue;
+                };
+                match call_id {
+                    // An explicit ID answers its own call, not the oldest pending one.
+                    Some(id) => queue.retain(|pending| pending != id),
+                    None => *call_id = queue.pop_front(),
                 }
             }
             _ => {}
@@ -573,6 +576,39 @@ mod tests {
         assert_eq!(body["input"][0]["role"], "developer");
         assert_eq!(history.len(), 2);
     }
+    #[test]
+    fn chatgpt_pairs_tool_outputs_without_stealing_explicit_call_ids() {
+        let call = |call_id: Option<&str>| ContentPart::ToolCall {
+            name: "read_file".into(),
+            args: json!({}),
+            call_id: call_id.map(str::to_owned),
+        };
+        let output = |call_id: Option<&str>| ContentPart::ToolOutput {
+            name: "read_file".into(),
+            output: json!("ok"),
+            is_error: None,
+            call_id: call_id.map(str::to_owned),
+            remote_id: None,
+        };
+        let mut req = CompletionRequest {
+            content: vec![call(None), call(Some("x")), output(Some("x")), output(None)],
+            ..Default::default()
+        };
+        pair_tool_calls(&mut req);
+        let ids: Vec<_> =
+            req.content
+                .iter()
+                .map(|part| match part {
+                    ContentPart::ToolCall { call_id, .. }
+                    | ContentPart::ToolOutput { call_id, .. } => call_id.clone().unwrap(),
+                    _ => unreachable!(),
+                })
+                .collect();
+        assert_eq!(ids[2], "x");
+        assert_eq!(ids[3], ids[0]);
+        assert_ne!(ids[0], "x");
+    }
+
     #[test]
     fn chatgpt_accepts_buffered_terminal_responses_but_not_partial_json() {
         let response =

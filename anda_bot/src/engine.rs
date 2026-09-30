@@ -1443,11 +1443,11 @@ fn daemon_config_response(
     })
 }
 
-fn daemon_config_revision(content: &str) -> String {
+pub(crate) fn daemon_config_revision(content: &str) -> String {
     app_protocol::hash(content.as_bytes())
 }
 
-fn normalize_config_file_content(mut content: String) -> String {
+pub(crate) fn normalize_config_file_content(mut content: String) -> String {
     content = content.replace("\r\n", "\n").replace('\r', "\n");
     if !content.ends_with('\n') {
         content.push('\n');
