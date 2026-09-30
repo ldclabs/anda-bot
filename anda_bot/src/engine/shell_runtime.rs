@@ -23,7 +23,9 @@ const MAX_CLI_WORKSPACES: usize = 64;
 const CLI_WORKSPACE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Directories explicitly registered by the local owner through the daemon API.
-/// Request metadata alone cannot add a directory to this set.
+/// Request metadata alone cannot add a directory to this set. Registrations
+/// live in memory for a day and end with the daemon, so clients register a
+/// chat's directory again with each message.
 #[derive(Clone)]
 pub(crate) struct CliWorkspaceGrants {
     owner: Principal,
@@ -79,7 +81,7 @@ impl CliWorkspaceGrants {
             .is_some_and(|expiry| *expiry > Instant::now());
         if !allowed {
             return Err(format!(
-                "CLI workspace {} is not registered; reconnect the interactive CLI",
+                "workspace {} is not registered with the daemon (registrations end when it restarts or after 24 hours); a new message from its chat or CLI registers it again",
                 workspace.display()
             )
             .into());

@@ -30,6 +30,12 @@ const project = join(directory, 'smoke-project')
 await mkdir(project)
 await promisify(execFile)('git', ['init', '-b', 'main'], { cwd: project })
 await writeFile(join(project, 'smoke.txt'), 'A local Git fixture\n')
+// The daemon lists a chat started from the `anda` terminal only by its
+// `cli:<folder>` source; the desktop keeps no workspace of its own for it.
+const terminalProject = join(directory, 'terminal-project')
+await mkdir(terminalProject)
+await promisify(execFile)('git', ['init', '-b', 'main'], { cwd: terminalProject })
+await writeFile(join(terminalProject, 'terminal.txt'), 'Started from the anda terminal\n')
 const browserConnections = new Map()
 const submissionReceipts = new Map()
 let recoveryExecutions = 0
@@ -569,6 +575,36 @@ try {
   )
   await page.screenshot({ path: join(screenshotDir, '09-terminal.png') })
   await page.evaluate((id) => window.anda.terminal({ action: 'close', id }), term.id)
+  // The workbench opens the folder of a chat started from the `anda` terminal,
+  // named only by its source, and still refuses any other folder.
+  sources[`cli:${terminalProject}`] = { c: 0, s: 'idle', t: Date.now() }
+  for (const ws of wsServer.clients)
+    ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'state/changed',
+        params: { instanceId: 'smoke', revision: String(Date.now()) }
+      })
+    )
+  await page.locator('.chat-title').filter({ hasText: 'terminal-project' }).click()
+  assert.deepEqual(
+    await page.evaluate(
+      (workspace) => window.anda.terminal({ action: 'list', workspace }),
+      terminalProject
+    ),
+    []
+  )
+  await page
+    .locator('.resource-panel')
+    .getByRole('button', { name: 'Changes', exact: true })
+    .first()
+    .click()
+  await page.getByText('terminal.txt', { exact: true }).waitFor()
+  await assert.rejects(
+    page.evaluate((workspace) => window.anda.terminal({ action: 'list', workspace }), directory),
+    /Select this folder as a project/
+  )
+  await page.locator('.chat-title').filter({ hasText: 'Approval check' }).click()
   const hiddenSession = [...browserConnections.keys()].at(-1)
   const hiddenTab = await browserAction(hiddenSession, {
     action: 'open_tab',
@@ -679,7 +715,7 @@ try {
   assert.ok(!secrets.includes('desktop-test-token'))
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   if (app) {

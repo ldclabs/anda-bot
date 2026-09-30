@@ -864,6 +864,18 @@ export class Channel extends EventTarget {
       return null
     }
     input.meta = { ...input.meta, ...meta }
+    // The daemon keeps directory registrations in memory, so a restart or
+    // their 24-hour lifetime ends them while this chat stays open. Register
+    // the directory again for every turn; stop and cancel start none and must
+    // get through even when it no longer resolves.
+    const workspace = typeof meta.workspace === 'string' ? meta.workspace : ''
+    const command = parsePromptCommand(input.prompt)?.kind
+    if (workspace && command !== 'stop' && command !== 'cancel') {
+      await this.#api.rpc('register_workspace', [workspace])
+      if (isStale?.()) {
+        return null
+      }
+    }
     if (this.#api.agentRun) return this.#api.agentRun(input)
     return { output: await this.#api.rpc<AgentOutput>('agent_run', [input]) }
   }

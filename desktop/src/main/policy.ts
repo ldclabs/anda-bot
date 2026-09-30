@@ -1,4 +1,38 @@
+import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve } from 'node:path'
+import { workspaceFromCliSource } from '../../../chrome-extension/src/lib/anda/client/workspace'
+import type { Preferences } from '../shared/contract'
+
+/**
+ * Resolves a folder the workbench (Git and terminals) may open: a saved
+ * project, a chat's chosen workspace, or the folder a terminal-started chat's
+ * source names (`cli:<path>`), which the chat list carries without a
+ * `workspace` of its own. A path the renderer asks for is never enough alone.
+ */
+export async function authorizeWorkspace(
+  path: string,
+  preferences: Pick<Preferences, 'projects' | 'chats'>
+): Promise<string> {
+  if (typeof path !== 'string' || !path || path.length > 8192)
+    throw new Error('Choose a workspace first.')
+  const allowed = [
+    ...new Set(
+      [
+        ...preferences.projects.map((p) => p.path),
+        ...preferences.chats.flatMap((c) => [c.workspace, workspaceFromCliSource(c.source)])
+      ].filter((p): p is string => Boolean(p))
+    )
+  ]
+  const resolved = await realpath(path)
+  // The panels ask for the path the chat list names; another spelling of an
+  // allowed folder (a symlink, a trailing separator) matches by its real path.
+  const listed =
+    allowed.includes(path) ||
+    (await Promise.all(allowed.map((p) => realpath(p).catch(() => '')))).includes(resolved)
+  if (!listed || !(await stat(resolved)).isDirectory())
+    throw new Error('Select this folder as a project before using the workbench.')
+  return resolved
+}
 
 export function rendererAssetPath(root: string, raw: string): string {
   const url = new URL(raw)

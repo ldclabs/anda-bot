@@ -62,6 +62,9 @@ interface MockBackend {
   rpcCalls: Array<{ method: string; type?: string }>
   statusUpdates: string[]
   agentRun: (input: { prompt: string }) => Promise<AgentOutput>
+  // Workspaces passed to register_workspace, in call order.
+  registered: string[]
+  registerWorkspace: (workspace: string) => Promise<void>
   conversations: Map<number, Conversation>
   sourceState: SourceState | null
   // Consumed one per GetConversationDelta call; falls back to an empty delta
@@ -73,6 +76,7 @@ function createBackend(options: {
   conversations?: Conversation[]
   sourceState?: SourceState | null
   agentRun?: (input: { prompt: string }) => Promise<AgentOutput>
+  registerWorkspace?: (workspace: string) => Promise<void>
 }): MockBackend {
   const backend: MockBackend = {
     rpcCalls: [],
@@ -84,6 +88,8 @@ function createBackend(options: {
       (async () => {
         throw new Error('agent_run not mocked')
       }),
+    registered: [],
+    registerWorkspace: options.registerWorkspace || (async () => {}),
     deltaQueue: [],
     api: null as unknown as API
   }
@@ -102,6 +108,12 @@ function createBackend(options: {
       backend.rpcCalls.push({ method, type: input.args?.type })
       if (method === 'agent_run') {
         return (await backend.agentRun(input as { prompt: string })) as Result
+      }
+      if (method === 'register_workspace') {
+        const workspace = String(tupleArgs[0])
+        backend.registered.push(workspace)
+        await backend.registerWorkspace(workspace)
+        return { workspace } as Result
       }
       if (method === 'tool_call') {
         switch (input.args?.type) {
@@ -482,6 +494,72 @@ describe('Channel.sendPrompt', () => {
 
     expect(channel.messageGroups).toHaveLength(0)
     expect(backend.statusUpdates[backend.statusUpdates.length - 1]).toBe('request failed')
+  })
+
+  it('registers a folder chat again before each turn, but not to stop or cancel', async () => {
+    const backend = createBackend({
+      agentRun: async () => ({
+        content: '',
+        usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
+      })
+    })
+    const channel = new Channel('cli:/tmp/project/', backend.api)
+
+    try {
+      // A daemon restarted since the chat was opened has forgotten the folder.
+      await channel.sendPrompt('hello', [])
+      await channel.sendPrompt('/stop', [])
+      await channel.sendPrompt('/cancel', [])
+
+      expect(backend.registered).toEqual(['/tmp/project'])
+      expect(backend.rpcCalls.map((call) => call.method)).toEqual([
+        'register_workspace',
+        'agent_run',
+        'agent_run',
+        'agent_run'
+      ])
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('registers the workspace a desktop chat was started in', async () => {
+    const backend = createBackend({
+      agentRun: async () => ({
+        content: '',
+        usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 1 }
+      })
+    })
+    backend.api.requestExtra = async () => ({ conversation: 0, workspace: '/tmp/desktop-project' })
+    const channel = new Channel('desktop:chat-1', backend.api)
+
+    try {
+      await channel.sendPrompt('hello', [])
+
+      expect(backend.registered).toEqual(['/tmp/desktop-project'])
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('keeps the prompt unsent when its folder cannot be registered', async () => {
+    const backend = createBackend({
+      agentRun: async () => {
+        throw new Error('agent_run must not be reached')
+      },
+      registerWorkspace: async (workspace) => {
+        throw new Error(`cannot resolve workspace ${workspace}`)
+      }
+    })
+    const channel = new Channel('cli:/tmp/moved', backend.api)
+
+    await expect(channel.sendPrompt('hello', [])).rejects.toThrow(
+      'cannot resolve workspace /tmp/moved'
+    )
+
+    expect(backend.rpcCalls.some((call) => call.method === 'agent_run')).toBe(false)
+    expect(channel.messageGroups).toHaveLength(0)
+    channel.destroy()
   })
 
   it('delivers follow-up turn output to the voice poller of an already polled conversation', async () => {

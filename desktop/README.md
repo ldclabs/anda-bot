@@ -82,7 +82,7 @@ With a current runtime, `/ws/app/v1` sends caller-scoped state invalidations aft
 
 ## Workbench
 
-Open the right panel from a chat's header, then choose **Changes**, **Terminal**, **Browser** or **Resources**.
+Open the right panel from a chat's header, then choose **Changes**, **Terminal**, **Browser** or **Resources**. Changes and Terminal open only the chat's own folder: a project, the folder a new chat was started in, or the folder a chat started from the `anda` terminal ran in.
 
 - **Changes** requires the selected project to be a Git repository root. View staged/working-tree changes and history; stage, unstage and commit from explicit controls. Operations reject a changed repository snapshot. Git hooks, helpers and repository filters run with your user permissions; use repositories you trust.
 - **Worktrees** creates branches in desktop-managed directories. Archiving another managed worktree saves a snapshot first, then removes its checkout; restore recreates its contents at the original path on a detached snapshot commit. It preserves content rather than the original staging layout. Ignored files, submodules and nested repositories must be handled separately before archiving. Stop other processes using the checkout before confirming archive. Your primary or externally managed worktrees cannot be archived here.

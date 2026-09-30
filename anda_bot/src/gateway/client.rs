@@ -7,7 +7,7 @@ use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
 use anda_kip::{Request as KipRequest, Response as KipWireResponse};
 use std::{
     io::SeekFrom,
-    path::Path,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -15,9 +15,12 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use crate::{
     auto_update::AutoUpdateState,
     daemon::{Daemon, LaunchState, process_exists},
-    engine::{AndaBotStatus, ConversationsTool, ConversationsToolArgs, DaemonModelsResponse},
+    engine::{
+        AndaBotStatus, ConversationsTool, ConversationsToolArgs, DaemonModelsResponse,
+        PromptCommand,
+    },
     identity::LocalIdentitySecrets,
-    util::http_client::new_reqwest_client,
+    util::{http_client::new_reqwest_client, request_meta::keys},
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
@@ -188,6 +191,30 @@ impl Client {
         });
         let _: Json = self.post_json("/daemon/cli-workspace", &request).await?;
         Ok(())
+    }
+
+    /// Runs a CLI prompt after registering its workspace again. The daemon
+    /// keeps registrations in memory, so a restart or their 24-hour lifetime
+    /// ends them while the CLI stays open. Stop and cancel start no work and
+    /// skip it, so a directory that no longer resolves never blocks them.
+    pub async fn agent_run_in_cli_workspace(
+        &self,
+        input: &AgentInput,
+    ) -> Result<AgentOutput, BoxError> {
+        let control = matches!(
+            PromptCommand::from(input.prompt.clone()),
+            PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+        );
+        let workspace = input
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get_extra_as::<PathBuf>(keys::WORKSPACE));
+        if let Some(workspace) = workspace
+            && !control
+        {
+            self.register_cli_workspace(&workspace).await?;
+        }
+        self.agent_run(input).await
     }
 
     #[allow(unused)]
@@ -786,6 +813,83 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("engine exploded"));
+    }
+
+    #[tokio::test]
+    async fn cli_agent_run_registers_its_workspace_first_except_to_stop_or_cancel() {
+        use std::sync::{Arc, Mutex};
+
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let output = AgentOutput::default();
+        let rpc: RPCResponse = Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
+        let body = serde_json::to_value(&rpc).unwrap();
+        let register_calls = calls.clone();
+        let run_calls = calls.clone();
+        let app = Router::new()
+            .route(
+                "/daemon/cli-workspace",
+                routing::post(move |axum::Json(request): axum::Json<Json>| {
+                    let calls = register_calls.clone();
+                    async move {
+                        let workspace = request["workspace"].as_str().unwrap_or_default();
+                        calls.lock().unwrap().push(format!("register {workspace}"));
+                        if workspace == "/tmp/moved" {
+                            return (
+                                http::StatusCode::BAD_REQUEST,
+                                axum::Json(json!({ "error": "cannot resolve workspace" })),
+                            );
+                        }
+                        (http::StatusCode::OK, axum::Json(request))
+                    }
+                }),
+            )
+            .route(
+                "/engine/default",
+                routing::post(move || {
+                    let calls = run_calls.clone();
+                    let body = body.clone();
+                    async move {
+                        calls.lock().unwrap().push("agent_run".to_string());
+                        axum::Json(body)
+                    }
+                }),
+            );
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        let client = Client::new(base_url, "token-1".to_string());
+        let input = |prompt: &str, workspace: &str| {
+            let mut input = AgentInput::new(String::new(), prompt.to_string());
+            input.meta = Some(serde_json::from_value(json!({ "workspace": workspace })).unwrap());
+            input
+        };
+
+        client
+            .agent_run_in_cli_workspace(&input("hello", "/tmp/project"))
+            .await
+            .unwrap();
+        // A restarted daemon has forgotten the directory; stopping never waits
+        // on registering a directory that may no longer resolve.
+        for prompt in ["/stop", "/cancel"] {
+            client
+                .agent_run_in_cli_workspace(&input(prompt, "/tmp/moved"))
+                .await
+                .unwrap();
+        }
+        let err = client
+            .agent_run_in_cli_workspace(&input("hello", "/tmp/moved"))
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("cannot resolve workspace"));
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                "register /tmp/project",
+                "agent_run",
+                "agent_run",
+                "agent_run",
+                "register /tmp/moved",
+            ]
+        );
     }
 
     #[tokio::test]

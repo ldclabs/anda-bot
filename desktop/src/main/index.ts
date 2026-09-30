@@ -21,7 +21,7 @@ import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { GitService } from './git'
 import { TerminalService } from './terminal'
 import { BrowserService } from './browser'
@@ -30,7 +30,13 @@ import type { Bootstrap, DaemonView, NativeEvent, Preferences } from '../shared/
 import { DesktopStore } from './store'
 import { DaemonClient, type InstallReport } from './daemon-client'
 import { isOlderRelease } from './update-machine'
-import { appPermissionAllowed, externalUrl, navigationSource, rendererAssetPath } from './policy'
+import {
+  appPermissionAllowed,
+  authorizeWorkspace,
+  externalUrl,
+  navigationSource,
+  rendererAssetPath
+} from './policy'
 import { label, type Label } from '../renderer/labels'
 
 protocol.registerSchemesAsPrivileged([
@@ -566,22 +572,10 @@ async function setup(): Promise<void> {
   nativeTheme.themeSource = store.state.preferences.theme
   daemon.on('state', (value) => emit({ type: 'state', value }))
   daemon.on('submissions', (value) => emit({ type: 'submissions', value }))
-  const authorizeWorkspace = async (path: string): Promise<string> => {
-    if (typeof path !== 'string' || !path || path.length > 8192)
-      throw new Error('Choose a workspace first.')
-    const allowed = new Set([
-      ...store.state.preferences.projects.map((p) => p.path),
-      ...store.state.preferences.chats.flatMap((c) => (c.workspace ? [c.workspace] : []))
-    ])
-    const resolved = await realpath(path)
-    const matches = await Promise.all([...allowed].map((p) => realpath(p).catch(() => '')))
-    if (!matches.includes(resolved) || !(await stat(resolved)).isDirectory())
-      throw new Error('Select this folder as a project before using the workbench.')
-    return resolved
-  }
-  git = new GitService(join(app.getPath('userData'), 'workbench'), authorizeWorkspace)
+  const workbenchWorkspace = (path: string) => authorizeWorkspace(path, store.state.preferences)
+  git = new GitService(join(app.getPath('userData'), 'workbench'), workbenchWorkspace)
   terminals = new TerminalService(
-    authorizeWorkspace,
+    workbenchWorkspace,
     (value) => emit({ type: 'terminal', value }),
     () => !updater?.installing
   )

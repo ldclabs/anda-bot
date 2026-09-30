@@ -1,13 +1,17 @@
-import { resolve, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { resolve, join, sep } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   appPermissionAllowed,
+  authorizeWorkspace,
   externalUrl,
   loopbackBaseUrl,
   navigationSource,
   validateRpc,
   rendererAssetPath
 } from '../src/main/policy'
+import type { ChatEntry } from '../src/shared/contract'
 import { desktopMessages } from '../src/renderer/labels'
 
 it('permits application audio only in its own main frame, never camera or preview frames', () => {
@@ -89,5 +93,75 @@ describe('desktop host boundaries', () => {
     expect(() => externalUrl('file:///etc/passwd')).toThrow()
     expect(() => externalUrl('javascript:alert(1)')).toThrow()
     expect(externalUrl('https://anda.bot')).toBe('https://anda.bot/')
+  })
+})
+
+describe('workbench workspaces', () => {
+  const directories: string[] = []
+  afterEach(async () => {
+    for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true })
+  })
+  async function folders(...names: string[]): Promise<string[]> {
+    const home = await realpath(await mkdtemp(join(tmpdir(), 'anda-workspace-test-')))
+    directories.push(home)
+    const paths = names.map((name) => join(home, name))
+    for (const path of paths) await mkdir(path)
+    return paths
+  }
+  const chat = (source: string, workspace?: string): ChatEntry => ({
+    source,
+    title: source,
+    updatedAt: 0,
+    ...(workspace ? { workspace } : {})
+  })
+
+  it('opens the folder a chat started in a terminal names in its source', async () => {
+    const [cli, voice, plain, chosen, project] = await folders(
+      'cli',
+      'voice',
+      'plain',
+      'chosen',
+      'project'
+    )
+    const preferences = {
+      projects: [{ id: 'p', path: project, name: 'project' }],
+      // Chats listed from the daemon carry their folder only in the source.
+      chats: [
+        chat(`cli:${cli}${sep}`),
+        chat(`cli:voice:${voice}`),
+        chat(plain),
+        chat('desktop:chat-1', chosen)
+      ]
+    }
+
+    for (const path of [cli, voice, plain, chosen, project])
+      expect(await authorizeWorkspace(path, preferences)).toBe(path)
+    // Another spelling of a listed folder resolves to that folder.
+    expect(await authorizeWorkspace(`${cli}${sep}`, preferences)).toBe(cli)
+  })
+
+  it('never opens a folder that no project or chat names', async () => {
+    const [listed, other] = await folders('listed', 'other')
+    const file = join(listed, 'notes.txt')
+    await writeFile(file, 'notes')
+    const preferences = {
+      projects: [],
+      chats: [
+        chat(`cli:${listed}`),
+        chat(`cli:${file}`),
+        // Channel and desktop sources are routes, not folders, even when they contain a path.
+        chat(`telegram:personal:reply_target:${other}:thread:`),
+        chat(`desktop:${other}`)
+      ]
+    }
+
+    await expect(authorizeWorkspace(other, preferences)).rejects.toThrow(
+      'Select this folder as a project'
+    )
+    await expect(authorizeWorkspace(file, preferences)).rejects.toThrow(
+      'Select this folder as a project'
+    )
+    await expect(authorizeWorkspace(join(listed, 'missing'), preferences)).rejects.toThrow()
+    await expect(authorizeWorkspace('', preferences)).rejects.toThrow('Choose a workspace first')
   })
 })

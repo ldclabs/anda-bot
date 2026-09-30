@@ -96,11 +96,15 @@ pub async fn run_voice_loop(
         let mut input = AgentInput::new(cmd.name.clone(), prompt);
         input.meta = Some(request_meta);
 
-        let output =
-            match wait_with_voice_status("Sending voice turn", client.agent_run(&input)).await? {
-                Some(output) => output,
-                None => break,
-            };
+        let output = match wait_with_voice_status(
+            "Sending voice turn",
+            client.agent_run_in_cli_workspace(&input),
+        )
+        .await?
+        {
+            Some(output) => output,
+            None => break,
+        };
 
         if let Some(reason) = &output.failed_reason {
             eprintln!("Agent failed: {reason}");

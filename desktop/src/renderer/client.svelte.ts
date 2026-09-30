@@ -433,8 +433,6 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         activeSource: channel.source
       })
     }
-    const workspace = this.preferences.chats.find((c) => c.source === channel.source)?.workspace
-    if (workspace) await this.rpc('register_workspace', [workspace])
     const ownsSending = !this.sending && parsePromptCommand(prompt)?.kind !== 'side'
     if (ownsSending) this.sending = true
     try {

@@ -346,7 +346,7 @@ impl ChatSession {
         tokio::spawn(async move {
             let _ = tx.send(
                 client
-                    .agent_run(&input)
+                    .agent_run_in_cli_workspace(&input)
                     .await
                     .map_err(|err| err.to_string()),
             );
@@ -1046,9 +1046,27 @@ mod tests {
     }
 
     async fn spawn_chat_gateway(state: ChatGateway) -> Client {
+        spawn_recording_chat_gateway(state, Default::default()).await
+    }
+
+    /// Records each directory the session registers before its prompts.
+    async fn spawn_recording_chat_gateway(
+        state: ChatGateway,
+        registered: Arc<std::sync::Mutex<Vec<String>>>,
+    ) -> Client {
         let app = Router::new()
             .route("/engine/default", routing::post(chat_gateway_handler))
-            .with_state(Arc::new(state));
+            .with_state(Arc::new(state))
+            .route(
+                "/daemon/cli-workspace",
+                routing::post(
+                    move |axum::Json(request): axum::Json<serde_json::Value>| async move {
+                        let workspace = request["workspace"].as_str().unwrap_or_default();
+                        registered.lock().unwrap().push(workspace.to_string());
+                        axum::Json(request)
+                    },
+                ),
+            );
         let base_url = crate::test_support::spawn_http_mock(app).await;
         Client::new(base_url, "token".to_string())
     }
@@ -1166,6 +1184,35 @@ mod tests {
         assert!(is_new_conversation_command("/new"));
         assert!(is_new_conversation_command("/new start fresh"));
         assert!(!is_new_conversation_command("hello"));
+    }
+
+    #[tokio::test]
+    async fn every_prompt_registers_the_launch_directory_again() {
+        let registered = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let client = spawn_recording_chat_gateway(
+            ChatGateway {
+                conversations: HashMap::new(),
+                agent_output: Ok(AgentOutput::default()),
+                source_state: serde_json::json!({"c": 0}),
+            },
+            registered.clone(),
+        )
+        .await;
+        let mut session = ChatSession::new(client);
+
+        // A daemon restarted since the CLI connected has forgotten the
+        // directory, so each prompt registers it again; stopping does not.
+        assert!(session.send("hello".to_string()).await.is_none());
+        assert!(session.send("again".to_string()).await.is_none());
+        assert!(session.send("/stop".to_string()).await.is_none());
+        let launch_dir = std::env::current_dir()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            *registered.lock().unwrap(),
+            [launch_dir.clone(), launch_dir]
+        );
     }
 
     #[tokio::test]
