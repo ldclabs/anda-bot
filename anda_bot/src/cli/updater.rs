@@ -133,7 +133,7 @@ impl ReleaseTarget {
         Self::from_parts(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
             let target = normalized_target_name(std::env::consts::OS, std::env::consts::ARCH);
             format!(
-                "Unsupported target: {target}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-x86_64, macos-arm64"
+                "Unsupported target: {target}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-arm64"
             )
             .into()
         })
@@ -152,7 +152,8 @@ impl ReleaseTarget {
                 arch,
                 exe_ext: "",
             }),
-            ("macos", "x86_64" | "arm64") => Some(Self {
+            // Intel Macs have no release assets; they build from source.
+            ("macos", "arm64") => Some(Self {
                 os: "macos",
                 arch,
                 exe_ext: "",
@@ -984,6 +985,7 @@ mod tests {
             "anda_launcher-windows-x86_64.exe"
         );
         assert!(ReleaseTarget::from_parts("windows", "arm64").is_none());
+        assert!(ReleaseTarget::from_parts("macos", "x86_64").is_none());
     }
 
     #[test]
@@ -1004,7 +1006,7 @@ mod tests {
                 .supports_launcher_sidecar_update()
         );
 
-        let macos = ReleaseTarget::from_parts("macos", "x86_64").unwrap();
+        let macos = ReleaseTarget::from_parts("macos", "arm64").unwrap();
         assert_eq!(
             sidecar_launcher_path(Path::new("/install"), macos),
             Path::new("/install").join("anda_launcher")

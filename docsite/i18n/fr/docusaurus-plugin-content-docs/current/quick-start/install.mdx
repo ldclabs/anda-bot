@@ -14,9 +14,11 @@ Anda Bot peut être installé depuis une version publiée (release) ou exécuté
 
 La plupart des utilisateurs devraient commencer par Anda Desktop : la fenêtre de discussion, l'espace de travail et l'icône de la barre système. Téléchargez-le depuis la [dernière version](https://github.com/ldclabs/anda-bot/releases/latest) :
 
-- macOS Apple Silicon : `Anda-mac-arm64.dmg` ; Intel : `Anda-mac-x64.dmg`
+- macOS Apple Silicon : `Anda-mac-arm64.dmg`
 - Windows x64 : `Anda-win-x64.exe`
 - Homebrew : `brew install --cask ldclabs/tap/anda-desktop` (installe aussi la formule `anda`)
+
+Les nouvelles versions macOS en ligne de commande et de bureau sont réservées à Apple Silicon. Sur Mac Intel, compilez depuis les sources.
 
 Anda Desktop conserve une installation `anda` existante, ou installe son `anda` intégré et les compétences sélectionnées là où les scripts d'installation les placent (`~/.local/bin` sur macOS, `%LOCALAPPDATA%\Programs\AndaBot` sur Windows). Le bureau, le terminal et l'extension Chrome partagent alors un seul runtime et un seul démon. Le premier lancement demande si Anda doit démarrer à l'ouverture de session. L'icône d'Anda Desktop remplace le lanceur retiré de la barre de menus d'Anda Bot, que le bureau supprime.
 

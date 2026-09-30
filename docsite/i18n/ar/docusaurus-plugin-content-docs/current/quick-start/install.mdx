@@ -14,9 +14,11 @@ description: قم بتثبيت إصدار Anda Bot الرسمي، أو قم بت
 
 يُنصح معظم المستخدمين بالبدء بـ Anda Desktop: نافذة الدردشة ومساحة العمل ورمز شريط النظام. نزّله من [أحدث إصدار](https://github.com/ldclabs/anda-bot/releases/latest):
 
-- macOS Apple Silicon: `Anda-mac-arm64.dmg`؛ Intel: `Anda-mac-x64.dmg`
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`
 - Windows x64: `Anda-win-x64.exe`
 - Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (يثبّت أيضًا صيغة `anda`)
+
+إصدارات macOS الجديدة لسطر الأوامر والتطبيق تدعم Apple Silicon فقط. يمكن لمستخدمي Mac بمعالج Intel البناء من المصدر.
 
 يحتفظ Anda Desktop بتثبيت `anda` الموجود، أو يثبّت `anda` المضمّن والمهارات المختارة في المكان الذي تستخدمه سكربتات التثبيت (`~/.local/bin` على macOS و`%LOCALAPPDATA%\Programs\AndaBot` على Windows). وبذلك يشترك التطبيق والطرفية وإضافة Chrome في runtime واحد وdaemon واحد. يسأل التشغيل الأول عما إذا كان يجب تشغيل Anda عند تسجيل الدخول. يحل رمز Anda Desktop في شريط النظام محل مشغّل شريط القوائم القديم Anda Bot، ويزيله التطبيق.
 

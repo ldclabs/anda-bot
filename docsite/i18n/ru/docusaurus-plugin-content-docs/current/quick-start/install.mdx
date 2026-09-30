@@ -14,9 +14,11 @@ Anda Bot можно установить в виде скомпилирован�
 
 Большинству пользователей стоит начать с Anda Desktop: окна чата, рабочей области и значка в трее. Скачайте его со страницы [последнего релиза](https://github.com/ldclabs/anda-bot/releases/latest):
 
-- macOS Apple Silicon: `Anda-mac-arm64.dmg`; Intel: `Anda-mac-x64.dmg`
+- macOS Apple Silicon: `Anda-mac-arm64.dmg`
 - Windows x64: `Anda-win-x64.exe`
 - Homebrew: `brew install --cask ldclabs/tap/anda-desktop` (также устанавливает формулу `anda`)
+
+Новые сборки командной строки и приложения для macOS доступны только для Apple Silicon. На Mac с Intel можно собрать из исходного кода.
 
 Anda Desktop использует уже установленный `anda`, а если его нет — устанавливает встроенный `anda` и навыки туда же, куда их ставят скрипты установки (`~/.local/bin` в macOS, `%LOCALAPPDATA%\Programs\AndaBot` в Windows). Так приложение, терминал и расширение Chrome используют один runtime и один демон. При первом запуске приложение спросит, запускать ли Anda при входе в систему. Значок Anda Desktop в трее заменяет устаревший лаунчер Anda Bot в строке меню, который приложение удаляет.
 

@@ -391,11 +391,17 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+# A shell translated by Rosetta reports x86_64 on Apple Silicon.
+if [ "$OS" = "macos" ] && [ "$ARCH" = "x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+    ARCH="arm64"
+fi
+
 TARGET="${OS}-${ARCH}"
 
 case "$TARGET" in
-    linux-x86_64|linux-arm64|windows-x86_64|macos-x86_64|macos-arm64) ;;
-    *) error "Unsupported target: ${TARGET}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-x86_64, macos-arm64" ;;
+    linux-x86_64|linux-arm64|windows-x86_64|macos-arm64) ;;
+    macos-x86_64) error "Releases for macOS support Apple Silicon only. On an Intel Mac, build anda from source: https://github.com/${REPO}" ;;
+    *) error "Unsupported target: ${TARGET}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-arm64" ;;
 esac
 
 if [ -n "${ANDA_INSTALL_DIR:-}" ]; then
