@@ -46,6 +46,7 @@ export const defaultPreferences: Preferences = {
 }
 export interface DaemonView {
   connected: boolean
+  needsSetup?: boolean
   home: string
   baseUrl: string
   /** The shared `anda` CLI this app runs its daemon commands with. */
@@ -91,6 +92,9 @@ export interface NativeEvent {
   value?: unknown
 }
 export interface DesktopBridge {
+  chatgpt<Result>(
+    request: import('../../../chrome-extension/src/lib/anda/chatgpt/types').ChatGptRequest
+  ): Promise<Result>
   browser(request: BrowserRequest): Promise<BrowserState>
   git<Result>(request: GitRequest): Promise<Result>
   terminal<Result>(request: TerminalRequest): Promise<Result>

@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "System"
+  },
+  "chatgptTitle": {
+    "message": "ChatGPT plan"
+  },
+  "chatgptDescription": {
+    "message": "Connect your ChatGPT account to use eligible models with your plan. Audio and video require a separate provider."
+  },
+  "chatgptAccount": {
+    "message": "ChatGPT account"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "Reconnect / enable plan"
+  },
+  "chatgptUseModel": {
+    "message": "Use selected model"
+  },
+  "chatgptLogout": {
+    "message": "Sign out"
+  },
+  "chatgptManageUsage": {
+    "message": "Manage usage"
+  },
+  "chatgptWaiting": {
+    "message": "Complete sign-in in your browser."
+  },
+  "chatgptConnectedNotice": {
+    "message": "ChatGPT is connected. Select a model to start using your plan."
+  },
+  "chatgptUsingPlan": {
+    "message": "Using ChatGPT plan"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "Signed in, but permission to use the ChatGPT plan is disabled. Reconnect to enable it."
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "Signed out locally. Remote revocation was not confirmed; disconnect Anda Bot in ChatGPT settings."
+  },
+  "chatgptAuthorization": {
+    "message": "Authorization"
   }
 }

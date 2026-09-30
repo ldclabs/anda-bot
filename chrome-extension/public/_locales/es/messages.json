@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "Sistema"
+  },
+  "chatgptTitle": {
+    "message": "Plan de ChatGPT"
+  },
+  "chatgptDescription": {
+    "message": "Conecta tu cuenta de ChatGPT para usar modelos compatibles con tu plan. El audio y el vídeo requieren otro proveedor."
+  },
+  "chatgptAccount": {
+    "message": "Cuenta de ChatGPT"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "Reconectar / activar plan"
+  },
+  "chatgptUseModel": {
+    "message": "Usar modelo seleccionado"
+  },
+  "chatgptLogout": {
+    "message": "Cerrar sesión"
+  },
+  "chatgptManageUsage": {
+    "message": "Gestionar uso"
+  },
+  "chatgptWaiting": {
+    "message": "Completa el inicio de sesión en el navegador."
+  },
+  "chatgptConnectedNotice": {
+    "message": "ChatGPT está conectado. Selecciona un modelo para usar tu plan."
+  },
+  "chatgptUsingPlan": {
+    "message": "Usando el plan de ChatGPT"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "Sesión iniciada, pero el uso del plan no está autorizado. Reconecta para activarlo."
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "Sesión local cerrada. No se confirmó la revocación remota; desconecta Anda Bot en los ajustes de ChatGPT."
+  },
+  "chatgptAuthorization": {
+    "message": "Autorización"
   }
 }

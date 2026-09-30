@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChatGptSettings from './chatgpt/ChatGptSettings.svelte'
   import { getMessage } from '$lib/i18n'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import {
@@ -452,6 +453,8 @@
           oninput={markSettingsDirty}
         />
       </div>
+
+      <ChatGptSettings settings={draftSettings} onModelSelected={refreshModels} />
 
       <div data-slot="field" class={fieldClass('gap-1.5')}>
         <div class="flex items-center justify-between gap-2">

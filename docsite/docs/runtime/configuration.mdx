@@ -221,3 +221,19 @@ Set `brain.runtime_config` to a trusted JSON/YAML file relative to the configura
 brain:
   runtime_config: null
 ```
+
+You can also connect an eligible ChatGPT Plus / Pro plan without an API key:
+
+```bash
+anda auth login chatgpt
+anda auth accounts
+anda auth models <profile-id>
+anda auth use <profile-id> <model-slug>
+anda auth logout <profile-id>
+```
+
+In Anda Desktop or extension settings, click **Continue with ChatGPT**, complete browser authorization, then choose **Use selected model**. Press **Ctrl+G** in the TUI to sign in. CLI/TUI sign-in selects the first available model; pass `--model <slug>` to the CLI to choose another. Without a configured model, the daemon serves only authenticated setup controls; Brain, channels and cron start after model selection. All three clients share account and refresh state under the same `ANDA_HOME`. Credentials are encrypted in `chatgpt/accounts.cose`, never stored in config.yaml or browser storage.
+
+Changing a ChatGPT plan model waits until running tasks and subagents are idle. ChatGPT plan providers are owner-only: while they are enabled, other users and external IM requests are rejected. Audio, video and transcription require separate providers. A usage limit never silently switches billing to an API key; use [ChatGPT usage settings](https://chatgpt.com/settings/usage). Existing `.codex/auth.json` configurations remain compatible, but new connections should use this dedicated sign-in flow.
+
+For a headless or SSH host, run `anda auth login chatgpt --no-browser --port 1455` and forward `127.0.0.1:1455` from the browser's machine to the daemon host. To move a session, run `anda auth export <profile-id> --output /absolute/path/session.json` (disconnects the source), transfer the owner-only file securely over SSH, and run `anda auth import /absolute/path/session.json` on the destination. Import removes the transfer file and preserves the destination host ID. Activate a model with `anda auth use <profile-id> <model-slug>`. Never refresh the same session on both hosts.

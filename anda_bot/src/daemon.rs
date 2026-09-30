@@ -312,7 +312,7 @@ impl Daemon {
     }
 
     pub async fn serve(
-        self,
+        mut self,
         id_key: identity::Ed25519Key,
         user_pubkey: identity::Ed25519PubKey,
     ) -> Result<(), BoxError> {
@@ -327,20 +327,50 @@ impl Daemon {
             );
         }
 
-        let setup_issues = self.cfg.setup_issues();
-        if !setup_issues.is_empty() {
-            return Err(format!(
-                "runtime configuration is incomplete: {}",
-                setup_issues.join(", ")
-            )
-            .into());
-        }
-
-        // Create global cancellation token for graceful shutdown
         let global_cancel_token = CancellationToken::new();
+        tokio::spawn(shutdown_signal(global_cancel_token.clone()));
         let outer_http_client =
             util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| client)?;
-        let models = Arc::new(self.cfg.models(outer_http_client.clone()));
+        let auth_http =
+            util::http_client::build_http_client(self.cfg.https_proxy.clone(), |client| {
+                client
+                    .redirect(reqwest::redirect::Policy::none())
+                    .retry(reqwest::retry::never())
+            })?;
+        let chatgpt =
+            crate::chatgpt::ChatGptService::open(&self.home, id_key.as_bytes(), auth_http)?;
+        if !self.cfg.setup_issues().is_empty() {
+            let auth = anda_engine_server::handler::AppState {
+                engines: Arc::new(Default::default()),
+                default_engine: id_key.id(),
+                start_time_ms: anda_engine::unix_ms(),
+                extra_info: Arc::new(Default::default()),
+                ed25519_pubkeys: Arc::new(vec![user_pubkey.clone().into()]),
+            };
+            let api = crate::chatgpt::api::ChatGptApi {
+                service: chatgpt.clone(),
+                home: self.home.clone(),
+                auth,
+                owner: user_pubkey.id(),
+                config_lock: Arc::new(tokio::sync::Mutex::new(())),
+                runtime: None,
+                setup_complete: CancellationToken::new(),
+            };
+            if !crate::chatgpt::setup::serve(
+                api,
+                self.cfg.socket_addr()?,
+                global_cancel_token.clone(),
+            )
+            .await?
+            {
+                return Ok(());
+            }
+            self.cfg = Config::from_file(&self.config_file_path()).await?;
+        }
+        let models = Arc::new(
+            self.cfg
+                .models_with_chatgpt(outer_http_client.clone(), Some(chatgpt.clone())),
+        );
         let mcp = McpSettings::from_file(&self.home).await?;
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_registry = self.cfg.user_registry(user_pubkey.clone())?;
@@ -383,6 +413,7 @@ impl Daemon {
             http_client: outer_http_client.clone(),
             auto_updater,
             gateway_addr: self.cfg.socket_addr()?,
+            chatgpt: Some(chatgpt),
         };
 
         let cron_runtime =
@@ -431,8 +462,6 @@ impl Daemon {
 
         // shutdown_signal only completes on an OS signal; joining it would
         // keep the process alive forever after an HTTP-triggered shutdown.
-        tokio::spawn(shutdown_signal(global_cancel_token.clone()));
-
         // Fail fast: if any subsystem exits (error or panic), cancel the rest
         // instead of leaving a half-alive daemon (e.g. cron and channels
         // running with no HTTP gateway).
@@ -1013,7 +1042,7 @@ mod tests {
             addr: format!("127.0.0.1:{port}"),
             model: crate::config::ModelSettings {
                 active: "fake-model".to_string(),
-                providers: vec![anda_engine::model::ModelConfig {
+                providers: vec![crate::config::ModelProvider {
                     family: "openai".to_string(),
                     model: "fake-model".to_string(),
                     api_base: "http://127.0.0.1:1/v1".to_string(),

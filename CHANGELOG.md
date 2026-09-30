@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- **Sign in with ChatGPT**: connect an eligible ChatGPT plan from Anda Desktop, the Chrome extension, `anda auth login chatgpt`, or Ctrl+G in the TUI. A setup gateway makes the first login possible without an API key. Accounts share encrypted daemon-owned credentials, rotating token refresh, model discovery, logout/revocation, and explicit session transfer for self-hosted machines. ChatGPT plan inference uses the public Responses API with local tools and no automatic fallback to API-key billing. Plan providers are owner-only; audio/video and transcription retain separate providers.
+
 ## [0.13.1] — 2026-09-30
 
 ### Added

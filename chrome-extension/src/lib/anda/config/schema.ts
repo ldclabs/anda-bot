@@ -6,13 +6,7 @@ import type { Json } from './api'
 export type JsonObject = { [key: string]: Json }
 
 export type FieldKind =
-  | 'text'
-  | 'secret'
-  | 'number'
-  | 'boolean'
-  | 'select'
-  | 'string-list'
-  | 'object'
+  'text' | 'secret' | 'number' | 'boolean' | 'select' | 'string-list' | 'object'
 
 export interface FieldSchema {
   key: string
@@ -64,11 +58,25 @@ export const modelProviderFields: FieldSchema[] = [
     key: 'family',
     label: getMessage('configFieldFamily') || 'Family',
     kind: 'select',
-    options: ['anthropic', 'openai', 'gemini']
+    options: ['anthropic', 'openai', 'openai-response', 'gemini']
   },
   { key: 'model', label: getMessage('configFieldModel') || 'Model', kind: 'text' },
   { key: 'api_base', label: getMessage('configFieldAPIBase') || 'API base', kind: 'text' },
   { key: 'api_key', label: getMessage('configFieldAPIKey') || 'API key', kind: 'secret' },
+  {
+    key: 'auth',
+    label: getMessage('chatgptAuthorization'),
+    kind: 'object',
+    fields: [
+      {
+        key: 'type',
+        label: getMessage('chatgptAuthorization'),
+        kind: 'select',
+        options: ['api_key', 'chatgpt']
+      },
+      { key: 'profile', label: getMessage('chatgptAccount'), kind: 'text' }
+    ]
+  },
   {
     key: 'effort',
     label: getMessage('configFieldEffort') || 'Effort',

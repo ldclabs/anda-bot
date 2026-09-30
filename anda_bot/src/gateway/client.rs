@@ -223,6 +223,10 @@ impl Client {
             .await
     }
 
+    pub async fn chatgpt(&self, request: &crate::chatgpt::api::Request) -> Result<Json, BoxError> {
+        self.post_json("/daemon/chatgpt", request).await
+    }
+
     pub async fn shutdown(&self) -> Result<Json, BoxError> {
         self.post_json("/daemon/shutdown", &()).await
     }

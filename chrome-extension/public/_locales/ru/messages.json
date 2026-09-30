@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "Система"
+  },
+  "chatgptTitle": {
+    "message": "Подписка ChatGPT"
+  },
+  "chatgptDescription": {
+    "message": "Подключите аккаунт ChatGPT для использования доступных моделей по подписке. Для аудио и видео нужен отдельный провайдер."
+  },
+  "chatgptAccount": {
+    "message": "Аккаунт ChatGPT"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "Переподключить / включить подписку"
+  },
+  "chatgptUseModel": {
+    "message": "Использовать выбранную модель"
+  },
+  "chatgptLogout": {
+    "message": "Выйти"
+  },
+  "chatgptManageUsage": {
+    "message": "Управление использованием"
+  },
+  "chatgptWaiting": {
+    "message": "Завершите вход в браузере."
+  },
+  "chatgptConnectedNotice": {
+    "message": "ChatGPT подключён. Выберите модель для использования подписки."
+  },
+  "chatgptUsingPlan": {
+    "message": "Используется подписка ChatGPT"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "Вход выполнен, но использование подписки не разрешено. Переподключитесь, чтобы разрешить его."
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "Вы вышли локально. Удалённый отзыв доступа не подтверждён; отключите Anda Bot в настройках ChatGPT."
+  },
+  "chatgptAuthorization": {
+    "message": "Авторизация"
   }
 }

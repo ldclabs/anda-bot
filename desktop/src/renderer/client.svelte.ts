@@ -142,7 +142,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     // A capability marker for shared views; the actual bearer never leaves Main.
     return normalizeSettings({
       baseUrl: this.connection.baseUrl || 'http://127.0.0.1:8042',
-      token: this.authorized ? 'native-session' : '',
+      token: this.authorized || this.connection.needsSetup ? 'native-session' : '',
       appearanceTheme: this.preferences.theme,
       submitKeyMode: this.preferences.submitKeyMode,
       approvalMode: this.preferences.approvalMode
@@ -165,6 +165,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.preferences.language = language
     setNativeMessages(language, translations[language])
     setClientPlatform({
+      chatgpt: (request) => window.anda.chatgpt(request),
+      openExternal: (url) => window.anda.openExternal(url),
       settings: async () => this.settings,
       saveSettings: async (settings) => {
         await this.savePreferences({

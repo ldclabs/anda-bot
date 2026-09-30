@@ -108,6 +108,7 @@ pub struct Engines {
     config_write_lock: Arc<Mutex<()>>,
     cli_workspaces: shell_runtime::CliWorkspaceGrants,
     home_dir: PathBuf,
+    chatgpt: Option<Arc<crate::chatgpt::ChatGptService>>,
 }
 
 #[async_trait]
@@ -134,6 +135,37 @@ pub struct EngineConfig {
     pub auto_updater: Arc<AutoUpdater>,
     /// Listener address; OAuth loopback redirects use the same IP family and port.
     pub gateway_addr: std::net::SocketAddr,
+    pub chatgpt: Option<Arc<crate::chatgpt::ChatGptService>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct PlanAccess {
+    auth: AppState,
+    owner: Principal,
+    models: Arc<Models>,
+}
+pub(crate) async fn plan_access(
+    State(state): State<PlanAccess>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if state
+        .models
+        .model_names()
+        .iter()
+        .any(|name| name.starts_with("chatgpt:"))
+    {
+        let caller = verify_trusted_user(&state.auth, request.headers(), unix_ms());
+        if !matches!(caller, Ok(caller) if caller == state.owner || caller == state.auth.default_engine)
+        {
+            return (
+                StatusCode::FORBIDDEN,
+                "ChatGPT plan providers are owner-only; use API-key providers for shared users",
+            )
+                .into_response();
+        }
+    }
+    next.run(request).await
 }
 
 #[derive(Clone)]
@@ -151,6 +183,8 @@ pub(crate) struct RuntimeModels {
     http_client: reqwest::Client,
     view: Arc<RwLock<DaemonModelsResponse>>,
     reload_lock: Arc<Mutex<()>>,
+    chatgpt: Option<Arc<crate::chatgpt::ChatGptService>>,
+    bot: Option<Arc<AndaBot>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,7 +244,25 @@ impl RuntimeModels {
             http_client,
             view: Arc::new(RwLock::new(view)),
             reload_lock: Arc::new(Mutex::new(())),
+            chatgpt: None,
+            bot: None,
         }
+    }
+
+    pub(crate) fn check_plan_switch(&self, next_chatgpt: bool) -> Result<(), BoxError> {
+        if (self.uses_chatgpt() || next_chatgpt)
+            && self.bot.as_ref().is_some_and(|bot| bot.has_busy_sessions())
+        {
+            return Err("Wait for running tasks and subagents to finish before changing ChatGPT plan models".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn uses_chatgpt(&self) -> bool {
+        self.models
+            .model_names()
+            .iter()
+            .any(|name| name.starts_with("chatgpt:"))
     }
 
     pub(crate) async fn current(&self) -> DaemonModelsResponse {
@@ -239,7 +291,15 @@ impl RuntimeModels {
             .into());
         }
 
-        let next_models = config.models(self.http_client.clone());
+        self.check_plan_switch(
+            config
+                .model
+                .providers
+                .iter()
+                .any(|p| !p.disabled && matches!(p.auth, config::ModelAuth::Chatgpt { .. })),
+        )?;
+        let next_models =
+            config.models_with_chatgpt(self.http_client.clone(), self.chatgpt.clone());
         if next_models.get_model().is_none() {
             return Err("No model found in config.yaml".into());
         }
@@ -457,12 +517,14 @@ impl Engines {
             hasher.finalize().into()
         };
         let outer_http_client = cfg.http_client.clone();
-        let runtime_models = RuntimeModels::new(
+        let mut runtime_models = RuntimeModels::new(
             cfg.models.clone(),
             cfg.brain_models.clone(),
             config_path.clone(),
             outer_http_client.clone(),
         );
+
+        runtime_models.chatgpt = cfg.chatgpt.clone();
 
         // Initialize Web3 client for ICP network interaction
         let web3 = Web3Client::builder()
@@ -601,9 +663,11 @@ impl Engines {
                 transcription_manager.clone(),
                 active_im_channels,
             )
+            .with_plan_owner(cfg.owner)
             .with_admission(cron_runtime.admission.clone())
             .with_memory_access(memory_access.clone()),
         );
+        runtime_models.bot = Some(bot.clone());
         let image_understanding_agent = Arc::new(
             MediaUnderstandingAgent::image(cfg.workspaces.clone())
                 .with_cli_workspaces(cli_workspaces.clone()),
@@ -834,6 +898,7 @@ impl Engines {
             state,
             brain_admission_auth,
             mcp_oauth_flows,
+            chatgpt: cfg.chatgpt,
             bot,
             brain: brain_client,
             memory,
@@ -853,7 +918,20 @@ impl Engines {
         (self.bot.admission(), self.brain_admission_auth.clone())
     }
 
+    pub(crate) fn plan_access_state(&self) -> PlanAccess {
+        let mut auth = self.state.clone();
+        let mut keys = auth.ed25519_pubkeys.as_ref().clone();
+        keys.extend(self.brain_admission_auth.ed25519_pubkeys.iter().cloned());
+        auth.ed25519_pubkeys = Arc::new(keys);
+        PlanAccess {
+            auth,
+            owner: self.cli_workspaces.owner(),
+            models: self.runtime_models.models.clone(),
+        }
+    }
+
     pub fn into_router(self, cancel_token: CancellationToken) -> Router<()> {
+        let plan_access_state = self.plan_access_state();
         let memory_state = memory_api::MemoryApiState {
             app: self.state.clone(),
             owner: self.cli_workspaces.owner(),
@@ -885,7 +963,7 @@ impl Engines {
             bridge: self.browser_bridge,
             voice_capabilities: self.voice_capabilities,
             auto_updater: self.auto_updater,
-            home_dir: self.home_dir,
+            home_dir: self.home_dir.clone(),
             runtime_models: self.runtime_models.clone(),
             cli_workspaces: self.cli_workspaces.clone(),
         };
@@ -926,14 +1004,35 @@ impl Engines {
             )
             .with_state(self.mcp_oauth_flows);
 
+        let chatgpt_router = self
+            .chatgpt
+            .map(|service| {
+                crate::chatgpt::api::ChatGptApi {
+                    service,
+                    home: self.home_dir.clone(),
+                    auth: self.state.clone(),
+                    owner: self.cli_workspaces.owner(),
+                    config_lock: self.config_write_lock.clone(),
+                    runtime: Some(self.runtime_models.clone()),
+                    setup_complete: CancellationToken::new(),
+                }
+                .router()
+            })
+            .unwrap_or_default();
+
         let app: Router<()> = Router::new()
             .route("/", routing::get(get_version))
             .route(
                 "/engine/{*id}",
-                routing::post(anda_engine).layer(axum::middleware::from_fn_with_state(
-                    self.bot.admission(),
-                    engine_admission,
-                )),
+                routing::post(anda_engine)
+                    .layer(axum::middleware::from_fn_with_state(
+                        self.bot.admission(),
+                        engine_admission,
+                    ))
+                    .layer(axum::middleware::from_fn_with_state(
+                        plan_access_state,
+                        plan_access,
+                    )),
             )
             .with_state(self.state)
             .merge(browser_ws_router)
@@ -947,7 +1046,8 @@ impl Engines {
             )
             .merge(auto_update_router)
             .merge(daemon_control_router)
-            .merge(mcp_oauth_router);
+            .merge(mcp_oauth_router)
+            .merge(chatgpt_router);
         app
     }
 }

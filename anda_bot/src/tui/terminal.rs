@@ -149,6 +149,7 @@ async fn run_app(
         needs_render |= revision != app.chat.revision();
         needs_render |= app.finish_pending_update_check();
         needs_render |= app.finish_pending_memory();
+        needs_render |= app.finish_pending_chatgpt();
         needs_render |= app.finish_pending_memory_inbox();
         needs_render |= app.refresh_actions();
 

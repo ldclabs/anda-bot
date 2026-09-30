@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { DesktopBridge, NativeEvent } from '../shared/contract'
 
 const api: DesktopBridge = {
+  chatgpt: (request) => ipcRenderer.invoke('anda:chatgpt', request),
   browser: (request) => ipcRenderer.invoke('anda:browser', request),
   git: (request) => ipcRenderer.invoke('anda:git', request),
   terminal: (request) => ipcRenderer.invoke('anda:terminal', request),

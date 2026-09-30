@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChatGptUsage from '$lib/anda/chatgpt/ChatGptUsage.svelte'
   import { getMessage } from '$lib/i18n'
   import { connectionKey } from '$lib/service-worker/settings'
   import ChatChannelsSidebar from '$lib/anda/ChatChannelsSidebar.svelte'
@@ -804,6 +805,7 @@
     {/if}
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
+      <ChatGptUsage model={andaClient.modelState.activeModel} />
       <ChatComposer
         placeholder={andaClient.settings.token
           ? getMessage('placeholderMessage')

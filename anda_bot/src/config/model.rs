@@ -1,10 +1,88 @@
-use anda_engine::model::ModelConfig;
+use anda_engine::model::{ModelConfig as EngineModelConfig, ModelEffort};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::util::text::read_text_file_sync;
 
 pub use crate::provider_env::CODEX_API_BASE;
+
+/// Local provider configuration keeps OAuth profile references separate from keys.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ModelAuth {
+    #[default]
+    ApiKey,
+    Chatgpt {
+        profile: String,
+    },
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ModelProvider {
+    pub family: String,
+    pub model: String,
+    pub api_base: String,
+    pub api_key: String,
+    pub labels: Vec<String>,
+    pub context_window: usize,
+    pub max_output: usize,
+    pub effort: Option<ModelEffort>,
+    pub disabled: bool,
+    pub bearer_auth: bool,
+    pub stream: bool,
+    pub auth: ModelAuth,
+}
+impl std::fmt::Debug for ModelProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModelProvider")
+            .field("config", &self.engine_config())
+            .field("auth", &self.auth)
+            .finish()
+    }
+}
+impl ModelProvider {
+    pub fn engine_config(&self) -> EngineModelConfig {
+        EngineModelConfig {
+            family: self.family.clone(),
+            model: self.model.clone(),
+            api_base: self.api_base.clone(),
+            api_key: self.api_key.clone(),
+            labels: self.labels.clone(),
+            context_window: self.context_window,
+            max_output: self.max_output,
+            effort: self.effort,
+            disabled: self.disabled,
+            bearer_auth: self.bearer_auth,
+            stream: self.stream,
+        }
+    }
+    pub fn selection_id(&self) -> String {
+        match &self.auth {
+            ModelAuth::ApiKey => self.model.clone(),
+            ModelAuth::Chatgpt { profile } => format!("chatgpt:{profile}:{}", self.model),
+        }
+    }
+}
+impl From<EngineModelConfig> for ModelProvider {
+    fn from(c: EngineModelConfig) -> Self {
+        Self {
+            family: c.family,
+            model: c.model,
+            api_base: c.api_base,
+            api_key: c.api_key,
+            labels: c.labels,
+            context_window: c.context_window,
+            max_output: c.max_output,
+            effort: c.effort,
+            disabled: c.disabled,
+            bearer_auth: c.bearer_auth,
+            stream: c.stream,
+            auth: ModelAuth::ApiKey,
+        }
+    }
+}
+type ModelConfig = ModelProvider;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelSettings {
@@ -18,12 +96,18 @@ pub struct ModelSettings {
 impl ModelSettings {
     pub fn try_load_codex_token(&mut self, home: &Path) {
         for provider in &mut self.providers {
-            if provider.api_key.trim().is_empty() && Self::uses_codex_auth(provider) {
+            if matches!(provider.auth, ModelAuth::ApiKey)
+                && provider.api_key.trim().is_empty()
+                && Self::uses_codex_auth(provider)
+            {
                 let token_path = home.join(".codex/auth.json");
                 if let Ok(token_str) = read_text_file_sync(token_path)
                     && let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
                     && !token.tokens.access_token.is_empty()
                 {
+                    log::warn!(
+                        "Legacy Codex credential compatibility is active. Run `anda auth login chatgpt` to connect an independent ChatGPT plan session."
+                    );
                     provider.api_key = token.tokens.access_token;
                 }
             }
@@ -62,7 +146,8 @@ pub struct OAuthToken {
 
 fn provider_with_env_api_key(provider: &ModelConfig) -> ModelConfig {
     let mut provider = provider.clone();
-    if provider.api_key.trim().is_empty()
+    if matches!(provider.auth, ModelAuth::ApiKey)
+        && provider.api_key.trim().is_empty()
         && let Some(api_key) =
             crate::provider_env::env_api_key(&provider.family, &provider.model, &provider.api_base)
     {

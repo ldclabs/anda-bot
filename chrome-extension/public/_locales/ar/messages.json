@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "النظام"
+  },
+  "chatgptTitle": {
+    "message": "خطة ChatGPT"
+  },
+  "chatgptDescription": {
+    "message": "اربط حساب ChatGPT لاستخدام النماذج المؤهلة ضمن خطتك. يتطلب الصوت والفيديو مزودًا منفصلًا."
+  },
+  "chatgptAccount": {
+    "message": "حساب ChatGPT"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "إعادة الاتصال / تفعيل الخطة"
+  },
+  "chatgptUseModel": {
+    "message": "استخدام النموذج المحدد"
+  },
+  "chatgptLogout": {
+    "message": "تسجيل الخروج"
+  },
+  "chatgptManageUsage": {
+    "message": "إدارة الاستخدام"
+  },
+  "chatgptWaiting": {
+    "message": "أكمل تسجيل الدخول في المتصفح."
+  },
+  "chatgptConnectedNotice": {
+    "message": "تم الاتصال بـ ChatGPT. اختر نموذجًا لبدء استخدام خطتك."
+  },
+  "chatgptUsingPlan": {
+    "message": "يتم استخدام خطة ChatGPT"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "تم تسجيل الدخول، لكن استخدام الخطة غير مصرح به. أعد الاتصال لتفعيله."
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "تم تسجيل الخروج محليًا. لم يتم تأكيد إلغاء الوصول عن بُعد؛ افصل Anda Bot من إعدادات ChatGPT."
+  },
+  "chatgptAuthorization": {
+    "message": "التفويض"
   }
 }

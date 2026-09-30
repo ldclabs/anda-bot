@@ -64,6 +64,14 @@ impl AndaBot {
         extra_user_context: Option<Message>,
         cron_receipt: Option<crate::cron::AgentReceipt>,
     ) {
+        // A plan registration is a billing identity. Keep this runner on the
+        // exact provider selected when the request starts, across tool rounds.
+        if req.model.is_none()
+            && let Some(model) = self.inner.models.get_model()
+            && model.model_name().starts_with("chatgpt:")
+        {
+            req.model = Some(model.model_name());
+        }
         let assistant = self.clone();
         tokio::spawn(async move {
             let mut cron_receipts = crate::cron::AgentReceipts::default();
@@ -758,6 +766,20 @@ impl SessionRunner {
         inputs: Vec<ConversationInput>,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<bool, BoxError> {
+        if !inputs.is_empty()
+            && self.runner.is_idle()
+            && !self.session.has_running_background_tasks()
+            && let Some(model) = self.assistant.inner.models.get_model()
+            && (model.model_name().starts_with("chatgpt:")
+                || self.runner.model().model_name().starts_with("chatgpt:"))
+        {
+            self.runner.set_model(
+                model
+                    .model_name()
+                    .starts_with("chatgpt:")
+                    .then(|| model.model_name()),
+            );
+        }
         self.wait_for_input = false;
         if !inputs.is_empty() {
             self.session.runner_idle.store(false, Ordering::SeqCst);

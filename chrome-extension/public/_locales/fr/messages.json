@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "Système"
+  },
+  "chatgptTitle": {
+    "message": "Forfait ChatGPT"
+  },
+  "chatgptDescription": {
+    "message": "Connectez votre compte ChatGPT pour utiliser les modèles inclus dans votre forfait. Un autre fournisseur est nécessaire pour l’audio et la vidéo."
+  },
+  "chatgptAccount": {
+    "message": "Compte ChatGPT"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "Reconnecter / activer le forfait"
+  },
+  "chatgptUseModel": {
+    "message": "Utiliser ce modèle"
+  },
+  "chatgptLogout": {
+    "message": "Se déconnecter"
+  },
+  "chatgptManageUsage": {
+    "message": "Gérer l’utilisation"
+  },
+  "chatgptWaiting": {
+    "message": "Terminez la connexion dans votre navigateur."
+  },
+  "chatgptConnectedNotice": {
+    "message": "ChatGPT est connecté. Sélectionnez un modèle pour utiliser votre forfait."
+  },
+  "chatgptUsingPlan": {
+    "message": "Forfait ChatGPT utilisé"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "Connecté, mais l’utilisation du forfait n’est pas autorisée. Reconnectez-vous pour l’activer."
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "Déconnexion locale effectuée. La révocation distante n’a pas été confirmée ; déconnectez Anda Bot dans les paramètres ChatGPT."
+  },
+  "chatgptAuthorization": {
+    "message": "Autorisation"
   }
 }

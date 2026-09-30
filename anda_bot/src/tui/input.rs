@@ -64,7 +64,7 @@ pub(super) fn input_display_text(app: &App) -> &str {
 
 pub(super) fn input_placeholder(app: &App) -> &'static str {
     if app.setup_required() {
-        "Edit config.yaml, save, then press Enter to enable chat."
+        "Press Ctrl+G to connect ChatGPT, or edit config.yaml and press Enter."
     } else if !app.daemon_running {
         "Waiting for a healthy local daemon. Press Enter to retry."
     } else if app.choice_input.is_some() || app.chat.sending {

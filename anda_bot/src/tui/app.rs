@@ -69,6 +69,7 @@ pub(super) struct App {
     pub(super) input_layouts: RefCell<InputLayouts>,
     pending_bootstrap: Option<oneshot::Receiver<Box<App>>>,
     pending_status: Option<oneshot::Receiver<StatusResult>>,
+    pending_chatgpt: Option<oneshot::Receiver<Result<(), String>>>,
     actions_key: (u64, usize),
     action_states: Vec<TuiActionState>,
     active_action: Option<TuiAction>,
@@ -109,6 +110,7 @@ impl App {
             input_layouts: RefCell::default(),
             pending_bootstrap: None,
             pending_status: None,
+            pending_chatgpt: None,
             actions_key: (0, 0),
             action_states: Vec::new(),
             active_action: None,
@@ -574,6 +576,111 @@ impl App {
         }
     }
 
+    pub(super) fn start_chatgpt_login(&mut self) {
+        if self.pending_chatgpt.is_some() {
+            return;
+        }
+        let client = self.client.clone();
+        let daemon = self.runtime_daemon();
+        let (tx, rx) = oneshot::channel();
+        self.notice="Continue with ChatGPT in your browser. Press Ctrl+C to leave; the pending sign-in will be cancelled.".into();
+        self.pending_chatgpt = Some(rx);
+        tokio::spawn(async move {
+            use crate::chatgpt::{LoginView, api::Request};
+            let result: Result<(), BoxError> = async {
+                client.ensure_daemon_running(&daemon).await?;
+                let flow: LoginView = serde_json::from_value(
+                    client
+                        .chatgpt(&Request::LoginStart {
+                            profile_id: None,
+                            port: 0,
+                            consent: false,
+                        })
+                        .await?,
+                )?;
+                if let Err(error) = crate::cli::auth::open_browser(
+                    flow.authorization_url
+                        .as_deref()
+                        .ok_or("missing sign-in URL")?,
+                ) {
+                    let _ = client
+                        .chatgpt(&Request::LoginCancel {
+                            flow_id: flow.flow_id.clone(),
+                        })
+                        .await;
+                    return Err(format!(
+                        "{error}. Use `anda auth login chatgpt --no-browser` in a terminal."
+                    )
+                    .into());
+                }
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    if tx.is_closed() {
+                        let _ = client
+                            .chatgpt(&Request::LoginCancel {
+                                flow_id: flow.flow_id.clone(),
+                            })
+                            .await;
+                        return Err("sign-in cancelled".into());
+                    }
+                    let status: LoginView = serde_json::from_value(
+                        client
+                            .chatgpt(&Request::LoginStatus {
+                                flow_id: flow.flow_id.clone(),
+                            })
+                            .await?,
+                    )?;
+                    if status.status == "completed" {
+                        let profile = status.account_id.ok_or("missing connected account")?;
+                        let models = client
+                            .chatgpt(&Request::Models {
+                                profile_id: profile.clone(),
+                            })
+                            .await?;
+                        let model = models
+                            .pointer("/models/0/slug")
+                            .and_then(|v| v.as_str())
+                            .ok_or("No eligible models; use ChatGPT account settings")?;
+                        client
+                            .chatgpt(&Request::ModelSelect {
+                                profile_id: profile,
+                                model: model.into(),
+                            })
+                            .await?;
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        return Ok(());
+                    }
+                    if !matches!(status.status.as_str(), "pending" | "exchanging") {
+                        return Err(status.error.unwrap_or(status.status).into());
+                    }
+                }
+            }
+            .await;
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
+    }
+    pub(super) fn finish_pending_chatgpt(&mut self) -> bool {
+        let Some(rx) = self.pending_chatgpt.as_mut() else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                self.pending_chatgpt = None;
+                match result {
+                    Ok(()) => self.start_bootstrap(),
+                    Err(error) => self.notice = error,
+                };
+                true
+            }
+            Err(oneshot::error::TryRecvError::Empty) => false,
+            Err(oneshot::error::TryRecvError::Closed) => {
+                self.pending_chatgpt = None;
+                self.notice = "ChatGPT sign-in ended; press Ctrl+G to retry.".into();
+                true
+            }
+        }
+    }
+
     pub(super) fn start_status_refresh(&mut self) {
         if self.pending_status.is_some() || self.pending_bootstrap.is_some() {
             return;
@@ -865,6 +972,10 @@ impl App {
     ) -> Result<(), BoxError> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
+                KeyCode::Char('g') if !self.chat.sending => {
+                    self.start_chatgpt_login();
+                    return Ok(());
+                }
                 KeyCode::Char('c') => {
                     self.should_quit = true;
                     return Ok(());

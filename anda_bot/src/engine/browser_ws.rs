@@ -455,6 +455,9 @@ async fn handle_browser_ws_request(
         None
     };
     let result = match incoming.method.as_deref().unwrap_or_default() {
+        _ if state.runtime_models.uses_chatgpt() && caller != state.cli_workspaces.owner() => Err(
+            "ChatGPT plan providers are owner-only; use API-key providers for shared users".into(),
+        ),
         _ if state.app_protocol && incoming.jsonrpc.as_deref() != Some("2.0") => {
             Err("jsonrpc must be 2.0".into())
         }
@@ -1094,6 +1097,10 @@ async fn handle_set_model(
     let model = models
         .get(model_name)
         .ok_or_else(|| format!("model {model_name:?} not found"))?;
+    state
+        .runtime_models
+        .check_plan_switch(model.model_name().starts_with("chatgpt:"))
+        .map_err(|e| e.to_string())?;
     models.set_model(model);
     let response = state
         .runtime_models

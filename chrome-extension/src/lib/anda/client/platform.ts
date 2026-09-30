@@ -3,6 +3,8 @@ import type { SettingsState } from './types'
 
 /** Optional native transport. Credentials stay in the host, never in the web UI. */
 export interface ClientPlatform {
+  chatgpt?<Result>(request: import('../chatgpt/types').ChatGptRequest): Promise<Result>
+  openExternal?(url: string): Promise<void>
   settings(): Promise<SettingsState>
   saveSettings(settings: SettingsState): Promise<void>
   rpc<Result>(method: string, params: unknown[]): Promise<Result>

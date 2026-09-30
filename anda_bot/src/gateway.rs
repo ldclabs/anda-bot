@@ -50,6 +50,7 @@ pub async fn serve(
     let memory = engines.memory.clone();
     let memory_cancel_token = cancel_token.clone();
     let brain_admission = engines.brain_admission_state();
+    let plan_access = engines.plan_access_state();
     let app = Router::new()
         .merge(engines.into_router(cancel_token.clone()))
         .merge(
@@ -58,6 +59,10 @@ pub async fn serve(
                 .layer(axum::middleware::from_fn_with_state(
                     brain_admission,
                     engine::brain_admission,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    plan_access,
+                    engine::plan_access,
                 )),
         )
         .layer(CompressionLayer::new());

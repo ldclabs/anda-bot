@@ -212,14 +212,34 @@ impl Config {
 
         if active.is_empty() {
             issues.push("model.active".to_string());
-        } else if let Some(provider) = model_providers.iter().find(|m| m.model == active) {
+        } else if let Some(provider) = model_providers.iter().find(|m| m.selection_id() == active) {
             let pos = model_providers
                 .iter()
-                .position(|m| m.model == active)
+                .position(|m| m.selection_id() == active)
                 .unwrap();
             let base = format!("model.providers[{pos}]");
             if provider.disabled {
                 issues.push(format!("{base}.disabled"));
+            }
+            if let ModelAuth::Chatgpt { profile } = &provider.auth {
+                if profile.is_empty() {
+                    issues.push(format!("{base}.auth.profile"));
+                }
+                if provider.family != "openai-response"
+                    || provider.api_base != crate::chatgpt::API_BASE
+                    || !provider.api_key.is_empty()
+                {
+                    issues.push(format!("{base}.auth: ChatGPT requires openai-response, the public OpenAI endpoint, and no API key"));
+                }
+                if provider
+                    .labels
+                    .iter()
+                    .any(|v| matches!(v.as_str(), "audio" | "video"))
+                {
+                    issues.push(format!(
+                        "{base}.labels: ChatGPT plan does not accept audio or video"
+                    ));
+                }
             }
             if provider.family.trim().is_empty() {
                 issues.push(format!("{base}.family"));
@@ -230,7 +250,7 @@ impl Config {
             if provider.api_base.trim().is_empty() {
                 issues.push(format!("{base}.api_base"));
             }
-            if provider.api_key.trim().is_empty() {
+            if matches!(provider.auth, ModelAuth::ApiKey) && provider.api_key.trim().is_empty() {
                 issues.push(format!("{base}.api_key"));
             }
         } else {
@@ -359,9 +379,37 @@ impl Config {
             || UserSettings::pubkey_from_str(&user_ref).is_ok()
     }
 
+    #[cfg(test)]
     pub fn models(&self, http_client: reqwest::Client) -> Models {
+        self.models_with_chatgpt(http_client, None)
+    }
+
+    pub fn models_with_chatgpt(
+        &self,
+        http_client: reqwest::Client,
+        chatgpt: Option<std::sync::Arc<crate::chatgpt::ChatGptService>>,
+    ) -> Models {
         let providers = self.model.providers_with_env_api_keys();
-        let models = Models::from_configs(&providers, http_client.clone());
+        let ordinary: Vec<_> = providers
+            .iter()
+            .filter(|p| matches!(p.auth, ModelAuth::ApiKey))
+            .map(ModelProvider::engine_config)
+            .collect();
+        let models = Models::from_configs(&ordinary, http_client.clone());
+        if let Some(service) = chatgpt {
+            for provider in &providers {
+                if !provider.disabled
+                    && let ModelAuth::Chatgpt { profile } = &provider.auth
+                {
+                    let model = crate::chatgpt::model::completion_model(
+                        service.clone(),
+                        profile.clone(),
+                        provider,
+                    );
+                    models.set(provider.selection_id(), model);
+                }
+            }
+        }
         let active = self.model.active.trim();
         if let Some(model) = models.get(active) {
             models.set_model(model);
@@ -406,8 +454,8 @@ pub fn normalize_identity(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ModelProvider as ModelConfig;
     use crate::util::http_client::new_reqwest_client;
-    use anda_engine::model::ModelConfig;
 
     #[test]
     fn brain_runtime_paths_use_config_directory_and_explicit_override() {

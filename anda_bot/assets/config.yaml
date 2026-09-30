@@ -52,16 +52,11 @@ model:
       stream: true
       disabled: false
 
-    - family: openai
-      model: "gpt-6.1-sol"
-      api_base: "https://chatgpt.com/backend-api/codex"
-      api_key: ""
-      effort: high
-      context_window: 320000
-      max_output: 128000
-      labels: ["memory", "image", "audio", "video"]
-      stream: true
-      disabled: false
+    # Connect a ChatGPT plan with `anda auth login chatgpt`, or Continue with
+    # ChatGPT in desktop/extension settings. Anda adds an openai-response
+    # provider with auth: { type: chatgpt, profile: <account-id> } automatically.
+    # OAuth tokens stay encrypted under ANDA_HOME/chatgpt, never in this file.
+    # Legacy Codex auth.json configurations should migrate via that login flow.
 
     - family: openai
       model: "gpt-6-luna"

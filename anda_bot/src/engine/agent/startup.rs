@@ -150,6 +150,7 @@ impl AndaBot {
         let now_ms = unix_ms();
         let mut meta = request_meta_from_conversation(&conversation, &candidate.source_key);
         meta = request_meta_for_conversation(&meta, conversation._id);
+        self.ensure_plan_owner(&conversation.user, &meta)?;
         let RequestState {
             workspace,
             source,

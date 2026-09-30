@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChatGptSettings from '$lib/anda/chatgpt/ChatGptSettings.svelte'
   import { getMessage } from '$lib/i18n'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass, fieldClass, fieldLabelClass, inputClass, textareaClass } from '$lib/anda/ui'
@@ -380,6 +381,9 @@
     ? 'flex h-full min-h-0 flex-col bg-background text-foreground'
     : 'min-h-screen bg-background text-foreground'}
 >
+  <div class="mx-auto w-full max-w-7xl p-4">
+    <ChatGptSettings {settings} onModelSelected={loadConfig} />
+  </div>
   {#if !embedded}
     <header class="border-b bg-muted/25">
       <div

@@ -12,6 +12,7 @@ mod auto_update;
 mod autostart;
 mod brain;
 mod channel;
+mod chatgpt;
 mod cli;
 mod config;
 mod cron;
@@ -75,6 +76,8 @@ struct Cli {
 pub enum Commands {
     /// Validate config YAML from stdin without creating a home or starting services.
     ValidateConfig,
+    /// Connect and manage a ChatGPT plan without an API key.
+    Auth(cli::auth::AuthCommand),
     /// Serve the isolated MIB evaluation adapter (never starts the daemon).
     #[cfg(feature = "mib")]
     Mib(mib::MibCommand),
@@ -503,6 +506,10 @@ async fn run() -> Result<(), BoxError> {
                     }
                 }
             }
+        }
+        Some(Commands::Auth(cmd)) => {
+            let client = build_control_client(&daemon).await?;
+            cli::auth::run(&daemon, &client, cmd).await?;
         }
         Some(Commands::Models(cmd)) => {
             log::info!(

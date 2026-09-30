@@ -135,3 +135,19 @@ GLM_API_KEY
 brain:
   runtime_config: null
 ```
+
+يمكنك أيضًا ربط خطة ChatGPT Plus / Pro مؤهلة دون مفتاح API:
+
+```bash
+anda auth login chatgpt
+anda auth accounts
+anda auth models <profile-id>
+anda auth use <profile-id> <model-slug>
+anda auth logout <profile-id>
+```
+
+في إعدادات Anda Desktop أو الإضافة، اضغط **Continue with ChatGPT** وأكمل التفويض في المتصفح، ثم اختر **استخدام النموذج المحدد**. في TUI، اضغط **Ctrl+G**. تختار CLI/TUI أول نموذج متاح؛ ويمكن تحديد نموذج عبر `--model <slug>` في CLI. عند عدم إعداد نموذج، يقدم daemon واجهات إعداد مصادَقًا عليها فقط؛ ولا يبدأ Brain أو القنوات أو cron إلا بعد اختيار النموذج. تشترك الواجهات الثلاث في الحسابات وتجديد الرموز ضمن `ANDA_HOME` نفسه. تُشفّر بيانات الاعتماد في `chatgpt/accounts.cose` ولا تُحفظ في config.yaml أو تخزين المتصفح.
+
+انتظر انتهاء المهام والوكلاء الفرعيين قبل تغيير نموذج الخطة. مزودو خطة ChatGPT مخصصون للمالك المحلي فقط؛ وعند تفعيلهم تُرفض طلبات المستخدمين الآخرين والمرسلين الخارجيين عبر المراسلة. يتطلب الصوت والفيديو والنسخ الصوتي مزودين منفصلين. لا يؤدي بلوغ الحد إلى التحويل التلقائي إلى مفتاح API مدفوع. استخدم [إعدادات استخدام ChatGPT](https://chatgpt.com/settings/usage). تبقى إعدادات `.codex/auth.json` القديمة متوافقة، لكن الاتصالات الجديدة ينبغي أن تستخدم تدفق تسجيل الدخول هذا.
+
+على مضيف بعيد أو دون متصفح، شغّل `anda auth login chatgpt --no-browser --port 1455` وأعد توجيه `127.0.0.1:1455` من جهاز المتصفح إلى مضيف daemon. لنقل جلسة، شغّل `anda auth export <profile-id> --output /absolute/path/session.json` (يفصل المضيف المصدر)، وانقل الملف بأمان عبر SSH مع صلاحيات `0600`، ثم شغّل `anda auth import /absolute/path/session.json` على الوجهة. يحذف الاستيراد ملف النقل ويحافظ على معرّف مضيف الوجهة. فعّل النموذج باستخدام `anda auth use <profile-id> <model-slug>`. لا تجدّد الجلسة نفسها على المضيفين معًا.

@@ -135,3 +135,19 @@ Définissez `brain.runtime_config` vers un fichier JSON/YAML de confiance, relat
 brain:
   runtime_config: null
 ```
+
+Vous pouvez aussi connecter un forfait ChatGPT Plus / Pro éligible sans clé API :
+
+```bash
+anda auth login chatgpt
+anda auth accounts
+anda auth models <profile-id>
+anda auth use <profile-id> <model-slug>
+anda auth logout <profile-id>
+```
+
+Dans les paramètres d’Anda Desktop ou de l’extension, cliquez sur **Continue with ChatGPT**, autorisez l’accès dans le navigateur, puis choisissez **Utiliser ce modèle**. Dans la TUI, appuyez sur **Ctrl+G**. La CLI/TUI choisit le premier modèle disponible ; la CLI accepte `--model <slug>`. Sans modèle configuré, le daemon expose uniquement des commandes de configuration authentifiées ; Brain, les canaux et cron démarrent après la sélection du modèle. Les trois clients partagent les comptes et le renouvellement sous le même `ANDA_HOME`. Les identifiants sont chiffrés dans `chatgpt/accounts.cose`, jamais stockés dans config.yaml ou dans le navigateur.
+
+Attendez la fin des tâches et des sous-agents avant de changer de modèle du forfait. Les fournisseurs ChatGPT sont réservés au propriétaire local : lorsqu’ils sont activés, les demandes des autres utilisateurs et des expéditeurs externes de messagerie sont refusées. L’audio, la vidéo et la transcription nécessitent des fournisseurs distincts. Une limite d’utilisation ne déclenche jamais un basculement automatique vers une clé API payante. Consultez les [paramètres d’utilisation ChatGPT](https://chatgpt.com/settings/usage). Les anciennes configurations `.codex/auth.json` restent compatibles, mais les nouvelles connexions doivent utiliser cette procédure.
+
+Pour un hôte distant ou sans navigateur, utilisez `anda auth login chatgpt --no-browser --port 1455` et transférez le port `127.0.0.1:1455` de la machine du navigateur vers l’hôte du daemon. Pour déplacer une session, lancez `anda auth export <profile-id> --output /absolute/path/session.json` (déconnecte la source), transférez le fichier par SSH avec les permissions `0600`, puis lancez `anda auth import /absolute/path/session.json` sur la destination. L’import supprime le fichier transféré et conserve l’identifiant de l’hôte de destination. Activez un modèle avec `anda auth use <profile-id> <model-slug>`. Ne renouvelez jamais la même session sur les deux hôtes.

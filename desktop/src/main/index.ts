@@ -727,6 +727,7 @@ async function setup(): Promise<void> {
       if (method === 'agent_run') emit({ type: 'submissions', value: store.state.pending })
     }
   })
+  handle('anda:chatgpt', (request: unknown) => daemon.chatgpt(request))
   handle('anda:config', (method, content, revision) => {
     if (
       !['GET', 'PUT'].includes(method) ||

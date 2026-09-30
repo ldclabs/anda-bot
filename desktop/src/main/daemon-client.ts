@@ -239,6 +239,7 @@ export class DaemonClient extends EventEmitter {
     }
   }
   private async establish(start: boolean): Promise<DaemonView> {
+    clearInterval(this.heartbeat)
     try {
       if (this.mockUrl) {
         this.view.baseUrl = loopbackBaseUrl(this.mockUrl)
@@ -263,6 +264,31 @@ export class DaemonClient extends EventEmitter {
         this.bearer = token.token
       }
       this.credentialAt = Date.now()
+      if (!this.mockUrl) {
+        const status = (await fetch(`${this.view.baseUrl}/daemon/status`, {
+          signal: AbortSignal.timeout(10_000),
+          redirect: 'error'
+        }).then((r) => r.json())) as { needs_setup?: boolean }
+        this.view.needsSetup = status.needs_setup === true
+        if (this.view.needsSetup) {
+          this.view.connected = false
+          this.view.error =
+            'Connect ChatGPT or configure an API provider in Settings to get started.'
+          this.heartbeat = setInterval(() => {
+            void fetch(`${this.view.baseUrl}/daemon/status`, {
+              signal: AbortSignal.timeout(2000),
+              redirect: 'error'
+            })
+              .then((r) => r.json() as Promise<{ needs_setup?: boolean }>)
+              .then((status) => {
+                if (status.needs_setup !== true) return this.connect()
+              })
+              .catch(() => {})
+          }, 2000)
+          this.emit('change', this.view)
+          return { ...this.view }
+        }
+      }
       await this.openSocket(false)
       this.view.connected = true
       delete this.view.error
@@ -297,6 +323,7 @@ export class DaemonClient extends EventEmitter {
       this.emit('change', this.view)
     } catch (error) {
       this.view.connected = false
+      this.view.needsSetup = false
       this.view.error = error instanceof Error ? error.message : 'Connection failed'
       this.emit('change', this.view)
     }
@@ -633,12 +660,43 @@ export class DaemonClient extends EventEmitter {
     await this.settlePending(id, null)
     this.emit('submissions', this.store.state.pending)
   }
+  async chatgpt(request: unknown): Promise<unknown> {
+    if (
+      !request ||
+      typeof request !== 'object' ||
+      !('method' in request) ||
+      ![
+        'accounts',
+        'login_start',
+        'login_status',
+        'login_cancel',
+        'account_select',
+        'logout',
+        'models',
+        'model_select'
+      ].includes(String(request.method)) ||
+      Buffer.byteLength(JSON.stringify(request)) > 16 * 1024
+    )
+      throw new Error('Invalid ChatGPT request')
+    if (!this.bearer) await this.connect()
+    if (!this.bearer) throw new Error('Anda daemon is unavailable')
+    const response = await fetch(`${this.view.baseUrl}/daemon/chatgpt`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.bearer}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      redirect: 'error',
+      signal: AbortSignal.timeout(60_000)
+    })
+    const result = (await response.json()) as { error?: string }
+    if (!response.ok) throw new Error(result.error || `ChatGPT request failed (${response.status})`)
+    return result
+  }
   async config(
     method: 'GET' | 'PUT',
     content?: string,
     expectedRevision?: string
   ): Promise<unknown> {
-    if (!this.view.connected) {
+    if (!this.view.connected && !this.view.needsSetup) {
       const request = this.configWrites
         .catch(() => {})
         .then(() => this.offlineConfig(method, content, expectedRevision))
@@ -746,5 +804,6 @@ export class DaemonClient extends EventEmitter {
     this.failPending(new Error('WebSocket disconnected'))
     this.view.connected = false
     this.view.liveEvents = false
+    this.view.needsSetup = false
   }
 }

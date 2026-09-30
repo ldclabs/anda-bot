@@ -1645,5 +1645,47 @@
   },
   "memoryBrainSystem": {
     "message": "系统"
+  },
+  "chatgptTitle": {
+    "message": "ChatGPT 套餐"
+  },
+  "chatgptDescription": {
+    "message": "连接 ChatGPT 账号，使用套餐支持的模型。音视频需要单独的模型服务。"
+  },
+  "chatgptAccount": {
+    "message": "ChatGPT 账号"
+  },
+  "chatgptContinue": {
+    "message": "Continue with ChatGPT"
+  },
+  "chatgptReconnect": {
+    "message": "重新连接 / 启用套餐"
+  },
+  "chatgptUseModel": {
+    "message": "使用所选模型"
+  },
+  "chatgptLogout": {
+    "message": "退出登录"
+  },
+  "chatgptManageUsage": {
+    "message": "管理用量"
+  },
+  "chatgptWaiting": {
+    "message": "请在浏览器中完成登录。"
+  },
+  "chatgptConnectedNotice": {
+    "message": "ChatGPT 已连接。选择模型后即可使用套餐。"
+  },
+  "chatgptUsingPlan": {
+    "message": "正在使用 ChatGPT 套餐"
+  },
+  "chatgptPermissionDisabled": {
+    "message": "已登录，但尚未授权使用 ChatGPT 套餐。重新连接以启用。"
+  },
+  "chatgptRevocationUnconfirmed": {
+    "message": "已在本地退出，尚未确认远程撤销。请在 ChatGPT 设置中断开 Anda Bot。"
+  },
+  "chatgptAuthorization": {
+    "message": "授权方式"
   }
 }

@@ -75,7 +75,47 @@ function browserAction(source, args) {
     )
   })
 }
+let chatgptConnected = true
+let chatgptSelected = false
 const server = createServer((req, res) => {
+  if (req.url === '/daemon/chatgpt') {
+    assert.equal(req.headers.authorization, 'Bearer desktop-test-token')
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+    })
+    req.on('end', () => {
+      const request = JSON.parse(body)
+      let result = {}
+      if (request.method === 'accounts')
+        result = {
+          active: 'test-account',
+          accounts: [
+            {
+              id: 'test-account',
+              label: 'Local test account',
+              connected: chatgptConnected,
+              plan_enabled: chatgptConnected
+            }
+          ],
+          needs_setup: false
+        }
+      if (request.method === 'models')
+        result = { models: [{ slug: 'test-plan-model', display_name: 'Test plan model' }] }
+      if (request.method === 'model_select') {
+        assert.equal(request.params.profile_id, 'test-account')
+        chatgptSelected = true
+        result = { active_model: 'chatgpt:test-account:test-plan-model' }
+      }
+      if (request.method === 'logout') {
+        chatgptConnected = false
+        result = { revocation_confirmed: true }
+      }
+      res.setHeader('Content-Type', 'application/json')
+      res.end(JSON.stringify(result))
+    })
+    return
+  }
   if (req.url === '/browser-fixture') {
     res.setHeader('Content-Type', 'text/html')
     res.end(
@@ -500,6 +540,18 @@ try {
   assert.equal(await page.getByText('Side reply after renderer reload', { exact: true }).count(), 1)
   await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
   await page.getByRole('heading', { name: 'General', exact: true }).waitFor()
+  const chatgptCard = page.getByRole('region', { name: 'ChatGPT plan', exact: true })
+  await chatgptCard.getByRole('button', { name: 'Use selected model', exact: true }).waitFor()
+  await chatgptCard.getByRole('button', { name: 'Use selected model', exact: true }).click()
+  await chatgptCard.getByText('Using ChatGPT plan', { exact: true }).waitFor()
+  assert.equal(chatgptSelected, true)
+  await page.screenshot({ path: join(screenshotDir, '15-chatgpt-settings.png') })
+  await page.setViewportSize({ width: 760, height: 740 })
+  await page.screenshot({ path: join(screenshotDir, '16-chatgpt-narrow.png') })
+  await page.setViewportSize({ width: 1280, height: 850 })
+  await chatgptCard.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await chatgptCard.getByRole('button', { name: 'Reconnect / enable plan', exact: true }).waitFor()
+  assert.equal(chatgptConnected, false)
   await page.screenshot({ path: join(screenshotDir, '03-settings.png') })
   await page.locator('.settings-tabs').getByRole('button', { name: 'Audio', exact: true }).click()
   // The meter counts wall-clock time, but the recorder emits nothing until its

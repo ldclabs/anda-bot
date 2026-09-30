@@ -84,6 +84,7 @@ pub struct AndaBot {
 struct AndaBotInner {
     admission: Arc<crate::runtime_admission::Admission>,
     memory_access: Option<Arc<brain::MemoryAccess>>,
+    plan_owner: Option<Principal>,
     brain: brain::Client,
     models: Arc<Models>,
     actions: Arc<ActionRuntime>,
@@ -248,6 +249,7 @@ impl AndaBot {
             inner: Arc::new(AndaBotInner {
                 admission: Arc::new(crate::runtime_admission::Admission::default()),
                 memory_access: None,
+                plan_owner: None,
                 brain,
                 models,
                 actions,
@@ -267,6 +269,28 @@ impl AndaBot {
                 session_creation_lock: tokio::sync::Mutex::new(()),
             }),
         }
+    }
+
+    fn ensure_plan_owner(&self, caller: &Principal, meta: &RequestMeta) -> Result<(), BoxError> {
+        if self
+            .inner
+            .models
+            .model_names()
+            .iter()
+            .any(|name| name.starts_with("chatgpt:"))
+            && (request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
+                || self.inner.plan_owner.is_some_and(|owner| &owner != caller))
+        {
+            return Err("ChatGPT plan providers are owner-only. Use API-key providers for external or shared users.".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn with_plan_owner(mut self, owner: Principal) -> Self {
+        Arc::get_mut(&mut self.inner)
+            .expect("configure plan owner before sharing")
+            .plan_owner = Some(owner);
+        self
     }
 
     pub(crate) fn with_memory_access(mut self, access: Arc<brain::MemoryAccess>) -> Self {
@@ -444,7 +468,7 @@ impl AndaBot {
     // A live session can itself be idle: its completion runner has no
     // pending work and no background tasks are running. The bot is busy only
     // while some session has work in flight.
-    fn has_busy_sessions(&self) -> bool {
+    pub(crate) fn has_busy_sessions(&self) -> bool {
         let mut sessions = self.inner.sessions.write();
         sessions.retain(|_, session| !session.sender.is_closed());
         sessions.values().any(|session| !session.is_idle())
@@ -749,6 +773,8 @@ impl Agent<AgentCtx> for AndaBot {
         if caller == &ANONYMOUS {
             return Err("anonymous caller not allowed".into());
         }
+
+        self.ensure_plan_owner(caller, ctx.meta())?;
 
         let has_resources = !resources.is_empty();
         let command = match PromptCommand::from(prompt) {
@@ -2003,6 +2029,23 @@ mod tests {
         let input = AgentInput::new(AndaBot::NAME.to_string(), "hello there".to_string());
         let output = engine.agent_run(test_caller(), input).await.unwrap();
         assert!(output.conversation.is_some() || output.session.is_some());
+    }
+
+    #[tokio::test]
+    async fn chatgpt_plan_rejects_external_channel_input_before_inference() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let model = anda_engine::model::openai::Client::new("unused-test-key", None)
+            .completion_model_v2("chatgpt:test:model");
+        bot.inner.models.set_model(Model::new(Arc::new(model)));
+        let mut input = AgentInput::new(AndaBot::NAME.to_string(), "external message".into());
+        let mut meta = RequestMeta::default();
+        meta.extra
+            .insert(keys::EXTERNAL_USER.to_string(), true.into());
+        input.meta = Some(meta);
+        let error = engine.agent_run(test_caller(), input).await.unwrap_err();
+        assert!(error.to_string().contains("owner-only"));
+        assert_eq!(bot.inner.conversations.conversations_len(), 0);
     }
 
     #[tokio::test]
