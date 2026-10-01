@@ -4,13 +4,26 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-10-01
+
 ### Added
 
-- **Sign in with ChatGPT**: connect an eligible ChatGPT plan from Anda Desktop, the Chrome extension, `anda auth login chatgpt`, or Ctrl+G in the TUI. A setup gateway makes the first login possible without an API key. Accounts share encrypted daemon-owned credentials, rotating token refresh, model discovery, logout/revocation, and explicit session transfer for self-hosted machines. ChatGPT plan inference uses the public Responses API with local tools and no automatic fallback to API-key billing. Plan providers are owner-only; audio/video and transcription retain separate providers.
+- **Sign in with ChatGPT**: connect an eligible ChatGPT plan from Anda Desktop, the Chrome extension, `anda auth login chatgpt`, or Ctrl+G in the TUI. A setup gateway makes the first login possible without an API key. Accounts share encrypted daemon-owned credentials, rotating token refresh, model discovery, logout/revocation, and explicit session transfer for self-hosted machines. ChatGPT plan inference uses the public Responses API with local tools and no automatic fallback to API-key billing. Plan providers are owner-only; audio/video and transcription retain separate providers. In Anda Desktop and the extension, the account controls live in Agent configuration → Models, and choosing a model there keeps unsaved edits to the rest of the configuration.
+- **Connect a model on first use**: when the daemon reports that no model is set up, Anda Desktop opens **Connect a model**. Sign in with ChatGPT and confirm a model, or pick a preset from the bundled `config.yaml` and enter only its API key. Saving changes just that provider and `model.active`, keeps the rest of the file and its comments, checks the configuration's revision and never overwrites a model already set up with another endpoint; the guide finishes once the daemon has loaded the model, without a paid test request. **Set up later** is remembered per Anda home: chat keeps your draft and a connect button, and **Settings → General → Connect a model** reopens the guide. The guide also carries the launch-at-login choice, replacing the "installed" dialog that the first run showed before any model was set up.
+
+### Changed
+
+- **Default model list**: a new `config.yaml` lists `mimo-v2.6-pro`, `mimo-v2.6-flash`, `kimi-k3`, `glm-5.3` and `glm-5.3-flash`, replacing `mimo-v2.5-pro`, `mimo-v2.5`, `kimi-k2.6`, `glm-5.1` and `step-3.7-flash`. `mimo-v2.6-flash` uses MiMo's Anthropic-compatible endpoint, the Kimi and GLM entries have a 400K context window and 128K output, `glm-5.3` drops the `memory` label, and `gemini-flash-latest`, `gemini-flash-lite-latest`, `mimo-v2.6-flash` and `kimi-k3` run at `effort: max`. The `gpt-6.1-sol` entry, which used the Codex CLI's token, gives way to a pointer to Sign in with ChatGPT. Anda Desktop's **Connect a model** offers these presets; configs created earlier keep their entries.
+- **Version 0.13.2**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.13.2.
 
 ### Fixed
 
-- **Model settings navigation**: opening Models with an existing API-key provider no longer mutates reactive state during rendering. ChatGPT plan settings now live inside Agent configuration → Models instead of above every configuration view or in General. Model activation preserves unsaved configuration edits, and model field labels resolve after the selected language is ready.
+- **Agent configuration in narrower windows**: in Anda Desktop and on the Chrome extension's configuration page, a window narrower than 1280 px shows the YAML preview under the form instead of squeezing the form between it and the section list; on small screens the section list wraps into a grid, and switching sections starts at the top of the form. The model provider fields are labeled in the selected UI language; Anda Desktop showed them in English.
+- **Homebrew formula passes the tap's checks**: 0.13.1's arm64-only `anda` formula declared its macOS download inside `on_macos`, which Homebrew's style audit rejects, so the tap's test-bot failed. The Apple Silicon build is now the formula's top-level download, with per-architecture Linux overrides; Intel Macs still get the arm64 requirement.
+
+### Upgrade notes
+
+- A configuration that still uses the Codex endpoint (`https://chatgpt.com/backend-api/codex`, such as the earlier `gpt-6.1-sol` entry) keeps borrowing the Codex CLI's `~/.codex/auth.json` token and now logs a warning. Run `anda auth login chatgpt`, or **Continue with ChatGPT** in Anda Desktop or the extension, to give Anda its own ChatGPT plan session; the old entry can then be removed.
 
 ## [0.13.1] — 2026-09-30
 

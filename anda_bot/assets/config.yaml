@@ -106,7 +106,7 @@ model:
       model: "gemini-flash-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
-      effort: high
+      effort: max
       context_window: 400000
       max_output: 64000
       labels: ["flash", "memory", "image", "audio", "video"]
@@ -117,7 +117,7 @@ model:
       model: "gemini-flash-lite-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
-      effort: high
+      effort: max
       context_window: 400000
       max_output: 64000
       labels: ["lite"]
@@ -125,7 +125,7 @@ model:
       disabled: false
 
     - family: anthropic
-      model: "mimo-v2.5-pro"
+      model: "mimo-v2.6-pro"
       api_base: "https://api.xiaomimimo.com/anthropic/v1"
       api_key: ""
       effort: high
@@ -136,11 +136,11 @@ model:
       disabled: false
       bearer_auth: true
 
-    - family: openai
-      model: "mimo-v2.5"
-      api_base: "https://api.xiaomimimo.com/v1"
+    - family: anthropic
+      model: "mimo-v2.6-flash"
+      api_base: "https://api.xiaomimimo.com/anthropic/v1"
       api_key: ""
-      effort: high
+      effort: max
       context_window: 400000
       max_output: 128000
       labels: ["flash", "image", "audio", "video"]
@@ -149,35 +149,35 @@ model:
       bearer_auth: true
 
     - family: openai
-      model: "kimi-k2.6"
+      model: "kimi-k3"
       api_base: "https://api.moonshot.cn/v1"
       api_key: ""
-      effort: high
-      context_window: 256000
-      max_output: 32000
+      effort: max
+      context_window: 400000
+      max_output: 128000
       labels: []
       stream: true
       disabled: false
 
     - family: anthropic
-      model: "glm-5.1"
+      model: "glm-5.3"
       api_base: "https://open.bigmodel.cn/api/anthropic/v1"
       api_key: ""
       effort: high
-      context_window: 200000
+      context_window: 400000
       max_output: 128000
-      labels: ["memory"]
+      labels: []
       stream: true
       disabled: false
 
-    - family: openai
-      model: "step-3.7-flash"
-      api_base: "https://api.stepfun.com/v1"
+    - family: anthropic
+      model: "glm-5.3-flash"
+      api_base: "https://open.bigmodel.cn/api/anthropic/v1"
       api_key: ""
       effort: high
-      context_window: 256000
-      max_output: 32000
-      labels: ["flash", "image", "video"]
+      context_window: 400000
+      max_output: 128000
+      labels: []
       stream: true
       disabled: false
 
