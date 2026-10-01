@@ -4,6 +4,16 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-10-01
+
+### Changed
+
+- **Version 0.13.3**: the `anda_bot` crate, its lockfile entry and Anda Desktop advertise 0.13.3. The Chrome extension is unchanged and stays at 0.13.2.
+
+### Fixed
+
+- **Check for updates covers the desktop app again**: in Anda Desktop, **Check for updates** in the tray or **Settings** stopped after the `anda` runtime whenever a new runtime release was ready or the runtime check failed, so the desktop app itself was not checked or updated; while a runtime release was ready, the tray offered only its install action. It now moves on to the desktop app after the runtime update is installed, postponed or fails, and the update dialog keeps both results, including any errors. The tray always lists **Check for updates**, next to the install actions for a ready `anda` or desktop release. The install docs in every language describe both updates.
+
 ## [0.13.2] — 2026-10-01
 
 ### Added
