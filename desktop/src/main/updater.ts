@@ -136,14 +136,11 @@ export class DesktopUpdater {
       try {
         const runtime = await this.checkRuntime(true)
         const release = downloadedRelease(runtime)
-        failed = Boolean(runtime.error)
-        messages.push(
-          release
-            ? await this.promptRuntime(release)
-            : runtime.error
-              ? `Anda runtime: ${runtime.error}`
-              : this.t('runtimeUpToDate').replace('{version}', runtime.current_tag)
-        )
+        if (release) messages.push(await this.promptRuntime(release))
+        else if (runtime.error) {
+          failed = true
+          messages.push(`Anda runtime: ${runtime.error}`)
+        } else messages.push(this.t('runtimeUpToDate').replace('{version}', runtime.current_tag))
       } catch (error) {
         failed = true
         messages.push(`Anda runtime: ${error instanceof Error ? error.message : String(error)}`)
