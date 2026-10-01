@@ -132,27 +132,36 @@ export class DesktopUpdater {
     return this.run(async () => {
       const messages: string[] = []
       let failed = false
+      const fail = (key: 'runtimeUpdateError' | 'desktopUpdateError', error: unknown) => {
+        failed = true
+        const detail = error instanceof Error ? error.message : String(error)
+        messages.push(this.t(key).replace('{error}', detail))
+      }
+      // The runtime check can download a whole release; look up the desktop
+      // feed meanwhile. A lookup failure is reported after the runtime result.
+      const desktop = this.findApp()
+      desktop.catch(() => {})
       this.progress(this.t('checkingRuntime'))
       try {
         const runtime = await this.checkRuntime(true)
         const release = downloadedRelease(runtime)
-        if (release) messages.push(await this.promptRuntime(release))
-        else if (runtime.error) {
-          failed = true
-          messages.push(`Anda runtime: ${runtime.error}`)
-        } else messages.push(this.t('runtimeUpToDate').replace('{version}', runtime.current_tag))
+        if (runtime.error) {
+          fail('runtimeUpdateError', runtime.error)
+          // A failed check keeps a verified download in the tray. Installing
+          // needs the release server too, so do not stop the service for it now.
+          if (release) messages.push(this.t('runtimeUpdateKept').replace('{version}', release))
+        } else if (release) messages.push(await this.promptRuntime(release))
+        else messages.push(this.t('runtimeUpToDate').replace('{version}', runtime.current_tag))
       } catch (error) {
-        failed = true
-        messages.push(`Anda runtime: ${error instanceof Error ? error.message : String(error)}`)
+        fail('runtimeUpdateError', error)
       }
       // Installing or postponing the runtime must not skip the desktop release.
       // Keep its result visible alongside any failure from the other channel.
       this.progress(this.t('checkingDesktop'))
       try {
-        messages.push(await this.checkApp())
+        messages.push(await this.checkApp(desktop))
       } catch (error) {
-        failed = true
-        messages.push(`Anda Desktop: ${error instanceof Error ? error.message : String(error)}`)
+        fail('desktopUpdateError', error)
       }
       return { message: messages.join('\n\n'), failed }
     })
@@ -228,31 +237,40 @@ export class DesktopUpdater {
     this.changed()
     return result
   }
-  private async checkApp(): Promise<string> {
+  /** The desktop release to offer, or a final `message` when there is none. */
+  private async findApp(): Promise<{ message: string } | { version: string; downloaded: boolean }> {
     const unavailable = await this.appUpdateUnavailable()
-    if (unavailable) return unavailable
-    if (!this.downloaded) {
-      const result = await this.findAppUpdate()
-      if (!result.isUpdateAvailable) return this.t('desktopUpToDate')
-      this.progress(`Anda Desktop ${result.updateInfo.version} is available.`)
+    if (unavailable) return { message: unavailable }
+    if (this.downloaded) return { version: this.downloaded, downloaded: true }
+    const result = await this.findAppUpdate()
+    return result.isUpdateAvailable
+      ? { version: result.updateInfo.version, downloaded: false }
+      : { message: this.t('desktopUpToDate') }
+  }
+  private async checkApp(found = this.findApp()): Promise<string> {
+    const release = await found
+    if ('message' in release) return release.message
+    const { version } = release
+    if (!release.downloaded) {
+      this.progress(`Anda Desktop ${version} is available.`)
       const choice = await dialog.showMessageBox({
         type: 'question',
-        message: `Download Anda Desktop ${result.updateInfo.version}?`,
+        message: `Download Anda Desktop ${version}?`,
         buttons: ['Later', 'Download'],
         defaultId: 1,
         cancelId: 0
       })
       if (choice.response !== 1) return 'Desktop update available; download postponed.'
-      this.progress(`Downloading Anda Desktop ${result.updateInfo.version}…`)
+      this.progress(`Downloading Anda Desktop ${version}…`)
       await autoUpdater.downloadUpdate()
-      this.downloaded = result.updateInfo.version
+      this.downloaded = version
     }
-    this.progress(`Anda Desktop ${this.downloaded} is ready to install.`)
+    this.progress(`Anda Desktop ${version} is ready to install.`)
     if (this.runningTerminals())
       return 'Desktop update downloaded. Close your terminal sessions before installing.'
     const choice = await dialog.showMessageBox({
       type: 'question',
-      message: `Install Anda Desktop ${this.downloaded} and restart it?`,
+      message: `Install Anda Desktop ${version} and restart it?`,
       detail: 'The Anda service keeps running; only the desktop app restarts.',
       buttons: ['Later', 'Install and restart'],
       defaultId: 0,
@@ -264,7 +282,7 @@ export class DesktopUpdater {
     this.progress('Installing Anda Desktop…')
     this.store.state.updateIntent = {
       previous: app.getVersion(),
-      target: this.downloaded,
+      target: version,
       startedAt: Date.now()
     }
     await this.store.save()

@@ -237,9 +237,16 @@ impl AutoUpdater {
         Ok(())
     }
 
+    /// Records a failed check or install. A verified download of a newer
+    /// release stays installable: a check that fails offline must not hide an
+    /// update that is already on disk.
     async fn record_failure(&self, error: String) -> AutoUpdateState {
         let mut state = self.state();
-        state.status = AutoUpdateStatus::Failed;
+        state.status = if usable_download(&state).await {
+            AutoUpdateStatus::Downloaded
+        } else {
+            AutoUpdateStatus::Failed
+        };
         state.current_tag = current_version_tag();
         state.last_checked_ms = Some(unix_ms());
         state.error = Some(error);
@@ -431,6 +438,20 @@ async fn usable_downloaded_file(
         .is_ok_and(|actual_hash| actual_hash == expected_hash)
 }
 
+/// Whether `state` records a verified download of a newer release that is
+/// still on disk.
+async fn usable_download(state: &AutoUpdateState) -> bool {
+    let (Some(latest_tag), Some(asset_name), Some(path)) = (
+        state.latest_tag.as_deref(),
+        state.asset_name.as_deref(),
+        state.downloaded_path.as_deref(),
+    ) else {
+        return false;
+    };
+    is_newer_release(latest_tag, &state.current_tag)
+        && usable_downloaded_file(state, latest_tag, asset_name, Path::new(path)).await
+}
+
 async fn sha256_file(path: &Path) -> Result<String, BoxError> {
     let mut file = tokio::fs::File::open(path).await?;
     let mut hasher = Sha256::new();
@@ -574,6 +595,46 @@ mod tests {
         // The failure state is durable across reads.
         let reread = updater.state();
         assert_eq!(reread.status, AutoUpdateStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn failures_keep_a_verified_download_installable() {
+        let updater = test_updater().await;
+        let dir = tempfile::tempdir().unwrap();
+        let asset = "anda-macos-arm64";
+        let path = dir.path().join(asset);
+        let mut state = AutoUpdateState {
+            status: AutoUpdateStatus::Downloaded,
+            latest_tag: Some("v9999.0.0".to_string()),
+            asset_name: Some(asset.to_string()),
+            downloaded_path: Some(path.to_string_lossy().to_string()),
+            sha256: Some(write_file(&path, b"the new binary")),
+            checksum_verified: true,
+            ..AutoUpdateState::default()
+        };
+        updater.save_state(&state).await.unwrap();
+
+        // An offline check reports its error and keeps the release ready.
+        let checked = updater.check_now().await;
+        assert_eq!(checked.status, AutoUpdateStatus::Downloaded);
+        assert!(checked.downloaded_update_available());
+        assert!(checked.error.is_some());
+        assert!(checked.last_checked_ms.is_some());
+        assert!(updater.state().downloaded_update_available());
+
+        // A download of the running release is not an update to keep.
+        state.latest_tag = Some(state.current_tag.clone());
+        updater.save_state(&state).await.unwrap();
+        let failed = updater.record_failure("boom".to_string()).await;
+        assert_eq!(failed.status, AutoUpdateStatus::Failed);
+
+        // Neither is a download that no longer matches its checksum.
+        state.latest_tag = Some("v9999.0.0".to_string());
+        updater.save_state(&state).await.unwrap();
+        std::fs::write(&path, b"tampered").unwrap();
+        let failed = updater.check_now().await;
+        assert_eq!(failed.status, AutoUpdateStatus::Failed);
+        assert!(!updater.state().downloaded_update_available());
     }
 
     #[tokio::test]

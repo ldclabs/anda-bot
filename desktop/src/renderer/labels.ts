@@ -57,6 +57,10 @@ const en = {
   desktopUpdateAvailable: 'Anda Desktop {version} available',
   desktopUpdateCheckUnavailable: 'Unable to check for desktop updates. Please try again.',
   runtimeUpToDate: 'Anda runtime {version} is up to date.',
+  runtimeUpdateError: 'Anda runtime: {error}',
+  runtimeUpdateKept:
+    'Anda {version} stays downloaded. Install it from the tray once the release server is reachable.',
+  desktopUpdateError: 'Anda Desktop: {error}',
   desktopUpToDate: 'Anda Desktop is up to date.',
   desktopUpdatesReleaseOnly: 'Desktop updates are available only in release builds.',
   desktopUpdatesManual:
@@ -200,6 +204,9 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateAvailable: 'Anda 桌面客户端 {version} 可更新',
     desktopUpdateCheckUnavailable: '无法检查桌面客户端更新，请重试。',
     runtimeUpToDate: 'Anda 服务 {version} 已是最新版本。',
+    runtimeUpdateError: 'Anda 服务：{error}',
+    runtimeUpdateKept: 'Anda {version} 的更新包仍保留在本地，发布服务器可访问后可从托盘安装。',
+    desktopUpdateError: 'Anda 桌面客户端：{error}',
     desktopUpToDate: 'Anda 桌面客户端已是最新版本。',
     desktopUpdatesReleaseOnly: '当前为开发版本，桌面客户端自动更新仅适用于正式发布版本。',
     desktopUpdatesManual: '当前桌面客户端未配置签名更新通道，请手动安装新版本安装包。',
@@ -337,6 +344,10 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateCheckUnavailable:
       'Impossible de vérifier les mises à jour du bureau. Veuillez réessayer.',
     runtimeUpToDate: 'Le service Anda {version} est à jour.',
+    runtimeUpdateError: 'Service Anda : {error}',
+    runtimeUpdateKept:
+      'Anda {version} reste téléchargé. Installez-le depuis l’icône dès que le serveur des versions est accessible.',
+    desktopUpdateError: 'Anda Desktop : {error}',
     desktopUpToDate: 'Anda Desktop est à jour.',
     desktopUpdatesReleaseOnly:
       'Les mises à jour du bureau sont disponibles uniquement dans les versions publiées.',
@@ -479,6 +490,10 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateCheckUnavailable:
       'No se pudieron comprobar las actualizaciones de escritorio. Inténtalo de nuevo.',
     runtimeUpToDate: 'El servicio Anda {version} está actualizado.',
+    runtimeUpdateError: 'Servicio Anda: {error}',
+    runtimeUpdateKept:
+      'Anda {version} sigue descargado. Instálalo desde la bandeja cuando el servidor de versiones esté accesible.',
+    desktopUpdateError: 'Anda Desktop: {error}',
     desktopUpToDate: 'Anda Desktop está actualizado.',
     desktopUpdatesReleaseOnly:
       'Las actualizaciones de escritorio solo están disponibles en versiones publicadas.',
@@ -620,6 +635,10 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateAvailable: 'Доступна Anda Desktop {version}',
     desktopUpdateCheckUnavailable: 'Не удалось проверить обновления приложения. Повторите попытку.',
     runtimeUpToDate: 'Служба Anda {version} обновлена до последней версии.',
+    runtimeUpdateError: 'Служба Anda: {error}',
+    runtimeUpdateKept:
+      'Anda {version} остаётся загруженной. Установите её из трея, когда сервер релизов станет доступен.',
+    desktopUpdateError: 'Anda Desktop: {error}',
     desktopUpToDate: 'Anda Desktop обновлён до последней версии.',
     desktopUpdatesReleaseOnly: 'Обновления приложения доступны только в релизных сборках.',
     desktopUpdatesManual:
@@ -760,6 +779,10 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateAvailable: 'يتوفر Anda Desktop {version}',
     desktopUpdateCheckUnavailable: 'تعذّر البحث عن تحديثات تطبيق سطح المكتب. حاول مرة أخرى.',
     runtimeUpToDate: 'خدمة Anda {version} محدّثة.',
+    runtimeUpdateError: 'خدمة Anda: {error}',
+    runtimeUpdateKept:
+      'يبقى Anda {version} منزّلًا. ثبّته من شريط النظام عندما يصبح خادم الإصدارات متاحًا.',
+    desktopUpdateError: 'Anda Desktop: {error}',
     desktopUpToDate: 'Anda Desktop محدّث.',
     desktopUpdatesReleaseOnly: 'تحديثات تطبيق سطح المكتب متاحة فقط في الإصدارات المنشورة.',
     desktopUpdatesManual: 'لا تتضمن هذه النسخة قناة تحديث موقّعة؛ ثبّت الحزمة التالية يدويًا.',

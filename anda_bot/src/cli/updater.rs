@@ -357,6 +357,10 @@ async fn run_update_check(
 fn print_update_check_state(state: &auto_update::AutoUpdateState) {
     match state.status {
         auto_update::AutoUpdateStatus::Downloaded if state.downloaded_update_available() => {
+            // A failed check keeps a verified download; report both.
+            if let Some(detail) = state.error.as_deref() {
+                println!("Update check failed: {detail}");
+            }
             let latest = state.latest_tag.as_deref().unwrap_or("the latest release");
             println!(
                 "Anda {latest} has been downloaded. Run `anda update`, then `anda restart` to use it."
