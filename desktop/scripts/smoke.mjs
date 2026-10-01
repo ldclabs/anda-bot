@@ -607,16 +607,26 @@ try {
   )
 
   await page.screenshot({ path: join(screenshotDir, '15-chatgpt-settings.png') })
-  await page.setViewportSize({ width: 760, height: 740 })
+  // Narrow the real window. Playwright's viewport emulation outlives the check:
+  // later "narrow" steps stayed at the emulated size, and on Windows the
+  // screenshot after the language switch reloaded the page timed out.
+  const fullWidth = await page.evaluate(() => window.innerWidth)
+  const narrowWidth = 760
+  const fullBounds = await app.evaluate(({ BrowserWindow }, width) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    const bounds = window.getBounds()
+    window.setContentSize(width, 740)
+    return bounds
+  }, narrowWidth)
+  await page.waitForFunction((width) => window.innerWidth === width, narrowWidth)
   await page.getByRole('heading', { name: 'Models', exact: true }).scrollIntoViewIfNeeded()
   const narrowForm = await page.getByRole('region', { name: 'Models', exact: true }).boundingBox()
   assert.ok(
     narrowForm && narrowForm.height > 300,
     'Models form must not collapse in a narrow window'
   )
-  const narrowViewport = page.viewportSize()
   assert.ok(
-    narrowForm.x + narrowForm.width <= narrowViewport.width + 1,
+    narrowForm.x + narrowForm.width <= narrowWidth + 1,
     'Models form must fit the window width'
   )
   await chatgptCard
@@ -624,7 +634,11 @@ try {
     .scrollIntoViewIfNeeded()
 
   await page.screenshot({ path: join(screenshotDir, '16-chatgpt-narrow.png') })
-  await page.setViewportSize({ width: 1280, height: 850 })
+  await app.evaluate(
+    ({ BrowserWindow }, bounds) => BrowserWindow.getAllWindows()[0].setBounds(bounds),
+    fullBounds
+  )
+  await page.waitForFunction((width) => window.innerWidth === width, fullWidth)
   await chatgptCard.getByRole('button', { name: 'Sign out', exact: true }).click()
   await chatgptCard.getByRole('button', { name: 'Reconnect / enable plan', exact: true }).waitFor()
   assert.equal(chatgptConnected, false)
