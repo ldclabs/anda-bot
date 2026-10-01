@@ -22,13 +22,14 @@ All daemon commands then use that shared `anda`, so the desktop, terminals and t
 
 ### Tray and login / 托盘与登录启动
 
-The app's tray is Anda's only tray. It shows whether the service runs, restarts it, installs `anda` updates, copies a 30-day Chrome extension token and opens the logs. The first run asks whether to start Anda at login (**Settings → Launch at login**); a login start stays in the tray without opening a window and starts the service.
+The app's tray is Anda's only tray. It shows whether the service runs, restarts it, installs `anda` updates, copies a 30-day Chrome extension token and opens the logs. The model connection guide offers a launch-at-login option (also in **Settings → Launch at login**); a login start stays in the tray without opening a window and starts the service.
 
 - Closing the window keeps the tray, terminals and notifications. **Quit Anda Desktop** leaves the service running, but asks before ending active user terminals. An explicit stop in Settings is remembered across restarts until you reconnect.
 - On macOS, closing a fullscreen window first exits fullscreen, then hides it. Reopen it from the Dock or tray to continue with the same chats and drafts.
 - Automatic reconnects never start a service that was stopped elsewhere (for example with `anda stop`); opening the app, *Reconnect* or sending a message does.
 - The app mirrors its UI language to `~/.anda/launcher/ui.json`, which the daemon uses for approval cards and the Chrome extension follows.
-- If configuration is incomplete, open **Settings → Agent configuration**. Offline saves are validated by the Rust parser before replacing the file; a private `config.yaml.desktop-backup` is preserved.
+- When a model is missing, the connection guide opens automatically. Choose ChatGPT and confirm a model, or select a preset sourced directly from `anda_bot/assets/config.yaml` and enter its API key. Saving preserves unrelated YAML and uses revision checks; completion waits for the selected model to load, without a paid probe request. Dismissing the guide is remembered per Anda home. Chat keeps a connection button and your draft; reopen it from **Settings → General → Connect a model**.
+- If other configuration is incomplete, open **Settings → Agent configuration**. Offline saves are validated by the Rust parser before replacing the file; a private `config.yaml.desktop-backup` is preserved.
 - Imported IM channel conversations are read-only; start a local chat to respond without changing the original sender or reply route.
 - Chrome page automation continues to require the Chrome extension. Electron does not share Chrome's tabs or login state.
 
@@ -76,6 +77,7 @@ Use `--anda-profile=/absolute/path` when an explicit, separate UI profile is nee
 
 ```bash
 pnpm --dir desktop test:e2e
+pnpm --dir desktop test:onboarding
 pnpm --dir chrome-extension check
 pnpm --dir chrome-extension test
 pnpm --dir chrome-extension i18n
@@ -84,6 +86,8 @@ RUST_MIN_STACK=16777216 cargo test -p anda_bot desktop_ -- --nocapture
 RUST_MIN_STACK=16777216 cargo test -p anda_bot daemon_control_routes_serve_config_and_status -- --nocapture
 RUST_MIN_STACK=16777216 cargo test -p anda_bot --test cli_validation -- --nocapture
 ```
+
+The onboarding smoke test covers preset selection, configuration conflicts, draft retention, dismissal/restart, ChatGPT cancellation and activation, and non-model configuration errors. It saves screenshots under `desktop/test-results/onboarding/`.
 
 The Electron smoke test uses a temporary profile and authenticated local mock daemon. It never opens the real Anda database or calls a paid model. Screenshots are written to `desktop/test-results/`. GUI tests need a graphical session and may need to run outside a command sandbox.
 

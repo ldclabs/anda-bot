@@ -53,7 +53,10 @@ async fn config(
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let config: serde_json::Value = serde_saphyr::from_str(&content).unwrap_or_default();
-    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":true})).into_response()
+    let setup_issues = crate::config::Config::from_contents(&content)
+        .map(|config| config.setup_issues())
+        .unwrap_or_else(|_| vec!["config".into()]);
+    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":true,"setup_issues":setup_issues})).into_response()
 }
 async fn read_config(path: &std::path::Path) -> std::io::Result<Option<String>> {
     match crate::util::text::read_text_file(path).await {
@@ -112,7 +115,8 @@ async fn update_config(
     if config.setup_issues().is_empty() {
         api.setup_complete.cancel();
     }
-    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":!config.setup_issues().is_empty()})).into_response()
+    let setup_issues = config.setup_issues();
+    Json(json!({"path":path,"revision":revision(&content),"content":content,"config":config,"needs_setup":!setup_issues.is_empty(),"setup_issues":setup_issues})).into_response()
 }
 async fn shutdown(
     State((api, cancel)): State<(ChatGptApi, tokio_util::sync::CancellationToken)>,

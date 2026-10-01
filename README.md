@@ -54,7 +54,9 @@ Anda Desktop is the chat window, workbench and tray for your local Anda. Downloa
 
 New macOS CLI and desktop releases are available for Apple Silicon only. Intel Mac users can build from source.
 
-The desktop, your terminal and the Chrome extension share one `anda` and one daemon. On start, Anda Desktop keeps an existing install (from the install script, `ANDA_INSTALL_DIR` or Homebrew), or installs its bundled `anda` and curated skills where the install scripts put them: `~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows. A newer CLI is never downgraded, and Homebrew installs are updated with `brew upgrade`. The first run asks whether Anda should start at login; the tray then keeps the service running while the window is closed.
+The desktop, your terminal and the Chrome extension share one `anda` and one daemon. On start, Anda Desktop keeps an existing install (from the install script, `ANDA_INSTALL_DIR` or Homebrew), or installs its bundled `anda` and curated skills where the install scripts put them: `~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows. A newer CLI is never downgraded, and Homebrew installs are updated with `brew upgrade`. The model connection guide includes a launch-at-login option; the tray then keeps the service running while the window is closed.
+
+When no model is configured, the desktop automatically opens **Connect a model**. Sign in with ChatGPT and confirm a model, or choose a preset from the bundled `config.yaml` and enter its API key. Anda saves and loads the default model before returning to chat. **Set up later** keeps a reminder in chat; reopen the guide from **Settings → General → Connect a model**. Existing model configurations are reused.
 
 The desktop tray replaces the retired Anda Bot menu bar launcher. Installing Anda Desktop, rerunning an install script or updating an old launcher removes the launcher's login entry, app bundle and shortcuts, and keeps the daemon starting at login if the launcher did.
 
@@ -101,7 +103,7 @@ shell installer, set `ANDA_NO_AUTOSTART=1` or `ANDA_NO_START=1`.
 
 Requirements:
 
-- At least one model provider API key. Enter it in Anda Desktop under
+- At least one model provider API key. Enter it in the desktop **Connect a model** guide or under
   **Settings → Agent configuration**, or put it in `~/.anda/config.yaml` or a
   supported environment variable.
 
@@ -138,7 +140,7 @@ anda auth use <profile-id> <model-slug>
 anda auth logout <profile-id>
 ```
 
-In Anda Desktop, open **Settings → Agent configuration → Models**. In the extension, open **Models** on the configuration page or the model section in side-panel settings. Click **Continue with ChatGPT**, complete browser authorization, then choose **Use selected model**. Press **Ctrl+G** in the TUI to sign in. CLI/TUI sign-in selects the first available model; pass `--model <slug>` to the CLI to choose another. Without a configured model, the daemon serves only authenticated setup controls; Brain, channels and cron start after model selection. All three clients share account and refresh state under the same `ANDA_HOME`. Credentials are encrypted in `chatgpt/accounts.cose`, never stored in config.yaml or browser storage.
+In Anda Desktop, use **Connect a model → Continue with ChatGPT**, then confirm the selected model. The full account controls remain under **Settings → Agent configuration → Models**. In the extension, open **Models** on the configuration page or the model section in side-panel settings. Click **Continue with ChatGPT**, complete browser authorization, then choose **Use selected model**. Press **Ctrl+G** in the TUI to sign in. CLI/TUI sign-in selects the first available model; pass `--model <slug>` to the CLI to choose another. Without a configured model, the daemon serves only authenticated setup controls; Brain, channels and cron start after model selection. All three clients share account and refresh state under the same `ANDA_HOME`. Credentials are encrypted in `chatgpt/accounts.cose`, never stored in config.yaml or browser storage.
 
 Changing a ChatGPT plan model waits until running tasks and subagents are idle. ChatGPT plan providers are owner-only: while they are enabled, other users and external IM requests are rejected. Audio, video and transcription require separate providers. A usage limit never silently switches billing to an API key; use [ChatGPT usage settings](https://chatgpt.com/settings/usage). Existing `.codex/auth.json` configurations remain compatible, but new connections should use this dedicated sign-in flow.
 

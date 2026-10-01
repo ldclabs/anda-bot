@@ -50,6 +50,7 @@
   import AudioPanel from './AudioPanel.svelte'
   import LocaleSwitcher from './LocaleSwitcher.svelte'
   import UpdateDialog from './UpdateDialog.svelte'
+  import ModelSetup from './ModelSetup.svelte'
   let { client }: { client: DesktopClient } = $props()
   provideAndaClient(untrack(() => client))
   const t = (key: Label) => label(client.preferences.language, key)
@@ -136,6 +137,15 @@
   ]
   $effect(() => applyAppearanceTheme(client.preferences.theme))
   $effect(() => {
+    if (
+      client.ready &&
+      client.needsModelSetup &&
+      !client.modelSetupAcknowledged &&
+      !client.updateDialogOpen
+    )
+      client.modelSetupOpen = true
+  })
+  $effect(() => {
     const source = client.activeSource
     if (source !== renderedSource) {
       if (renderedSource && scrollArea) scrollPositions.set(renderedSource, scrollArea.scrollTop)
@@ -218,6 +228,10 @@
       throw error
     }
     following = true
+  }
+  function openAgentConfig() {
+    client.view = 'settings'
+    settingsTab = 'config'
   }
   async function searchHistory() {
     if (!query.trim() || !client.authorized) return
@@ -495,7 +509,16 @@
             >{t('newChat')}</button
           >
         </div>{/if}
-      {#if !client.authorized}<div class="status-banner">
+      {#if client.connection.needsSetup}<div class="status-banner">
+          <span>{t(client.needsModelSetup ? 'setupMissingModel' : 'setupRepair')}</span>
+          <button
+            onclick={() =>
+              client.needsModelSetup ? (client.modelSetupOpen = true) : openAgentConfig()}
+          >
+            {t(client.needsModelSetup ? 'connectModel' : 'setupAdvanced')}
+          </button>
+        </div>
+      {:else if !client.authorized}<div class="status-banner">
           <span>{client.connection.error || t('disconnected')}</span><button
             onclick={() => void reconnect()}>{t('reconnect')}</button
           >
@@ -571,21 +594,27 @@
       <footer class="composer-footer">
         <div class="composer-container">
           {#key client.activeSource}<ChatComposer
-              disabled={!client.authorized || client.readOnly || currentPending.length > 0}
+              disabled={(!client.authorized && !client.needsModelSetup) ||
+                client.readOnly ||
+                currentPending.length > 0}
+              connectAction={client.needsModelSetup
+                ? { label: t('connectModel'), run: () => (client.modelSetupOpen = true) }
+                : undefined}
               placeholder={t('prompt')}
               sending={submitting}
               {working}
               stoppable={(working || client.voice.speaking) && !client.readOnly}
               onSend={send}
               onStop={() => client.stopActiveTask()}
-              voiceEnabled={pageVisible}
-              voiceAvailable={client.voice.capabilities.transcription.length > 0}
+              voiceEnabled={pageVisible && client.authorized}
+              voiceAvailable={client.authorized &&
+                client.voice.capabilities.transcription.length > 0}
               voiceCapabilities={client.voice.capabilities}
               onVoiceSend={(recording) => client.sendVoiceTurn(recording)}
               approvalMode={client.preferences.approvalMode}
               onApprovalModeChange={(mode) => preference({ approvalMode: mode })}
               submitKeyMode={client.preferences.submitKeyMode}
-              onLoadSkills={() => client.skills.listPrompts()}
+              onLoadSkills={client.authorized ? () => client.skills.listPrompts() : undefined}
               quickPrompts={client.quickPrompts.items}
               onRemoveQuickPrompt={(prompt) => client.quickPrompts.remove(prompt.text)}
               onClearQuickPrompts={() => client.quickPrompts.clear()}
@@ -670,6 +699,12 @@
         </div>{:else}<div class="settings-page">
           <h1>{t('general')}</h1>
           <p class="muted">Anda Desktop · {client.connection.home}</p>
+          <div class="setting-row">
+            <span>{t('connectModel')}</span>
+            <button class="primary" onclick={() => (client.modelSetupOpen = true)}
+              >{t('connectModel')}</button
+            >
+          </div>
           <div class="setting-row">
             <span>{t('theme')}</span><DropdownMenu
               items={themeItems}
@@ -868,4 +903,7 @@
     onclose={() => (client.updateDialogOpen = false)}
     oncheck={() => void checkUpdate()}
   />
+{/if}
+{#if client.modelSetupOpen && !client.updateDialogOpen}
+  <ModelSetup {client} onadvanced={openAgentConfig} />
 {/if}

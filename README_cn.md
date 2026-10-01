@@ -54,7 +54,9 @@ Anda 桌面端是本地 Anda 的聊天窗口、工作台和托盘。请从 [late
 
 新的 macOS 命令行和桌面发布包仅提供 Apple Silicon 版本。Intel Mac 用户可从源码构建。
 
-桌面端、终端和 Chrome 扩展共用同一个 `anda` 和同一个 daemon。桌面端启动时会沿用已有安装（安装脚本、`ANDA_INSTALL_DIR` 或 Homebrew 安装的 anda）；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置：macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`。较新的 CLI 不会被降级，Homebrew 安装通过 `brew upgrade` 更新。首次运行会询问是否登录时启动 Anda；关闭窗口后，托盘会让服务继续运行。
+桌面端、终端和 Chrome 扩展共用同一个 `anda` 和同一个 daemon。桌面端启动时会沿用已有安装（安装脚本、`ANDA_INSTALL_DIR` 或 Homebrew 安装的 anda）；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置：macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`。较新的 CLI 不会被降级，Homebrew 安装通过 `brew upgrade` 更新。模型连接引导中可以选择是否登录时启动 Anda；关闭窗口后，托盘会让服务继续运行。
+
+尚未配置模型时，桌面端会自动打开“连接模型”引导。使用 ChatGPT 登录并确认模型，或从内置 `config.yaml` 的预置模型中选择一项、填写 API Key。Anda 保存并加载默认模型后，即可返回聊天。选择“稍后设置”后，聊天页会保留提示，也可以从**设置 → 通用 → 连接模型**重新打开。已有的模型配置会直接沿用。
 
 桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器。安装 Anda 桌面端、重新运行安装脚本或更新旧启动器时，都会移除启动器的登录项、app 包和快捷方式；如果原来启动器会在登录时启动，daemon 仍会在登录时启动。
 
@@ -100,7 +102,7 @@ shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
 
 前置要求：
 
-- 至少一个可用的模型提供方 API key。可以在 Anda 桌面端的**设置 → Agent 配置**中填写，
+- 至少一个可用的模型提供方 API key。可以在桌面端的“连接模型”引导或**设置 → Agent 配置**中填写，
   也可以写在 `~/.anda/config.yaml`，或通过支持的环境变量提供。
 
 也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
@@ -136,7 +138,7 @@ anda auth use <profile-id> <model-slug>
 anda auth logout <profile-id>
 ```
 
-在 Anda 桌面端打开 **设置 → Agent 配置 → 模型**；在扩展中打开配置页的“模型”分区，或侧边栏设置中的模型区域。点击 **Continue with ChatGPT**，完成浏览器授权，再选择“使用所选模型”。TUI 中可按 **Ctrl+G** 登录；CLI/TUI 默认选用账号模型目录中的首个模型，CLI 可通过 `--model <slug>` 指定。模型未配置时 daemon 只运行经过身份验证的设置服务；选择模型后才启动 Brain、渠道和 cron。三端共享同一 `ANDA_HOME` 下的账号和刷新状态，凭证加密保存于 `chatgpt/accounts.cose`，不写入配置文件或浏览器存储。
+在 Anda 桌面端选择**连接模型 → 使用 ChatGPT 登录**，然后确认所选模型。完整账号管理仍位于**设置 → Agent 配置 → 模型**；在扩展中打开配置页的“模型”分区，或侧边栏设置中的模型区域。点击 **Continue with ChatGPT**，完成浏览器授权，再选择“使用所选模型”。TUI 中可按 **Ctrl+G** 登录；CLI/TUI 默认选用账号模型目录中的首个模型，CLI 可通过 `--model <slug>` 指定。模型未配置时 daemon 只运行经过身份验证的设置服务；选择模型后才启动 Brain、渠道和 cron。三端共享同一 `ANDA_HOME` 下的账号和刷新状态，凭证加密保存于 `chatgpt/accounts.cose`，不写入配置文件或浏览器存储。
 
 切换 ChatGPT 套餐模型需要先等待运行中的任务和子代理空闲。ChatGPT 套餐 provider 仅供本地 owner 使用；启用此类 provider 时，其他用户及外部 IM 请求会被拒绝。音视频和转录仍需独立 provider。额度耗尽不会自动切换到收费 API key，可前往 [ChatGPT 用量设置](https://chatgpt.com/settings/usage) 管理。旧版 `.codex/auth.json` 配置仍兼容，但新接入应使用上述正式登录流程。
 

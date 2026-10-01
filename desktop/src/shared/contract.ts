@@ -47,6 +47,7 @@ export const defaultPreferences: Preferences = {
 export interface DaemonView {
   connected: boolean
   needsSetup?: boolean
+  setupIssues?: string[]
   home: string
   baseUrl: string
   /** The shared `anda` CLI this app runs its daemon commands with. */

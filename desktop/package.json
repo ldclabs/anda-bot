@@ -13,6 +13,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "test:e2e": "node scripts/smoke.mjs",
+    "test:onboarding": "node scripts/onboarding-smoke.mjs",
     "package": "pnpm build && node scripts/prepare-runtime.mjs && electron-builder --publish never",
     "package:dir": "pnpm build && node scripts/prepare-runtime.mjs && electron-builder --dir --publish never"
   },

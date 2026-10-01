@@ -264,14 +264,20 @@ export class DaemonClient extends EventEmitter {
         this.bearer = token.token
       }
       this.credentialAt = Date.now()
-      if (!this.mockUrl) {
+      {
         const status = (await fetch(`${this.view.baseUrl}/daemon/status`, {
           signal: AbortSignal.timeout(10_000),
           redirect: 'error'
-        }).then((r) => r.json())) as { needs_setup?: boolean }
+        }).then((r) => (this.mockUrl && !r.ok ? {} : r.json()))) as { needs_setup?: boolean }
         this.view.needsSetup = status.needs_setup === true
+        delete this.view.setupIssues
         if (this.view.needsSetup) {
           this.view.connected = false
+          const config = (await this.config('GET')) as { setup_issues?: unknown }
+          if (Array.isArray(config.setup_issues))
+            this.view.setupIssues = config.setup_issues.filter(
+              (issue): issue is string => typeof issue === 'string'
+            )
           this.view.error =
             'Connect ChatGPT or configure an API provider in Settings to get started.'
           this.heartbeat = setInterval(() => {

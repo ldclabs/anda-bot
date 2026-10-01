@@ -372,6 +372,26 @@ async fn chatgpt_setup_activates_model_without_an_api_key_or_brain() {
         .await
         .unwrap();
     assert_eq!(state["needs_setup"], true);
+    // Only the authenticated configuration response exposes setup reasons.
+    assert!(state.get("setup_issues").is_none());
+    assert_eq!(
+        http.get(format!("{base}/daemon/config"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    let config: serde_json::Value = http
+        .get(format!("{base}/daemon/config"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(config["setup_issues"], serde_json::json!(["model.active"]));
     let response = http
         .post(format!("{base}/daemon/chatgpt"))
         .bearer_auth(&token)
@@ -405,6 +425,27 @@ async fn chatgpt_setup_activates_model_without_an_api_key_or_brain() {
             .model_name(),
         "chatgpt:p:test-model"
     );
+}
+
+#[test]
+fn chatgpt_setup_template_presets_load_with_only_an_api_key() {
+    let template = crate::config::Config::default_template();
+    let count = crate::config::Config::from_contents(template)
+        .unwrap()
+        .model
+        .providers
+        .len();
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    for index in 0..count {
+        let mut config = crate::config::Config::from_contents(template).unwrap();
+        let provider = &mut config.model.providers[index];
+        provider.api_key = "test-onboarding-key".into();
+        provider.disabled = false;
+        config.model.active = provider.selection_id();
+        assert!(config.setup_issues().is_empty(), "{}", config.model.active);
+        let model = config.models(http.clone()).get_model().unwrap();
+        assert_eq!(model.model_name(), config.model.active);
+    }
 }
 
 #[tokio::test]

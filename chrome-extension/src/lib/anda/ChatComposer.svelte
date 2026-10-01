@@ -90,6 +90,7 @@
 
   let {
     disabled = false,
+    connectAction,
     sending = false,
     placeholder = getMessage('placeholderMessage'),
     working = false,
@@ -122,6 +123,7 @@
     actions
   }: {
     disabled?: boolean
+    connectAction?: { label: string; run: () => void }
     sending?: boolean
     placeholder?: string
     working?: boolean
@@ -644,6 +646,10 @@
   }
 
   async function submitMessage() {
+    if (connectAction && !disabled) {
+      connectAction.run()
+      return
+    }
     if (!canSend) {
       return
     }
@@ -1058,7 +1064,14 @@
             <Tooltip.Root>
               <Tooltip.Trigger>
                 {#snippet child({ props })}
-                  {#if showStopButton}
+                  {#if connectAction}
+                    <button
+                      type="button"
+                      {disabled}
+                      class={buttonClass('default', 'sm', 'rounded-full')}
+                      onclick={connectAction.run}>{connectAction.label}</button
+                    >
+                  {:else if showStopButton}
                     <button
                       {...props}
                       type="button"

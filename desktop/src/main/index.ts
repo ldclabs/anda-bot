@@ -144,18 +144,9 @@ async function onInstalled(report: InstallReport): Promise<void> {
   if (report.launcher_started_at_login && !store.state.preferences.launchAtLogin)
     // The retired launcher kept a tray at login; this app's tray takes over.
     await setLaunchAtLogin(true)
-  if (report.action === 'installed' && !store.state.setupShown) {
-    store.state.setupShown = true
-    const result = await dialog.showMessageBox({
-      type: 'info',
-      message: t('setupTitle'),
-      detail: t('setupDetail').replace('{path}', report.path),
-      checkboxLabel: t('startAtLogin'),
-      checkboxChecked: true,
-      buttons: [t('ok')]
-    })
-    await setLaunchAtLogin(result.checkboxChecked)
-  } else if (report.launcher_retired) inform(t('launcherRetired'))
+  // First-use model setup (including the login-start preference) lives in the
+  // renderer, after we know whether the shared daemon actually needs a model.
+  if (report.launcher_retired) inform(t('launcherRetired'))
   const bundled = await daemon.bundledRelease()
   if (report.action === 'homebrew' && report.version && bundled)
     if (isOlderRelease(report.version, bundled)) inform(t('brewOutdated'))

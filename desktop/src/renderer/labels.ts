@@ -1,4 +1,7 @@
+import { modelSetupMessages } from './model-setup-labels'
+
 const en = {
+  ...modelSetupMessages.en!,
   newChat: 'New chat',
   search: 'Search chats',
   recent: 'Recent',
@@ -130,11 +133,7 @@ const en = {
   extensionToken: 'Copy Chrome extension token',
   tokenCopied: 'Chrome extension token copied. Paste it into the extension settings.',
   quitDesktop: 'Quit Anda Desktop (service keeps running)',
-  setupTitle: 'Anda is ready',
-  setupDetail:
-    'The anda command line is installed at {path} and shared by Anda Desktop, your terminal and the Chrome extension.',
   startAtLogin: 'Start Anda when I log in',
-  ok: 'OK',
   launcherRetired: 'The Anda Bot tray is now part of Anda Desktop.',
   brewOutdated:
     'Homebrew’s anda is older than this app. Run “brew upgrade anda” to use every desktop feature.',
@@ -145,6 +144,7 @@ export type Label = keyof typeof en
 export const desktopMessages: Record<string, Record<Label, string>> = {
   en,
   zh_CN: {
+    ...modelSetupMessages.zh_CN!,
     newChat: '新聊天',
     search: '搜索聊天',
     recent: '最近',
@@ -274,15 +274,13 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     extensionToken: '复制 Chrome 扩展令牌',
     tokenCopied: 'Chrome 扩展令牌已复制，请粘贴到扩展设置中。',
     quitDesktop: '退出 Anda 桌面端（服务继续运行）',
-    setupTitle: 'Anda 已准备就绪',
-    setupDetail: 'anda 命令行已安装在 {path}，由 Anda 桌面端、终端和 Chrome 扩展共同使用。',
     startAtLogin: '登录时启动 Anda',
-    ok: '好',
     launcherRetired: 'Anda Bot 托盘已并入 Anda 桌面端。',
     brewOutdated: 'Homebrew 安装的 anda 比本应用旧。运行“brew upgrade anda”即可使用全部桌面功能。',
     restartToUpgrade: 'Anda {version} 已安装。请从托盘重启服务以启用新版本。'
   },
   fr: {
+    ...modelSetupMessages.fr!,
     newChat: 'Nouvelle discussion',
     search: 'Rechercher',
     recent: 'Récents',
@@ -416,11 +414,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     extensionToken: 'Copier le jeton de l’extension Chrome',
     tokenCopied: 'Jeton de l’extension Chrome copié. Collez-le dans les réglages de l’extension.',
     quitDesktop: 'Quitter Anda Desktop (le service continue)',
-    setupTitle: 'Anda est prêt',
-    setupDetail:
-      'La ligne de commande anda est installée dans {path} et partagée par Anda Desktop, votre terminal et l’extension Chrome.',
     startAtLogin: 'Démarrer Anda à l’ouverture de session',
-    ok: 'OK',
     launcherRetired: 'Le lanceur Anda Bot fait désormais partie d’Anda Desktop.',
     brewOutdated:
       'Le anda de Homebrew est plus ancien que cette app. Lancez « brew upgrade anda » pour toutes les fonctions.',
@@ -428,6 +422,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
       'Anda {version} est installé. Redémarrez le service depuis l’icône pour l’utiliser.'
   },
   es: {
+    ...modelSetupMessages.es!,
     newChat: 'Nuevo chat',
     search: 'Buscar chats',
     recent: 'Recientes',
@@ -561,11 +556,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     extensionToken: 'Copiar token de la extensión de Chrome',
     tokenCopied: 'Token de la extensión de Chrome copiado. Pégalo en los ajustes de la extensión.',
     quitDesktop: 'Salir de Anda Desktop (el servicio sigue activo)',
-    setupTitle: 'Anda está listo',
-    setupDetail:
-      'La línea de comandos anda está instalada en {path} y la comparten Anda Desktop, tu terminal y la extensión de Chrome.',
     startAtLogin: 'Iniciar Anda al iniciar sesión',
-    ok: 'Aceptar',
     launcherRetired: 'La bandeja de Anda Bot ahora forma parte de Anda Desktop.',
     brewOutdated:
       'El anda de Homebrew es más antiguo que esta app. Ejecuta «brew upgrade anda» para usar todas las funciones.',
@@ -573,6 +564,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
       'Anda {version} está instalado. Reinicia el servicio desde la bandeja para usarlo.'
   },
   ru: {
+    ...modelSetupMessages.ru!,
     newChat: 'Новый чат',
     search: 'Поиск чатов',
     recent: 'Недавние',
@@ -704,11 +696,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     extensionToken: 'Скопировать токен расширения Chrome',
     tokenCopied: 'Токен расширения Chrome скопирован. Вставьте его в настройки расширения.',
     quitDesktop: 'Выйти из Anda Desktop (служба продолжит работу)',
-    setupTitle: 'Anda готова',
-    setupDetail:
-      'Командная строка anda установлена в {path} и используется Anda Desktop, терминалом и расширением Chrome.',
     startAtLogin: 'Запускать Anda при входе в систему',
-    ok: 'ОК',
     launcherRetired: 'Трей Anda Bot теперь входит в Anda Desktop.',
     brewOutdated:
       'anda из Homebrew старше этого приложения. Выполните «brew upgrade anda», чтобы получить все функции.',
@@ -716,6 +704,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
       'Anda {version} установлена. Перезапустите службу из трея, чтобы использовать её.'
   },
   ar: {
+    ...modelSetupMessages.ar!,
     newChat: 'محادثة جديدة',
     search: 'البحث في المحادثات',
     recent: 'الأخيرة',
@@ -845,11 +834,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     extensionToken: 'نسخ رمز إضافة Chrome',
     tokenCopied: 'تم نسخ رمز إضافة Chrome. الصقه في إعدادات الإضافة.',
     quitDesktop: 'إنهاء Anda Desktop (تستمر الخدمة في العمل)',
-    setupTitle: 'Anda جاهز',
-    setupDetail:
-      'تم تثبيت سطر أوامر anda في {path}، ويشترك فيه Anda Desktop والطرفية وإضافة Chrome.',
     startAtLogin: 'تشغيل Anda عند تسجيل الدخول',
-    ok: 'حسنًا',
     launcherRetired: 'أصبح رمز Anda Bot في شريط النظام جزءًا من Anda Desktop.',
     brewOutdated:
       'إصدار anda من Homebrew أقدم من هذا التطبيق. شغّل «brew upgrade anda» لاستخدام كل الميزات.',

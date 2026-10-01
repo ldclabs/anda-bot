@@ -14,11 +14,15 @@
   let {
     settings,
     onModelSelected,
-    modelSelectionDisabled = false
+    modelSelectionDisabled = false,
+    onboarding = false,
+    noModelsMessage = ''
   }: {
     settings: SettingsState
-    onModelSelected?: () => void | Promise<void>
+    onModelSelected?: (model: string) => void | Promise<void>
     modelSelectionDisabled?: boolean
+    onboarding?: boolean
+    noModelsMessage?: string
   } = $props()
   let accounts = $state<ChatGptAccounts>({ accounts: [], needs_setup: false })
   let profile = $state('')
@@ -80,6 +84,7 @@
           method: 'login_status',
           params: { flow_id: flow.flow_id }
         })
+        if (!alive || generation !== attempt || !flow) return
         if (current.status === 'completed') {
           profile = current.account_id || ''
           flow = null
@@ -116,12 +121,15 @@
         method: 'model_select',
         params: { profile_id: profile, model }
       })
+      if (!alive) return
       notice = getMessage('chatgptUsingPlan')
-      await onModelSelected?.()
+      await onModelSelected?.(`chatgpt:${profile}:${model}`)
     })
   }
   onMount(() => {
-    void action(refresh)
+    void action(refresh).then(() => {
+      if (alive && onboarding && !error && !accounts.accounts.length) void signIn()
+    })
   })
   onDestroy(() => {
     alive = false
@@ -138,10 +146,10 @@
   class="grid min-w-0 gap-3 rounded-lg border bg-muted/15 p-4"
   aria-label={getMessage('chatgptTitle')}
 >
-  <div class="grid gap-1">
-    <h3 class="text-sm font-semibold">{getMessage('chatgptTitle')}</h3>
-    <p class="text-xs text-muted-foreground">{getMessage('chatgptDescription')}</p>
-  </div>
+  {#if !onboarding}<div class="grid gap-1">
+      <h3 class="text-sm font-semibold">{getMessage('chatgptTitle')}</h3>
+      <p class="text-xs text-muted-foreground">{getMessage('chatgptDescription')}</p>
+    </div>{/if}
   {#if accounts.accounts.length}
     <label class="grid gap-1 text-xs"
       >{getMessage('chatgptAccount')}
@@ -175,19 +183,23 @@
     {/if}
   {/if}
   <div class="flex flex-wrap gap-2">
-    <button class={buttonClass('default', 'sm')} disabled={busy} onclick={() => void signIn()}
-      >{getMessage('chatgptContinue')}</button
-    >
+    {#if !onboarding || !selected}<button
+        class={buttonClass('default', 'sm')}
+        disabled={busy}
+        onclick={() => void signIn()}>{getMessage('chatgptContinue')}</button
+      >{/if}
     {#if selected}
-      <button class={buttonClass('outline', 'sm')} disabled={busy} onclick={() => void signIn(true)}
-        >{getMessage('chatgptReconnect')}</button
-      >
-      {#if models.length}<button
+      {#if !onboarding || !models.length}<button
           class={buttonClass('outline', 'sm')}
+          disabled={busy}
+          onclick={() => void signIn(true)}>{getMessage('chatgptReconnect')}</button
+        >{/if}
+      {#if models.length}<button
+          class={buttonClass(onboarding ? 'default' : 'outline', 'sm')}
           disabled={busy || !model || modelSelectionDisabled}
           onclick={() => void useModel()}>{getMessage('chatgptUseModel')}</button
         >{/if}
-      {#if selected.connected}<button
+      {#if selected.connected && !onboarding}<button
           class={buttonClass('ghost', 'sm')}
           disabled={busy}
           onclick={() =>
@@ -204,12 +216,15 @@
     <button class={buttonClass('ghost', 'sm')} disabled={busy} onclick={() => void action(refresh)}
       >{getMessage('refreshModels')}</button
     >
-    <button
-      class={buttonClass('link', 'sm')}
-      onclick={() => void openChatGptUrl(usageUrl).catch((e) => (error = message(e)))}
-      >{getMessage('chatgptManageUsage')}</button
-    >
+    {#if !onboarding}<button
+        class={buttonClass('link', 'sm')}
+        onclick={() => void openChatGptUrl(usageUrl).catch((e) => (error = message(e)))}
+        >{getMessage('chatgptManageUsage')}</button
+      >{/if}
   </div>
+  {#if onboarding && selected && !busy && !models.length && !error}
+    <p class="text-xs text-muted-foreground" role="status">{noModelsMessage}</p>
+  {/if}
   {#if modelSelectionDisabled}
     <p class="text-xs text-muted-foreground" role="status">
       {getMessage('chatgptSaveConfigFirst')}

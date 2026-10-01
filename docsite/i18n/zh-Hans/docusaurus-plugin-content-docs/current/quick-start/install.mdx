@@ -20,7 +20,9 @@ Anda Bot 可以通过发布版安装，也可以直接从仓库源码运行。�
 
 新的 macOS 命令行和桌面发布包仅提供 Apple Silicon 版本。Intel Mac 用户可从源码构建。
 
-Anda 桌面端会沿用已有的 `anda` 安装；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置（macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`）。之后桌面端、终端和 Chrome 扩展共用同一个 runtime 和 daemon。首次运行会询问是否登录时启动 Anda。桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器，桌面端会将其移除。
+Anda 桌面端会沿用已有的 `anda` 安装；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置（macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`）。之后桌面端、终端和 Chrome 扩展共用同一个 runtime 和 daemon。模型连接引导中可以选择是否登录时启动 Anda。桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器，桌面端会将其移除。
+
+尚未配置模型时，会自动打开“连接模型”引导。使用 ChatGPT 登录并确认模型，或从内置 `config.yaml` 的预置模型中选择一项、填写 API Key。引导会等待所选模型加载完成。选择“稍后设置”后会保留草稿和连接提示，也可以从**设置 → 通用 → 连接模型**重新打开。已有配置会直接沿用。
 
 ### 仅安装命令行
 

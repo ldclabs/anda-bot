@@ -39,6 +39,7 @@ import fr from '../../../chrome-extension/public/_locales/fr/messages.json'
 import es from '../../../chrome-extension/public/_locales/es/messages.json'
 import ru from '../../../chrome-extension/public/_locales/ru/messages.json'
 import ar from '../../../chrome-extension/public/_locales/ar/messages.json'
+import { needsModelSetup } from '../shared/model-setup'
 
 const translations = { en, zh_CN: zh, fr, es, ru, ar }
 
@@ -58,6 +59,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
   updateStatus = $state<UpdateStatus | null>(null)
   updateDialogOpen = $state(false)
+  modelSetupOpen = $state(false)
+  modelSetupAcknowledged = $state(false)
   activeChannel = $state<Channel | null>(null)
   modelState = $state<ModelState>({ activeModel: null, modelNames: [] })
   view = $state('chat')
@@ -125,6 +128,29 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   get authorized(): boolean {
     return this.connection.connected
   }
+  get needsModelSetup(): boolean {
+    return needsModelSetup(this.connection)
+  }
+  private get modelSetupStorageKey(): string {
+    return `andaModelSetupAcknowledged:${this.connection.home}`
+  }
+  async dismissModelSetup(): Promise<void> {
+    this.modelSetupAcknowledged = true
+    try {
+      // A first message can be drafted before a chat has ever been submitted.
+      // Keep that source reachable and flush its draft before leaving setup.
+      if (this.preferences.drafts[this.activeSource]) {
+        clearTimeout(this.draftTimer)
+        await this.savePreferences({
+          activeSource: this.activeSource,
+          drafts: { ...this.preferences.drafts }
+        })
+      }
+      await window.anda.storageSet({ [this.modelSetupStorageKey]: true })
+    } finally {
+      this.modelSetupOpen = false
+    }
+  }
   get activeSource(): string {
     return this.activeChannel?.source || ''
   }
@@ -158,6 +184,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.platform = bootstrap.platform
     document.documentElement.dataset.platform = bootstrap.platform
     this.connection = bootstrap.daemon
+    const setupStorage = await window.anda.storageGet([this.modelSetupStorageKey])
+    this.modelSetupAcknowledged = setupStorage[this.modelSetupStorageKey] === true
     this.pending = bootstrap.pending
     this.updateStatus = bootstrap.update
     this.updateDialogOpen = bootstrap.updateRequested || bootstrap.update?.phase === 'running'
@@ -421,11 +449,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const chats = this.preferences.chats.map((c) => (c.source === source ? { ...c, ...patch } : c))
     await this.savePreferences({ chats })
   }
-  async sendPrompt(
-    prompt: string,
-    attachments: ChatAttachment[],
-    speak = false
-  ): Promise<void> {
+  async sendPrompt(prompt: string, attachments: ChatAttachment[], speak = false): Promise<void> {
     if (!this.activeChannel || !this.authorized)
       throw new Error('Connect to the local daemon before sending')
     const channel = this.activeChannel
@@ -577,8 +601,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       this.jumpMessage = bookmark.message_id
     }
     const draft = state.andaPromptDraftRequest as
-      | { id: string; text: string; createdAt: number }
-      | undefined
+      { id: string; text: string; createdAt: number } | undefined
     if (draft && draft.createdAt > Date.now() - 5 * 60_000) this.incomingDraft = draft
     await window.anda.storageSet({ andaBookmarkJumpRequest: null, andaPromptDraftRequest: null })
   }

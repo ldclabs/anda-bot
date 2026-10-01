@@ -20,7 +20,9 @@ Most people should start with Anda Desktop: the chat window, workbench and tray.
 
 New macOS CLI and desktop releases are available for Apple Silicon only. Intel Mac users can build from source.
 
-Anda Desktop keeps an existing `anda` install, or installs its bundled `anda` and curated skills where the install scripts put them (`~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows). The desktop, your terminal and the Chrome extension then share one runtime and one daemon. The first run asks whether Anda should start at login. The desktop tray replaces the retired Anda Bot menu bar launcher, which the desktop removes.
+Anda Desktop keeps an existing `anda` install, or installs its bundled `anda` and curated skills where the install scripts put them (`~/.local/bin` on macOS, `%LOCALAPPDATA%\Programs\AndaBot` on Windows). The desktop, your terminal and the Chrome extension then share one runtime and one daemon. The model connection guide includes a launch-at-login option. The desktop tray replaces the retired Anda Bot menu bar launcher, which the desktop removes.
+
+If no model is configured, **Connect a model** opens automatically. Sign in with ChatGPT and confirm a model, or choose a preset from the bundled `config.yaml` and enter its API key. The guide waits for the selected model to load. **Set up later** keeps your draft and a connection reminder; reopen the guide from **Settings → General → Connect a model**. Existing configurations are reused.
 
 ### Command line only
 
