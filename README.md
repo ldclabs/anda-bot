@@ -60,7 +60,7 @@ When no model is configured, the desktop automatically opens **Connect a model**
 
 The desktop tray replaces the retired Anda Bot menu bar launcher. Installing Anda Desktop, rerunning an install script or updating an old launcher removes the launcher's login entry, app bundle and shortcuts, and keeps the daemon starting at login if the launcher did.
 
-The tray and **Settings → Check for updates** wait for active tasks to finish, stop the service while installing a new `anda` release, then start it again; the desktop app updates separately (signed release builds) without stopping the service. The tray also restarts the service, copies a Chrome extension token and opens the logs.
+**Check for updates** in the tray and Settings checks both `anda` and the desktop app. Installing `anda` waits for active tasks to finish, stops the service during installation, then starts it again. The check continues to the desktop app even if the `anda` update is installed, postponed or fails; desktop updates (signed release builds) restart only the app without stopping the service. The tray keeps **Check for updates** alongside the individual install actions, and also restarts the service, copies a Chrome extension token and opens the logs.
 
 Signed desktop releases automatically check for app updates one minute after launch, then every six hours after each check finishes, even with the window closed or the service stopped. New versions appear in the tray; downloads and installation still require confirmation. Checks with no update or a network failure stay quiet.
 

@@ -10,6 +10,7 @@ import { DesktopUpdater } from '../src/main/updater'
 const build = vi.hoisted(() => ({ packaged: false }))
 vi.mock('electron', () => ({
   app: {
+    getVersion: () => '0.13.0',
     get isPackaged() {
       return build.packaged
     }
@@ -78,9 +79,10 @@ function fixture(running = true) {
       current_tag: 'v0.14.0'
     }))
   }
+  const store = { state: {}, save: vi.fn(async () => {}) } as unknown as DesktopStore
   const updater = new DesktopUpdater(
     daemon as unknown as DaemonClient,
-    { state: {} } as DesktopStore,
+    store,
     () => 0,
     emitted,
     changed,
@@ -93,7 +95,7 @@ function fixture(running = true) {
     latest_tag: 'v0.14.0',
     downloaded_path: '/download/anda'
   }
-  return { updater, daemon, actions, statuses, emitted, changed }
+  return { updater, daemon, store, actions, statuses, emitted, changed }
 }
 
 function packagedFixture(running = true) {
@@ -182,16 +184,19 @@ it('publishes progress immediately and retains the final check result', async ()
 })
 
 it('retains check failures and allows retrying', async () => {
-  const f = fixture()
+  const f = packagedFixture()
   f.daemon.runtimeUpdateState.mockRejectedValueOnce(new Error('Release server unavailable'))
-  await expect(f.updater.check()).rejects.toThrow('Release server unavailable')
-  expect(f.updater.status).toEqual({ phase: 'error', message: 'Release server unavailable' })
+  const message = await f.updater.check()
+  expect(message).toContain('Anda runtime: Release server unavailable')
+  expect(message).toContain('Anda Desktop is up to date.')
+  expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+  expect(f.updater.status).toEqual({ phase: 'error', message })
   await f.updater.check()
   expect(f.updater.status?.phase).toBe('complete')
 })
 
 it('shows runtime errors returned by the CLI as failures', async () => {
-  const f = fixture()
+  const f = packagedFixture()
   f.daemon.runtimeUpdateState.mockResolvedValue({
     status: 'failed',
     current_tag: 'v0.14.0',
@@ -200,6 +205,101 @@ it('shows runtime errors returned by the CLI as failures', async () => {
   await f.updater.check()
   expect(f.updater.status?.phase).toBe('error')
   expect(f.updater.status?.message).toContain('Download failed')
+  expect(f.updater.status?.message).toContain('Anda Desktop is up to date.')
+  expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+})
+
+it.each([0, 1])(
+  'continues to download and install desktop after the runtime prompt (response: %s)',
+  async (response) => {
+    const f = packagedFixture()
+    f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
+    vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease(true))
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response, checkboxChecked: false })
+    const checking = f.updater.check()
+    await vi.runAllTimersAsync()
+    const message = await checking
+
+    expect(message).toContain(response === 1 ? 'Anda v0.14.0 is installed.' : 'stays downloaded')
+    expect(message).toContain('Installing update')
+    expect(f.actions).toEqual(response === 1 ? ['begin', 'renew', 'stop', 'install', 'start'] : [])
+    expect(f.daemon.view.connected).toBe(true)
+    expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(dialog.showMessageBox).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ message: 'Download Anda Desktop 0.15.0?' })
+    )
+    expect(dialog.showMessageBox).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ message: 'Install Anda Desktop 0.15.0 and restart it?' })
+    )
+    expect(f.store.state.updateIntent).toEqual({
+      previous: '0.13.0',
+      target: '0.15.0',
+      startedAt: expect.any(Number)
+    })
+    expect(f.store.save).toHaveBeenCalledTimes(1)
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+    expect(f.updater.status).toEqual({ phase: 'complete', message })
+  }
+)
+
+it('still offers a desktop update after a runtime installation fails and recovers', async () => {
+  const f = packagedFixture()
+  f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
+  f.daemon.applyRuntimeUpdate.mockRejectedValue(new Error('replacement failed'))
+  vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease(true))
+  vi.mocked(dialog.showMessageBox)
+    .mockResolvedValueOnce({ response: 1, checkboxChecked: false })
+    .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
+  const checking = f.updater.check()
+  await vi.runAllTimersAsync()
+  const message = await checking
+
+  expect(f.actions).toEqual(['begin', 'renew', 'stop', 'start'])
+  expect(f.daemon.view.connected).toBe(true)
+  expect(message).toContain('Anda runtime: replacement failed')
+  expect(message).toContain('Desktop update available; download postponed.')
+  expect(f.updater.desktopRelease).toBe('0.15.0')
+  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
+})
+
+it('keeps the successful runtime result visible when the desktop check fails', async () => {
+  const f = packagedFixture(false)
+  f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
+  vi.mocked(autoUpdater.checkForUpdates).mockRejectedValue(new Error('Desktop feed unavailable'))
+  const message = await f.updater.check()
+
+  expect(message).toContain('Anda v0.14.0 is installed.')
+  expect(message).toContain('Anda Desktop: Desktop feed unavailable')
+  expect(f.actions).toEqual(['install'])
+  expect(f.updater.status).toEqual({ phase: 'error', message })
+})
+
+it('reports both errors when neither update channel can be checked', async () => {
+  const f = packagedFixture()
+  f.daemon.runtimeUpdateState.mockRejectedValue(new Error('Runtime unavailable'))
+  vi.mocked(autoUpdater.checkForUpdates).mockRejectedValue(new Error('Desktop feed unavailable'))
+  const message = await f.updater.check()
+
+  expect(message).toContain('Anda runtime: Runtime unavailable')
+  expect(message).toContain('Anda Desktop: Desktop feed unavailable')
+  expect(f.updater.status).toEqual({ phase: 'error', message })
+})
+
+it('explains manual desktop updates after installing the runtime in an unsigned build', async () => {
+  const f = packagedFixture(false)
+  vi.mocked(readFile).mockResolvedValue(JSON.stringify({ signed: false }))
+  f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
+  const message = await f.updater.check()
+
+  expect(message).toContain('Anda v0.14.0 is installed.')
+  expect(message).toContain('no signed update channel')
+  expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled()
+  expect(f.updater.status).toEqual({ phase: 'complete', message })
 })
 
 it('reports a downloaded release and preserves it when installation is postponed', async () => {

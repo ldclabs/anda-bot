@@ -483,6 +483,8 @@ try {
   await updateDialog.getByText('Update failed', { exact: true }).waitFor()
   // Mock tests disable native CLI commands: the real check must surface that failure.
   await updateDialog.getByText('Native daemon commands are disabled in mock tests').waitFor()
+  // The same tray action must also report the desktop channel after a runtime failure.
+  await updateDialog.getByText('Desktop updates are available only in release builds.').waitFor()
   assert.equal(
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()),
     true

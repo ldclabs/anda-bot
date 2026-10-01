@@ -127,6 +127,8 @@ cargo run -p anda_bot -- --home /path/to/.anda
 anda update
 ```
 
+Homebrew 安装通过 `brew upgrade anda` 更新。Anda 桌面端托盘或设置中的**检查更新**会检查 `anda` 和桌面客户端两个组件。Runtime 安装会等待活动任务结束；无论该更新已安装、暂缓还是失败，都会继续检查桌面客户端。正式签名版可在不中断服务的情况下更新桌面应用；未签名版本需要手动安装新的桌面安装包。
+
 可以这样管理后台 daemon：
 
 ```bash

@@ -188,12 +188,15 @@ function refreshTray(): void {
         enabled: false
       },
       { label: t('restartDaemon'), click: () => void controlDaemon('restart').catch(() => {}) },
-      release
-        ? {
-            label: `${t('installUpdate')} (${release})`,
-            click: () => runUpdate(() => updater.installRuntime())
-          }
-        : { label: t('update'), click: () => runUpdate(() => updater.check()) },
+      { label: t('update'), click: () => runUpdate(() => updater.check()) },
+      ...(release
+        ? [
+            {
+              label: `${t('installUpdate')} (anda ${release})`,
+              click: () => runUpdate(() => updater.installRuntime())
+            }
+          ]
+        : []),
       ...(updater?.desktopRelease
         ? [
             {

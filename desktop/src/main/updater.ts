@@ -127,21 +127,37 @@ export class DesktopUpdater {
     this.changed()
     return this.runtime
   }
-  /** Settings and the tray: install a ready runtime, else check both channels. */
+  /** Settings and the tray: handle both channels, even if a runtime update fails. */
   async check(): Promise<string> {
     return this.run(async () => {
+      const messages: string[] = []
+      let failed = false
       this.progress(this.t('checkingRuntime'))
-      const runtime = await this.checkRuntime(true)
-      const release = downloadedRelease(runtime)
-      if (release) return { message: await this.promptRuntime(release) }
-      const runtimeMessage = runtime.error
-        ? `Anda runtime: ${runtime.error}`
-        : this.t('runtimeUpToDate').replace('{version}', runtime.current_tag)
-      this.progress(this.t('checkingDesktop'))
-      return {
-        message: `${runtimeMessage}\n\n${await this.checkApp()}`,
-        failed: Boolean(runtime.error)
+      try {
+        const runtime = await this.checkRuntime(true)
+        const release = downloadedRelease(runtime)
+        failed = Boolean(runtime.error)
+        messages.push(
+          release
+            ? await this.promptRuntime(release)
+            : runtime.error
+              ? `Anda runtime: ${runtime.error}`
+              : this.t('runtimeUpToDate').replace('{version}', runtime.current_tag)
+        )
+      } catch (error) {
+        failed = true
+        messages.push(`Anda runtime: ${error instanceof Error ? error.message : String(error)}`)
       }
+      // Installing or postponing the runtime must not skip the desktop release.
+      // Keep its result visible alongside any failure from the other channel.
+      this.progress(this.t('checkingDesktop'))
+      try {
+        messages.push(await this.checkApp())
+      } catch (error) {
+        failed = true
+        messages.push(`Anda Desktop: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      return { message: messages.join('\n\n'), failed }
     })
   }
   /** The tray's install action for an already downloaded runtime release. */
