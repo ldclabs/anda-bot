@@ -1,7 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["anda_bot"]
-exclude = ["vendor/weixin-agent"]
 
 [workspace.package]
 description = "🐼 Born of panda. Awakened as Anda. A copilot for your computer, powered by the ANDA Brain."
@@ -100,7 +99,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 tempfile = "3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
-weixin-agent = "0.2"
+weixin-agent = "0.3"
 windows-sys = "0.61"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 
@@ -125,8 +124,6 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # anda_object_store = { path = "../anda-db/rs/anda_object_store" }
 # anda_kip = { path = "../anda-db/rs/anda_kip" }
 ratatui = { git = "https://github.com/ratatui/ratatui.git", rev = "3603d21f6b318007bbab0a0f1baefe337ebeae39" }
-# Pinned source plus HTTP client injection; see vendor/weixin-agent/ANDA_PATCH.md.
-weixin-agent = { path = "vendor/weixin-agent" }
 
 [profile.dev.package."*"]
 # Shrink dependency code and unwind tables so macOS debug builds fit the

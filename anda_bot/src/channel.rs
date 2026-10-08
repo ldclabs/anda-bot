@@ -40,7 +40,7 @@ pub fn build_channels(
         &cfg.telegram,
         client.clone(),
     )?)?;
-    register(wechat::build_wechat_channels(&cfg.wechat, client.clone())?)?;
+    register(wechat::build_wechat_channels(&cfg.wechat)?)?;
     register(discord::build_discord_channels(
         &cfg.discord,
         client.clone(),

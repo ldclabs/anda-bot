@@ -38,7 +38,6 @@ const WECHAT_CONTEXT_TOKEN_MAX_AGE_MS: u64 = 2 * 60 * 60 * 1000;
 
 pub fn build_wechat_channels(
     cfg: &[config::WechatChannelSettings],
-    http_client: reqwest::Client,
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
@@ -54,10 +53,7 @@ pub fn build_wechat_channels(
             );
         }
 
-        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::with_http_client(
-            wechat_cfg,
-            http_client.clone(),
-        ));
+        let channel: Arc<dyn Channel> = Arc::new(WechatChannel::new(wechat_cfg));
         let channel_id = channel.id();
         if channels.insert(channel_id.clone(), channel).is_some() {
             return Err(format!("duplicate WeChat channel id '{channel_id}'").into());
@@ -78,21 +74,12 @@ pub struct WechatChannel {
     route_tag: Option<u32>,
     workspace: Arc<ChannelWorkspace>,
     context_tokens: Arc<ContextTokens>,
-    http_client: reqwest::Client,
     send_client: Mutex<Option<(String, Arc<WeixinClient>)>>,
     dedup: Arc<RecentEventDedup>,
 }
 
 impl WechatChannel {
-    #[cfg(test)]
     pub fn new(cfg: &config::WechatChannelSettings) -> Self {
-        Self::with_http_client(cfg, crate::util::http_client::new_reqwest_client())
-    }
-
-    pub fn with_http_client(
-        cfg: &config::WechatChannelSettings,
-        http_client: reqwest::Client,
-    ) -> Self {
         let workspace = Arc::new(ChannelWorkspace::default());
         Self {
             id: cfg.channel_id(),
@@ -109,16 +96,13 @@ impl WechatChannel {
             route_tag: cfg.route_tag,
             context_tokens: Arc::new(ContextTokens::new(workspace.clone())),
             workspace,
-            http_client,
             send_client: Mutex::new(None),
             dedup: Arc::new(RecentEventDedup::new(EVENT_DEDUP_WINDOW)),
         }
     }
 
     fn build_weixin_config(&self, token: &str) -> Result<WeixinConfig, BoxError> {
-        let mut builder = WeixinConfig::builder()
-            .token(token)
-            .http_client(self.http_client.clone());
+        let mut builder = WeixinConfig::builder().token(token);
         builder = builder.base_url(&self.base_url);
         builder = builder.cdn_base_url(&self.cdn_base_url);
         if let Some(route_tag) = self.route_tag {
@@ -506,7 +490,7 @@ async fn channel_message_from_context(
     if content.trim().is_empty()
         && let Some(ref_message) = &ctx.ref_message
     {
-        content = format_ref_message(ref_message);
+        content = format_ref_message(ref_message.title.as_deref(), ref_message.body.as_deref());
     }
 
     let mut attachments = Vec::new();
@@ -650,14 +634,8 @@ async fn temp_media_path(
     ))
 }
 
-fn format_ref_message(ref_message: &weixin_agent::RefMessageInfo) -> String {
-    let mut parts = Vec::new();
-    if let Some(title) = &ref_message.title {
-        parts.push(title.clone());
-    }
-    if let Some(body) = &ref_message.body {
-        parts.push(body.clone());
-    }
+fn format_ref_message(title: Option<&str>, body: Option<&str>) -> String {
+    let parts = [title, body].into_iter().flatten().collect::<Vec<_>>();
     if parts.is_empty() {
         "[Quoted message]".to_string()
     } else {
@@ -709,7 +687,8 @@ fn wechat_media_file_name(media: &MediaInfo, message_id: &str) -> String {
         MediaType::Image => format!("{message_id}.jpg"),
         MediaType::Video => format!("{message_id}.mp4"),
         MediaType::Voice => format!("{message_id}.silk"),
-        MediaType::File => format!("{message_id}.bin"),
+        // Files, and media kinds newer than this channel knows.
+        _ => format!("{message_id}.bin"),
     }
 }
 
@@ -1014,19 +993,10 @@ mod tests {
     #[test]
     fn quoted_messages_and_attachments_render_labels() {
         assert_eq!(
-            format_ref_message(&weixin_agent::RefMessageInfo {
-                title: Some("Alice".to_string()),
-                body: Some("original text".to_string()),
-            }),
+            format_ref_message(Some("Alice"), Some("original text")),
             "[Quoted: Alice | original text]"
         );
-        assert_eq!(
-            format_ref_message(&weixin_agent::RefMessageInfo {
-                title: None,
-                body: None,
-            }),
-            "[Quoted message]"
-        );
+        assert_eq!(format_ref_message(None, None), "[Quoted message]");
 
         let image = Resource {
             name: "pic.png".to_string(),
@@ -1130,39 +1100,27 @@ mod tests {
         assert!(context_token_is_stale(Some(1)));
     }
     #[tokio::test]
-    async fn shared_transport_and_context_fallback_do_not_replay_prefix() {
+    async fn context_fallback_does_not_replay_prefix() {
         use axum::{Router, routing};
         use serde_json::Value;
         let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let state = requests.clone();
         let app = Router::new().route(
             "/ilink/bot/sendmessage",
-            routing::post(
-                move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| {
-                    let requests = state.clone();
-                    async move {
-                        assert_eq!(headers["x-anda-transport"], "shared");
-                        let mut requests = requests.lock().unwrap();
-                        requests.push(body);
-                        if requests.len() == 2 {
-                            axum::Json(
-                                serde_json::json!({"ret":-2,"errmsg":"context token expired"}),
-                            )
-                        } else {
-                            axum::Json(serde_json::json!({"ret":0}))
-                        }
+            routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let requests = state.clone();
+                async move {
+                    let mut requests = requests.lock().unwrap();
+                    requests.push(body);
+                    if requests.len() == 2 {
+                        axum::Json(serde_json::json!({"ret":-2,"errmsg":"context token expired"}))
+                    } else {
+                        axum::Json(serde_json::json!({"ret":0}))
                     }
-                },
-            ),
+                }
+            }),
         );
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-anda-transport", "shared".parse().unwrap());
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .default_headers(headers)
-            .build()
-            .unwrap();
-        let mut channel = WechatChannel::with_http_client(&test_config(), client);
+        let mut channel = WechatChannel::new(&test_config());
         channel.base_url = crate::test_support::spawn_http_mock(app).await;
         let dir = tempfile::tempdir().unwrap();
         channel.set_workspace(dir.path().to_owned());
@@ -1190,7 +1148,7 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn media_upload_uses_shared_transport_and_cleans_temporary_files() {
+    async fn media_upload_cleans_temporary_files() {
         use axum::{Router, response::IntoResponse, routing};
         use serde_json::Value;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1201,55 +1159,39 @@ mod tests {
         let app = Router::new()
             .route(
                 "/ilink/bot/getuploadurl",
-                routing::post(move |headers: axum::http::HeaderMap| {
+                routing::post(move || {
                     let url = cdn_url.clone();
-                    async move {
-                        assert_eq!(headers["x-anda-transport"], "shared");
-                        axum::Json(serde_json::json!({"ret":0,"upload_full_url":url}))
-                    }
+                    async move { axum::Json(serde_json::json!({"ret":0,"upload_full_url":url})) }
                 }),
             )
             .route(
                 "/cdn",
-                routing::post(
-                    |headers: axum::http::HeaderMap, body: axum::body::Bytes| async move {
-                        assert_eq!(headers["x-anda-transport"], "shared");
-                        assert!(!body.is_empty());
-                        ([("x-encrypted-param", "download-key")], "ok")
-                    },
-                ),
+                routing::post(|body: axum::body::Bytes| async move {
+                    assert!(!body.is_empty());
+                    ([("x-encrypted-param", "download-key")], "ok")
+                }),
             )
             .route(
                 "/ilink/bot/sendmessage",
-                routing::post(
-                    move |headers: axum::http::HeaderMap, axum::Json(_body): axum::Json<Value>| {
-                        let call = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        async move {
-                            assert_eq!(headers["x-anda-transport"], "shared");
-                            if call == 0 {
-                                axum::Json(serde_json::json!({"ret":0})).into_response()
-                            } else {
-                                (
-                                    http::StatusCode::FORBIDDEN,
-                                    axum::Json(serde_json::json!({"ret":403})),
-                                )
-                                    .into_response()
-                            }
+                routing::post(move |axum::Json(_body): axum::Json<Value>| {
+                    let call = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async move {
+                        if call == 0 {
+                            axum::Json(serde_json::json!({"ret":0})).into_response()
+                        } else {
+                            (
+                                http::StatusCode::FORBIDDEN,
+                                axum::Json(serde_json::json!({"ret":403})),
+                            )
+                                .into_response()
                         }
-                    },
-                ),
+                    }
+                }),
             );
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-anda-transport", "shared".parse().unwrap());
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .default_headers(headers)
-            .build()
-            .unwrap();
-        let mut channel = WechatChannel::with_http_client(&test_config(), client);
+        let mut channel = WechatChannel::new(&test_config());
         channel.base_url = base;
         let dir = tempfile::tempdir().unwrap();
         channel.set_workspace(dir.path().to_owned());

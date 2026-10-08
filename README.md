@@ -408,7 +408,7 @@ channels:
 
 `allowed_users` still checks the platform sender, such as a Telegram account, WeChat `wxid`, Discord user id, or Lark open id. `user` chooses the trusted Anda caller that owns the resulting conversations, resources, and memory context.
 
-Channel delivery preserves Telegram topics, Discord threads and Lark/Feishu reply threads. Text and attachments retry independently without replaying successfully delivered parts. `https_proxy` also covers WebSocket and WeChat traffic. Lark/Feishu currently sends attachment HTTP(S) links and explicitly rejects local/binary attachments. Keep channel workspace attachment files with database backups.
+Channel delivery preserves Telegram topics, Discord threads and Lark/Feishu reply threads. Text and attachments retry independently without replaying successfully delivered parts. `https_proxy` also covers WebSocket traffic; WeChat does not need a proxy and connects without it. Lark/Feishu currently sends attachment HTTP(S) links and explicitly rejects local/binary attachments. Keep channel workspace attachment files with database backups.
 
 Set `allow_external_users: true` to accept non-allowlisted IM senders as `$external_user`. They can interact with the bot, but are treated as untrusted and are not the owner/partner.
 

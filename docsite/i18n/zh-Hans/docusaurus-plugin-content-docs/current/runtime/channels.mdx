@@ -149,7 +149,7 @@ channels:
 
 ## 消息投递
 
-`https_proxy` 同时用于频道 API 请求、媒体传输以及 Discord/Lark WebSocket 连接。Discord 会恢复可恢复的会话并检查心跳确认，附件下载独立进行。
+`https_proxy` 同时用于频道 API 请求、媒体传输以及 Discord/Lark WebSocket 连接；微信不需要代理，不经过它。Discord 会恢复可恢复的会话并检查心跳确认，附件下载独立进行。
 
 使用 `list_im_channels` 查找最近的收件人和线程。它扫描最新 300 条已存储消息，并区分不同线程。`send_im_message` 的 `thread` 分别使用 Telegram topic ID、Discord 线程频道 ID，或 Lark/飞书根消息 ID（`om_...`）。Telegram 仍兼容 `chat_id:topic_id` 收件人格式；显式 `thread` 优先。
 

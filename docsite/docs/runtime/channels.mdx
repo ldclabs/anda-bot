@@ -149,7 +149,7 @@ channels:
 
 ## Message delivery
 
-`https_proxy` applies to channel API requests, media transfers, and Discord/Lark WebSocket connections. Discord resumes recoverable sessions and checks heartbeat acknowledgements while attachments download separately.
+`https_proxy` applies to channel API requests, media transfers, and Discord/Lark WebSocket connections; WeChat does not need a proxy and connects without it. Discord resumes recoverable sessions and checks heartbeat acknowledgements while attachments download separately.
 
 Use `list_im_channels` to discover recent recipients and threads. It scans the latest 300 stored messages and keeps threads distinct. For `send_im_message`, `thread` is a Telegram topic ID, a Discord thread channel ID, or a Lark/Feishu root message ID (`om_...`). Telegram also accepts the older `chat_id:topic_id` recipient format; an explicit `thread` takes precedence.
 
