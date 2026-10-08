@@ -2,7 +2,6 @@
 //! daemon restart, and repair the statuses recorded for their sources.
 
 use anda_core::{AgentContext, BoxError, CompletionRequest};
-use anda_db_utils::UniqueVec;
 use anda_engine::{
     context::AgentCtx,
     memory::{Conversation, ConversationStatus},
@@ -17,11 +16,9 @@ use super::{
     meta::{
         conversation_chat_history, request_meta_for_conversation, request_meta_from_conversation,
     },
-    select_most_used_tools,
     session::SessionRequestMeta,
 };
 use crate::engine::{
-    browser::ChromeBrowserTool,
     conversation::{RequestState, SourceStatusRepair},
     system::system_runtime_prompt,
 };
@@ -65,7 +62,8 @@ impl AndaBot {
             }
 
             match self.latest_conversation_in_chain(state.conv_id, None).await {
-                Ok(conversation) => {
+                Ok(None) => {}
+                Ok(Some(conversation)) => {
                     if state.status != conversation.status {
                         repairs.insert(
                             source_key.clone(),
@@ -182,20 +180,7 @@ impl AndaBot {
                 now_ms,
             )
             .await?;
-        let mut tools = UniqueVec::from(self.inner.tools.clone());
-        if self.inner.browser_manager.is_active() {
-            tools.extend(
-                ChromeBrowserTool::active_tool_names()
-                    .into_iter()
-                    .map(str::to_string),
-            );
-        }
-
-        tools.extend(
-            self.inner.conversations.tool_usage_with(|usage| {
-                select_most_used_tools(&available_tools, &tools, usage, 3)
-            }),
-        );
+        let tools = self.initial_tools(&available_tools, Vec::new());
         let initial_req = CompletionRequest {
             instructions,
             prompt,
@@ -219,8 +204,11 @@ impl AndaBot {
         // lock and hold it through insert_session, or two runners for the same
         // session id would race persist_conversation_state and the orphan's
         // detach_session would later evict the healthy runner.
+        let caller = conversation.user.to_string();
         let _session_creation_guard = self.inner.session_creation_lock.lock().await;
-        if self.get_session(&sess_id).is_some() || self.get_session_by_source(&source_key).is_some()
+        if self
+            .find_joinable_session(&sess_id, &source_key, &caller)
+            .is_some()
         {
             return Ok(());
         }
@@ -234,7 +222,7 @@ impl AndaBot {
             &ctx,
             SessionSpec {
                 sess_id,
-                caller: conversation.user.to_string(),
+                caller,
                 workspace,
                 source_key,
                 conversation_id: conversation._id,

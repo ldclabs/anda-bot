@@ -91,7 +91,6 @@ struct AndaBotInner {
     conversations: Arc<ConversationsTool>,
     resource_store: Arc<ResourceStore>,
     tool_dependencies: Vec<String>,
-    tools: Vec<String>,
     sessions: ActiveSessions,
     completion_hooks: Arc<Vec<Arc<dyn CompletionHook>>>,
     idle_hooks: Vec<Arc<dyn IdleHook>>,
@@ -257,7 +256,6 @@ impl AndaBot {
                 conversations,
                 resource_store,
                 tool_dependencies,
-                tools: base_tools(),
                 sessions: RwLock::new(HashMap::new()),
                 completion_hooks: Arc::new(completion_hooks),
                 idle_hooks,
@@ -361,9 +359,9 @@ impl AndaBot {
         let external_user =
             request_meta_extra_as::<bool>(spec.meta, keys::EXTERNAL_USER).unwrap_or(false);
         let formation_counterparty = if external_user {
-            Some(scoped_external_user_name_from_meta(spec.meta))
+            scoped_external_user_name_from_meta(spec.meta)
         } else {
-            Some(spec.caller.clone())
+            spec.caller.clone()
         };
 
         let conversation_id = Arc::new(AtomicU64::new(spec.conversation_id));
@@ -414,7 +412,7 @@ impl AndaBot {
             ),
             runner_idle: AtomicBool::new(false),
             formation_context: Some(InputContext {
-                counterparty: formation_counterparty,
+                counterparty: Some(formation_counterparty),
                 agent: Some(AndaBot::NAME.to_string()),
                 source: Some(spec.source_key),
                 topic: spec.formation_topic.map(str::to_string),
@@ -446,18 +444,38 @@ impl AndaBot {
         self.inner.sessions.write().insert(task.id, task);
     }
 
-    fn get_session(&self, key: &Xid) -> Option<Arc<Session>> {
+    /// The session table without sessions whose runner has exited.
+    fn live_sessions(&self) -> parking_lot::RwLockWriteGuard<'_, HashMap<Xid, Arc<Session>>> {
         let mut sessions = self.inner.sessions.write();
-        sessions.retain(|_, task| !task.sender.is_closed());
-        sessions.get(key).cloned()
+        sessions.retain(|_, session| !session.sender.is_closed());
+        sessions
     }
 
-    fn get_session_by_source(&self, source_key: &str) -> Option<Arc<Session>> {
-        let mut sessions = self.inner.sessions.write();
-        sessions.retain(|_, task| !task.sender.is_closed());
+    fn get_session(&self, key: &Xid) -> Option<Arc<Session>> {
+        self.live_sessions().get(key).cloned()
+    }
+
+    /// The live session `caller` can join: the one with id `key`, otherwise
+    /// the caller's session for `source_key`. A session is only joinable by
+    /// the caller that owns it: several managers without an explicit
+    /// source/workspace share the same fallback source_key, and joining
+    /// another caller's session would leak its chat history and reroute its
+    /// replies.
+    fn find_joinable_session(
+        &self,
+        key: &Xid,
+        source_key: &str,
+        caller: &str,
+    ) -> Option<Arc<Session>> {
+        let sessions = self.live_sessions();
         sessions
-            .values()
-            .find(|session| session.source_key == source_key)
+            .get(key)
+            .filter(|session| session.caller == caller)
+            .or_else(|| {
+                sessions
+                    .values()
+                    .find(|session| session.caller == caller && session.source_key == source_key)
+            })
             .cloned()
     }
 
@@ -469,9 +487,9 @@ impl AndaBot {
     // pending work and no background tasks are running. The bot is busy only
     // while some session has work in flight.
     pub(crate) fn has_busy_sessions(&self) -> bool {
-        let mut sessions = self.inner.sessions.write();
-        sessions.retain(|_, session| !session.sender.is_closed());
-        sessions.values().any(|session| !session.is_idle())
+        self.live_sessions()
+            .values()
+            .any(|session| !session.is_idle())
     }
 
     // Samples the sessions and invokes the idle hooks once the bot has been
@@ -500,17 +518,15 @@ impl AndaBot {
     }
 
     fn active_sessions(&self) -> Vec<Arc<Session>> {
-        let mut sessions = self.inner.sessions.write();
-        sessions.retain(|_, session| !session.sender.is_closed());
         // Snapshot `active_at` once per session up front. It is a shared atomic that running
         // session tasks update concurrently; reading it inside the comparator would let the
         // observed order change mid-sort, which makes the comparison a non-total order and
         // panics with "comparison function does not correctly implement a total order".
-        let mut active = sessions
+        let mut active = self
+            .live_sessions()
             .values()
             .map(|session| (session.active_at.load(Ordering::SeqCst), session.clone()))
             .collect::<Vec<_>>();
-        drop(sessions);
 
         active.sort_by(|(a_active_at, a), (b_active_at, b)| {
             b_active_at.cmp(a_active_at).then_with(|| a.id.cmp(&b.id))
@@ -526,10 +542,12 @@ impl AndaBot {
     }
 
     fn session_state_by_id(&self, session_id: &str, now_ms: u64) -> Option<SessionState> {
-        self.active_sessions()
-            .into_iter()
+        let session = self
+            .live_sessions()
+            .values()
             .find(|session| session.id.to_string() == session_id)
-            .map(|session| session.state(now_ms))
+            .cloned();
+        session.map(|session| session.state(now_ms))
     }
 
     async fn persist_conversation_state(
@@ -645,11 +663,14 @@ impl AndaBot {
         .await;
     }
 
+    /// The newest conversation in the child chain that starts at `conv_id`.
+    /// With `user`, the chain ends before the first conversation the user
+    /// does not own, so `None` means `conv_id` itself is someone else's.
     async fn latest_conversation_in_chain(
         &self,
         conv_id: u64,
         user: Option<Principal>,
-    ) -> Result<Conversation, BoxError> {
+    ) -> Result<Option<Conversation>, BoxError> {
         let mut seen = HashSet::new();
         let mut next_id = Some(conv_id);
         let mut latest = None;
@@ -679,7 +700,163 @@ impl AndaBot {
             latest = Some(conversation);
         }
 
-        latest.ok_or_else(|| format!("conversation not found: {conv_id}").into())
+        Ok(latest)
+    }
+
+    /// The admission permit a request holds while it runs. Cron runs and
+    /// calls from inside a session were admitted by their caller, and
+    /// `/stop` and `/cancel` get through while new work is refused.
+    fn admit(
+        &self,
+        ctx: &AgentCtx,
+        command: &PromptCommand,
+    ) -> Result<Option<crate::runtime_admission::Permit>, BoxError> {
+        if ctx
+            .base
+            .get_state::<crate::runtime_admission::AdmittedCron>()
+            .is_some()
+            || ctx.base.get_state::<SessionRequestMeta>().is_some()
+        {
+            return Ok(None);
+        }
+        let permit = if matches!(
+            command,
+            PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+        ) {
+            self.inner.admission.enter_existing()
+        } else {
+            self.inner.admission.enter()?
+        };
+        Ok(Some(permit))
+    }
+
+    /// Hands `input` to a live session of the caller, or returns it when the
+    /// session's runner has already shut down.
+    async fn join_session(
+        &self,
+        ctx: &AgentCtx,
+        session: &Session,
+        mut input: ConversationInput,
+    ) -> Result<AgentOutput, Box<ConversationInput>> {
+        if request_meta_extra_as::<bool>(ctx.meta(), keys::FINISH_WHEN_IDLE).unwrap_or(false) {
+            session.finish_when_idle.store(true, Ordering::SeqCst);
+        }
+        let conversation_id = session.conversation_id.load(Ordering::SeqCst);
+        session
+            .request_meta
+            .set(request_meta_for_conversation(ctx.meta(), conversation_id));
+        session
+            .request_meta
+            .set_cron_workspace(ctx.base.get_state::<cron::CronWorkspaceGrant>());
+        let control = matches!(
+            input.command,
+            PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
+        );
+        // A user writing in chat answers any choice card the agent is
+        // waiting on; scheduled prompts are not the user's answer.
+        let answers_choices = matches!(
+            input.command,
+            PromptCommand::Plain { .. } | PromptCommand::Steer { .. }
+        ) && input.cron_receipt.is_none()
+            && !input.extra.contains_key(keys::CRON_JOB_ID);
+        if let Some(receipt) = &mut input.cron_receipt {
+            session.bind_cron_receipt(receipt);
+        }
+        session.runner_idle.store(false, Ordering::SeqCst);
+        if let Err(err) = session.sender.send(input).await {
+            log::warn!("Failed to enqueue prompt for processing conversation {conversation_id}");
+            self.detach_session(&session.id);
+            return Err(Box::new(err.0));
+        }
+        if control {
+            session.control.request();
+        }
+        if answers_choices {
+            session.actions.answer_choices_in_chat().await;
+        }
+        Ok(AgentOutput {
+            conversation: (conversation_id > 0).then_some(conversation_id),
+            session: Some(session.id.to_string()),
+            ..Default::default()
+        })
+    }
+
+    /// The caller's latest conversations as context for a conversation that
+    /// starts fresh, each cut to its recent text messages.
+    async fn history_conversations_message(
+        &self,
+        caller: &Principal,
+        current: Option<&Conversation>,
+        now_ms: u64,
+    ) -> Result<Option<Message>, BoxError> {
+        let (mut conversations, _) = self
+            .inner
+            .conversations
+            .conversations
+            .list_conversations_by_user(caller, None, Some(2))
+            .await?;
+        if let Some(conv) = current
+            && !conversations.iter().any(|c| c._id == conv._id)
+        {
+            conversations.push(conv.clone());
+        }
+        let conversations = self
+            .inner
+            .conversations
+            .filter_memory_sources(conversations)
+            .await?;
+        if conversations.is_empty() {
+            return Ok(None);
+        }
+
+        let documents = Documents::new(
+            "user_history_conversations".to_string(),
+            conversations
+                .into_iter()
+                .map(|conv| Document::from(recent_text_messages(conv)))
+                .collect(),
+        );
+        Ok(Some(Message {
+            role: "user".into(),
+            content: vec![documents.to_string().into()],
+            name: Some(SYSTEM_PERSON_NAME.into()),
+            timestamp: Some(now_ms),
+            ..Default::default()
+        }))
+    }
+
+    /// The tools a session's first request loads: the base set, `extra`, the
+    /// browser tools while an extension is connected, and the caller's three
+    /// most used other tools.
+    fn initial_tools(&self, available_tools: &[String], extra: Vec<String>) -> UniqueVec<String> {
+        let mut tools = UniqueVec::from(base_tools());
+        tools.extend(extra);
+        if self.inner.browser_manager.is_active() {
+            tools.extend(
+                ChromeBrowserTool::active_tool_names()
+                    .into_iter()
+                    .map(str::to_string),
+            );
+        }
+        let most_used = self
+            .inner
+            .conversations
+            .tool_usage_with(|usage| select_most_used_tools(available_tools, &tools, usage, 3));
+        tools.extend(most_used);
+        tools
+    }
+
+    /// Points `source_key` at a conversation; a failed save is logged and the
+    /// request goes on.
+    async fn record_source_conversation(&self, source_key: &str, state: SourceState) {
+        if let Err(err) = self
+            .inner
+            .conversations
+            .update_source_state(source_key.to_string(), state)
+            .await
+        {
+            log::error!("Failed to update_source_state: {err:?}");
+        }
     }
 }
 
@@ -795,25 +972,7 @@ impl Agent<AgentCtx> for AndaBot {
         if let PromptCommand::Invalid { reason } = &command {
             return Err(reason.clone().into());
         }
-        let _permit = if ctx
-            .base
-            .get_state::<crate::runtime_admission::AdmittedCron>()
-            .is_some()
-            || ctx.base.get_state::<SessionRequestMeta>().is_some()
-        {
-            None
-        } else {
-            Some(
-                if matches!(
-                    command,
-                    PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
-                ) {
-                    self.inner.admission.enter_existing()
-                } else {
-                    self.inner.admission.enter()?
-                },
-            )
-        };
+        let _permit = self.admit(&ctx, &command)?;
 
         let now_ms = unix_ms();
         let requested = requested_memory_mode(&ctx)?;
@@ -827,13 +986,14 @@ impl Agent<AgentCtx> for AndaBot {
         let is_new = matches!(command, PromptCommand::New { .. });
         // One chain walk serves the memory policy, a side command and the
         // session lookup. Only `/new` may start over when the saved chain
-        // cannot be read.
+        // cannot be read. A source shared with another caller may point at
+        // their conversation, which this caller starts over from.
         let mut current_conversation = if requested_conversation > 0 {
             match self
                 .latest_conversation_in_chain(requested_conversation, Some(*caller))
                 .await
             {
-                Ok(conversation) => Some(conversation),
+                Ok(conversation) => conversation,
                 Err(err) if !is_new => return Err(err),
                 Err(_) => None,
             }
@@ -847,7 +1007,6 @@ impl Agent<AgentCtx> for AndaBot {
             current_conversation.as_ref().filter(|_| !is_new),
         )?;
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
-        let mut available_tools = Vec::new();
 
         ctx.base.set_state(AgentInfo);
 
@@ -886,6 +1045,7 @@ impl Agent<AgentCtx> for AndaBot {
                 .insert(keys::CONVERSATION.to_string(), id.into());
         }
 
+        let caller_id = caller.to_string();
         let mut sess_id = current_conversation
             .as_ref()
             .and_then(|conv| conv.thread)
@@ -901,94 +1061,40 @@ impl Agent<AgentCtx> for AndaBot {
         // re-check before creating the session so concurrent requests for the
         // same source cannot create duplicate sessions.
         let mut instructions: Option<String> = None;
-        let _session_creation_guard = loop {
+        let mut available_tools = Vec::new();
+        let session_creation_guard = loop {
             let guard = self.inner.session_creation_lock.lock().await;
-            // A session is only joinable by the caller that owns it: several
-            // managers without an explicit source/workspace share the same
-            // fallback source_key, and joining another caller's session would
-            // leak its chat history and reroute its replies.
-            let active_session = self
-                .get_session(&sess_id)
-                .or_else(|| self.get_session_by_source(&source_key))
-                .filter(|session| session.caller == caller.to_string());
-            if let Some(session) = active_session {
-                if !is_new && requested.is_some_and(|mode| mode != session.memory_policy.mode) {
-                    return Err("Change memory mode in a new conversation with /new".into());
-                }
-                if is_new {
-                    detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
-                    if let Some(session) = self.detach_session(&session.id) {
-                        session.finish_when_idle.store(true, Ordering::SeqCst);
-                        detached_existing_session = true;
+            if let Some(session) = self.find_joinable_session(&sess_id, &source_key, &caller_id) {
+                if !is_new {
+                    if requested.is_some_and(|mode| mode != session.memory_policy.mode) {
+                        return Err("Change memory mode in a new conversation with /new".into());
                     }
-                    if Some(detached_conversation_id) != current_conversation_id {
-                        // Fetch the latest ancestors in the detached session for
-                        // the /new command. The chain walk is a sequence of DB
-                        // reads, so release the creation lock first: holding it
-                        // here would stall every unrelated session creation.
-                        drop(guard);
-                        if let Ok(conv) = self
-                            .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
-                            .await
-                        {
-                            ancestors = Some(recent_ancestors(&conv));
-                        }
-                        continue;
-                    }
-                } else {
-                    // Join existing conversation session if it's active.
                     // Release the lock first: enqueueing can wait on a full
                     // channel and must not stall unrelated requests.
                     drop(guard);
-                    if request_meta_extra_as::<bool>(ctx.meta(), keys::FINISH_WHEN_IDLE)
-                        .unwrap_or(false)
+                    match self.join_session(&ctx, &session, input).await {
+                        Ok(output) => return Ok(output),
+                        Err(rejected) => input = *rejected,
+                    }
+                    continue;
+                }
+
+                detached_conversation_id = session.conversation_id.load(Ordering::SeqCst);
+                if let Some(session) = self.detach_session(&session.id) {
+                    session.finish_when_idle.store(true, Ordering::SeqCst);
+                    detached_existing_session = true;
+                }
+                if Some(detached_conversation_id) != current_conversation_id {
+                    // Fetch the latest ancestors in the detached session for
+                    // the /new command. The chain walk is a sequence of DB
+                    // reads, so release the creation lock first: holding it
+                    // here would stall every unrelated session creation.
+                    drop(guard);
+                    if let Ok(Some(conv)) = self
+                        .latest_conversation_in_chain(detached_conversation_id, Some(*caller))
+                        .await
                     {
-                        session.finish_when_idle.store(true, Ordering::SeqCst);
-                    }
-                    let response_conversation_id = session.conversation_id.load(Ordering::SeqCst);
-                    let meta = request_meta_for_conversation(ctx.meta(), response_conversation_id);
-                    session.request_meta.set(meta);
-                    session
-                        .request_meta
-                        .set_cron_workspace(ctx.base.get_state::<cron::CronWorkspaceGrant>());
-                    let control = matches!(
-                        input.command,
-                        PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
-                    );
-                    // A user writing in chat answers any choice card the agent is
-                    // waiting on; scheduled prompts are not the user's answer.
-                    let answers_choices = matches!(
-                        input.command,
-                        PromptCommand::Plain { .. } | PromptCommand::Steer { .. }
-                    ) && input.cron_receipt.is_none()
-                        && !input.extra.contains_key(keys::CRON_JOB_ID);
-                    if let Some(receipt) = &mut input.cron_receipt {
-                        session.bind_cron_receipt(receipt);
-                    }
-                    session.runner_idle.store(false, Ordering::SeqCst);
-                    match session.sender.send(input).await {
-                        Ok(_) => {
-                            if control {
-                                session.control.request();
-                            }
-                            if answers_choices {
-                                session.actions.answer_choices_in_chat().await;
-                            }
-                            return Ok(AgentOutput {
-                                conversation: (response_conversation_id > 0)
-                                    .then_some(response_conversation_id),
-                                session: Some(session.id.to_string()),
-                                ..Default::default()
-                            });
-                        }
-                        Err(err) => {
-                            log::warn!(
-                                "Failed to enqueue prompt for processing conversation {}",
-                                response_conversation_id,
-                            );
-                            self.detach_session(&session.id);
-                            input = err.0;
-                        }
+                        ancestors = Some(recent_ancestors(&conv));
                     }
                     continue;
                 }
@@ -1027,7 +1133,7 @@ impl Agent<AgentCtx> for AndaBot {
             instructions.expect("system instructions are built before session creation");
 
         let mut initial_goal = None;
-        let mut tools = UniqueVec::from(self.inner.tools.clone());
+        let mut session_tools = Vec::new();
         let mut content: Vec<ContentPart> = Vec::new();
         let mut force_standalone_conversation = false;
         let prompt = match command {
@@ -1036,7 +1142,7 @@ impl Agent<AgentCtx> for AndaBot {
             | PromptCommand::Loop { prompt } => prompt,
             PromptCommand::Goal { prompt } => {
                 initial_goal = Some(prompt.clone());
-                tools.push(GoalTool::NAME.to_string());
+                session_tools.push(GoalTool::NAME.to_string());
                 prompt
             }
             PromptCommand::Ping => return Err("prompt cannot be empty".into()),
@@ -1049,12 +1155,8 @@ impl Agent<AgentCtx> for AndaBot {
             PromptCommand::Skill { skill, prompt } => {
                 let (callable, directive) =
                     skill_command_directive(self.inner.skill_library.subagent_set(), &skill);
-                if let Some(callable) = callable {
-                    tools.push(callable);
-                }
-
+                session_tools.extend(callable);
                 content.push(system_runtime_prompt("prompt command", directive).into());
-
                 prompt
             }
             PromptCommand::Invalid { reason } => return Err(reason.into()),
@@ -1070,21 +1172,17 @@ impl Agent<AgentCtx> for AndaBot {
                 let Some(prompt) = prompt else {
                     if detached_conversation_id > 0
                         && source_state.conv_id != detached_conversation_id
-                        && let Err(err) = self
-                            .inner
-                            .conversations
-                            .update_source_state(
-                                source_key.clone(),
-                                SourceState {
-                                    conv_id: detached_conversation_id,
-                                    status: ConversationStatus::Cancelled,
-                                    timestamp: now_ms,
-                                    user: Some(*caller),
-                                },
-                            )
-                            .await
                     {
-                        log::error!("Failed to update_source_state: {:?}", err);
+                        self.record_source_conversation(
+                            &source_key,
+                            SourceState {
+                                conv_id: detached_conversation_id,
+                                status: ConversationStatus::Cancelled,
+                                timestamp: now_ms,
+                                user: Some(*caller),
+                            },
+                        )
+                        .await;
                     }
 
                     return Ok(AgentOutput {
@@ -1101,22 +1199,13 @@ impl Agent<AgentCtx> for AndaBot {
             }
         };
 
-        let mut chat_history: Vec<Message> = Vec::new();
-        let mut reserve_chat_history: Vec<Message> = Vec::new();
-        let mut new_chat_history_message = Message {
-            role: "user".into(),
-            content: vec![],
-            name: Some(SYSTEM_PERSON_NAME.into()),
-            timestamp: Some(now_ms),
-            ..Default::default()
-        };
-
         let should_continue = !force_standalone_conversation
             && current_conversation
                 .as_ref()
-                .map(|conv| should_continue_conversation(&conv.status))
-                .unwrap_or(false);
+                .is_some_and(|conv| should_continue_conversation(&conv.status));
 
+        let mut chat_history: Vec<Message> = Vec::new();
+        let mut reserve_chat_history: Vec<Message> = Vec::new();
         let conversation = if should_continue && let Some(conv) = current_conversation {
             // 如果 conversation 已经存在，允许 prompt 为空（会进入等待模式）
             reserve_chat_history = conversation_chat_history(&conv);
@@ -1127,38 +1216,13 @@ impl Agent<AgentCtx> for AndaBot {
                 return Err("prompt cannot be empty".into());
             }
 
-            if !force_standalone_conversation {
-                let (mut history_conversations, _) = self
-                    .inner
-                    .conversations
-                    .conversations
-                    .list_conversations_by_user(caller, None, Some(2))
-                    .await?;
-
-                if let Some(conv) = &current_conversation
-                    && !history_conversations.iter().any(|c| c._id == conv._id)
-                {
-                    history_conversations.push(conv.clone());
-                }
-
-                history_conversations = self
-                    .inner
-                    .conversations
-                    .filter_memory_sources(history_conversations)
-                    .await?;
-                if policy.may_read() && !history_conversations.is_empty() {
-                    new_chat_history_message.content.push(
-                        Documents::new(
-                            "user_history_conversations".to_string(),
-                            history_conversations
-                                .into_iter()
-                                .map(Document::from)
-                                .collect(),
-                        )
-                        .to_string()
-                        .into(),
-                    );
-                }
+            if !force_standalone_conversation
+                && policy.may_read()
+                && let Some(message) = self
+                    .history_conversations_message(caller, current_conversation.as_ref(), now_ms)
+                    .await?
+            {
+                chat_history.push(message);
             }
 
             let mut conv = Conversation {
@@ -1171,11 +1235,7 @@ impl Agent<AgentCtx> for AndaBot {
                 created_at: now_ms,
                 updated_at: now_ms,
                 extra: Some({
-                    let mut extra = if force_standalone_conversation {
-                        conversation_extra_without_id(ctx.meta())
-                    } else {
-                        ctx.meta().extra.clone()
-                    };
+                    let mut extra = conversation_extra_without_id(ctx.meta());
                     policy.persist(&mut extra);
                     extra.insert("memory_source_parents".into(), json!(inherited_sources));
                     json!(extra)
@@ -1196,8 +1256,11 @@ impl Agent<AgentCtx> for AndaBot {
             {
                 conversation.child = Some(conv_id);
                 conversation.updated_at = now_ms;
+                // The chain goes on in the child. Clients show a failure only
+                // for a Failed status, and failed_reason is set only with it.
                 if conversation.status == ConversationStatus::Failed {
                     conversation.status = ConversationStatus::Completed;
+                    conversation.failed_reason = None;
                 }
                 self.persist_conversation_state(&conversation).await?;
             }
@@ -1207,41 +1270,30 @@ impl Agent<AgentCtx> for AndaBot {
         };
 
         if source_state.conv_id != conversation._id {
-            // Update the mapping of source to conv_id if it's different from the current one.
-            if let Err(err) = self
-                .inner
-                .conversations
-                .update_source_state(
-                    source_key.clone(),
-                    SourceState {
-                        conv_id: conversation._id,
-                        status: conversation.status.clone(),
-                        timestamp: now_ms,
-                        user: Some(conversation.user),
-                    },
-                )
-                .await
-            {
-                log::error!("Failed to update_source_state: {:?}", err);
-            }
+            self.record_source_conversation(
+                &source_key,
+                SourceState {
+                    conv_id: conversation._id,
+                    status: conversation.status.clone(),
+                    timestamp: now_ms,
+                    user: Some(conversation.user),
+                },
+            )
+            .await;
         }
 
-        let res = AgentOutput {
-            conversation: Some(conversation._id),
-            ..Default::default()
-        };
-
+        let conversation_id = conversation._id;
         let (session, rx, action_rx) = self.create_session(
             &ctx,
             SessionSpec {
                 sess_id,
-                caller: caller.to_string(),
+                caller: caller_id,
                 workspace,
                 source_key,
-                conversation_id: conversation._id,
+                conversation_id,
                 request_meta: SessionRequestMeta::new(request_meta_for_conversation(
                     ctx.meta(),
-                    conversation._id,
+                    conversation_id,
                 )),
                 meta: ctx.meta(),
                 initial_goal,
@@ -1249,31 +1301,18 @@ impl Agent<AgentCtx> for AndaBot {
                 active_at_ms: unix_ms(),
             },
         );
+        // The session is registered: a concurrent request for it now joins
+        // and queues its input until the runner starts.
+        drop(session_creation_guard);
 
         if let Some(receipt) = &mut cron_receipt {
             session.bind_cron_receipt(receipt);
         }
-        let assistant = self.clone();
-        if !new_chat_history_message.content.is_empty() {
-            chat_history.push(new_chat_history_message);
-        };
 
-        if assistant.inner.browser_manager.is_active() {
-            tools.extend(
-                ChromeBrowserTool::active_tool_names()
-                    .into_iter()
-                    .map(str::to_string),
-            );
-        }
         // Attachments reach the model as references, so load the tools that
         // can inspect them instead of making the model discover them first.
-        tools.extend(multimodal::media_agent_names_for(&resources));
-
-        tools.extend(
-            assistant.inner.conversations.tool_usage_with(|usage| {
-                select_most_used_tools(&available_tools, &tools, usage, 3)
-            }),
-        );
+        session_tools.extend(multimodal::media_agent_names_for(&resources));
+        let tools = self.initial_tools(&available_tools, session_tools);
         let req = CompletionRequest {
             instructions,
             prompt,
@@ -1284,7 +1323,7 @@ impl Agent<AgentCtx> for AndaBot {
             ..Default::default()
         };
 
-        assistant.spawn_session_runner(
+        self.spawn_session_runner(
             ctx,
             req,
             resources,
@@ -1296,15 +1335,19 @@ impl Agent<AgentCtx> for AndaBot {
             system_extra_user_context(&extra),
             cron_receipt,
         );
-        Ok(res)
+        Ok(AgentOutput {
+            conversation: Some(conversation_id),
+            ..Default::default()
+        })
     }
 }
 
 impl AndaBotInner {
     fn apply_merge_discovered_tools(&self, runner: &mut CompletionRunner) {
-        if let Some(merge_discovered_tools) =
-            self.merge_discovered_tools_for_model(&runner.model().model_name())
-        {
+        if let Some(merge_discovered_tools) = merge_discovered_tools_for_model(
+            &self.merge_discovered_tools_cache,
+            &runner.model().model_name(),
+        ) {
             runner.set_merge_discovered_tools(Some(merge_discovered_tools));
         }
     }
@@ -1322,33 +1365,21 @@ impl AndaBotInner {
             .write()
             .insert(model_name, merge_discovered_tools);
     }
-
-    fn merge_discovered_tools_for_model(&self, model_name: &str) -> Option<bool> {
-        merge_discovered_tools_for_model_cache(&self.merge_discovered_tools_cache, model_name)
-    }
 }
 
-fn merge_discovered_tools_for_model_cache(
+/// Whether a model takes discovered tools merged into its request: the known
+/// policy of its family, otherwise what an earlier run of it found out.
+fn merge_discovered_tools_for_model(
     cache: &RwLock<HashMap<String, bool>>,
     model_name: &str,
 ) -> Option<bool> {
-    known_merge_discovered_tools_for_model(model_name).or_else(|| {
-        let key = merge_discovered_tools_model_key(model_name)?;
-        cache.read().get(&key).copied()
-    })
-}
-
-fn known_merge_discovered_tools_for_model(model_name: &str) -> Option<bool> {
-    let model_name = merge_discovered_tools_model_key(model_name)?;
-    if model_name.contains("deepseek") {
+    let key = merge_discovered_tools_model_key(model_name)?;
+    if key.contains("deepseek") {
         Some(false)
-    } else if model_name.starts_with("gpt")
-        || model_name.contains("/gpt")
-        || model_name.contains("chatgpt")
-    {
+    } else if key.starts_with("gpt") || key.contains("/gpt") || key.contains("chatgpt") {
         Some(true)
     } else {
-        None
+        cache.read().get(&key).copied()
     }
 }
 
@@ -1457,6 +1488,36 @@ fn recent_ancestors(conversation: &Conversation) -> Vec<u64> {
     ids
 }
 
+/// How many text messages of each past conversation a fresh conversation
+/// sees as history.
+const HISTORY_TEXT_MESSAGES: usize = 20;
+
+/// `conversation` cut to its last [`HISTORY_TEXT_MESSAGES`] messages that
+/// carry text, with only their text: its saved history can be as long as the
+/// model's context window, and tool traffic and reasoning add no context.
+fn recent_text_messages(mut conversation: Conversation) -> Conversation {
+    let mut recent = Vec::new();
+    for value in conversation.messages.iter().rev() {
+        if recent.len() == HISTORY_TEXT_MESSAGES {
+            break;
+        }
+        let Ok(mut message) = serde_json::from_value::<Message>(value.clone()) else {
+            continue;
+        };
+        message
+            .content
+            .retain(|part| matches!(part, ContentPart::Text { .. }));
+        if !message.content.is_empty()
+            && let Ok(value) = serde_json::to_value(message)
+        {
+            recent.push(value);
+        }
+    }
+    recent.reverse();
+    conversation.messages = recent;
+    conversation
+}
+
 fn select_most_used_tools(
     available_tools: &[String],
     base_tools: &[String],
@@ -1550,19 +1611,25 @@ mod tests {
 
     #[test]
     fn known_merge_discovered_tools_policy_covers_deepseek_and_gpt_models() {
+        // A cached probe never overrides a known model family.
+        let cache = RwLock::new(HashMap::from([("deepseek-v4-pro".to_string(), true)]));
         assert_eq!(
-            known_merge_discovered_tools_for_model("deepseek-v4-pro"),
+            merge_discovered_tools_for_model(&cache, "DeepSeek-V4-Pro"),
             Some(false)
         );
         assert_eq!(
-            known_merge_discovered_tools_for_model("openai/gpt-5.4"),
+            merge_discovered_tools_for_model(&cache, "openai/gpt-5.4"),
             Some(true)
         );
         assert_eq!(
-            known_merge_discovered_tools_for_model("chatgpt-codex"),
+            merge_discovered_tools_for_model(&cache, "chatgpt-codex"),
             Some(true)
         );
-        assert_eq!(known_merge_discovered_tools_for_model("gemini-3-pro"), None);
+        assert_eq!(
+            merge_discovered_tools_for_model(&cache, "gemini-3-pro"),
+            None
+        );
+        assert_eq!(merge_discovered_tools_for_model(&cache, "  "), None);
     }
 
     #[test]
@@ -1570,11 +1637,11 @@ mod tests {
         let cache = RwLock::new(HashMap::from([("custom-model".to_string(), true)]));
 
         assert_eq!(
-            merge_discovered_tools_for_model_cache(&cache, "CUSTOM-MODEL"),
+            merge_discovered_tools_for_model(&cache, "CUSTOM-MODEL"),
             Some(true)
         );
         assert_eq!(
-            merge_discovered_tools_for_model_cache(&cache, "unknown-model"),
+            merge_discovered_tools_for_model(&cache, "unknown-model"),
             None
         );
     }
@@ -2263,6 +2330,152 @@ mod tests {
             .agent_run(caller, input_for_source("/new fresh start", "cli:join"))
             .await;
         assert!(new_conv.is_ok());
+    }
+
+    #[tokio::test]
+    async fn callers_sharing_a_source_keep_their_own_conversations() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let owner = test_caller();
+        let other = Principal::from_slice(&[9, 8, 7, 6, 5, 4, 3, 2, 1]);
+
+        let first = engine
+            .agent_run(owner, input_for_source("hello", "cli:shared"))
+            .await
+            .unwrap();
+        // The source now points at the owner's conversation; the other caller
+        // starts its own instead of failing on a conversation it cannot read.
+        let second = engine
+            .agent_run(other, input_for_source("hello", "cli:shared"))
+            .await
+            .unwrap();
+        assert_ne!(second.conversation, first.conversation);
+        let conversation = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(second.conversation.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(conversation.user, other);
+
+        // The owner goes on in its live session although the source moved on.
+        let again = engine
+            .agent_run(owner, input_for_source("again", "cli:shared"))
+            .await
+            .unwrap();
+        assert_eq!(again.conversation, first.conversation);
+        assert!(again.session.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_failed_conversation_continued_in_a_child_drops_its_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+        let now_ms = unix_ms();
+        let failed = Conversation {
+            user: caller,
+            status: ConversationStatus::Failed,
+            failed_reason: Some("model error".to_string()),
+            period: now_ms / 3600 / 1000,
+            created_at: now_ms,
+            updated_at: now_ms,
+            ..Default::default()
+        };
+        let failed_id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&failed))
+            .await
+            .unwrap();
+
+        let mut input = input_for_source("try again", "cli:failed");
+        input
+            .meta
+            .as_mut()
+            .unwrap()
+            .extra
+            .insert(keys::CONVERSATION.to_string(), json!(failed_id));
+        let output = engine.agent_run(caller, input).await.unwrap();
+        let child_id = output.conversation.unwrap();
+        assert_ne!(child_id, failed_id);
+
+        let conversations = &bot.inner.conversations.conversations;
+        let parent = conversations.get_conversation(failed_id).await.unwrap();
+        assert_eq!(parent.child, Some(child_id));
+        assert_eq!(parent.status, ConversationStatus::Completed);
+        assert_eq!(parent.failed_reason, None);
+        // The child's saved request metadata does not name its parent.
+        let child = conversations.get_conversation(child_id).await.unwrap();
+        let extra = child.extra.unwrap();
+        assert_eq!(extra.get("source"), Some(&json!("cli:failed")));
+        assert!(extra.get(keys::CONVERSATION).is_none());
+        assert_eq!(child.ancestors, Some(vec![failed_id]));
+    }
+
+    #[test]
+    fn history_keeps_the_recent_text_of_a_past_conversation() {
+        let text = |role: &str, text: String| {
+            json!(Message {
+                role: role.to_string(),
+                content: vec![ContentPart::Text { text }],
+                ..Default::default()
+            })
+        };
+        let mut messages = (0..30)
+            .map(|i| text("user", format!("question {i}")))
+            .collect::<Vec<_>>();
+        messages.push(json!(Message {
+            role: "assistant".to_string(),
+            content: vec![
+                ContentPart::Reasoning {
+                    text: "thinking".to_string()
+                },
+                ContentPart::Text {
+                    text: "answer".to_string()
+                },
+                ContentPart::ToolCall {
+                    name: "shell".to_string(),
+                    args: json!({}),
+                    call_id: Some("call-1".to_string()),
+                },
+            ],
+            ..Default::default()
+        }));
+        messages.push(json!(Message {
+            role: "tool".to_string(),
+            content: vec![ContentPart::ToolOutput {
+                name: "shell".to_string(),
+                output: json!({"ok": true}),
+                is_error: None,
+                call_id: Some("call-1".to_string()),
+                remote_id: None,
+            }],
+            ..Default::default()
+        }));
+
+        let conversation = recent_text_messages(Conversation {
+            messages,
+            ..Default::default()
+        });
+
+        let kept = conversation
+            .messages
+            .into_iter()
+            .map(|value| serde_json::from_value::<Message>(value).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(kept.len(), HISTORY_TEXT_MESSAGES);
+        assert_eq!(kept[0].text().as_deref(), Some("question 11"));
+        let last = kept.last().unwrap();
+        assert_eq!(last.role, "assistant");
+        assert_eq!(
+            last.content,
+            vec![ContentPart::Text {
+                text: "answer".to_string()
+            }]
+        );
     }
 
     #[tokio::test]
