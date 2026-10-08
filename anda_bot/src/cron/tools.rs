@@ -37,7 +37,7 @@ async fn job_origin(
 ) -> Result<Option<CronJobOrigin>, BoxError> {
     let mut origin = CronJobOrigin::from_meta_with_caller(meta, ctx.caller());
     if let Some(grants) = grants
-        && let Some(path) = grants.authorize_cron_workspace(ctx.caller(), meta).await?
+        && let Some(path) = grants.authorize_workspace(ctx.caller(), meta).await?
         && let Some(origin) = &mut origin
     {
         origin.workspace_grant = Some(path.to_string_lossy().into_owned());

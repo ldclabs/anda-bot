@@ -509,10 +509,7 @@ mod tests {
                 assert_eq!(
                     state
                         .grants
-                        .authorize_cron_workspace(
-                            &anda_core::Principal::management_canister(),
-                            &meta
-                        )
+                        .authorize_workspace(&anda_core::Principal::management_canister(), &meta)
                         .await
                         .unwrap(),
                     Some(workspace.canonicalize().unwrap())

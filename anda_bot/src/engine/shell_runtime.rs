@@ -16,8 +16,7 @@ use std::{
 };
 
 use super::agent::SessionRequestMeta;
-use crate::util::request_meta::keys;
-use crate::util::windows_process::suppress_console_window;
+use crate::{cron::CronWorkspaceGrant, util::request_meta::keys};
 
 const MAX_CLI_WORKSPACES: usize = 64;
 const CLI_WORKSPACE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
@@ -72,6 +71,34 @@ impl CliWorkspaceGrants {
         Ok(workspace)
     }
 
+    /// Resolves the registered directory a CLI or desktop request names, or
+    /// `None` for other sources. Live shell calls and new cron grants both
+    /// pass through here: only the owner may use such a directory, never on
+    /// behalf of an external IM user.
+    pub(crate) async fn authorize_workspace(
+        &self,
+        caller: &Principal,
+        meta: &RequestMeta,
+    ) -> Result<Option<PathBuf>, BoxError> {
+        let Some((source, workspace)) = cli_workspace_request(meta)? else {
+            return Ok(None);
+        };
+        if meta
+            .get_extra_as::<bool>(keys::EXTERNAL_USER)
+            .unwrap_or(false)
+        {
+            return Err("External IM users cannot use a registered local workspace".into());
+        }
+        if *caller != self.owner {
+            return Err("only the local owner may use a registered CLI workspace".into());
+        }
+        let resolved = self.resolve(&workspace).await?;
+        if source != workspace && canonical_directory(&source).await? != resolved {
+            return Err("CLI source and workspace do not match".into());
+        }
+        Ok(Some(resolved))
+    }
+
     async fn resolve(&self, workspace: &Path) -> Result<PathBuf, BoxError> {
         let workspace = canonical_directory(workspace).await?;
         let allowed = self
@@ -90,6 +117,7 @@ impl CliWorkspaceGrants {
     }
 }
 
+/// The `(source, workspace)` directories a CLI or desktop request names.
 fn cli_workspace_request(meta: &RequestMeta) -> Result<Option<(PathBuf, PathBuf)>, BoxError> {
     let Some(source) = meta.get_extra_as::<String>(keys::SOURCE) else {
         return Ok(None);
@@ -114,32 +142,6 @@ fn cli_workspace_request(meta: &RequestMeta) -> Result<Option<(PathBuf, PathBuf)
         .get_extra_as::<PathBuf>(keys::WORKSPACE)
         .ok_or("CLI request is missing its workspace")?;
     Ok(Some((source_workspace.into(), workspace)))
-}
-
-impl CliWorkspaceGrants {
-    pub(crate) async fn authorize_cron_workspace(
-        &self,
-        caller: &Principal,
-        meta: &RequestMeta,
-    ) -> Result<Option<PathBuf>, BoxError> {
-        let Some((source, workspace)) = cli_workspace_request(meta)? else {
-            return Ok(None);
-        };
-        if meta
-            .get_extra_as::<bool>(keys::EXTERNAL_USER)
-            .unwrap_or(false)
-        {
-            return Err("External IM users cannot use a registered local workspace".into());
-        }
-        if *caller != self.owner {
-            return Err("only the local owner may use a registered CLI workspace".into());
-        }
-        let resolved = self.resolve(&workspace).await?;
-        if canonical_directory(&source).await? != resolved {
-            return Err("CLI source and workspace do not match".into());
-        }
-        Ok(Some(resolved))
-    }
 }
 
 async fn canonical_directory(workspace: &Path) -> Result<PathBuf, BoxError> {
@@ -180,34 +182,45 @@ impl NativeShellRuntime {
     pub fn insecure(self) -> Self {
         Self {
             inner: self.inner.insecure(),
-            cli_workspaces: self.cli_workspaces,
+            ..self
         }
     }
 
     pub fn session_limits(self, limits: SessionLimits) -> Self {
         Self {
             inner: self.inner.session_limits(limits),
-            cli_workspaces: self.cli_workspaces,
+            ..self
         }
     }
 
+    /// The runtime for this call, rooted at the registered CLI workspace when
+    /// the request names one. The derived runtime keeps this one's policy and
+    /// shares its sessions, so `shell_session` reaches the command and dropping
+    /// it does not end the command.
+    async fn runtime_for(&self, ctx: &BaseCtx) -> Result<Option<NativeRuntime>, BoxError> {
+        Ok(self
+            .cli_workspace(ctx)
+            .await?
+            .map(|workspace| self.inner.for_workspace(workspace)))
+    }
+
     async fn cli_workspace(&self, ctx: &BaseCtx) -> Result<Option<PathBuf>, BoxError> {
-        let meta: RequestMeta = ctx
-            .get_state::<SessionRequestMeta>()
-            .map(|state| state.get())
-            .unwrap_or_else(|| ctx.meta().clone());
-        let Some((source_workspace, workspace)) = cli_workspace_request(&meta)? else {
+        let session = ctx.get_state::<SessionRequestMeta>();
+        let meta = session
+            .as_ref()
+            .map_or_else(|| ctx.meta().clone(), SessionRequestMeta::get);
+        let Some((source, workspace)) = cli_workspace_request(&meta)? else {
             return Ok(None);
         };
-        let saved_grant = match ctx.get_state::<SessionRequestMeta>() {
+        let saved_grant = match &session {
             Some(session) => session.cron_workspace(),
-            None => ctx.get_state::<crate::cron::CronWorkspaceGrant>(),
+            None => ctx.get_state::<CronWorkspaceGrant>(),
         };
         let resolved = if let Some(grant) = saved_grant {
             let resolved = canonical_directory(&workspace).await?;
             if grant.caller != *ctx.caller()
                 || grant.path != resolved
-                || canonical_directory(&source_workspace).await? != resolved
+                || (source != workspace && canonical_directory(&source).await? != resolved)
             {
                 return Err("Scheduled workspace does not match its saved authorization".into());
             }
@@ -218,7 +231,7 @@ impl NativeShellRuntime {
                 .as_ref()
                 .ok_or("CLI workspace registration is unavailable")?;
             grants
-                .authorize_cron_workspace(ctx.caller(), &meta)
+                .authorize_workspace(ctx.caller(), &meta)
                 .await?
                 .ok_or("CLI request is missing its workspace")?
         };
@@ -227,6 +240,7 @@ impl NativeShellRuntime {
         // session may have been created in a nested directory, which would
         // otherwise override this newer, registered parent directory.
         if let Some(frozen) = ctx.meta().get_extra_as::<PathBuf>(keys::WORKSPACE)
+            && frozen != workspace
             && let Ok(frozen) = tokio::fs::canonicalize(frozen).await
             && frozen != resolved
             && frozen.starts_with(&resolved)
@@ -251,20 +265,13 @@ impl Executor for NativeShellRuntime {
         input: CommandArgs,
         mut envs: HashMap<String, String>,
     ) -> Result<CommandOutput, BoxError> {
-        let cli_workspace = self.cli_workspace(&ctx).await?;
+        let scoped = self.runtime_for(&ctx).await?;
         augment_command_path(&mut envs);
-        match cli_workspace {
-            // This root was registered out of band by the authenticated owner.
-            // The derived runtime shares this one's sessions, so `shell_session`
-            // reaches the command and dropping it does not end the command.
-            Some(workspace) => {
-                self.inner
-                    .for_workspace(workspace)
-                    .execute_session(ctx, input, envs)
-                    .await
-            }
-            None => self.inner.execute_session(ctx, input, envs).await,
-        }
+        scoped
+            .as_ref()
+            .unwrap_or(&self.inner)
+            .execute_session(ctx, input, envs)
+            .await
     }
 
     async fn interact_session(
@@ -291,30 +298,28 @@ impl Executor for NativeShellRuntime {
         self.inner.shell()
     }
 
+    /// Legacy `ShellTool` entry point; the registered `shell` tool runs
+    /// commands through [`Self::execute_session`].
     async fn execute(
         &self,
         ctx: BaseCtx,
         input: ExecArgs,
         mut envs: HashMap<String, String>,
     ) -> Result<ExecOutput, BoxError> {
-        let cli_workspace = self.cli_workspace(&ctx).await?;
+        let scoped = self.runtime_for(&ctx).await?;
         augment_command_path(&mut envs);
-        let mut command = NativeRuntime::build_shell_command(&input.command);
-        suppress_console_window(&mut command);
-        if let Some(workspace) = cli_workspace {
-            // This root was registered out of band by the authenticated owner.
-            // NativeRuntime still applies its normal request-narrowing check.
-            NativeRuntime::new(workspace)
-                .insecure()
-                .execute_command(ctx, self.name(), command, envs, Some(input))
-                .await
-        } else {
-            self.inner
-                .execute_command(ctx, self.name(), command, envs, Some(input))
-                .await
-        }
+        scoped
+            .as_ref()
+            .unwrap_or(&self.inner)
+            .execute(ctx, input, envs)
+            .await
     }
 }
+
+/// Tool directories a daemon's minimal PATH (launchd, systemd) usually lacks.
+#[cfg(not(target_os = "windows"))]
+static TOOL_PATH_CANDIDATES: std::sync::LazyLock<Vec<PathBuf>> =
+    std::sync::LazyLock::new(default_tool_path_candidates);
 
 #[cfg(not(target_os = "windows"))]
 fn augment_command_path(envs: &mut HashMap<String, String>) {
@@ -323,7 +328,7 @@ fn augment_command_path(envs: &mut HashMap<String, String>) {
         .cloned()
         .or_else(|| std::env::var("PATH").ok());
 
-    if let Some(path) = enriched_path_value(base_path.as_deref(), default_tool_path_candidates()) {
+    if let Some(path) = enriched_path_value(base_path.as_deref(), &TOOL_PATH_CANDIDATES) {
         envs.insert("PATH".to_string(), path);
     }
 }
@@ -361,10 +366,7 @@ fn default_tool_path_candidates() -> Vec<PathBuf> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn enriched_path_value(
-    base_path: Option<&str>,
-    candidates: impl IntoIterator<Item = PathBuf>,
-) -> Option<String> {
+fn enriched_path_value(base_path: Option<&str>, candidates: &[PathBuf]) -> Option<String> {
     let mut paths = base_path
         .map(std::env::split_paths)
         .into_iter()
@@ -373,8 +375,8 @@ fn enriched_path_value(
         .collect::<Vec<_>>();
 
     for candidate in candidates {
-        if !candidate.as_os_str().is_empty() && !paths.contains(&candidate) {
-            paths.push(candidate);
+        if !candidate.as_os_str().is_empty() && !paths.contains(candidate) {
+            paths.push(candidate.clone());
         }
     }
 
@@ -386,7 +388,15 @@ fn enriched_path_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anda_core::{Agent, AgentOutput, Resource};
+    use anda_engine::{
+        context::AgentCtx,
+        engine::{AgentInfo, Engine},
+        extension::shell::{CommandState, ShellSessionScope},
+        management::{BaseManagement, Visibility},
+    };
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     fn cli_meta(workspace: &Path) -> RequestMeta {
         let mut meta = RequestMeta::default();
@@ -401,8 +411,46 @@ mod tests {
         meta
     }
 
+    /// A context whose live session metadata is `meta`, as an agent turn sees it.
+    fn session_ctx(caller: Principal, meta: RequestMeta) -> BaseCtx {
+        let ctx = anda_engine::engine::EngineBuilder::new()
+            .mock_ctx()
+            .base
+            .with_caller(caller);
+        ctx.set_state(SessionRequestMeta::new(meta));
+        ctx.set_state(ShellSessionScope::new());
+        ctx
+    }
+
     fn pwd_command() -> &'static str {
         if cfg!(windows) { "cd" } else { "pwd" }
+    }
+
+    async fn run_session(
+        runtime: &NativeShellRuntime,
+        ctx: BaseCtx,
+        command: String,
+    ) -> Result<CommandOutput, BoxError> {
+        runtime
+            .execute_session(
+                ctx,
+                CommandArgs {
+                    command,
+                    // The foreground call still returns as soon as the command exits.
+                    yield_time_ms: Some(30_000),
+                    ..Default::default()
+                },
+                HashMap::new(),
+            )
+            .await
+    }
+
+    async fn pwd_in_session(runtime: &NativeShellRuntime, ctx: BaseCtx) -> CommandOutput {
+        let output = run_session(runtime, ctx, pwd_command().to_string())
+            .await
+            .unwrap();
+        assert_eq!(output.state, CommandState::Exited, "{output:?}");
+        output
     }
 
     fn assert_same_directory(actual: Option<&str>, expected: &Path) {
@@ -427,14 +475,6 @@ mod tests {
         assert!(!runtime.shell().is_empty());
     }
 
-    #[test]
-    fn insecure_preserves_workspace() {
-        let workspace = PathBuf::from("/tmp/anda-shell-test");
-        let runtime = NativeShellRuntime::new(workspace.clone()).insecure();
-
-        assert_eq!(runtime.workspace(), &workspace);
-    }
-
     #[tokio::test]
     async fn cli_shell_uses_only_an_owner_registered_directory() {
         let temp = tempfile::tempdir().unwrap();
@@ -446,133 +486,78 @@ mod tests {
         tokio::fs::create_dir_all(&second_project).await.unwrap();
         let owner = Principal::management_canister();
         let grants = CliWorkspaceGrants::new(owner);
-        let runtime = NativeShellRuntime::new(default)
+        let runtime = NativeShellRuntime::new(default.clone())
             .with_cli_workspaces(grants.clone())
             .insecure();
-        let ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        ctx.set_state(SessionRequestMeta::new(cli_meta(&project)));
+        let ctx = session_ctx(owner, cli_meta(&project));
 
-        assert!(
-            runtime
-                .cli_workspace(&ctx)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("not registered")
-        );
-        let marker = temp.path().join("default").join("ran");
-        assert!(
-            runtime
-                .execute(
-                    ctx.clone(),
-                    ExecArgs {
-                        command: format!("echo ran > {}", marker.display()),
-                        ..Default::default()
-                    },
-                    HashMap::new(),
-                )
-                .await
-                .is_err()
-        );
+        let marker = default.join("ran");
+        let err = run_session(
+            &runtime,
+            ctx.clone(),
+            format!("echo ran > {}", marker.display()),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("not registered"), "{err}");
         assert!(!marker.exists());
+
         grants.register(&project).await.unwrap();
         let project = project.canonicalize().unwrap();
-        assert_eq!(
-            runtime.cli_workspace(&ctx).await.unwrap(),
-            Some(project.clone())
-        );
+        let output = pwd_in_session(&runtime, ctx.clone()).await;
+        assert_eq!(output.output.workspace.as_deref(), project.to_str());
+        assert_same_directory(output.output.stdout.as_deref(), &project);
 
-        let output = runtime
+        // The legacy entry point derives the same runtime, so a background
+        // command keeps the `shell` tool's task-ID prefix.
+        let legacy = runtime
             .execute(
                 ctx,
                 ExecArgs {
                     command: pwd_command().to_string(),
+                    background: true,
                     ..Default::default()
                 },
                 HashMap::new(),
             )
             .await
             .unwrap();
-        assert_eq!(output.workspace.as_deref(), project.to_str());
-        assert_same_directory(output.stdout.as_deref(), &project);
-
-        let raw_source_ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        let mut raw_source_meta = cli_meta(&project);
-        raw_source_meta
-            .extra
-            .insert(keys::SOURCE.to_string(), json!(project.to_string_lossy()));
-        raw_source_ctx.set_state(SessionRequestMeta::new(raw_source_meta));
-        assert_eq!(
-            runtime.cli_workspace(&raw_source_ctx).await.unwrap(),
-            Some(project.clone())
+        assert_eq!(legacy.workspace.as_deref(), project.to_str());
+        assert!(
+            legacy
+                .stdout
+                .as_deref()
+                .is_some_and(|stdout| stdout.contains("task ID shell:")),
+            "{legacy:?}"
         );
 
-        let trailing_source_ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        let mut trailing_meta = cli_meta(&project);
-        trailing_meta.extra.insert(
-            keys::SOURCE.to_string(),
-            json!(format!(
-                "cli:{}{}",
-                project.display(),
-                std::path::MAIN_SEPARATOR
-            )),
-        );
-        trailing_source_ctx.set_state(SessionRequestMeta::new(trailing_meta));
-        assert_eq!(
-            runtime.cli_workspace(&trailing_source_ctx).await.unwrap(),
-            Some(project.clone())
-        );
-
-        let voice_ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        let mut voice_meta = cli_meta(&project);
-        voice_meta.extra.insert(
-            keys::SOURCE.to_string(),
-            json!(format!("cli:voice:{}", project.display())),
-        );
-        voice_ctx.set_state(SessionRequestMeta::new(voice_meta));
-        assert_eq!(
-            runtime.cli_workspace(&voice_ctx).await.unwrap(),
-            Some(project.clone())
-        );
+        for source in [
+            project.display().to_string(),
+            format!("cli:{}{}", project.display(), std::path::MAIN_SEPARATOR),
+            format!("cli:voice:{}", project.display()),
+        ] {
+            let mut meta = cli_meta(&project);
+            meta.extra.insert(keys::SOURCE.to_string(), json!(source));
+            assert_eq!(
+                runtime
+                    .cli_workspace(&session_ctx(owner, meta))
+                    .await
+                    .unwrap(),
+                Some(project.clone()),
+                "{source}"
+            );
+        }
 
         grants.register(&second_project).await.unwrap();
-        let second_ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        second_ctx.set_state(SessionRequestMeta::new(cli_meta(&second_project)));
-        let second_output = runtime
-            .execute(
-                second_ctx,
-                ExecArgs {
-                    command: pwd_command().to_string(),
-                    ..Default::default()
-                },
-                HashMap::new(),
-            )
-            .await
-            .unwrap();
+        let output = pwd_in_session(&runtime, session_ctx(owner, cli_meta(&second_project))).await;
         let second_project = second_project.canonicalize().unwrap();
-        assert_eq!(second_output.workspace.as_deref(), second_project.to_str());
-        assert_same_directory(second_output.stdout.as_deref(), &second_project);
+        assert_eq!(output.output.workspace.as_deref(), second_project.to_str());
+        assert_same_directory(output.output.stdout.as_deref(), &second_project);
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn registered_workspace_sessions_outlive_their_call() {
-        use anda_engine::extension::shell::{CommandState, ShellSessionScope};
         let temp = tempfile::tempdir().unwrap();
         let default = temp.path().join("default");
         let project = temp.path().join("project");
@@ -584,12 +569,7 @@ mod tests {
         let runtime = NativeShellRuntime::new(default)
             .with_cli_workspaces(grants)
             .insecure();
-        let ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .base
-            .with_caller(owner);
-        ctx.set_state(SessionRequestMeta::new(cli_meta(&project)));
-        ctx.set_state(ShellSessionScope::new());
+        let ctx = session_ctx(owner, cli_meta(&project));
 
         let mut output = runtime
             .execute_session(
@@ -637,73 +617,47 @@ mod tests {
         let mut meta = cli_meta(&project);
         meta.extra
             .insert(keys::SOURCE.to_string(), json!("desktop:chat-1"));
-        assert!(
-            grants
-                .authorize_cron_workspace(&owner, &meta)
-                .await
-                .is_err()
-        );
+        assert!(grants.authorize_workspace(&owner, &meta).await.is_err());
         grants.register(&project).await.unwrap();
         assert_eq!(
-            grants
-                .authorize_cron_workspace(&owner, &meta)
-                .await
-                .unwrap(),
+            grants.authorize_workspace(&owner, &meta).await.unwrap(),
             Some(project.canonicalize().unwrap())
         );
         assert!(
             grants
-                .authorize_cron_workspace(&Principal::anonymous(), &meta)
+                .authorize_workspace(&Principal::anonymous(), &meta)
                 .await
                 .is_err()
         );
         meta.extra
             .insert(keys::EXTERNAL_USER.to_string(), json!(true));
-        assert!(
-            grants
-                .authorize_cron_workspace(&owner, &meta)
-                .await
-                .is_err()
-        );
+        assert!(grants.authorize_workspace(&owner, &meta).await.is_err());
     }
 
     #[tokio::test]
     async fn forged_cli_metadata_cannot_use_another_caller_or_unregistered_path() {
         let temp = tempfile::tempdir().unwrap();
-        let default = temp.path().join("default");
         let project = temp.path().join("project");
         let unregistered = temp.path().join("unregistered");
-        tokio::fs::create_dir_all(&default).await.unwrap();
         tokio::fs::create_dir_all(&project).await.unwrap();
         tokio::fs::create_dir_all(&unregistered).await.unwrap();
-        let grants = CliWorkspaceGrants::new(Principal::management_canister());
+        let owner = Principal::management_canister();
+        let grants = CliWorkspaceGrants::new(owner);
         grants.register(&project).await.unwrap();
-        let runtime = NativeShellRuntime::new(default).with_cli_workspaces(grants);
-        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
-        ctx.set_state(SessionRequestMeta::new(cli_meta(&project)));
-        assert!(
-            runtime
-                .cli_workspace(&ctx)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("only the local owner")
-        );
-
-        let owner_grants = CliWorkspaceGrants::new(Principal::management_canister());
-        owner_grants.register(&project).await.unwrap();
         let runtime =
-            NativeShellRuntime::new(temp.path().join("default")).with_cli_workspaces(owner_grants);
-        let owner_ctx = ctx.with_caller(Principal::management_canister());
-        owner_ctx.set_state(SessionRequestMeta::new(cli_meta(&unregistered)));
-        assert!(
-            runtime
-                .cli_workspace(&owner_ctx)
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("not registered")
-        );
+            NativeShellRuntime::new(temp.path().join("default")).with_cli_workspaces(grants);
+
+        let err = runtime
+            .cli_workspace(&session_ctx(Principal::anonymous(), cli_meta(&project)))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("only the local owner"), "{err}");
+
+        let err = runtime
+            .cli_workspace(&session_ctx(owner, cli_meta(&unregistered)))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not registered"), "{err}");
     }
 
     #[tokio::test]
@@ -716,24 +670,85 @@ mod tests {
         let grants = CliWorkspaceGrants::new(Principal::management_canister());
         grants.register(&outside).await.unwrap();
         let runtime = NativeShellRuntime::new(default.clone()).with_cli_workspaces(grants);
-        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
         let mut meta = cli_meta(&outside);
         meta.extra
             .insert(keys::SOURCE.to_string(), json!("telegram"));
-        ctx.set_state(SessionRequestMeta::new(meta));
-        let output = runtime
-            .execute(
-                ctx,
-                ExecArgs {
-                    command: pwd_command().to_string(),
-                    ..Default::default()
-                },
-                HashMap::new(),
-            )
+
+        let output = pwd_in_session(&runtime, session_ctx(Principal::anonymous(), meta)).await;
+        assert_same_directory(output.output.workspace.as_deref(), &default);
+        assert_same_directory(output.output.stdout.as_deref(), &default);
+    }
+
+    struct NoopAgent;
+
+    impl Agent<AgentCtx> for NoopAgent {
+        fn name(&self) -> String {
+            "noop".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Does nothing".to_string()
+        }
+
+        async fn run(
+            &self,
+            _ctx: AgentCtx,
+            _prompt: String,
+            _resources: Vec<Resource>,
+        ) -> Result<AgentOutput, BoxError> {
+            Ok(AgentOutput::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn moving_a_session_to_a_parent_workspace_requires_a_new_conversation() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        let nested = project.join("nested");
+        tokio::fs::create_dir_all(&nested).await.unwrap();
+        let owner = Principal::management_canister();
+        let grants = CliWorkspaceGrants::new(owner);
+        grants.register(&project).await.unwrap();
+        grants.register(&nested).await.unwrap();
+        let runtime =
+            NativeShellRuntime::new(temp.path().to_path_buf()).with_cli_workspaces(grants);
+        let engine = Engine::builder()
+            .with_info(AgentInfo {
+                handle: "shell_runtime_test".to_string(),
+                name: "Shell Runtime Test Engine".to_string(),
+                description: "Test engine".to_string(),
+                endpoint: "https://example.com/engine".to_string(),
+                ..Default::default()
+            })
+            .with_management(Arc::new(BaseManagement {
+                controller: owner,
+                managers: BTreeSet::new(),
+                visibility: Visibility::Public,
+            }))
+            .register_agent(Arc::new(NoopAgent), None)
+            .unwrap()
+            .build("noop".to_string())
             .await
             .unwrap();
-        assert_eq!(output.workspace.as_deref(), default.to_str());
-        assert_same_directory(output.stdout.as_deref(), &default);
+
+        // The session's context keeps the metadata of the turn that created it.
+        let ctx = engine
+            .ctx_with(owner, "noop", "noop", cli_meta(&nested))
+            .unwrap()
+            .base;
+        ctx.set_state(SessionRequestMeta::new(cli_meta(&nested)));
+        assert_eq!(
+            runtime.cli_workspace(&ctx).await.unwrap(),
+            Some(nested.canonicalize().unwrap())
+        );
+
+        // A later turn moves the chat up to the parent directory.
+        ctx.set_state(SessionRequestMeta::new(cli_meta(&project)));
+        let err = runtime.cli_workspace(&ctx).await.unwrap_err();
+        assert!(
+            err.to_string().contains("start a new conversation"),
+            "{err}"
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -741,7 +756,7 @@ mod tests {
     fn enriched_path_keeps_existing_entries_and_adds_tool_dirs() {
         let path = enriched_path_value(
             Some("/usr/bin:/bin"),
-            [
+            &[
                 PathBuf::from("/opt/homebrew/bin"),
                 PathBuf::from("/usr/bin"),
                 PathBuf::from("/Users/example/.cargo/bin"),
@@ -772,7 +787,7 @@ mod tests {
         let path = grants.register(temp.path()).await.unwrap();
         let meta = cli_meta(&path);
         let authorized = grants
-            .authorize_cron_workspace(&owner, &meta)
+            .authorize_workspace(&owner, &meta)
             .await
             .unwrap()
             .unwrap();
@@ -785,7 +800,7 @@ mod tests {
         let session = SessionRequestMeta::new(meta);
         ctx.set_state(session.clone());
         assert!(runtime.cli_workspace(&ctx).await.is_err());
-        let grant = crate::cron::CronWorkspaceGrant {
+        let grant = CronWorkspaceGrant {
             caller: owner,
             path: authorized.clone(),
         };
