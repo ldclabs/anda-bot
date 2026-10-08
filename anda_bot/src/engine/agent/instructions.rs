@@ -61,12 +61,15 @@ pub(super) async fn available_tool_names(ctx: &AgentCtx) -> Vec<String> {
 }
 
 impl AndaBot {
+    /// `memory_briefing` consumes the memory attention raised since the last
+    /// session, so only a request that starts a session may ask for it.
     pub(super) async fn build_system_instructions(
         &self,
         ctx: &AgentCtx,
         home_dir: &str,
         workspace: &str,
         available_tools: &[String],
+        memory_briefing: bool,
         now_ms: u64,
     ) -> Result<String, BoxError> {
         // Memory sync, Brain reads and the session briefing run behind this
@@ -77,11 +80,13 @@ impl AndaBot {
             home_dir,
             workspace,
             available_tools,
+            memory_briefing,
             now_ms,
         ))
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn build_system_instructions_for_user(
         &self,
         ctx: &AgentCtx,
@@ -89,6 +94,7 @@ impl AndaBot {
         home_dir: &str,
         workspace: &str,
         available_tools: &[String],
+        memory_briefing: bool,
         now_ms: u64,
     ) -> Result<String, BoxError> {
         let policy = super::memory_policy::MemoryPolicy::current(&ctx.base);
@@ -160,7 +166,8 @@ impl AndaBot {
             crate::util::request_meta::keys::EXTERNAL_USER,
         )
         .unwrap_or(false);
-        if policy.may_read()
+        if memory_briefing
+            && policy.may_read()
             && !external
             && let Some(access) = &self.inner.memory_access
         {

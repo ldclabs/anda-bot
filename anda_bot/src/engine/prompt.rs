@@ -1,12 +1,14 @@
-use anda_engine::{
-    extension::skill::{SkillManager, normalise_skill_agent_name},
-    subagent::{SubAgent, SubAgentSet},
-};
+use anda_engine::extension::skill::SkillManager;
+
+use super::skill_library::SkillLibrary;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PromptCommand {
     #[default]
     Ping,
+    // Ordinary text, including '/loop' (case-insensitive), which only has to
+    // carry a prompt: interval and recurrence interpretation is left to the
+    // model so localized time expressions can be handled naturally.
     Plain {
         prompt: String,
     },
@@ -14,17 +16,7 @@ pub enum PromptCommand {
     // Intended for long-running tasks. When the main agent becomes idle after a turn,
     // a dedicated goal subagent evaluates whether the task is complete and can resume
     // the main agent via runner.follow_up when more work is needed.
-    // If the context grows too large, such as input_tokens > ctx.model.context_window / 2
-    // (possibly combined with another threshold like runner.turns() >= 81), the main
-    // agent should summarize its current progress and continue in a new child
-    // conversation created from that summary.
     Goal {
-        prompt: String,
-    },
-    // '/loop', case-insensitive.
-    // Leaves interval and recurrence interpretation to the model so localized
-    // time expressions can be handled naturally.
-    Loop {
         prompt: String,
     },
     // '/side' | '/btw', case-insensitive.
@@ -51,20 +43,21 @@ pub enum PromptCommand {
         skill: String,
         prompt: String,
     },
-    // '/stop', case-insensitive.
+    // '/stop', case-insensitive, with an optional reason.
     // Stops the current in-flight task while keeping the conversation runner idle
     // and reusable for later input.
     Stop {
-        prompt: String,
+        reason: String,
     },
-    // '/cancel', case-insensitive.
-    // Cancels the active conversation runner. If a message is provided, it
-    // becomes the failed_reason.
+    // '/cancel', case-insensitive, with an optional reason.
+    // Cancels the active conversation runner; the reason becomes the
+    // failed_reason.
     Cancel {
-        prompt: String,
+        reason: String,
     },
     // '/new' | '/clear', case-insensitive.
-    // Starts a new conversation, complete the current conversation if it exists, and optionally uses the provided prompt as the first message in the new conversation.
+    // Starts a new conversation, completing the current one if it exists, and
+    // optionally uses the provided prompt as the new conversation's first message.
     New {
         prompt: Option<String>,
     },
@@ -80,53 +73,67 @@ impl From<String> for PromptCommand {
             return Self::Ping;
         }
 
-        if let Some(stripped) = trimmed.strip_prefix('$') {
-            return parse_dollar_skill_command(stripped, trimmed);
+        if let Some(rest) = trimmed.strip_prefix('$') {
+            return match split_skill(rest) {
+                Some(skill) => Self::Skill {
+                    skill: skill.to_string(),
+                    prompt: trimmed.to_string(),
+                },
+                None => Self::Plain {
+                    prompt: trimmed.to_string(),
+                },
+            };
         }
 
         let Some(stripped) = trimmed.strip_prefix('/') else {
             return Self::Plain { prompt };
         };
         let command_end = stripped.find(char::is_whitespace).unwrap_or(stripped.len());
-        let command = &stripped[..command_end];
+        let command = stripped[..command_end].to_ascii_lowercase();
         let rest = stripped[command_end..].trim();
+        let full = || trimmed.to_string();
 
-        match command.to_ascii_lowercase().as_str() {
-            "goal" => required_prompt_command(command, rest, trimmed, |prompt| Self::Goal {
-                prompt: prompt.trim().to_string(),
-            }),
-            "loop" => required_prompt_command(command, rest, trimmed, |prompt| Self::Loop {
-                prompt: prompt.trim().to_string(),
-            }),
-            "side" | "btw" => {
-                required_prompt_command(command, rest, trimmed, |prompt| Self::Side {
-                    prompt: prompt.trim().to_string(),
-                })
-            }
-            "steer" => required_prompt_command(command, rest, trimmed, |prompt| Self::Steer {
-                prompt: prompt.trim().to_string(),
-            }),
-            "skill" => parse_skill_command(rest, trimmed),
+        match command.as_str() {
+            "goal" | "loop" | "side" | "btw" | "steer" if rest.is_empty() => Self::Invalid {
+                reason: format!("/{command} requires a prompt"),
+            },
+            "goal" => Self::Goal { prompt: full() },
+            "side" | "btw" => Self::Side { prompt: full() },
+            "steer" => Self::Steer { prompt: full() },
+            "skill" => match split_skill(rest) {
+                Some(skill) => Self::Skill {
+                    skill: skill.to_string(),
+                    prompt: full(),
+                },
+                None => Self::Invalid {
+                    reason: if rest.is_empty() {
+                        "/skill requires a skill name"
+                    } else {
+                        "/skill requires a prompt after the skill name"
+                    }
+                    .to_string(),
+                },
+            },
             "stop" => Self::Stop {
-                prompt: prompt.trim().to_string(),
+                reason: rest.to_string(),
             },
             "cancel" => Self::Cancel {
-                prompt: prompt.trim().to_string(),
+                reason: rest.to_string(),
             },
             "new" | "clear" => Self::New {
-                prompt: (!rest.is_empty()).then(|| prompt.trim().to_string()),
+                prompt: (!rest.is_empty()).then(full),
             },
-            _ => Self::Plain {
-                prompt: prompt.trim().to_string(),
-            },
+            // '/loop' and unknown commands, such as a '/tmp/...' path.
+            _ => Self::Plain { prompt: full() },
         }
     }
 }
 
-pub fn skill_subagent(skill_set: &dyn SubAgentSet, skill: &str) -> Option<SubAgent> {
-    skill_set.get_lowercase(&normalise_skill_agent_name(
-        skill.strip_prefix("skill_").unwrap_or(skill),
-    ))
+/// The skill name of `name prompt`, the text after `/skill` or `$`, when both
+/// parts are present.
+fn split_skill(input: &str) -> Option<&str> {
+    let (skill, prompt) = input.split_once(char::is_whitespace)?;
+    (!skill.is_empty() && !prompt.trim().is_empty()).then_some(skill)
 }
 
 /// Builds the runtime instruction a `/skill` command turns into, plus the
@@ -135,98 +142,29 @@ pub fn skill_subagent(skill_set: &dyn SubAgentSet, skill: &str) -> Option<SubAge
 /// Only a skill declaring `execution: subagent` is dispatchable; the rest run
 /// inline, which means the agent reads SKILL.md through `skills_manager` and
 /// follows it in this conversation, so the instruction has to say which.
+/// `None` when no active skill has that name: the prompt then reaches the
+/// model as typed, since `$HOME ...` names a variable far more often than a
+/// skill.
 pub fn skill_command_directive(
-    skill_set: &dyn SubAgentSet,
+    skills: &SkillLibrary,
     skill: &str,
-) -> (Option<String>, String) {
-    match skill_subagent(skill_set, skill) {
-        Some(subagent) => {
-            let directive = format!(
-                "Use the {} skill subagent to handle this request",
-                subagent.name
-            );
-            (Some(subagent.name), directive)
-        }
-        None => (
+) -> Option<(Option<String>, String)> {
+    if let Some(subagent) = skills.skill_subagent(skill) {
+        let directive = format!(
+            "Use the {} skill subagent to handle this request",
+            subagent.name
+        );
+        return Some((Some(subagent.name), directive));
+    }
+    skills.has_active_skill(skill).then(|| {
+        (
             None,
             format!(
                 "Use the {skill} skill to handle this request: read it with {} and follow it in this conversation",
                 SkillManager::NAME
             ),
-        ),
-    }
-}
-
-fn required_prompt_command<F>(
-    command: &str,
-    rest: &str,
-    full_prompt: &str,
-    build: F,
-) -> PromptCommand
-where
-    F: FnOnce(&str) -> PromptCommand,
-{
-    if rest.is_empty() {
-        PromptCommand::Invalid {
-            reason: format!("/{command} requires a prompt"),
-        }
-    } else {
-        build(full_prompt)
-    }
-}
-
-fn parse_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
-    parse_skill_parts(
-        rest,
-        full_prompt,
-        "/skill requires a skill name",
-        "/skill requires a prompt after the skill name",
-    )
-}
-
-fn parse_dollar_skill_command(rest: &str, full_prompt: &str) -> PromptCommand {
-    parse_skill_parts(
-        rest,
-        full_prompt,
-        "$ requires a skill name",
-        "$ requires a prompt after the skill name",
-    )
-}
-
-fn parse_skill_parts(
-    input: &str,
-    full_prompt: &str,
-    missing_skill_reason: &str,
-    missing_prompt_reason: &str,
-) -> PromptCommand {
-    let mut parts = input.splitn(2, char::is_whitespace);
-    let skill = parts.next().unwrap_or_default().trim();
-    let prompt = parts.next().unwrap_or_default().trim();
-    if skill.is_empty() {
-        if full_prompt.starts_with('$') {
-            return PromptCommand::Plain {
-                prompt: full_prompt.to_string(),
-            };
-        }
-        return PromptCommand::Invalid {
-            reason: missing_skill_reason.to_string(),
-        };
-    }
-    if prompt.is_empty() {
-        if full_prompt.starts_with('$') {
-            return PromptCommand::Plain {
-                prompt: full_prompt.to_string(),
-            };
-        }
-        return PromptCommand::Invalid {
-            reason: missing_prompt_reason.to_string(),
-        };
-    }
-
-    PromptCommand::Skill {
-        skill: skill.to_string(),
-        prompt: full_prompt.trim().to_string(),
-    }
+        )
+    })
 }
 
 #[cfg(test)]
@@ -240,24 +178,6 @@ mod tests {
             PromptCommand::from(" /GOAL ship the feature ".to_string()),
             PromptCommand::Goal {
                 prompt: "/GOAL ship the feature".to_string()
-            }
-        );
-        assert_eq!(
-            PromptCommand::from("/loop 5m /side check status".to_string()),
-            PromptCommand::Loop {
-                prompt: "/loop 5m /side check status".to_string()
-            }
-        );
-        assert_eq!(
-            PromptCommand::from("/loop 每5分钟 /side 检查状态".to_string()),
-            PromptCommand::Loop {
-                prompt: "/loop 每5分钟 /side 检查状态".to_string()
-            }
-        );
-        assert_eq!(
-            PromptCommand::from("/loop keep checking status".to_string()),
-            PromptCommand::Loop {
-                prompt: "/loop keep checking status".to_string()
             }
         );
         assert_eq!(
@@ -283,13 +203,19 @@ mod tests {
         assert_eq!(
             PromptCommand::from("/stop because it is wrong".to_string()),
             PromptCommand::Stop {
-                prompt: "/stop because it is wrong".to_string()
+                reason: "because it is wrong".to_string()
+            }
+        );
+        assert_eq!(
+            PromptCommand::from("/STOP".to_string()),
+            PromptCommand::Stop {
+                reason: String::new()
             }
         );
         assert_eq!(
             PromptCommand::from("/cancel because it is wrong".to_string()),
             PromptCommand::Cancel {
-                prompt: "/cancel because it is wrong".to_string()
+                reason: "because it is wrong".to_string()
             }
         );
         assert_eq!(
@@ -305,37 +231,53 @@ mod tests {
     }
 
     #[test]
-    fn prompt_command_keeps_unknown_slash_text_plain() {
-        assert_eq!(
-            PromptCommand::from("/tmp/workspace path".to_string()),
-            PromptCommand::Plain {
-                prompt: "/tmp/workspace path".to_string()
-            }
-        );
+    fn prompt_command_keeps_loop_and_unknown_slash_text_plain() {
+        for text in [
+            "/loop 5m /side check status",
+            "/loop 每5分钟 /side 检查状态",
+            "/tmp/workspace path",
+            "/unknown command",
+        ] {
+            assert_eq!(
+                PromptCommand::from(text.to_string()),
+                PromptCommand::Plain {
+                    prompt: text.to_string()
+                }
+            );
+        }
     }
 
     #[test]
     fn prompt_command_rejects_missing_required_arguments() {
-        assert!(matches!(
-            PromptCommand::from("/goal".to_string()),
-            PromptCommand::Invalid { .. }
-        ));
-        assert!(matches!(
-            PromptCommand::from("/loop".to_string()),
-            PromptCommand::Invalid { .. }
-        ));
-        assert!(matches!(
+        for command in ["/goal", "/loop", "/side", "/BTW", "/steer"] {
+            assert_eq!(
+                PromptCommand::from(command.to_string()),
+                PromptCommand::Invalid {
+                    reason: format!("{} requires a prompt", command.to_lowercase())
+                }
+            );
+        }
+        assert_eq!(
+            PromptCommand::from("/skill".to_string()),
+            PromptCommand::Invalid {
+                reason: "/skill requires a skill name".to_string()
+            }
+        );
+        assert_eq!(
             PromptCommand::from("/skill frontend-design".to_string()),
-            PromptCommand::Invalid { .. }
-        ));
-        assert!(matches!(
-            PromptCommand::from("$".to_string()),
-            PromptCommand::Plain { .. }
-        ));
-        assert!(matches!(
-            PromptCommand::from("$frontend-design".to_string()),
-            PromptCommand::Plain { .. }
-        ));
+            PromptCommand::Invalid {
+                reason: "/skill requires a prompt after the skill name".to_string()
+            }
+        );
+        // A bare or name-only `$` is ordinary text.
+        for text in ["$", "$frontend-design", "$ frontend-design polish"] {
+            assert_eq!(
+                PromptCommand::from(text.to_string()),
+                PromptCommand::Plain {
+                    prompt: text.to_string()
+                }
+            );
+        }
     }
 
     #[test]
@@ -352,21 +294,34 @@ mod tests {
             PromptCommand::from("/steer focus on tests".to_string()),
             PromptCommand::Steer { .. }
         ));
-        assert!(matches!(
-            PromptCommand::from("/stop".to_string()),
-            PromptCommand::Stop { .. }
-        ));
-        assert!(matches!(
-            PromptCommand::from("/cancel everything".to_string()),
-            PromptCommand::Cancel { .. }
-        ));
-        assert!(matches!(
-            PromptCommand::from("/clear".to_string()),
-            PromptCommand::New { prompt: None }
-        ));
-        assert!(matches!(
-            PromptCommand::from("/unknown command".to_string()),
-            PromptCommand::Plain { .. }
-        ));
+    }
+
+    #[tokio::test]
+    async fn skill_directive_routes_only_active_skills() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("skills").join("frontend-design");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: frontend-design\ndescription: Polish UI\n---\n\n# frontend-design\n",
+        )
+        .unwrap();
+        let skills = SkillLibrary::for_test(home.path().to_path_buf());
+        skills.reload().await.unwrap();
+
+        let (callable, directive) = skill_command_directive(&skills, "frontend-design").unwrap();
+        assert!(callable.is_none());
+        assert!(directive.contains("read it with skills_manager"));
+
+        // `$HOME is unset` has the shape of a skill command but names no skill,
+        // so it gets no directive and reaches the model as typed.
+        assert_eq!(
+            PromptCommand::from("$HOME is unset".to_string()),
+            PromptCommand::Skill {
+                skill: "HOME".to_string(),
+                prompt: "$HOME is unset".to_string()
+            }
+        );
+        assert!(skill_command_directive(&skills, "HOME").is_none());
     }
 }

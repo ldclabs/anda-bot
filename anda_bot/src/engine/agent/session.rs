@@ -229,7 +229,7 @@ impl Session {
             let _ = sender
                 .send(ConversationInput {
                     command: PromptCommand::Cancel {
-                        prompt: "Cron scheduler stopped".into(),
+                        reason: "Cron scheduler stopped".into(),
                     },
                     ..Default::default()
                 })

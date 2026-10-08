@@ -8,7 +8,7 @@ use anda_engine::{
         validate_skill_name,
     },
     hook::ToolHook,
-    subagent::SubAgentSet,
+    subagent::{SubAgent, SubAgentSet},
     unix_ms,
 };
 use async_trait::async_trait;
@@ -931,6 +931,26 @@ impl SkillLibrary {
     pub fn subagent_set(&self) -> &dyn SubAgentSet {
         self.skill_manager.as_ref()
     }
+
+    /// The callable of the skill a `/skill` command names, by skill name or
+    /// callable name; only skills declaring `execution: subagent` have one.
+    pub fn skill_subagent(&self, name: &str) -> Option<SubAgent> {
+        self.subagent_set().get_lowercase(&skill_agent_name(name))
+    }
+
+    /// Whether a `/skill` command naming `name` has an active skill to route to.
+    pub fn has_active_skill(&self, name: &str) -> bool {
+        let agent_name = skill_agent_name(name);
+        self.state
+            .read()
+            .records
+            .iter()
+            .any(|record| record.managed.active && record.managed.agent_name == agent_name)
+    }
+}
+
+fn skill_agent_name(name: &str) -> String {
+    normalise_skill_agent_name(name.strip_prefix("skill_").unwrap_or(name))
 }
 
 impl Tool<BaseCtx> for SkillLibrary {
@@ -1913,6 +1933,14 @@ mod tests {
         assert_eq!(learn.execution, SkillExecution::Inline);
         assert_eq!(worker.execution, SkillExecution::Subagent);
         assert!(learn.active && worker.active);
+
+        // A `/skill` command finds both, by skill name or callable name, but
+        // only the subagent skill has a callable.
+        assert!(lib.has_active_skill("learn") && lib.has_active_skill("Worker"));
+        assert!(lib.has_active_skill("skill_worker"));
+        assert!(!lib.has_active_skill("HOME"));
+        assert!(lib.skill_subagent("learn").is_none());
+        assert_eq!(lib.skill_subagent("worker").unwrap().name, "skill_worker");
 
         // The inline skill is loaded and readable, but never dispatchable.
         assert!(!lib.subagent_set().contains_lowercase("skill_learn"));

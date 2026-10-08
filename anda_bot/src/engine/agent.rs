@@ -1015,9 +1015,17 @@ impl Agent<AgentCtx> for AndaBot {
         ctx.base.set_state(AgentCaller);
 
         if let PromptCommand::Side { prompt } = &command {
-            let available_tools = available_tool_names(&ctx).await;
+            // A side request names only its own tools and leaves the memory
+            // briefing for the session it does not join.
             let instructions = self
-                .build_system_instructions(&ctx, &home_dir, &workspace, &available_tools, now_ms)
+                .build_system_instructions(
+                    &ctx,
+                    &home_dir,
+                    &workspace,
+                    &side::side_tool_names(),
+                    false,
+                    now_ms,
+                )
                 .await?;
             let side_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
             return crate::util::boxed(self.run_side_command(
@@ -1113,6 +1121,7 @@ impl Agent<AgentCtx> for AndaBot {
                         &home_dir,
                         &workspace,
                         &available_tools,
+                        true,
                         now_ms,
                     )
                     .await?,
@@ -1141,9 +1150,7 @@ impl Agent<AgentCtx> for AndaBot {
         let mut content: Vec<ContentPart> = Vec::new();
         let mut force_standalone_conversation = false;
         let prompt = match command {
-            PromptCommand::Plain { prompt }
-            | PromptCommand::Steer { prompt }
-            | PromptCommand::Loop { prompt } => prompt,
+            PromptCommand::Plain { prompt } | PromptCommand::Steer { prompt } => prompt,
             PromptCommand::Goal { prompt } => {
                 initial_goal = Some(prompt.clone());
                 session_tools.push(GoalTool::NAME.to_string());
@@ -1157,10 +1164,12 @@ impl Agent<AgentCtx> for AndaBot {
                 return Err("/cancel requires an active conversation".into());
             }
             PromptCommand::Skill { skill, prompt } => {
-                let (callable, directive) =
-                    skill_command_directive(self.inner.skill_library.subagent_set(), &skill);
-                session_tools.extend(callable);
-                content.push(system_runtime_prompt("prompt command", directive).into());
+                if let Some((callable, directive)) =
+                    skill_command_directive(&self.inner.skill_library, &skill)
+                {
+                    session_tools.extend(callable);
+                    content.push(system_runtime_prompt("prompt command", directive).into());
+                }
                 prompt
             }
             PromptCommand::Invalid { reason } => return Err(reason.into()),
@@ -2082,6 +2091,7 @@ mod tests {
                 "fixture-home",
                 "fixture-workspace",
                 &[],
+                true,
                 unix_ms(),
             )
             .await

@@ -1,4 +1,7 @@
-use crate::util::tool_response::ToolResponse as Response;
+use crate::util::{
+    request_meta::{keys, request_meta_extra_as},
+    tool_response::ToolResponse as Response,
+};
 use anda_core::{
     BoxError, FunctionDefinition, Json, Principal, Resource, ResourceRef, StateFeatures, Tool,
     ToolOutput, update_resources,
@@ -13,7 +16,7 @@ use anda_db::{
 use anda_db_tfs::jieba_tokenizer;
 use ic_auth_types::ByteArrayB64;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,6 +24,12 @@ use anda_core::{BoxFut, ToolGroup, ToolGroupInfo, ToolInput, ToolProvider};
 use anda_engine::{context::BaseCtx, unix_ms};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
+
+use super::conversation::AgentCaller;
+
+/// Metadata key listing the principals a stored resource is shared with
+/// besides its owner (`user`).
+const SHARED_USERS_KEY: &str = "shared_users";
 
 /// Capture tool/agent artifacts at the execution boundary. Unbound runners only
 /// expose their accumulated artifacts when finalized, which is too late for an
@@ -48,16 +57,12 @@ impl SessionArtifacts {
         if artifacts.is_empty() {
             return Ok(());
         }
-        let saved = self
-            .store
-            .persist_resources(caller, artifacts.to_vec())
-            .await?;
+        self.store.persist_in_place(caller, artifacts).await?;
         let mut pending = self.pending.write();
-        for (artifact, saved) in artifacts.iter_mut().zip(saved) {
+        for artifact in artifacts {
             let blob = artifact.blob.take();
-            *artifact = saved.clone();
+            pending.insert(artifact._id, artifact.clone());
             artifact.blob = blob;
-            pending.insert(saved._id, saved);
         }
         Ok(())
     }
@@ -66,6 +71,18 @@ impl SessionArtifacts {
         std::mem::take(&mut *self.pending.write())
             .into_values()
             .collect()
+    }
+
+    /// Records the artifacts a finished tool call returned. The call already
+    /// ran, so a storage failure is logged instead of failing it, which would
+    /// invite the model to repeat its side effects. Unrecorded artifacts keep
+    /// their blobs and are recorded again when the runner hands them back.
+    async fn capture(ctx: &BaseCtx, artifacts: &mut [Resource]) {
+        if let Some(collector) = ctx.get_state::<SessionArtifacts>()
+            && let Err(err) = collector.record(ctx.caller(), artifacts).await
+        {
+            log::warn!("failed to record tool artifacts: {err}");
+        }
     }
 }
 
@@ -107,11 +124,7 @@ where
         resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let mut output = self.0.call(ctx.clone(), args, resources).await?;
-        if let Some(artifacts) = ctx.get_state::<SessionArtifacts>() {
-            artifacts
-                .record(ctx.caller(), &mut output.artifacts)
-                .await?;
-        }
+        SessionArtifacts::capture(&ctx, &mut output.artifacts).await;
         Ok(output)
     }
 }
@@ -149,11 +162,7 @@ impl<T: ToolProvider<BaseCtx>> ToolProvider<BaseCtx> for ArtifactProvider<T> {
     ) -> BoxFut<'_, Result<ToolOutput<Json>, BoxError>> {
         Box::pin(async move {
             let mut output = self.0.call(ctx.clone(), input).await?;
-            if let Some(artifacts) = ctx.get_state::<SessionArtifacts>() {
-                artifacts
-                    .record(ctx.caller(), &mut output.artifacts)
-                    .await?;
-            }
+            SessionArtifacts::capture(&ctx, &mut output.artifacts).await;
             Ok(output)
         })
     }
@@ -225,7 +234,7 @@ impl ResourceStore {
     }
 
     /// Loads a persisted resource, including its blob, after verifying that
-    /// `caller` owns it.
+    /// `caller` may read it.
     pub async fn get_resource_for(
         &self,
         id: u64,
@@ -235,77 +244,95 @@ impl ResourceStore {
             return Err("_id is required".into());
         }
         let resource = self.get_resource(id).await?;
-        ensure_resource_access(&resource, caller)?;
+        if !may_read(&resource, &caller.to_string()) {
+            return Err("permission denied".into());
+        }
         Ok(resource)
     }
 
-    /// Downloads the blob of a persisted resource into `dir` (the system temp
-    /// directory when `None`), returning the resource and the saved file path.
-    /// `dir` must stay inside a download root or the temp directory: this call
-    /// is not approval-gated, so it must not write where the filesystem tools
-    /// cannot.
-    ///
-    /// When `caller` is supplied, ownership is verified before the blob is
-    /// written to disk.
+    /// Downloads the blob of a persisted resource `caller` may read into `dir`
+    /// (the system temp directory when `None`), returning the resource and the
+    /// saved file path. A relative `dir` starts at `workspace` when that lies
+    /// in a download root. `dir` must stay inside a download root or the temp
+    /// directory: this call is not approval-gated, so it must not write where
+    /// the filesystem tools cannot.
     pub async fn download_resource(
         &self,
         id: u64,
         dir: Option<&Path>,
-        caller: Option<&Principal>,
+        workspace: Option<&Path>,
+        caller: &Principal,
     ) -> Result<(Resource, PathBuf), BoxError> {
-        let resource = self.get_resource(id).await?;
-        if let Some(caller) = caller {
-            ensure_resource_access(&resource, caller)?;
-        }
-        let dir = resolve_download_dir(dir, &self.download_roots).await?;
+        let resource = self.get_resource_for(id, caller).await?;
+        let dir = resolve_download_dir(dir, workspace, &self.download_roots).await?;
         let path = save_resource_blob(&resource, &dir).await?;
         Ok((resource, path))
     }
 
+    /// Persists the resources for a message, returning references without
+    /// their blobs.
     pub async fn persist_resources(
         &self,
         user: &Principal,
-        resources: Vec<Resource>,
+        mut resources: Vec<Resource>,
     ) -> Result<Vec<Resource>, BoxError> {
-        if resources.is_empty() {
-            return Ok(Vec::new());
+        self.persist_in_place(user, &mut resources).await?;
+        for resource in &mut resources {
+            resource.blob = None; // remove blob data for message
+        }
+        Ok(resources)
+    }
+
+    /// Stores each resource without an id and gives it its stored id. Blobs
+    /// stay in place; a resource that already has an id is left alone.
+    async fn persist_in_place(
+        &self,
+        user: &Principal,
+        resources: &mut [Resource],
+    ) -> Result<(), BoxError> {
+        let fresh: Vec<usize> = (0..resources.len())
+            .filter(|&index| resources[index]._id == 0)
+            .collect();
+        if fresh.is_empty() {
+            return Ok(());
+        }
+        let taken = fresh
+            .iter()
+            .map(|&index| std::mem::take(&mut resources[index]))
+            .collect();
+        for (&index, resource) in fresh.iter().zip(update_resources(user, taken)) {
+            resources[index] = resource;
         }
 
-        let resources = update_resources(user, resources);
-        let mut refs = Vec::with_capacity(resources.len());
-        let mut inserted = 0;
-
-        for resource in resources {
-            let resource_ref = ResourceRef::from(&resource);
-            let id = if resource._id > 0 {
-                resource._id
-            } else {
-                match self.resources.add_from(&resource_ref).await {
-                    Ok(id) => {
-                        inserted += 1;
-                        id
-                    }
-                    // The same content is already stored. The conflict reports
-                    // the rejected new id, so find the stored one by its hash.
-                    Err(err) if err.unique_index_conflict().is_some() => {
-                        self.id_by_hash(resource.hash.as_ref()).await?
-                    }
-                    Err(err) => return Err(err.into()),
+        let user = user.to_string();
+        let mut changed = false;
+        for &index in &fresh {
+            let resource = &resources[index];
+            let id = match self.resources.add_from(&ResourceRef::from(resource)).await {
+                Ok(id) => {
+                    changed = true;
+                    id
                 }
+                // The same content is already stored. The conflict reports
+                // the rejected new id, so find the stored one by its hash.
+                Err(err) if err.unique_index_conflict().is_some() => {
+                    let id = self.id_by_hash(resource.hash.as_ref()).await?;
+                    // The hash was computed from the bytes this user sent, so
+                    // they hold the content: share the stored copy with them.
+                    if resource.blob.is_some() {
+                        changed |= self.share_with(id, &user).await?;
+                    }
+                    id
+                }
+                Err(err) => return Err(err.into()),
             };
-
-            refs.push(Resource {
-                _id: id,
-                blob: None, // remove blob data for message
-                ..resource
-            });
+            resources[index]._id = id;
         }
 
-        if inserted > 0 {
+        if changed {
             self.resources.flush(unix_ms()).await?;
         }
-
-        Ok(refs)
+        Ok(())
     }
 
     async fn id_by_hash(&self, hash: Option<&ByteArrayB64<32>>) -> Result<u64, BoxError> {
@@ -324,12 +351,41 @@ impl ResourceStore {
             .next()
             .ok_or_else(|| "stored resource with the same content hash not found".into())
     }
+
+    /// Lets `user` read the stored resource `id`, returning whether that
+    /// changed anything.
+    async fn share_with(&self, id: u64, user: &str) -> Result<bool, BoxError> {
+        let stored = self.get_resource(id).await?;
+        if may_read(&stored, user) {
+            return Ok(false);
+        }
+        let mut metadata = stored.metadata.unwrap_or_default();
+        let shared = metadata
+            .entry(SHARED_USERS_KEY)
+            .or_insert_with(|| Value::Array(Vec::new()));
+        match shared.as_array_mut() {
+            Some(users) => users.push(user.into()),
+            None => *shared = json!([user]),
+        }
+        self.resources
+            .update(
+                id,
+                BTreeMap::from([("metadata".to_string(), Fv::from(metadata))]),
+            )
+            .await?;
+        Ok(true)
+    }
 }
 
 /// Resolves a requested download directory to a canonical path inside one of
-/// `roots` or the system temp directory. A relative directory is taken from the
-/// first root (the temp directory when there is none).
-async fn resolve_download_dir(dir: Option<&Path>, roots: &[PathBuf]) -> Result<PathBuf, BoxError> {
+/// `roots` or the system temp directory. A relative directory starts at
+/// `workspace` when that lies in a root, as with the filesystem tools, and
+/// otherwise at the first root (the temp directory when there is none).
+async fn resolve_download_dir(
+    dir: Option<&Path>,
+    workspace: Option<&Path>,
+    roots: &[PathBuf],
+) -> Result<PathBuf, BoxError> {
     let temp_dir = std::env::temp_dir();
     let Some(dir) = dir else {
         return Ok(temp_dir);
@@ -340,11 +396,27 @@ async fn resolve_download_dir(dir: Option<&Path>, roots: &[PathBuf]) -> Result<P
     {
         return Err("download directory must not contain '..'".into());
     }
+    let mut allowed = Vec::with_capacity(roots.len() + 1);
+    for root in roots {
+        if let Ok(root) = tokio::fs::canonicalize(root).await {
+            allowed.push(root);
+        }
+    }
     let dir = if dir.is_absolute() {
         dir.to_path_buf()
     } else {
-        roots.first().unwrap_or(&temp_dir).join(dir)
+        let mut base = roots.first().unwrap_or(&temp_dir).clone();
+        if let Some(workspace) = workspace
+            && let Ok(workspace) = tokio::fs::canonicalize(workspace).await
+            && allowed.iter().any(|root| workspace.starts_with(root))
+        {
+            base = workspace;
+        }
+        base.join(dir)
     };
+    if let Ok(temp_dir) = tokio::fs::canonicalize(&temp_dir).await {
+        allowed.push(temp_dir);
+    }
     // Canonicalize the deepest existing ancestor so a link cannot lead out.
     let mut existing = dir.as_path();
     while tokio::fs::metadata(existing).await.is_err() {
@@ -355,12 +427,8 @@ async fn resolve_download_dir(dir: Option<&Path>, roots: &[PathBuf]) -> Result<P
     let resolved = tokio::fs::canonicalize(existing)
         .await?
         .join(dir.strip_prefix(existing)?);
-    for root in roots.iter().chain([&temp_dir]) {
-        if let Ok(root) = tokio::fs::canonicalize(root).await
-            && resolved.starts_with(&root)
-        {
-            return Ok(resolved);
-        }
+    if allowed.iter().any(|root| resolved.starts_with(root)) {
+        return Ok(resolved);
     }
     Err(format!(
         "download directory must be inside a workspace or the temp directory: {}",
@@ -415,15 +483,15 @@ fn resources_tool_parameters() -> Value {
             "type": {
                 "type": "string",
                 "enum": ["GetResource", "DownloadResource"],
-                "description": "Resource operation to perform. Use GetResource to load a persisted resource, including its blob, by _id. Use DownloadResource to save the resource blob to a local file for further processing."
+                "description": "Resource operation to perform. Use GetResource to load a persisted resource's details by _id; an agent gets them without the blob. Use DownloadResource to save the resource blob to a local file for further processing."
             },
             "_id": {
-                "type": ["integer", "null"],
+                "type": "integer",
                 "description": "Resource ID to load. Use the _id from a message attachment resource."
             },
             "dir": {
                 "type": ["string", "null"],
-                "description": "Only for DownloadResource: directory to save the file into, inside a workspace or the system temp directory. Defaults to the system temp directory."
+                "description": "Only for DownloadResource: directory to save the file into, inside a workspace or the system temp directory. A relative path starts at the current workspace. Defaults to the system temp directory."
             }
         },
         "required": ["type", "_id", "dir"],
@@ -431,21 +499,25 @@ fn resources_tool_parameters() -> Value {
     })
 }
 
-fn resource_owner(resource: &Resource) -> Option<&str> {
-    resource
-        .metadata
-        .as_ref()
-        .and_then(|metadata| metadata.get("user"))
-        .and_then(Value::as_str)
+/// Whether `user` may read `resource`: its owner, a user it is shared with,
+/// or anyone when it records no owner.
+fn may_read(resource: &Resource, user: &str) -> bool {
+    let Some(metadata) = &resource.metadata else {
+        return true;
+    };
+    let Some(owner) = metadata.get("user").and_then(Value::as_str) else {
+        return true;
+    };
+    owner == user || shared_users(metadata).any(|shared| shared == user)
 }
 
-fn ensure_resource_access(resource: &Resource, caller: &Principal) -> Result<(), BoxError> {
-    if let Some(owner) = resource_owner(resource)
-        && owner != caller.to_string()
-    {
-        return Err("permission denied".into());
-    }
-    Ok(())
+fn shared_users(metadata: &Map<String, Value>) -> impl Iterator<Item = &str> {
+    metadata
+        .get(SHARED_USERS_KEY)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
 }
 
 impl Tool<BaseCtx> for ResourceStore {
@@ -457,7 +529,7 @@ impl Tool<BaseCtx> for ResourceStore {
     }
 
     fn description(&self) -> String {
-        "Read persisted resources by ID, including blob content omitted from conversation messages, or download a resource blob to a local file."
+        "Read persisted resources by ID or download a resource blob to a local file. An agent gets a resource without its blob: download it, or inspect it with the matching understanding tool."
             .to_string()
     }
 
@@ -478,19 +550,28 @@ impl Tool<BaseCtx> for ResourceStore {
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         match args {
             ResourcesToolArgs::GetResource { _id } => {
-                let resource = self.get_resource_for(_id, ctx.caller()).await?;
+                let mut resource = self.get_resource_for(_id, ctx.caller()).await?;
+                // Clients render the blob; an agent would get it as base64
+                // text that floods its context.
+                if ctx.get_state::<AgentCaller>().is_some()
+                    && let Some(blob) = resource.blob.take()
+                {
+                    resource.size.get_or_insert(blob.len() as u64);
+                }
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(resource),
                     next_cursor: None,
                 }))
             }
             ResourcesToolArgs::DownloadResource { _id, dir } => {
-                if _id == 0 {
-                    return Err("_id is required".into());
-                }
-
+                let workspace = request_meta_extra_as::<PathBuf>(ctx.meta(), keys::WORKSPACE);
                 let (resource, path) = self
-                    .download_resource(_id, dir.as_deref().map(Path::new), Some(ctx.caller()))
+                    .download_resource(
+                        _id,
+                        dir.as_deref().map(Path::new),
+                        workspace.as_deref(),
+                        ctx.caller(),
+                    )
                     .await?;
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!({
@@ -574,16 +655,23 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(ensure_resource_access(&resource, &caller).is_ok());
+        assert!(may_read(&resource, &caller.to_string()));
 
         let mut metadata = serde_json::Map::new();
         metadata.insert("user".to_string(), "aaaaa-aa".into());
         let resource = Resource {
+            metadata: Some(metadata.clone()),
+            ..Default::default()
+        };
+        assert!(!may_read(&resource, &caller.to_string()));
+
+        metadata.insert(SHARED_USERS_KEY.to_string(), json!([caller.to_string()]));
+        let resource = Resource {
             metadata: Some(metadata),
             ..Default::default()
         };
-
-        assert!(ensure_resource_access(&resource, &caller).is_err());
+        assert!(may_read(&resource, &caller.to_string()));
+        assert!(may_read(&Resource::default(), &caller.to_string()));
     }
 
     use anda_core::ByteBufB64;
@@ -691,6 +779,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn repeated_content_is_shared_only_with_senders_of_the_bytes() {
+        let store = test_resource_store().await;
+        let owner = Principal::anonymous();
+        let other = Principal::management_canister();
+
+        let first = store
+            .persist_resources(&owner, vec![sample_resource("a.txt")])
+            .await
+            .unwrap();
+        let id = first[0]._id;
+        assert!(store.get_resource_for(id, &other).await.is_err());
+
+        // A reference carrying only the hash proves nothing and gains nothing.
+        let forged = store
+            .persist_resources(
+                &other,
+                vec![Resource {
+                    name: "forged.txt".to_string(),
+                    hash: store.get_resource(id).await.unwrap().hash,
+                    ..Default::default()
+                }],
+            )
+            .await
+            .unwrap();
+        assert_eq!(forged[0]._id, id);
+        assert!(store.get_resource_for(id, &other).await.is_err());
+
+        // Sending the same bytes shares the stored copy, once.
+        for _ in 0..2 {
+            let copy = Resource {
+                name: "copy.txt".to_string(),
+                ..sample_resource("a.txt")
+            };
+            let again = store.persist_resources(&other, vec![copy]).await.unwrap();
+            assert_eq!(again[0]._id, id);
+        }
+        let stored = store.get_resource_for(id, &other).await.unwrap();
+        assert_eq!(stored.name, "a.txt");
+        assert_eq!(
+            shared_users(stored.metadata.as_ref().unwrap()).collect::<Vec<_>>(),
+            vec![other.to_string()]
+        );
+        assert!(store.get_resource_for(id, &owner).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn download_resource_writes_blob_to_dir() {
         let store = test_resource_store().await;
         let user = Principal::anonymous();
@@ -703,7 +837,7 @@ mod tests {
         let id = refs[0]._id;
 
         let (resource, path) = store
-            .download_resource(id, Some(dir.path()), None)
+            .download_resource(id, Some(dir.path()), None, &user)
             .await
             .unwrap();
         assert_eq!(resource.name, "a.txt");
@@ -729,7 +863,7 @@ mod tests {
             .await
             .unwrap();
         let err = store
-            .download_resource(refs[0]._id, Some(dir.path()), None)
+            .download_resource(refs[0]._id, Some(dir.path()), None, &user)
             .await
             .map(|_| ())
             .unwrap_err();
@@ -750,7 +884,7 @@ mod tests {
         });
 
         // Missing subdirectories of a root resolve; relative ones use the first root.
-        let nested = resolve_download_dir(Some(Path::new("out/files")), &roots)
+        let nested = resolve_download_dir(Some(Path::new("out/files")), None, &roots)
             .await
             .unwrap();
         assert_eq!(
@@ -758,20 +892,43 @@ mod tests {
             workspace.canonicalize().unwrap().join("out").join("files")
         );
         assert_eq!(
-            resolve_download_dir(None, &roots).await.unwrap(),
+            resolve_download_dir(None, None, &roots).await.unwrap(),
             std::env::temp_dir()
+        );
+
+        // A relative directory starts at the request's workspace when that
+        // lies in a root, and ignores one outside every root.
+        let project = workspace.join("project");
+        tokio::fs::create_dir_all(&project).await.unwrap();
+        assert_eq!(
+            resolve_download_dir(Some(Path::new("out")), Some(&project), &roots)
+                .await
+                .unwrap(),
+            project.canonicalize().unwrap().join("out")
+        );
+        let elsewhere = home.path().join("elsewhere");
+        tokio::fs::create_dir_all(&elsewhere).await.unwrap();
+        assert_eq!(
+            resolve_download_dir(Some(Path::new("out")), Some(&elsewhere), &roots)
+                .await
+                .unwrap(),
+            workspace.canonicalize().unwrap().join("out")
         );
 
         // Anything outside the roots and the temp directory is refused.
         for dir in [outside.join("sub"), workspace.join("../escape")] {
-            assert!(resolve_download_dir(Some(&dir), &roots).await.is_err());
+            assert!(
+                resolve_download_dir(Some(&dir), None, &roots)
+                    .await
+                    .is_err()
+            );
         }
         #[cfg(unix)]
         {
             let link = workspace.join("link");
             std::os::unix::fs::symlink("/", &link).unwrap();
             assert!(
-                resolve_download_dir(Some(&link.join("sub")), &roots)
+                resolve_download_dir(Some(&link.join("sub")), None, &roots)
                     .await
                     .is_err()
             );
@@ -881,7 +1038,30 @@ mod tests {
             .await
             .unwrap();
         match output.output {
-            Response::Ok { result, .. } => assert_eq!(result["name"], "mine.txt"),
+            Response::Ok { result, .. } => {
+                assert_eq!(result["name"], "mine.txt");
+                assert!(result["blob"].is_string());
+            }
+            other => panic!("expected ok response, got {other:?}"),
+        }
+
+        // An agent gets the resource without its blob.
+        let agent_ctx = EngineBuilder::new().mock_ctx().base;
+        agent_ctx.set_state(AgentCaller);
+        let output = store
+            .call(
+                agent_ctx,
+                ResourcesToolArgs::GetResource { _id: refs[0]._id },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        match output.output {
+            Response::Ok { result, .. } => {
+                assert_eq!(result["name"], "mine.txt");
+                assert!(result.get("blob").is_none());
+                assert_eq!(result["size"], "contents of mine.txt".len());
+            }
             other => panic!("expected ok response, got {other:?}"),
         }
 
@@ -920,6 +1100,7 @@ mod tests {
         }];
         collector.record(&owner, &mut artifacts).await.unwrap();
         let id = artifacts[0]._id;
+        // A finished runner hands recorded artifacts back; they keep their id.
         collector.record(&owner, &mut artifacts).await.unwrap();
         assert_ne!(id, 0);
         assert_eq!(artifacts[0]._id, id);

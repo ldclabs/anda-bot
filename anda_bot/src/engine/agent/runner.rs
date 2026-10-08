@@ -795,8 +795,8 @@ impl SessionRunner {
                 self.runner.accumulate(&input.usage);
             }
             let (reason, cancelled) = match &inputs[index].command {
-                PromptCommand::Stop { prompt } => (control_command_reason(prompt, "stop"), false),
-                PromptCommand::Cancel { prompt } => (cancel_reason(prompt), true),
+                PromptCommand::Stop { reason } => (reason.clone(), false),
+                PromptCommand::Cancel { reason } => (cancel_reason(reason), true),
                 _ => unreachable!(),
             };
             let now_ms = unix_ms();
@@ -893,16 +893,14 @@ impl SessionRunner {
                     );
                 }
                 PromptCommand::Stop { .. } | PromptCommand::Cancel { .. } => unreachable!(),
-                PromptCommand::New { .. } => {
+                PromptCommand::New { .. } | PromptCommand::Side { .. } => {
                     log::warn!(
-                        "Received unexpected /new command in session {}, conversation {}. The /new command should be handled in the agent run() method and should not reach the session runner. Ignoring.",
+                        "Received unexpected /new or /side command in session {}, conversation {}. Both are handled in the agent run() method and should not reach the session runner. Ignoring.",
                         self.session.id,
                         self.conversation._id
                     );
                 }
-                PromptCommand::Plain { prompt }
-                | PromptCommand::Side { prompt }
-                | PromptCommand::Loop { prompt } => {
+                PromptCommand::Plain { prompt } => {
                     prepend_prompt_content(&mut content, prompt);
                     follow_up_batch.append(&mut content);
                 }
@@ -916,11 +914,16 @@ impl SessionRunner {
                     goal::set_goal(&mut self.session.goal.write(), prompt);
                 }
                 PromptCommand::Skill { skill, prompt } => {
-                    let (_, directive) = skill_command_directive(
-                        self.assistant.inner.skill_library.subagent_set(),
-                        &skill,
-                    );
-                    content.push(system_runtime_prompt("prompt command", directive).into());
+                    if let Some((callable, directive)) =
+                        skill_command_directive(&self.assistant.inner.skill_library, &skill)
+                    {
+                        // Load the skill's callable as a new session does.
+                        if let Some(callable) = callable {
+                            self.runner
+                                .add_tools(self.ctx.definitions(Some(&[callable])).await);
+                        }
+                        content.push(system_runtime_prompt("prompt command", directive).into());
+                    }
                     prepend_prompt_content(&mut content, prompt);
                     follow_up_batch.append(&mut content);
                 }
@@ -1448,26 +1451,11 @@ fn is_context_length_error(err: &BoxError) -> bool {
     false
 }
 
-fn control_command_reason(prompt: &str, command: &str) -> String {
-    let trimmed = prompt.trim();
-    let Some(body) = trimmed.strip_prefix('/') else {
-        return trimmed.to_string();
-    };
-    let command_end = body.find(char::is_whitespace).unwrap_or(body.len());
-    let parsed_command = &body[..command_end];
-    if !parsed_command.eq_ignore_ascii_case(command) {
-        return trimmed.to_string();
-    }
-
-    body[command_end..].trim().to_string()
-}
-
-fn cancel_reason(prompt: &str) -> String {
-    let reason = control_command_reason(prompt, "cancel");
+fn cancel_reason(reason: &str) -> String {
     if reason.trim().is_empty() {
         "conversation cancelled".to_string()
     } else {
-        reason
+        reason.to_string()
     }
 }
 
@@ -2178,7 +2166,7 @@ mod tests {
         let cont = sess_runner
             .run(
                 vec![input(PromptCommand::Stop {
-                    prompt: "/stop please".to_string(),
+                    reason: "please".to_string(),
                 })],
                 &mut snapshot,
             )
@@ -2197,7 +2185,7 @@ mod tests {
         let cont = sess_runner
             .run(
                 vec![input(PromptCommand::Cancel {
-                    prompt: "/cancel".to_string(),
+                    reason: String::new(),
                 })],
                 &mut snapshot,
             )
@@ -2847,7 +2835,7 @@ mod tests {
 
         let _ = stop_sender
             .send(input(PromptCommand::Stop {
-                prompt: "/stop".to_string(),
+                reason: String::new(),
             }))
             .await;
     }
@@ -2889,25 +2877,9 @@ mod tests {
     }
 
     #[test]
-    fn control_command_reason_strips_known_command_prefix() {
-        assert_eq!(
-            control_command_reason("/stop because it is wrong", "stop"),
-            "because it is wrong"
-        );
-        assert_eq!(control_command_reason("/STOP", "stop"), "");
-        assert_eq!(
-            control_command_reason("/cancel because it is wrong", "stop"),
-            "/cancel because it is wrong"
-        );
-    }
-
-    #[test]
     fn cancel_reason_defaults_when_reason_is_empty() {
-        assert_eq!(
-            cancel_reason("/cancel because it is wrong"),
-            "because it is wrong"
-        );
-        assert_eq!(cancel_reason("/cancel"), "conversation cancelled");
+        assert_eq!(cancel_reason("because it is wrong"), "because it is wrong");
+        assert_eq!(cancel_reason(" "), "conversation cancelled");
     }
 
     #[test]
@@ -3036,7 +3008,7 @@ mod tests {
         ));
         r.run(
             vec![input(PromptCommand::Stop {
-                prompt: "/stop".into(),
+                reason: String::new(),
             })],
             &mut HashMap::new(),
         )
@@ -3365,7 +3337,7 @@ mod tests {
         r.session.control.reset();
         r.run(
             vec![input(PromptCommand::Stop {
-                prompt: "/stop".into(),
+                reason: String::new(),
             })],
             &mut HashMap::new(),
         )
@@ -3487,7 +3459,7 @@ mod tests {
         // before the run() path starts preparing resources.
         r.run(
             vec![input(PromptCommand::Stop {
-                prompt: "/stop".into(),
+                reason: String::new(),
             })],
             &mut HashMap::new(),
         )
@@ -3533,7 +3505,7 @@ mod tests {
         session
             .sender
             .try_send(input(PromptCommand::Stop {
-                prompt: "/stop".into(),
+                reason: String::new(),
             }))
             .unwrap();
         session
@@ -3560,7 +3532,7 @@ mod tests {
         session
             .sender
             .send(input(PromptCommand::Cancel {
-                prompt: "/cancel".into(),
+                reason: String::new(),
             }))
             .await
             .unwrap();

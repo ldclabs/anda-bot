@@ -173,6 +173,7 @@ impl AndaBot {
                 &home_dir,
                 &workspace,
                 &available_tools,
+                true,
                 now_ms,
             )
             .await?;

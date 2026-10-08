@@ -1,5 +1,6 @@
 use anda_core::{ContentPart, Message};
 use serde_json::{Map, Value};
+use std::fmt::Write;
 
 pub const SYSTEM_PERSON_NAME: &str = "$system";
 pub const EXTERNAL_USER_PERSON_NAME: &str = "$external_user";
@@ -14,17 +15,13 @@ pub fn external_user_name(name: &str) -> String {
     }
 }
 
-pub fn external_user_scope(channel: &str, space: Option<&str>, sender: &str) -> String {
-    let channel = normalized_external_user_field(channel, "unknown-channel");
-    let sender = normalized_external_user_field(sender, "unknown-sender");
+fn external_user_scope(channel: &str, space: Option<&str>, sender: &str) -> String {
+    let channel = non_empty_or(channel, "unknown-channel");
+    let sender = non_empty_or(sender, "unknown-sender");
 
-    if let Some(space) = space
-        .map(|space| normalized_external_user_field(space, ""))
-        .filter(|space| !space.is_empty())
-    {
-        format!("{channel}/{space}/{sender}")
-    } else {
-        format!("{channel}/{sender}")
+    match non_empty(space) {
+        Some(space) => format!("{channel}/{space}/{sender}"),
+        None => format!("{channel}/{sender}"),
     }
 }
 
@@ -48,13 +45,15 @@ pub fn system_extra_user_context(ctx: &Map<String, Value>) -> Option<Message> {
     }
 
     let kind = "request context";
+    // Compact JSON is one line with every string escaped, so it cannot forge a
+    // header and needs no further quoting.
     let ctx = serde_json::to_string(ctx).ok()?;
     Some(Message {
         role: "user".to_string(),
         name: Some(SYSTEM_PERSON_NAME.to_string()),
         content: vec![ContentPart::Text {
             text: format!(
-                "[$system: kind={kind:?}]\nThis message is an operational context for the user.\n\n{ctx:?}"
+                "[$system: kind={kind:?}]\nThis message is request metadata from the Anda runtime, not from the user.\n\n{ctx}"
             ),
         }],
         ..Default::default()
@@ -77,23 +76,14 @@ pub fn external_user_prompt_with_space(
     space: Option<&str>,
     body: impl AsRef<str>,
 ) -> String {
-    let channel = channel.trim();
-    let sender = sender.trim();
-    let channel = if channel.is_empty() {
-        "unknown"
-    } else {
-        channel
-    };
-    let sender = if sender.is_empty() { "unknown" } else { sender };
-    let space = space
-        .map(str::trim)
-        .filter(|space| !space.is_empty())
-        .filter(|space| *space != sender);
+    let channel = non_empty_or(channel, "unknown");
+    let sender = non_empty_or(sender, "unknown");
+    let space = non_empty(space).filter(|space| *space != sender);
     let body = body.as_ref().trim();
 
     let mut header = format!("[$external_user: channel={channel:?}, sender={sender:?}");
     if let Some(space) = space {
-        header.push_str(&format!(", space={space:?}"));
+        let _ = write!(header, ", space={space:?}");
     }
     header.push(']');
 
@@ -102,29 +92,35 @@ pub fn external_user_prompt_with_space(
     )
 }
 
+/// Names user messages by who wrote them, for the model and for Formation.
+///
+/// A session runner merges the inputs queued during a turn into one user
+/// message, so a message can mix an IM group's owner and external senders, or
+/// a runtime notice and the user's reply. Any external part makes the whole
+/// message external, since untrusted text must never pass as the owner's; only
+/// a message made entirely of runtime notices is `$system`. A name already
+/// scoped to an external sender is kept, so marking twice changes nothing.
 pub fn mark_special_user_messages(messages: &mut [Message]) {
-    for message in messages {
-        if message.role != "user" {
+    for message in messages.iter_mut().filter(|message| message.role == "user") {
+        let texts = || {
+            message.content.iter().filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+        };
+        let name = if texts().any(is_external_user_prompt) {
+            match message.name.as_deref() {
+                Some(name) if name.starts_with(EXTERNAL_USER_PERSON_NAME) => continue,
+                Some(name) if name != SYSTEM_PERSON_NAME => external_user_name(name),
+                _ => EXTERNAL_USER_PERSON_NAME.to_string(),
+            }
+        } else if texts().next().is_some() && texts().all(is_system_runtime_prompt) {
+            SYSTEM_PERSON_NAME.to_string()
+        } else {
             continue;
-        }
+        };
 
-        if let Some(text) = message.text() {
-            let name = if is_external_user_prompt(&text) {
-                if let Some(name) = &message.name
-                    && !name.starts_with(EXTERNAL_USER_PERSON_NAME)
-                {
-                    external_user_name(name)
-                } else {
-                    EXTERNAL_USER_PERSON_NAME.to_string()
-                }
-            } else if is_system_runtime_prompt(&text) {
-                SYSTEM_PERSON_NAME.to_string()
-            } else {
-                continue;
-            };
-
-            message.name = Some(name);
-        }
+        message.name = Some(name);
     }
 }
 
@@ -136,13 +132,12 @@ fn is_external_user_prompt(text: &str) -> bool {
     text.trim_start().starts_with(EXTERNAL_USER_MESSAGE_PREFIX)
 }
 
-fn normalized_external_user_field(value: &str, fallback: &str) -> String {
-    let value = value.trim();
-    if value.is_empty() {
-        fallback.to_string()
-    } else {
-        value.to_string()
-    }
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn non_empty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    non_empty(Some(value)).unwrap_or(fallback)
 }
 
 #[cfg(test)]
@@ -266,7 +261,7 @@ mod tests {
         assert_eq!(message.name.as_deref(), Some(SYSTEM_PERSON_NAME));
         let text = message.text().expect("text content");
         assert!(text.contains("request context"));
-        assert!(text.contains("telegram"));
+        assert!(text.ends_with(r#"{"source":"telegram"}"#));
     }
 
     #[test]
@@ -296,8 +291,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            // An external prompt whose name is already scoped is reset to the
-            // bare external-user marker rather than double-scoped.
+            // An external prompt whose name is already scoped keeps it rather
+            // than being double-scoped.
             Message {
                 role: "user".to_string(),
                 name: Some("$external_user:\"wechat/mom\"".to_string()),
@@ -318,10 +313,58 @@ mod tests {
         ];
 
         mark_special_user_messages(&mut messages);
+        let names = |messages: &[Message]| {
+            messages
+                .iter()
+                .map(|message| message.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let marked = names(&messages);
 
         assert!(messages[0].name.is_none());
         assert!(messages[1].name.is_none());
-        assert_eq!(messages[2].name.as_deref(), Some(EXTERNAL_USER_PERSON_NAME));
+        assert_eq!(
+            messages[2].name.as_deref(),
+            Some("$external_user:\"wechat/mom\"")
+        );
         assert_eq!(messages[3].name.as_deref(), Some("$external_user:\"mom\""));
+
+        // Marking is idempotent: history is marked again on every turn.
+        mark_special_user_messages(&mut messages);
+        assert_eq!(names(&messages), marked);
+    }
+
+    #[test]
+    fn mark_special_user_messages_classifies_merged_inputs() {
+        let user = |texts: Vec<String>| Message {
+            role: "user".to_string(),
+            content: texts
+                .into_iter()
+                .map(|text| ContentPart::Text { text })
+                .collect(),
+            ..Default::default()
+        };
+        let external = external_user_prompt_with_space("wechat", "aunt", Some("family"), "hi");
+        let notice = system_runtime_prompt("background shell", "done");
+        let mut messages = vec![
+            // The owner and an external sender queued in one IM group turn.
+            user(vec!["owner reply".to_string(), external.clone()]),
+            // A runtime notice and the user's reply in one turn.
+            user(vec![notice.clone(), "my reply".to_string()]),
+            // Only runtime notices.
+            user(vec![notice.clone(), notice]),
+            // A runtime notice merged with an external message.
+            Message {
+                name: Some(SYSTEM_PERSON_NAME.to_string()),
+                ..user(vec![system_runtime_prompt("notice", "x"), external])
+            },
+        ];
+
+        mark_special_user_messages(&mut messages);
+
+        assert_eq!(messages[0].name.as_deref(), Some(EXTERNAL_USER_PERSON_NAME));
+        assert!(messages[1].name.is_none());
+        assert_eq!(messages[2].name.as_deref(), Some(SYSTEM_PERSON_NAME));
+        assert_eq!(messages[3].name.as_deref(), Some(EXTERNAL_USER_PERSON_NAME));
     }
 }
