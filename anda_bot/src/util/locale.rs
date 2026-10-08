@@ -1,16 +1,56 @@
-//! OS locale detection shared by the `anda` daemon and the transitional
+//! UI locale detection shared by the `anda` daemon and the transitional
 //! `anda_launcher`.
 //!
 //! Both binaries compile this same source file — `util.rs` declares
 //! `pub mod locale;` and `anda_launcher.rs` includes it via `#[path]` — so the
-//! tags one side reads and the tags the other side reads cannot drift.
+//! language one side picks and the language the other side picks cannot drift.
 //!
-//! Callers own the mapping from a locale tag to their own language enum,
-//! because the two binaries ship different sets of translated strings: the
-//! launcher's retirement notice is localized into six languages while the
-//! daemon's native dialogs are localized into two. What is shared is *where* tags come from
-//! (platform preference list first, then `LC_ALL`/`LC_MESSAGES`/`LANG`), the
-//! order they are tried in, and how a raw tag is normalized before matching.
+//! What is shared is *where* the language comes from (the language Anda
+//! Desktop was set to, then the platform preference list, then
+//! `LC_ALL`/`LC_MESSAGES`/`LANG`), the order tags are tried in, how a raw tag
+//! is normalized, and the six locales native strings are translated into.
+
+use std::path::Path;
+
+/// The locale for native dialogs and notices: the language Anda Desktop was
+/// set to, else the system language, else English.
+pub fn ui_locale(home: &Path) -> &'static str {
+    persisted_ui_language(home)
+        .and_then(|language| supported_locale(&normalize_tag(&language)))
+        .or_else(|| first_match(system_locale_tags(), supported_locale))
+        .unwrap_or("en")
+}
+
+/// The UI language Anda Desktop persists at `launcher/ui.json` (the path the
+/// retired tray launcher used, kept so existing settings still apply). Read
+/// per call: the desktop may rewrite the file while the daemon runs.
+pub fn persisted_ui_language(home: &Path) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct UiSettings {
+        #[serde(default)]
+        language: String,
+    }
+
+    let content = std::fs::read_to_string(home.join("launcher").join("ui.json")).ok()?;
+    let settings = serde_json::from_str::<UiSettings>(&content).ok()?;
+    let language = settings.language.trim();
+    (!language.is_empty()).then(|| language.to_string())
+}
+
+/// Maps a tag normalized by [`normalize_tag`] to one of the six locales
+/// native strings are translated into.
+pub fn supported_locale(tag: &str) -> Option<&'static str> {
+    if tag.starts_with("chinese") {
+        return Some("zh-Hans");
+    }
+    ["zh", "ru", "ar", "fr", "es", "en"]
+        .into_iter()
+        .find(|prefix| {
+            tag.strip_prefix(prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+        })
+        .map(|prefix| if prefix == "zh" { "zh-Hans" } else { prefix })
+}
 
 /// Locale tags in decreasing order of user preference.
 ///
@@ -162,5 +202,38 @@ mod tests {
     #[test]
     fn system_locale_tags_is_readable_without_panicking() {
         let _ = system_locale_tags();
+    }
+
+    #[test]
+    fn supported_locale_maps_normalized_tags() {
+        assert_eq!(supported_locale("zh-cn"), Some("zh-Hans"));
+        assert_eq!(supported_locale("zh-hans"), Some("zh-Hans"));
+        assert_eq!(supported_locale("chinese (simplified)"), Some("zh-Hans"));
+        assert_eq!(supported_locale("fr-fr"), Some("fr"));
+        assert_eq!(supported_locale("en"), Some("en"));
+        assert_eq!(supported_locale("de-de"), None);
+        assert_eq!(supported_locale("eng"), None);
+    }
+
+    #[test]
+    fn ui_locale_prefers_the_persisted_desktop_language() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(persisted_ui_language(home.path()), None);
+
+        let ui_path = home.path().join("launcher").join("ui.json");
+        std::fs::create_dir_all(ui_path.parent().unwrap()).unwrap();
+        std::fs::write(&ui_path, r#"{"language": "zh-Hans"}"#).unwrap();
+        assert_eq!(
+            persisted_ui_language(home.path()).as_deref(),
+            Some("zh-Hans")
+        );
+        assert_eq!(ui_locale(home.path()), "zh-Hans");
+        std::fs::write(&ui_path, r#"{"language": "es"}"#).unwrap();
+        assert_eq!(ui_locale(home.path()), "es");
+
+        std::fs::write(&ui_path, r#"{"language": "  "}"#).unwrap();
+        assert_eq!(persisted_ui_language(home.path()), None);
+        std::fs::write(&ui_path, "not json").unwrap();
+        assert_eq!(persisted_ui_language(home.path()), None);
     }
 }

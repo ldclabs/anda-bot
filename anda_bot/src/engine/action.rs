@@ -301,7 +301,7 @@ impl ActionSession {
             .get_extra_as::<String>(keys::WORKSPACE)
             .unwrap_or_default();
         let language_hint = shell_risk_language_hint(&meta)
-            .or_else(|| super::browser_ws::persisted_ui_language(&self.home_dir));
+            .or_else(|| crate::util::locale::persisted_ui_language(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
             &args,
             approval_mode,

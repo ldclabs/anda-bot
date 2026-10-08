@@ -1,6 +1,6 @@
 use crate::util::tool_response::ToolResponse as Response;
 use anda_core::{
-    BoxError, FunctionDefinition, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
+    BoxError, FunctionDefinition, Principal, RequestMeta, Resource, StateFeatures, Tool, ToolOutput,
 };
 use anda_engine::{context::BaseCtx, unix_ms};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -9,7 +9,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -34,6 +34,12 @@ const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
 const BROWSER_SCREENSHOT_TMP_DIR: &str = "browser-screenshots";
+const SCREENSHOT_FILE_PREFIX: &str = "chrome-screenshot-";
+/// Saved captures are references the model revisits within a task, not an
+/// archive, so they are not kept forever in the workspace.
+const SCREENSHOT_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// Anda Desktop registers one browser per chat under this prefix.
+const DESKTOP_SESSION_PREFIX: &str = "browser:desktop:";
 const LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE: &str = "local_file_access_disabled";
 const LOCAL_FILE_ACCESS_WARNING: &str = "Opened the local file via the browser application because the extension does not have access to file:// URLs. Enable \"Allow access to file URLs\" in the extension details to inspect or automate the page directly.";
 
@@ -74,14 +80,17 @@ struct PendingBrowserRequest {
     response: oneshot::Sender<BrowserActionResult>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct BrowserConnection {
     session: BrowserSession,
     connection_id: u64,
+    /// The user whose socket registered the session; only their requests
+    /// drive it.
+    caller: Principal,
     sender: mpsc::Sender<BrowserCommand>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserAction {
     GetCurrentTab,
@@ -124,13 +133,15 @@ pub enum BrowserAction {
     CloseTab,
     GetFrames,
     LaunchBrowser,
+    /// The script tool's implicit action.
+    #[default]
     ExecuteJavascript,
     HandleDialog,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ChromeBrowserToolArgs {
-    #[serde(default = "default_browser_action")]
+    #[serde(default)]
     pub action: BrowserAction,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,10 +265,6 @@ pub struct ChromeBrowserToolArgs {
     pub reason: Option<String>,
 }
 
-fn default_browser_action() -> BrowserAction {
-    BrowserAction::ExecuteJavascript
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct BrowserCommand {
     pub request_id: u64,
@@ -271,7 +278,7 @@ pub struct BrowserActionResult {
     #[serde(default)]
     pub ok: bool,
 
-    #[serde(default = "json_null")]
+    #[serde(default)]
     pub value: Value,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,6 +286,43 @@ pub struct BrowserActionResult {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+}
+
+impl BrowserActionResult {
+    pub fn ok(value: Value) -> Self {
+        Self {
+            ok: true,
+            value,
+            error: None,
+            error_code: None,
+        }
+    }
+
+    pub fn error(error: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            value: Value::Null,
+            error: Some(error.into()),
+            error_code: None,
+        }
+    }
+}
+
+impl From<BrowserActionResult> for Value {
+    /// Moves the payload, which may be a whole page, instead of re-serializing
+    /// it. Matches the `Serialize` layout.
+    fn from(result: BrowserActionResult) -> Self {
+        let mut object = serde_json::Map::with_capacity(4);
+        object.insert("ok".into(), result.ok.into());
+        object.insert("value".into(), result.value);
+        if let Some(error) = result.error {
+            object.insert("error".into(), error.into());
+        }
+        if let Some(error_code) = result.error_code {
+            object.insert("error_code".into(), error_code.into());
+        }
+        Value::Object(object)
+    }
 }
 
 #[derive(Clone)]
@@ -331,6 +375,7 @@ impl BrowserBridge {
     pub(crate) fn register_ws_session(
         &self,
         connection_id: u64,
+        caller: Principal,
         sender: mpsc::Sender<BrowserCommand>,
         args: BrowserRegisterArgs,
         multiplexed: bool,
@@ -338,10 +383,16 @@ impl BrowserBridge {
         let session = normalize_session(args.session)?;
         let now = unix_ms();
         let mut connections = self.connections.write();
-        let connected_at = connections
-            .get(&session)
-            .filter(|connection| connection.connection_id == connection_id)
-            .map_or(now, |connection| connection.session.connected_at);
+        let connected_at = match connections.get(&session) {
+            // Another user's browser keeps its session.
+            Some(connection) if connection.caller != caller => {
+                return Err("browser session belongs to another user".into());
+            }
+            Some(connection) if connection.connection_id == connection_id => {
+                connection.session.connected_at
+            }
+            _ => now,
+        };
         // Extension sockets replace their one session. The owner-only desktop
         // transport shares a socket across independently routed chat browsers.
         if !multiplexed {
@@ -362,6 +413,7 @@ impl BrowserBridge {
             BrowserConnection {
                 session: info.clone(),
                 connection_id,
+                caller,
                 sender,
             },
         );
@@ -384,37 +436,39 @@ impl BrowserBridge {
             .retain(|_, request| request.connection_id != connection_id);
     }
 
-    pub fn connected_session(&self, preferred: Option<&str>) -> Option<String> {
-        let connections = self.connections.read();
-        if let Some(preferred) = preferred.map(str::trim).filter(|value| !value.is_empty()) {
-            return connections
-                .get(preferred)
-                .filter(|connection| !connection.sender.is_closed())
-                .map(|_| preferred.to_string());
-        }
-        connections
-            .values()
-            .filter(|connection| !connection.sender.is_closed())
-            .min_by(|left, right| {
-                right
-                    .session
-                    .last_seen_at
-                    .cmp(&left.session.last_seen_at)
-                    .then_with(|| left.session.session.cmp(&right.session.session))
-            })
+    /// The session a request from `caller` drives: `preferred` when it is one
+    /// of their live sessions, else their most recently seen browser. Desktop
+    /// chat browsers belong to one chat each, so only their name reaches them.
+    pub fn connected_session(&self, caller: Principal, preferred: Option<&str>) -> Option<String> {
+        select_connection(&self.connections.read(), caller, preferred)
             .map(|connection| connection.session.session.clone())
     }
 
     pub async fn wait_for_connected_session(
         &self,
+        caller: Principal,
         preferred: Option<String>,
         timeout_ms: u64,
     ) -> Option<String> {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        self.wait_for(deadline, |connections| {
+            select_connection(connections, caller, preferred.as_deref())
+                .map(|connection| connection.session.session.clone())
+        })
+        .await
+    }
+
+    /// Waits until `select` finds a connection; a registration rechecks it.
+    async fn wait_for<T>(
+        &self,
+        deadline: Instant,
+        select: impl Fn(&HashMap<String, BrowserConnection>) -> Option<T>,
+    ) -> Option<T> {
         loop {
             let notified = self.notify.notified();
-            if let Some(session) = self.connected_session(preferred.as_deref()) {
-                return Some(session);
+            let found = select(&self.connections.read());
+            if found.is_some() {
+                return found;
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return None;
@@ -424,6 +478,7 @@ impl BrowserBridge {
 
     pub async fn run_action(
         &self,
+        caller: Principal,
         session: String,
         args: ChromeBrowserToolArgs,
     ) -> Result<BrowserActionResult, BoxError> {
@@ -432,14 +487,12 @@ impl BrowserBridge {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         // Reconnection, queue capacity and the response share one deadline.
         let action = async {
-            self.wait_for_connected_session(Some(session.clone()), timeout_ms)
-                .await
-                .ok_or("Chrome browser WebSocket connection is closed")?;
             let (connection_id, sender) = self
-                .connections
-                .read()
-                .get(&session)
-                .map(|connection| (connection.connection_id, connection.sender.clone()))
+                .wait_for(deadline, |connections| {
+                    select_connection(connections, caller, Some(&session))
+                        .map(|connection| (connection.connection_id, connection.sender.clone()))
+                })
+                .await
                 .ok_or("Chrome browser WebSocket connection is closed")?;
             let permit = sender
                 .reserve_owned()
@@ -487,31 +540,60 @@ impl BrowserBridge {
             })?
     }
 
-    pub async fn complete(
+    /// Hands a browser's reply to the waiting action. Only the connection the
+    /// command went out on may answer it.
+    pub(crate) fn complete(
         &self,
-        session: String,
+        connection_id: u64,
+        session: &str,
         request_id: u64,
         result: BrowserActionResult,
     ) -> Result<(), BoxError> {
-        let session = normalize_session(session)?;
+        let session = session.trim();
         let mut connections = self.connections.write();
         let mut pending = self.pending.lock();
-        let request = pending
-            .get(&request_id)
-            .ok_or_else(|| format!("browser request {request_id} was not found"))?;
-        if request.session != session {
+        let Entry::Occupied(request) = pending.entry(request_id) else {
+            return Err(format!("browser request {request_id} was not found").into());
+        };
+        if request.get().connection_id != connection_id || request.get().session != session {
             return Err(
-                format!("browser request {request_id} belongs to a different session").into(),
+                format!("browser request {request_id} belongs to another connection").into(),
             );
         }
-        if let Some(connection) = connections.get_mut(&session) {
+        if let Some(connection) = connections.get_mut(session) {
             connection.session.last_seen_at = unix_ms();
         }
-        if let Some(request) = pending.remove(&request_id) {
-            let _ = request.response.send(result);
-        }
+        let _ = request.remove().response.send(result);
         Ok(())
     }
+}
+
+fn select_connection<'a>(
+    connections: &'a HashMap<String, BrowserConnection>,
+    caller: Principal,
+    preferred: Option<&str>,
+) -> Option<&'a BrowserConnection> {
+    let usable = |connection: &&BrowserConnection| {
+        connection.caller == caller && !connection.sender.is_closed()
+    };
+    match preferred.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(preferred) => connections.get(preferred).filter(usable),
+        None => connections
+            .values()
+            .filter(usable)
+            .filter(|connection| !is_desktop_session(&connection.session.session))
+            .min_by(|left, right| {
+                right
+                    .session
+                    .last_seen_at
+                    .cmp(&left.session.last_seen_at)
+                    .then_with(|| left.session.session.cmp(&right.session.session))
+            }),
+    }
+}
+
+fn is_desktop_session(session: &str) -> bool {
+    session.starts_with(DESKTOP_SESSION_PREFIX)
 }
 
 impl ChromeBrowserTool {
@@ -519,6 +601,12 @@ impl ChromeBrowserTool {
     pub const PAGE_NAME: &'static str = "browser_page";
     pub const INPUT_NAME: &'static str = "browser_input";
     pub const SCRIPT_NAME: &'static str = "browser_script";
+    pub const NAMES: [&'static str; 4] = [
+        Self::TABS_NAME,
+        Self::PAGE_NAME,
+        Self::INPUT_NAME,
+        Self::SCRIPT_NAME,
+    ];
 
     pub fn tabs(bridge: Arc<BrowserBridge>) -> Self {
         Self::for_kind(bridge, ChromeBrowserToolKind::Tabs)
@@ -549,26 +637,11 @@ impl ChromeBrowserTool {
         self
     }
 
-    pub fn is_active(&self) -> bool {
-        self.bridge.connected_session(None).is_some()
-    }
-
-    pub fn dependency_tool_names() -> [&'static str; 4] {
-        [
-            Self::TABS_NAME,
-            Self::PAGE_NAME,
-            Self::INPUT_NAME,
-            Self::SCRIPT_NAME,
-        ]
-    }
-
-    pub fn active_tool_names() -> [&'static str; 4] {
-        [
-            Self::TABS_NAME,
-            Self::PAGE_NAME,
-            Self::INPUT_NAME,
-            Self::SCRIPT_NAME,
-        ]
+    /// Whether a request from `caller` has a browser it may drive.
+    pub fn is_available(&self, caller: Principal, meta: &RequestMeta) -> bool {
+        self.bridge
+            .connected_session(caller, browser_session_from_meta(meta).as_deref())
+            .is_some()
     }
 
     fn screenshot_tmp_dir(&self) -> PathBuf {
@@ -578,12 +651,8 @@ impl ChromeBrowserTool {
             .unwrap_or_else(|| {
                 std::env::temp_dir()
                     .join("anda_bot")
-                    .join("browser-screenshots")
+                    .join(BROWSER_SCREENSHOT_TMP_DIR)
             })
-    }
-
-    fn workspace_root(&self) -> Option<&Path> {
-        self.screenshot_workspace.as_deref().map(PathBuf::as_path)
     }
 }
 
@@ -654,150 +723,145 @@ impl Tool<BaseCtx> for ChromeBrowserTool {
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         validate_browser_action_for_tool(self.kind, &args)?;
+        let caller = *ctx.caller();
         let preferred_session = browser_session_from_meta(ctx.meta());
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
 
-        if args.action == BrowserAction::LaunchBrowser {
-            if preferred_session
-                .as_deref()
-                .is_some_and(|s| s.starts_with("browser:desktop:"))
-            {
-                let session = self
-                    .connected_session_or_launch(preferred_session, timeout_ms)
-                    .await?;
-                let result = self.run_browser_action(&session, args).await?;
-                return Ok(ToolOutput::new(Response::Ok {
-                    result: json!(result),
-                    next_cursor: None,
-                }));
-            }
-            let launch = launch_browser(args.url.as_deref()).await?;
+        // A desktop chat browser handles launch_browser itself. Otherwise this
+        // starts the user's browser and reports whether its extension connected.
+        if args.action == BrowserAction::LaunchBrowser
+            && !preferred_session.as_deref().is_some_and(is_desktop_session)
+        {
+            let launch = launch_browser(args.url.as_deref(), preferred_session.as_deref()).await?;
             let session = self
                 .bridge
-                .wait_for_connected_session(preferred_session, timeout_ms)
+                .wait_for_connected_session(caller, preferred_session, timeout_ms)
                 .await;
-            let result = BrowserActionResult {
-                ok: true,
-                value: json!({
-                    "launched": true,
-                    "launch": launch,
-                    "connected": session.is_some(),
-                    "session": session,
-                }),
-                error: None,
-                error_code: None,
-            };
-            return Ok(ToolOutput::new(Response::Ok {
-                result: json!(result),
-                next_cursor: None,
-            }));
+            return Ok(browser_output(BrowserActionResult::ok(json!({
+                "launched": true,
+                "launch": launch,
+                "connected": session.is_some(),
+                "session": session,
+            }))));
         }
 
-        if matches!(
+        // Captures arrive inline and are saved to a file the model can open.
+        let capture = matches!(
             args.action,
             BrowserAction::Screenshot | BrowserAction::PrintToPdf
-        ) {
+        );
+        if capture {
             args.include_data_url = Some(true);
         }
 
         let session = self
-            .connected_session_or_launch(preferred_session, timeout_ms)
+            .connected_session_or_launch(caller, preferred_session, timeout_ms)
             .await?;
-
-        let result = match args.action {
-            BrowserAction::OpenFile => self.run_open_file_action(&session, args).await?,
-            _ => self.run_browser_action(&session, args).await?,
+        let mut result = if args.action == BrowserAction::OpenFile {
+            let workspace = request_workspace(ctx.meta());
+            let workspace = workspace.as_deref().or(self.workspace_root());
+            self.run_open_file_action(caller, &session, args, workspace)
+                .await?
+        } else {
+            self.bridge.run_action(caller, session, args).await?
         };
-        Ok(ToolOutput::new(Response::Ok {
-            result: json!(result),
-            next_cursor: None,
-        }))
+        if capture {
+            materialize_screenshot_data_url(&mut result, &self.screenshot_tmp_dir()).await?;
+        }
+        Ok(browser_output(result))
     }
+}
+
+/// The requesting chat's workspace, which relative local paths belong to.
+fn request_workspace(meta: &RequestMeta) -> Option<PathBuf> {
+    request_meta_extra_as::<PathBuf>(meta, keys::WORKSPACE)
+        .filter(|workspace| workspace.is_absolute())
+}
+
+fn browser_output(result: BrowserActionResult) -> ToolOutput<Response> {
+    ToolOutput::new(Response::Ok {
+        result: result.into(),
+        next_cursor: None,
+    })
 }
 
 impl ChromeBrowserTool {
     async fn connected_session_or_launch(
         &self,
+        caller: Principal,
         preferred_session: Option<String>,
         timeout_ms: u64,
     ) -> Result<String, BoxError> {
-        match self.bridge.connected_session(preferred_session.as_deref()) {
-            Some(session) => Ok(session),
-            None => {
-                if preferred_session
-                    .as_deref()
-                    .is_some_and(|s| s.starts_with("browser:desktop:"))
-                {
-                    return Err("The selected desktop browser is disconnected. Reconnect Anda Desktop before retrying.".into());
-                }
-                let _launch = launch_browser(None).await?;
-                self.bridge
-                    .wait_for_connected_session(preferred_session, timeout_ms)
-                    .await
-                    .ok_or_else(|| "No connected Anda browser extension session. Install and configure the extension, then open the browser.".into())
-            }
+        if let Some(session) = self
+            .bridge
+            .connected_session(caller, preferred_session.as_deref())
+        {
+            return Ok(session);
         }
-    }
-
-    async fn run_browser_action(
-        &self,
-        session: &str,
-        args: ChromeBrowserToolArgs,
-    ) -> Result<BrowserActionResult, BoxError> {
-        let mut result = self.bridge.run_action(session.to_string(), args).await?;
-        materialize_screenshot_data_url(&mut result, &self.screenshot_tmp_dir()).await?;
-        Ok(result)
+        if preferred_session.as_deref().is_some_and(is_desktop_session) {
+            return Err("The selected desktop browser is disconnected. Reconnect Anda Desktop before retrying.".into());
+        }
+        launch_browser(None, preferred_session.as_deref()).await?;
+        self.bridge
+            .wait_for_connected_session(caller, preferred_session, timeout_ms)
+            .await
+            .ok_or_else(|| "No connected Anda browser extension session. Install and configure the extension, then open the browser.".into())
     }
 
     async fn run_open_file_action(
         &self,
+        caller: Principal,
         session: &str,
         args: ChromeBrowserToolArgs,
+        workspace: Option<&Path>,
     ) -> Result<BrowserActionResult, BoxError> {
-        let file = self.local_file_from_args(&args)?;
+        let file = local_file_from_args(&args, workspace)?;
         let file_url = file_url_for_path(&file.path)?;
-        let mut open_args = browser_args(BrowserAction::OpenTab);
-        open_args.url = Some(file_url.clone());
-        open_args.active = args.active;
-        open_args.window_id = args.window_id;
-        open_args.timeout_ms = args.timeout_ms;
-        open_args.reason = args.reason;
+        let open_args = ChromeBrowserToolArgs {
+            action: BrowserAction::OpenTab,
+            url: Some(file_url.clone()),
+            active: args.active,
+            window_id: args.window_id,
+            timeout_ms: args.timeout_ms,
+            reason: args.reason,
+            ..Default::default()
+        };
 
-        let result = self.run_browser_action(session, open_args).await?;
-        open_file_result_with_fallback(
-            session,
-            &file,
-            &file_url,
-            result,
-            launch_browser_for_session,
-        )
-        .await
+        let result = self
+            .bridge
+            .run_action(caller, session.to_string(), open_args)
+            .await?;
+        open_file_result_with_fallback(session, &file, &file_url, result, launch_browser).await
     }
 
-    fn local_file_from_args(
-        &self,
-        args: &ChromeBrowserToolArgs,
-    ) -> Result<LocalBrowserFile, BoxError> {
-        let reference = args
-            .path
-            .as_deref()
-            .or(args.url.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or("browser local file actions require path or file:// url")?;
-        let path = local_path_from_reference(reference, self.workspace_root())?;
-        if !path.exists() {
-            return Err(format!("local browser file does not exist: {}", path.display()).into());
-        }
-        let path = path.canonicalize()?;
-        let mime_type = browser_file_mime_type(&path);
-        let path_string = user_path_string_for_path(&path);
-        Ok(LocalBrowserFile {
-            path,
-            path_string,
-            mime_type,
-        })
+    fn workspace_root(&self) -> Option<&Path> {
+        self.screenshot_workspace.as_deref().map(PathBuf::as_path)
     }
+}
+
+fn local_file_from_args(
+    args: &ChromeBrowserToolArgs,
+    workspace: Option<&Path>,
+) -> Result<LocalBrowserFile, BoxError> {
+    let reference = args
+        .path
+        .as_deref()
+        .or(args.url.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("browser local file actions require path or file:// url")?;
+    let path = local_path_from_reference(reference, workspace)?;
+    if !path.exists() {
+        return Err(format!("local browser file does not exist: {}", path.display()).into());
+    }
+    let path = path.canonicalize()?;
+    let mime_type = browser_file_mime_type(&path);
+    let path_string = user_path_string_for_path(&path);
+    Ok(LocalBrowserFile {
+        path,
+        path_string,
+        mime_type,
+    })
 }
 
 fn annotate_open_file_value(
@@ -823,7 +887,7 @@ async fn open_file_result_with_fallback<F>(
     launch_browser: F,
 ) -> Result<BrowserActionResult, BoxError>
 where
-    F: AsyncFnOnce(Option<&str>, &str) -> Result<Value, BoxError>,
+    F: AsyncFnOnce(Option<&str>, Option<&str>) -> Result<Value, BoxError>,
 {
     if result.ok {
         if let Some(value) = result.value.as_object_mut() {
@@ -836,7 +900,7 @@ where
         return Ok(result);
     }
 
-    let launch = launch_browser(Some(file_url), session).await?;
+    let launch = launch_browser(Some(file_url), Some(session)).await?;
     Ok(BrowserActionResult {
         ok: true,
         value: json!({
@@ -1076,7 +1140,7 @@ pub fn browser_session_from_meta(meta: &RequestMeta) -> Option<String> {
     if request_meta_extra_as::<String>(meta, "source").is_some_and(|s| s.starts_with("desktop:"))
         && !request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
         && let Some(session) = request_meta_extra_as::<String>(meta, "browser_session")
-            .filter(|s| s.starts_with("browser:desktop:"))
+            .filter(|s| is_desktop_session(s))
     {
         return normalize_session(session).ok();
     }
@@ -1367,52 +1431,6 @@ struct LocalBrowserFile {
     mime_type: String,
 }
 
-fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
-    ChromeBrowserToolArgs {
-        action,
-        selector: None,
-        text: None,
-        value: None,
-        code: None,
-        world: None,
-        use_bridge: None,
-        query: None,
-        url: None,
-        key: None,
-        amount: None,
-        x: None,
-        y: None,
-        to_x: None,
-        to_y: None,
-        from_selector: None,
-        to_selector: None,
-        tab_id: None,
-        window_id: None,
-        frame_id: None,
-        active: None,
-        include_links: None,
-        include_forms: None,
-        include_data_url: None,
-        full_page: None,
-        viewport_width: None,
-        viewport_height: None,
-        device_scale_factor: None,
-        highlight: None,
-        bypass_cache: None,
-        behavior: None,
-        filename: None,
-        save_as: None,
-        download_id: None,
-        files: None,
-        path: None,
-        accept: None,
-        prompt_text: None,
-        max_chars: None,
-        timeout_ms: None,
-        reason: None,
-    }
-}
-
 fn local_path_from_reference(
     reference: &str,
     workspace: Option<&Path>,
@@ -1524,11 +1542,12 @@ async fn materialize_screenshot_data_url(
     tokio::fs::create_dir_all(screenshot_dir).await?;
 
     let path = screenshot_dir.join(format!(
-        "chrome-screenshot-{}.{}",
+        "{SCREENSHOT_FILE_PREFIX}{}.{}",
         Xid::new(),
         screenshot_extension_for_mime(&mime_type)
     ));
     tokio::fs::write(&path, &bytes).await?;
+    prune_old_screenshots(screenshot_dir).await;
 
     let file_uri = file_url_for_path(&path)?;
     let path = path.to_string_lossy().to_string();
@@ -1578,25 +1597,38 @@ fn screenshot_extension_for_mime(mime_type: &str) -> &'static str {
     }
 }
 
-fn json_null() -> Value {
-    Value::Null
+/// Best-effort removal of saved captures older than [`SCREENSHOT_RETENTION`].
+async fn prune_old_screenshots(screenshot_dir: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(screenshot_dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(SCREENSHOT_FILE_PREFIX)
+        {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .await
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > SCREENSHOT_RETENTION);
+        if expired && let Err(err) = tokio::fs::remove_file(entry.path()).await {
+            log::warn!("failed to prune browser capture {:?}: {err}", entry.path());
+        }
+    }
 }
 
-async fn launch_browser(url: Option<&str>) -> Result<Value, BoxError> {
-    launch_browser_with_preferred_scope(url, None).await
-}
-
-async fn launch_browser_for_session(url: Option<&str>, session: &str) -> Result<Value, BoxError> {
-    launch_browser_with_preferred_scope(url, browser_scope_from_session(session)).await
-}
-
-/// Launches a browser without blocking a runtime worker. `open` returns once
-/// the application is asked to open; a browser spawned directly on Linux keeps
-/// running and is reaped by the runtime when it exits.
-async fn launch_browser_with_preferred_scope(
-    url: Option<&str>,
-    preferred_scope: Option<&str>,
-) -> Result<Value, BoxError> {
+/// Launches a browser without blocking a runtime worker, preferring the one
+/// `session` belongs to. `open` returns once the application is asked to open;
+/// a browser spawned directly on Linux keeps running and is reaped by the
+/// runtime when it exits.
+async fn launch_browser(url: Option<&str>, session: Option<&str>) -> Result<Value, BoxError> {
+    let preferred_scope = session.and_then(browser_scope_from_session);
     let url = url.map(str::trim).filter(|url| !url.is_empty());
     if let Some(url) = url {
         validate_launch_url(url)?;
@@ -1688,6 +1720,7 @@ async fn launch_browser_with_preferred_scope(
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
+        let _ = preferred_scope;
         Err("launch_browser is not supported on this operating system".into())
     }
 }
@@ -1752,6 +1785,16 @@ mod tests {
     use crate::util::json_schema::assert_openai_strict_parameters;
     use std::fs;
 
+    /// The caller of `EngineBuilder::mock_ctx`.
+    const CALLER: Principal = Principal::anonymous();
+
+    fn browser_args(action: BrowserAction) -> ChromeBrowserToolArgs {
+        ChromeBrowserToolArgs {
+            action,
+            ..Default::default()
+        }
+    }
+
     fn snapshot_args() -> ChromeBrowserToolArgs {
         let mut args = browser_args(BrowserAction::Snapshot);
         args.timeout_ms = Some(1_000);
@@ -1767,6 +1810,7 @@ mod tests {
         bridge
             .register_ws_session(
                 connection_id,
+                CALLER,
                 sender,
                 BrowserRegisterArgs {
                     session: "chrome:tab:1".to_string(),
@@ -1791,22 +1835,22 @@ mod tests {
             .await
             .expect("browser command should be sent");
         assert_eq!(command.args.action, BrowserAction::Snapshot);
+        // Only screenshot and print_to_pdf captures are saved to files.
+        let page_value = json!({ "title": "Example", "data_url": "data:text/plain;base64,QQ==" });
         bridge
             .complete(
-                "chrome:tab:1".to_string(),
+                connection_id,
+                "chrome:tab:1",
                 command.request_id,
-                BrowserActionResult {
-                    ok: true,
-                    value: json!({ "title": "Example" }),
-                    error: None,
-                    error_code: None,
-                },
+                BrowserActionResult::ok(page_value.clone()),
             )
-            .await
             .unwrap();
 
         let output = worker.await.unwrap().unwrap();
-        assert!(matches!(output.output, Response::Ok { .. }));
+        let Response::Ok { result, .. } = output.output else {
+            panic!("browser action should succeed");
+        };
+        assert_eq!(result["value"], page_value);
     }
 
     #[tokio::test]
@@ -2071,6 +2115,7 @@ mod tests {
         bridge
             .register_ws_session(
                 connection_id,
+                CALLER,
                 sender,
                 BrowserRegisterArgs {
                     session: "chrome:tab:1".to_string(),
@@ -2080,14 +2125,22 @@ mod tests {
                 false,
             )
             .unwrap();
+        // The tool's default workspace lacks the file; the request's has it.
+        let default_workspace = tempfile::tempdir().unwrap();
         let tool = ChromeBrowserTool::tabs(bridge.clone())
-            .with_screenshot_workspace(temp_dir.path().to_path_buf());
+            .with_screenshot_workspace(default_workspace.path().to_path_buf());
+        let mut meta = RequestMeta::default();
+        meta.extra.insert(
+            keys::WORKSPACE.to_string(),
+            json!(temp_dir.path().to_string_lossy()),
+        );
+        let workspace = request_workspace(&meta).unwrap();
         let mut args = browser_args(BrowserAction::OpenFile);
         args.path = Some("report.html".to_string());
         args.timeout_ms = Some(1_000);
 
         let action = tokio::spawn(async move {
-            tool.run_open_file_action("chrome:tab:1", args)
+            tool.run_open_file_action(CALLER, "chrome:tab:1", args, Some(&workspace))
                 .await
                 .unwrap()
         });
@@ -2102,20 +2155,15 @@ mod tests {
         );
         bridge
             .complete(
-                "chrome:tab:1".to_string(),
+                connection_id,
+                "chrome:tab:1",
                 open_command.request_id,
-                BrowserActionResult {
-                    ok: true,
-                    value: json!({
-                        "opened": true,
-                        "tab": { "id": 77, "url": file_url },
-                        "page_ready": { "loaded": true }
-                    }),
-                    error: None,
-                    error_code: None,
-                },
+                BrowserActionResult::ok(json!({
+                    "opened": true,
+                    "tab": { "id": 77, "url": file_url },
+                    "page_ready": { "loaded": true }
+                })),
             )
-            .await
             .unwrap();
 
         let result = action.await.unwrap();
@@ -2150,7 +2198,7 @@ mod tests {
             result,
             async |url, session| {
                 assert_eq!(url, Some("file:///tmp/report.html"));
-                assert_eq!(session, "browser:edge:42");
+                assert_eq!(session, Some("browser:edge:42"));
                 Ok(json!({ "browser": "Microsoft Edge", "url": url }))
             },
         )
@@ -2241,6 +2289,7 @@ mod tests {
         bridge
             .register_ws_session(
                 connection_id,
+                CALLER,
                 sender,
                 BrowserRegisterArgs {
                     session: "chrome:tab:1".to_string(),
@@ -2255,7 +2304,7 @@ mod tests {
         let worker_bridge = bridge.clone();
         let action = tokio::spawn(async move {
             worker_bridge
-                .run_action("chrome:tab:1".to_string(), snapshot_args())
+                .run_action(CALLER, "chrome:tab:1".to_string(), snapshot_args())
                 .await
                 .unwrap()
         });
@@ -2266,23 +2315,154 @@ mod tests {
             .expect("browser command should be sent over WebSocket");
         assert_eq!(command.args.action, BrowserAction::Snapshot);
 
+        // Another socket cannot answer a command it was not sent.
+        let (other, _, _) = bridge.open_ws_connection();
+        let spoofed = bridge.complete(
+            other,
+            "chrome:tab:1",
+            command.request_id,
+            BrowserActionResult::ok(json!({ "title": "Spoofed" })),
+        );
+        assert!(
+            spoofed
+                .unwrap_err()
+                .to_string()
+                .contains("another connection")
+        );
+
         bridge
             .complete(
-                "chrome:tab:1".to_string(),
+                connection_id,
+                "chrome:tab:1",
                 command.request_id,
-                BrowserActionResult {
-                    ok: true,
-                    value: json!({ "title": "Example" }),
-                    error: None,
-                    error_code: None,
-                },
+                BrowserActionResult::ok(json!({ "title": "Example" })),
             )
-            .await
             .unwrap();
 
         let result = action.await.unwrap();
         assert!(result.ok);
         assert_eq!(result.value["title"], "Example");
+    }
+
+    #[tokio::test]
+    async fn sessions_are_bound_to_their_user_and_desktop_chats_are_named_only() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let other_user = Principal::management_canister();
+        let register = |connection: (u64, mpsc::Sender<BrowserCommand>), caller, session: &str| {
+            bridge.register_ws_session(
+                connection.0,
+                caller,
+                connection.1,
+                BrowserRegisterArgs {
+                    session: session.to_string(),
+                    ..Default::default()
+                },
+                false,
+            )
+        };
+        let (owner_id, owner_tx, _owner_rx) = bridge.open_ws_connection();
+        let (desktop_id, desktop_tx, _desktop_rx) = bridge.open_ws_connection();
+        let (other_id, other_tx, _other_rx) = bridge.open_ws_connection();
+        register((owner_id, owner_tx), CALLER, "browser:chrome:owner").unwrap();
+        register(
+            (other_id, other_tx.clone()),
+            other_user,
+            "browser:chrome:other",
+        )
+        .unwrap();
+        bridge
+            .register_ws_session(
+                desktop_id,
+                CALLER,
+                desktop_tx,
+                BrowserRegisterArgs {
+                    session: "browser:desktop:chat".into(),
+                    ..Default::default()
+                },
+                true,
+            )
+            .unwrap();
+
+        // Each user only sees their own browsers; desktop chat browsers need
+        // their name even when they were seen most recently.
+        assert_eq!(
+            bridge.connected_session(CALLER, None).as_deref(),
+            Some("browser:chrome:owner")
+        );
+        assert_eq!(
+            bridge.connected_session(other_user, None).as_deref(),
+            Some("browser:chrome:other")
+        );
+        assert_eq!(
+            bridge
+                .connected_session(CALLER, Some("browser:desktop:chat"))
+                .as_deref(),
+            Some("browser:desktop:chat")
+        );
+        assert!(
+            bridge
+                .connected_session(other_user, Some("browser:chrome:owner"))
+                .is_none()
+        );
+        // Another user's socket cannot take over a session.
+        assert!(register((other_id, other_tx), other_user, "browser:chrome:owner").is_err());
+        assert_eq!(
+            bridge
+                .connected_session(CALLER, Some("browser:chrome:owner"))
+                .as_deref(),
+            Some("browser:chrome:owner")
+        );
+
+        let tool = ChromeBrowserTool::page(bridge.clone());
+        let mut desktop_chat = RequestMeta::default();
+        desktop_chat
+            .extra
+            .insert("source".into(), "desktop:chat".into());
+        desktop_chat
+            .extra
+            .insert("browser_session".into(), "browser:desktop:chat".into());
+        assert!(tool.is_available(CALLER, &desktop_chat));
+        bridge.disconnect_ws_connection(desktop_id);
+        assert!(!tool.is_available(CALLER, &desktop_chat));
+        assert!(tool.is_available(CALLER, &RequestMeta::default()));
+    }
+
+    #[test]
+    fn browser_action_result_json_matches_its_serialization() {
+        let mut failed = BrowserActionResult::error("blocked");
+        failed.error_code = Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE.into());
+        for result in [
+            BrowserActionResult::ok(json!({ "title": "Example" })),
+            failed,
+        ] {
+            assert_eq!(serde_json::to_value(&result).unwrap(), Value::from(result));
+        }
+    }
+
+    #[tokio::test]
+    async fn old_screenshots_are_pruned() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join(format!("{SCREENSHOT_FILE_PREFIX}old.png"));
+        let unrelated = dir.path().join("notes.png");
+        for path in [&old, &unrelated] {
+            fs::write(path, b"x").unwrap();
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(std::time::SystemTime::now() - SCREENSHOT_RETENTION * 2)
+                .unwrap();
+        }
+        let mut result =
+            BrowserActionResult::ok(json!({ "data_url": "data:image/png;base64,aW1hZ2U=" }));
+
+        materialize_screenshot_data_url(&mut result, dir.path())
+            .await
+            .unwrap();
+
+        assert!(!old.exists());
+        assert!(unrelated.exists());
+        assert!(Path::new(result.value["path"].as_str().unwrap()).exists());
     }
 
     #[test]
@@ -2493,7 +2673,7 @@ mod tests {
             "file:///tmp/x.html",
             BrowserActionResult {
                 ok: false,
-                value: json_null(),
+                value: Value::Null,
                 error: Some("blocked".to_string()),
                 error_code: Some(LOCAL_FILE_ACCESS_DISABLED_ERROR_CODE.to_string()),
             },
@@ -2511,7 +2691,7 @@ mod tests {
             "file:///tmp/x.html",
             BrowserActionResult {
                 ok: false,
-                value: json_null(),
+                value: Value::Null,
                 error: Some("boom".to_string()),
                 error_code: Some("OTHER".to_string()),
             },
@@ -2529,6 +2709,7 @@ mod tests {
         bridge
             .register_ws_session(
                 id,
+                CALLER,
                 tx,
                 BrowserRegisterArgs {
                     session: "session".into(),
@@ -2541,7 +2722,7 @@ mod tests {
             let worker_bridge = bridge.clone();
             let task = tokio::spawn(async move {
                 worker_bridge
-                    .run_action("session".into(), snapshot_args())
+                    .run_action(CALLER, "session".into(), snapshot_args())
                     .await
             });
             let _ = rx.recv().await.unwrap();
@@ -2561,7 +2742,7 @@ mod tests {
             }
             assert!(bridge.pending.lock().is_empty());
         }
-        assert!(!ChromeBrowserTool::page(bridge).is_active());
+        assert!(bridge.connected_session(CALLER, None).is_none());
     }
 
     #[tokio::test]
@@ -2571,6 +2752,7 @@ mod tests {
         bridge
             .register_ws_session(
                 id,
+                CALLER,
                 tx.clone(),
                 BrowserRegisterArgs {
                     session: "session".into(),
@@ -2590,7 +2772,7 @@ mod tests {
         }
         let result = tokio::time::timeout(
             Duration::from_secs(2),
-            bridge.run_action("session".into(), snapshot_args()),
+            bridge.run_action(CALLER, "session".into(), snapshot_args()),
         )
         .await
         .unwrap();
@@ -2605,6 +2787,7 @@ mod tests {
         bridge
             .register_ws_session(
                 old,
+                CALLER,
                 tx,
                 BrowserRegisterArgs {
                     session: "session".into(),
@@ -2614,13 +2797,17 @@ mod tests {
             )
             .unwrap();
         let worker = bridge.clone();
-        let task =
-            tokio::spawn(async move { worker.run_action("session".into(), snapshot_args()).await });
+        let task = tokio::spawn(async move {
+            worker
+                .run_action(CALLER, "session".into(), snapshot_args())
+                .await
+        });
         rx.recv().await.unwrap();
         let (new, tx, _rx) = bridge.open_ws_connection();
         bridge
             .register_ws_session(
                 new,
+                CALLER,
                 tx,
                 BrowserRegisterArgs {
                     session: "session".into(),
@@ -2631,7 +2818,10 @@ mod tests {
             .unwrap();
         assert!(task.await.unwrap().is_err());
         bridge.disconnect_ws_connection(old);
-        assert_eq!(bridge.connected_session(None).as_deref(), Some("session"));
+        assert_eq!(
+            bridge.connected_session(CALLER, None).as_deref(),
+            Some("session")
+        );
         assert!(bridge.pending.lock().is_empty());
     }
 

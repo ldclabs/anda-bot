@@ -136,7 +136,7 @@ fn notify_once(home: &Path) {
     }
     let _ = fs::create_dir_all(&stamp_dir);
     let _ = fs::write(&stamp, env!("CARGO_PKG_VERSION"));
-    let locale = notice_locale(home);
+    let locale = locale::ui_locale(home);
     let title = t!("launcher.retired_title", locale = locale);
     let message = t!("launcher.retired_message", locale = locale);
     let download = t!("launcher.retired_download", locale = locale);
@@ -144,26 +144,6 @@ fn notify_once(home: &Path) {
     if confirm(&title, &message, &download, &later) {
         open_url(DESKTOP_URL);
     }
-}
-
-/// The language the launcher was set to, else the system language.
-fn notice_locale(home: &Path) -> &'static str {
-    let persisted = fs::read_to_string(home.join("launcher").join("ui.json"))
-        .ok()
-        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
-        .and_then(|value| value.get("language")?.as_str().map(str::to_string));
-    locale::first_match(
-        persisted.into_iter().chain(locale::system_locale_tags()),
-        supported_locale,
-    )
-    .unwrap_or("en")
-}
-
-fn supported_locale(tag: &str) -> Option<&'static str> {
-    ["zh", "ru", "ar", "fr", "es", "en"]
-        .into_iter()
-        .find(|prefix| tag == *prefix || tag.starts_with(&format!("{prefix}-")))
-        .map(|prefix| if prefix == "zh" { "zh-Hans" } else { prefix })
 }
 
 #[cfg(target_os = "macos")]
@@ -235,27 +215,6 @@ mod tests {
             detect_home(Vec::<OsString>::new()).ends_with(".anda")
                 || env::var_os("ANDA_HOME").is_some()
         );
-    }
-
-    #[test]
-    fn notice_locale_maps_normalized_tags() {
-        assert_eq!(supported_locale("zh-cn"), Some("zh-Hans"));
-        assert_eq!(supported_locale("zh-hans"), Some("zh-Hans"));
-        assert_eq!(supported_locale("fr-fr"), Some("fr"));
-        assert_eq!(supported_locale("en"), Some("en"));
-        assert_eq!(supported_locale("de-de"), None);
-    }
-
-    #[test]
-    fn notice_prefers_the_persisted_launcher_language() {
-        let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join("launcher")).unwrap();
-        fs::write(
-            home.path().join("launcher/ui.json"),
-            r#"{"language":"zh-Hans"}"#,
-        )
-        .unwrap();
-        assert_eq!(notice_locale(home.path()), "zh-Hans");
     }
 
     #[test]

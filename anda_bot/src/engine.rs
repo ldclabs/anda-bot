@@ -54,6 +54,7 @@ pub(crate) use shell_runtime::CliWorkspaceGrants;
 mod side;
 mod skill_library;
 mod system;
+mod workspace_picker;
 
 use crate::{
     auto_update::AutoUpdater,
@@ -356,6 +357,7 @@ fn build_skill_registry(
     );
     let mut known_skill_tools = BTreeSet::from_iter(default_skill_tools.iter().cloned());
     known_skill_tools.extend(brain::RuntimeTool::NAMES.map(String::from));
+    known_skill_tools.extend(ChromeBrowserTool::NAMES.map(String::from));
     known_skill_tools.extend(
         [
             brain::Client::NAME,
@@ -370,10 +372,6 @@ fn build_skill_registry(
             cron::UpdateCronJobTool::NAME,
             cron::ManageCronJobTool::NAME,
             cron::ListCronRunsTool::NAME,
-            ChromeBrowserTool::TABS_NAME,
-            ChromeBrowserTool::PAGE_NAME,
-            ChromeBrowserTool::INPUT_NAME,
-            ChromeBrowserTool::SCRIPT_NAME,
             skill::SkillManager::NAME,
             skill::SkillsListTool::NAME,
             SkillLibrary::NAME,

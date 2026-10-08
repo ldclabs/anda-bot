@@ -1,6 +1,5 @@
 use anda_core::{AgentInput, BoxError, Json, Principal, ToolInput};
-use anda_engine::memory::KipArgs;
-use anda_engine::unix_ms;
+use anda_engine::{engine::Engine, memory::KipArgs, unix_ms};
 use anda_engine_server::handler::AppState;
 use axum::{
     body::Body,
@@ -14,14 +13,10 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use hyper::upgrade;
 use hyper_util::rt::TokioIo;
-use rust_i18n::t;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::{
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
-use tokio::{process::Command, sync::mpsc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
+use tokio::sync::mpsc;
 use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{Message, handshake::derive_accept_key, protocol::Role},
@@ -33,16 +28,17 @@ use super::{
     app_protocol::{AppCapabilities, AppInitialize, AppSubmit, StateChanged, SubmissionRead},
     browser::{BrowserActionResult, BrowserBridge, BrowserCommand, BrowserRegisterArgs},
     shell_runtime::CliWorkspaceGrants,
+    workspace_picker,
 };
 use crate::brain;
 use crate::util::locale;
-#[cfg(target_os = "windows")]
-use crate::util::windows_process::suppress_tokio_console_window;
 use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
 
 const SEC_WEBSOCKET_ACCEPT: &str = "sec-websocket-accept";
 const SEC_WEBSOCKET_KEY: &str = "sec-websocket-key";
 const SEC_WEBSOCKET_VERSION: &str = "sec-websocket-version";
+/// How often an idle socket rechecks its credential against the wall clock.
+const EXPIRY_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct BrowserWebSocketState {
@@ -96,25 +92,76 @@ struct BrowserWsRequest<'a> {
     params: &'a BrowserCommand,
 }
 
-#[derive(Clone)]
-struct BrowserWsConnection {
+/// A reply frame. It borrows the result, which is serialized once instead of
+/// being copied into another `Value` first.
+#[derive(Serialize)]
+struct BrowserWsResponse<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    jsonrpc: Option<&'static str>,
     id: u64,
-    sender: mpsc::Sender<BrowserCommand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<BrowserWsError<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum BrowserWsError<'a> {
+    /// The extension transport carries the message alone.
+    Message(&'a str),
+    /// The desktop transport's JSON-RPC 2.0 error object.
+    Rpc { code: i32, message: &'a str },
+}
+
+/// One authenticated socket, shared by its request tasks.
+struct WsConnection {
+    state: BrowserWebSocketState,
+    caller: Principal,
+    engine: Arc<Engine>,
+    /// The bridge connection that browser registrations and replies belong to.
+    id: u64,
+    actions: mpsc::Sender<BrowserCommand>,
+    writer: mpsc::Sender<String>,
+}
+
+impl WsConnection {
+    fn is_owner(&self) -> bool {
+        self.caller == self.state.cli_workspaces.owner()
+    }
+
+    async fn reply(&self, id: u64, result: Result<Value, String>) {
+        let app_protocol = self.state.app_protocol;
+        let (result, error) = match &result {
+            Ok(value) => (Some(value), None),
+            Err(message) if app_protocol => (
+                None,
+                Some(BrowserWsError::Rpc {
+                    code: -32000,
+                    message,
+                }),
+            ),
+            Err(message) => (None, Some(BrowserWsError::Message(message))),
+        };
+        let response = BrowserWsResponse {
+            jsonrpc: app_protocol.then_some("2.0"),
+            id,
+            result,
+            error,
+        };
+        match serde_json::to_string(&response) {
+            Ok(payload) => {
+                let _ = self.writer.send(payload).await;
+            }
+            Err(err) => log::warn!("failed to encode WebSocket response {id}: {err}"),
+        }
+    }
 }
 
 pub async fn app_websocket(
     State(mut state): State<BrowserWebSocketState>,
     request: Request<Body>,
 ) -> Response {
-    if super::verify_trusted_user(&state.app, request.headers(), unix_ms())
-        != Ok(state.cli_workspaces.owner())
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            "Application transport requires the local owner",
-        )
-            .into_response();
-    }
     // Desktop Main is the only client of this local privileged endpoint.
     // Browser/extension clients retain their existing transport.
     if request.headers().contains_key("origin") {
@@ -129,20 +176,33 @@ pub async fn app_websocket(
 }
 
 pub async fn browser_websocket(
-    State(state): State<BrowserWebSocketState>,
+    State(mut state): State<BrowserWebSocketState>,
     Path(id): Path<String>,
     mut request: Request<Body>,
 ) -> Response {
-    let engine_id = match resolve_engine_id(&state.app, &id) {
-        Ok(id) => id,
+    let engine = match resolve_engine(&state.app, &id) {
+        Ok(engine) => engine,
         Err((status, message)) => return (status, message).into_response(),
     };
 
-    let auth_headers = websocket_auth_headers(request.headers(), request.uri());
+    // Only the browser extension, which cannot set WebSocket headers, may pass
+    // its bearer in the query string.
+    let auth_headers = if state.app_protocol {
+        request.headers().clone()
+    } else {
+        websocket_auth_headers(request.headers(), request.uri())
+    };
     let caller = match super::verify_trusted_user(&state.app, &auth_headers, unix_ms()) {
         Ok(caller) => caller,
         Err(error) => return error.into_response(),
     };
+    if state.app_protocol && caller != state.cli_workspaces.owner() {
+        return (
+            StatusCode::FORBIDDEN,
+            "Application transport requires the local owner",
+        )
+            .into_response();
+    }
 
     let Some(sec_key) = websocket_key(request.headers()) else {
         return (StatusCode::BAD_REQUEST, "missing WebSocket upgrade headers").into_response();
@@ -160,7 +220,6 @@ pub async fn browser_websocket(
     let Some(credential_expires_at_ms) = bearer_expires_at_ms(bearer) else {
         return (StatusCode::UNAUTHORIZED, "invalid or expired credential").into_response();
     };
-    let mut state = state;
     state.brain = state.brain.with_auth_token(bearer.to_string());
     state.auth_headers = auth_headers;
     state.credential_expires_at_ms = credential_expires_at_ms;
@@ -171,11 +230,7 @@ pub async fn browser_websocket(
             Ok(upgraded) => {
                 let io = TokioIo::new(upgraded);
                 let websocket = WebSocketStream::from_raw_socket(io, Role::Server, None).await;
-                if let Err(err) =
-                    handle_browser_websocket(websocket, state, caller, engine_id).await
-                {
-                    log::warn!("Chrome browser WebSocket closed with error: {err}");
-                }
+                handle_browser_websocket(websocket, state, caller, engine).await;
             }
             Err(err) => {
                 log::warn!("Chrome browser WebSocket upgrade failed: {err}");
@@ -202,174 +257,145 @@ async fn handle_browser_websocket(
     websocket: WebSocketStream<TokioIo<upgrade::Upgraded>>,
     state: BrowserWebSocketState,
     caller: Principal,
-    engine_id: Principal,
-) -> Result<(), BoxError> {
+    engine: Arc<Engine>,
+) {
     let (mut socket_writer, mut socket_reader) = websocket.split();
-    let (connection_id, action_sender, mut action_receiver) = state.bridge.open_ws_connection();
-    let connection = BrowserWsConnection {
-        id: connection_id,
-        sender: action_sender,
-    };
-    let (write_sender, mut write_receiver) = mpsc::channel::<String>(64);
+    let (connection_id, actions, mut action_receiver) = state.bridge.open_ws_connection();
+    let (writer, mut write_receiver) = mpsc::channel::<String>(64);
+    // Cancels in-flight request tasks (agent runs, tool calls, ...) when the
+    // connection goes away, so orphans do not keep running side effects that a
+    // reconnecting client will retry.
     let request_tasks = CancellationToken::new();
-    let writer_cancel = request_tasks.clone();
     let expires_at_ms = state.credential_expires_at_ms;
-
-    let writer = tokio::spawn(async move {
-        while let Some(payload) = write_receiver.recv().await {
-            if unix_ms() >= expires_at_ms {
-                break;
-            }
-            if socket_writer
-                .send(Message::Text(payload.into()))
-                .await
-                .is_err()
-            {
-                break;
-            }
-        }
-        writer_cancel.cancel();
+    let app_protocol = state.app_protocol;
+    let events = state.events.clone();
+    let connection = Arc::new(WsConnection {
+        state,
+        caller,
+        engine,
+        id: connection_id,
+        actions,
+        writer: writer.clone(),
     });
+
+    let write_task = {
+        let cancel = request_tasks.clone();
+        tokio::spawn(async move {
+            while let Some(payload) = write_receiver.recv().await {
+                if socket_writer
+                    .send(Message::Text(payload.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            cancel.cancel();
+        })
+    };
 
     // Register before processing requests. Snapshot reads after initialize are
     // covered by this subscription; changes during a read cause another read.
     // watch retains only the latest invalidation, bounding slow-client memory.
     // The extension uses these to refresh its channel list.
-    let event_forwarder = {
-        let mut events = state.events.subscribe(&caller.to_string());
-        let writer = write_sender.clone();
-        let instance = state.events.instance.clone();
+    let event_task = {
+        let mut changes = events.subscribe(&caller.to_string());
+        let writer = writer.clone();
         let cancel = request_tasks.clone();
-        let app_protocol = state.app_protocol;
         tokio::spawn(async move {
-            let mut expiry = tokio::time::interval(std::time::Duration::from_secs(15));
-            loop {
-                let changed = tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    _ = expiry.tick() => false,
-                    result = events.changed() => { if result.is_err() { break; } true }
+            while changes.changed().await.is_ok() {
+                let revision = changes.borrow_and_update().to_string();
+                let message = json!({"jsonrpc":"2.0", "method":"state/changed", "params": StateChanged { instance_id: events.instance.clone(), revision }}).to_string();
+                // Desktop reconnects for a fresh snapshot rather than
+                // silently lose the final invalidation. A browser only
+                // refreshes its channel list, so it waits for queue room
+                // instead of dropping its session and in-flight requests.
+                let sent = if app_protocol {
+                    writer.try_send(message).is_ok()
+                } else {
+                    writer.send(message).await.is_ok()
                 };
-                if unix_ms() >= expires_at_ms {
+                if !sent {
                     cancel.cancel();
                     break;
-                }
-                if changed {
-                    let revision = events.borrow_and_update().to_string();
-                    let message = json!({"jsonrpc":"2.0", "method":"state/changed", "params": StateChanged { instance_id: instance.clone(), revision }}).to_string();
-                    // Desktop reconnects for a fresh snapshot rather than
-                    // silently lose the final invalidation. A browser only
-                    // refreshes its channel list, so it waits for queue room
-                    // instead of dropping its session and in-flight requests.
-                    let sent = if app_protocol {
-                        writer.try_send(message).is_ok()
-                    } else {
-                        writer.send(message).await.is_ok()
-                    };
-                    if !sent {
-                        cancel.cancel();
-                        break;
-                    }
                 }
             }
         })
     };
 
-    let action_write_sender = write_sender.clone();
-    let action_cancel = request_tasks.clone();
-    let action_forwarder = tokio::spawn(async move {
-        while let Some(command) = action_receiver.recv().await {
-            if unix_ms() >= expires_at_ms {
-                break;
-            }
-            let payload = match serde_json::to_string(&BrowserWsRequest {
-                id: command.request_id,
-                method: "browser_action",
-                params: &command,
-            }) {
-                Ok(payload) => payload,
-                Err(err) => {
-                    log::warn!("failed to encode browser action request: {err}");
-                    continue;
+    let action_task = {
+        let cancel = request_tasks.clone();
+        tokio::spawn(async move {
+            while let Some(command) = action_receiver.recv().await {
+                let payload = match serde_json::to_string(&BrowserWsRequest {
+                    id: command.request_id,
+                    method: "browser_action",
+                    params: &command,
+                }) {
+                    Ok(payload) => payload,
+                    Err(err) => {
+                        log::warn!("failed to encode browser action request: {err}");
+                        continue;
+                    }
+                };
+                if writer.send(payload).await.is_err() {
+                    break;
                 }
-            };
-
-            if action_write_sender.send(payload).await.is_err() {
-                break;
             }
-        }
-        action_cancel.cancel();
-    });
+            cancel.cancel();
+        })
+    };
 
-    // Cancels in-flight request tasks (agent runs, tool calls, ...) when the
-    // connection goes away, so orphans do not keep running side effects that a
-    // reconnecting client will retry.
-    while let Some(message) = tokio::select! {
-        _ = request_tasks.cancelled() => None,
-        message = socket_reader.next() => message,
-    } {
-        // A live socket does not extend the credential's lifetime. This also
-        // revokes its browser registration and outstanding actions on expiry.
+    // A live socket does not extend the credential's lifetime. The wall clock
+    // is checked on every frame and on a timer, so a machine waking from sleep
+    // closes an expired socket promptly. Closing also revokes its browser
+    // registration and outstanding actions.
+    let mut expiry_check = tokio::time::interval(EXPIRY_CHECK_INTERVAL);
+    loop {
+        let frame = tokio::select! {
+            _ = request_tasks.cancelled() => break,
+            _ = expiry_check.tick() => None,
+            frame = socket_reader.next() => Some(frame),
+        };
         if unix_ms() >= expires_at_ms {
             break;
         }
-        let message = match message {
-            Ok(message) => message,
-            Err(err) => {
+        let message = match frame {
+            None => continue,
+            Some(Some(Ok(message))) => message,
+            Some(None) => break,
+            Some(Some(Err(err))) => {
                 // Read errors are common in practice (extension service worker
-                // killed, network drop). Fall through to the cleanup below
-                // instead of returning early and leaking the connection state
-                // plus writer/forwarder tasks.
+                // killed, network drop); the cleanup below still runs.
                 log::warn!("Chrome browser WebSocket read error: {err}");
                 break;
             }
         };
-        match message {
-            Message::Text(text) => {
-                handle_browser_ws_text(
-                    text.as_ref(),
-                    &state,
-                    caller,
-                    engine_id,
-                    &connection,
-                    &write_sender,
-                    &request_tasks,
-                )
-                .await;
-            }
-            Message::Binary(data) => {
-                if let Ok(text) = std::str::from_utf8(data.as_ref()) {
-                    handle_browser_ws_text(
-                        text,
-                        &state,
-                        caller,
-                        engine_id,
-                        &connection,
-                        &write_sender,
-                        &request_tasks,
-                    )
-                    .await;
-                }
-            }
-            Message::Close(_frame) => break,
-            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {}
-        }
+        let text = match &message {
+            Message::Text(text) => text.as_str(),
+            Message::Binary(data) => match std::str::from_utf8(data) {
+                Ok(text) => text,
+                Err(_) => continue,
+            },
+            Message::Close(_) => break,
+            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
+        };
+        handle_browser_ws_text(&connection, text, &request_tasks);
     }
 
-    state.bridge.disconnect_ws_connection(connection_id);
-    action_forwarder.abort();
-    event_forwarder.abort();
-    writer.abort();
+    connection
+        .state
+        .bridge
+        .disconnect_ws_connection(connection_id);
     request_tasks.cancel();
-    Ok(())
+    action_task.abort();
+    event_task.abort();
+    write_task.abort();
 }
 
-async fn handle_browser_ws_text(
+fn handle_browser_ws_text(
+    connection: &Arc<WsConnection>,
     text: &str,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-    engine_id: Principal,
-    connection: &BrowserWsConnection,
-    write_sender: &mpsc::Sender<String>,
     request_tasks: &CancellationToken,
 ) {
     let incoming = match serde_json::from_str::<BrowserWsIncoming>(text) {
@@ -380,59 +406,79 @@ async fn handle_browser_ws_text(
         }
     };
 
-    if incoming.method.is_some() {
-        // Handle requests on their own task: agent runs, folder pickers, and
-        // auto-update checks can take seconds to minutes, and the read loop
-        // must keep draining pings and browser-action responses meanwhile.
-        // The task dies with the connection: its results would go to a dead
-        // sender anyway, and a reconnecting client retries the request.
-        let state = state.clone();
-        let connection = connection.clone();
-        let write_sender = write_sender.clone();
-        let cancel = request_tasks.child_token();
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel.cancelled() => {}
-                _ = crate::util::boxed(handle_browser_ws_request(
-                    incoming,
-                    &state,
-                    caller,
-                    engine_id,
-                    &connection,
-                    &write_sender,
-                )) => {}
-            }
-        });
-    } else {
-        handle_browser_ws_response(incoming, state).await;
+    match incoming.method.as_deref() {
+        None => handle_browser_ws_response(connection, incoming),
+        // The extension's keep-alive ping expects no reply.
+        Some("ping") if incoming.id.is_none() => {}
+        Some(_) => {
+            // Handle requests on their own task: agent runs, folder pickers,
+            // and auto-update checks can take seconds to minutes, and the read
+            // loop must keep draining pings and browser-action responses
+            // meanwhile. The task dies with the connection: its results would
+            // go to a dead sender anyway, and a reconnecting client retries.
+            let connection = connection.clone();
+            let cancel = request_tasks.child_token();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = cancel.cancelled() => {}
+                    _ = crate::util::boxed(handle_browser_ws_request(incoming, &connection)) => {}
+                }
+            });
+        }
     }
 }
 
-async fn handle_browser_ws_request(
-    incoming: BrowserWsIncoming,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-    engine_id: Principal,
-    connection: &BrowserWsConnection,
-    write_sender: &mpsc::Sender<String>,
-) {
-    let id = incoming.id;
+async fn handle_browser_ws_request(incoming: BrowserWsIncoming, connection: &Arc<WsConnection>) {
+    let BrowserWsIncoming {
+        jsonrpc,
+        id,
+        method,
+        params,
+        ..
+    } = incoming;
+    let result = dispatch_browser_ws_request(
+        connection,
+        jsonrpc.as_deref(),
+        method.as_deref().unwrap_or_default(),
+        params,
+    )
+    .await;
+    if let Some(id) = id {
+        connection.reply(id, result).await;
+    }
+}
+
+async fn dispatch_browser_ws_request(
+    connection: &Arc<WsConnection>,
+    jsonrpc: Option<&str>,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let state = &connection.state;
     // Requests run in separate tasks and may start after the frame was read.
     if unix_ms() >= state.credential_expires_at_ms {
-        if let Some(id) = id {
-            send_ws_result(
-                write_sender,
-                id,
-                Err("invalid or expired credential".into()),
-                state.app_protocol,
-            )
-            .await;
-        }
-        return;
+        return Err("invalid or expired credential".into());
     }
-    // Each method is its own subsystem; see `crate::util::boxed`.
-    use crate::util::boxed;
-    let method = incoming.method.as_deref().unwrap_or_default();
+    if state.runtime_models.uses_chatgpt() && !connection.is_owner() {
+        return Err(
+            "ChatGPT plan providers are owner-only; use API-key providers for shared users".into(),
+        );
+    }
+    if state.app_protocol && jsonrpc != Some("2.0") {
+        return Err("jsonrpc must be 2.0".into());
+    }
+    // Daemon lifecycle and machine-wide settings belong to the local owner.
+    if matches!(
+        method,
+        "pick_workspace"
+            | "register_workspace"
+            | "reload_models"
+            | "set_model"
+            | "auto_update_install_and_restart"
+    ) && !connection.is_owner()
+    {
+        return Err("Only the local owner may control the daemon".into());
+    }
     let _permit = if method.starts_with("memory_")
         || method.starts_with("brain_")
         || matches!(
@@ -442,31 +488,14 @@ async fn handle_browser_ws_request(
                 | "register_workspace"
                 | "auto_update_install_and_restart"
         ) {
-        match state.admission.enter() {
-            Ok(permit) => Some(permit),
-            Err(error) => {
-                if let Some(id) = id {
-                    send_ws_result(write_sender, id, Err(error.into()), state.app_protocol).await;
-                }
-                return;
-            }
-        }
+        Some(state.admission.enter().map_err(str::to_string)?)
     } else {
         None
     };
-    let result = match incoming.method.as_deref().unwrap_or_default() {
-        _ if state.runtime_models.uses_chatgpt() && caller != state.cli_workspaces.owner() => Err(
-            "ChatGPT plan providers are owner-only; use API-key providers for shared users".into(),
-        ),
-        _ if state.app_protocol && incoming.jsonrpc.as_deref() != Some("2.0") => {
-            Err("jsonrpc must be 2.0".into())
-        }
-        // Daemon lifecycle and machine-wide settings belong to the local owner.
-        "pick_workspace" | "reload_models" | "set_model" | "auto_update_install_and_restart"
-            if caller != state.cli_workspaces.owner() =>
-        {
-            Err("Only the local owner may control the daemon".into())
-        }
+
+    // Each method is its own subsystem; see `crate::util::boxed`.
+    use crate::util::boxed;
+    match method {
         "initialize" | "chat/subscribe" if state.app_protocol => Ok(json!(AppInitialize {
             protocol_version: 1,
             instance_id: state.events.instance.clone(),
@@ -475,65 +504,76 @@ async fn handle_browser_ws_request(
                 submission_receipts: true
             }
         })),
-        "chat/submit" if state.app_protocol => {
-            boxed(handle_app_submit(incoming.params, state, caller, engine_id)).await
-        }
+        "chat/submit" if state.app_protocol => boxed(handle_app_submit(params, connection)).await,
         "submission/read" if state.app_protocol => {
-            match serde_json::from_value::<SubmissionRead>(incoming.params) {
-                Ok(args) => state
-                    .submissions
-                    .read(&caller.to_string(), &args.source, &args.request_id)
-                    .await
-                    .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string())),
-                Err(e) => Err(e.to_string()),
-            }
+            let args: SubmissionRead = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let receipt = state
+                .submissions
+                .read(
+                    &connection.caller.to_string(),
+                    &args.source,
+                    &args.request_id,
+                )
+                .await?;
+            to_json(receipt)
         }
         "ping" => Ok(json!({ "ok": true })),
-        "browser_register" => handle_browser_register(incoming.params, state, connection),
-        "agent_run" => boxed(handle_agent_run(incoming.params, state, caller, engine_id)).await,
-        "tool_call" => boxed(handle_tool_call(incoming.params, state, caller, engine_id)).await,
+        "browser_register" => handle_browser_register(params, connection),
+        "agent_run" => {
+            let (input,): (AgentInput,) = params_from_value(params)?;
+            boxed(run_agent(connection, input)).await
+        }
+        "tool_call" => boxed(handle_tool_call(params, connection)).await,
         "brain_status" => boxed(handle_brain_status(state)).await,
         method if method.starts_with("memory_") => Ok(boxed(state.memory.websocket_dispatch(
             &state.auth_headers,
             method,
-            incoming.params,
+            params,
         ))
         .await),
-        "brain_kip_readonly" => boxed(handle_brain_kip_readonly(incoming.params, state)).await,
+        "brain_kip_readonly" => boxed(handle_brain_kip_readonly(params, state)).await,
         "brain_attention" | "brain_respond" | "brain_runtime_status" => {
-            boxed(handle_brain_runtime(
-                incoming.method.as_deref().unwrap_or_default(),
-                incoming.params,
-                state,
-                caller,
-            ))
-            .await
+            boxed(handle_brain_runtime(method, params, connection)).await
         }
-        "information" => handle_information(state, engine_id),
-        "ui_language" => handle_ui_language(state),
-        "pick_workspace" => handle_pick_workspace().await,
-        "register_workspace" => handle_register_workspace(incoming.params, state, caller).await,
-        "capabilities" => handle_capabilities(state, engine_id),
-        "model_names" => handle_model_names(state).await,
-        "reload_models" => handle_reload_models(state).await,
-        "set_model" => handle_set_model(incoming.params, state, engine_id).await,
-        "auto_update_status" => handle_auto_update_status(state),
-        "auto_update_check" => handle_auto_update_check(state).await,
-        "auto_update_install_and_restart" => handle_auto_update_install_and_restart(state).await,
+        "information" => to_json(connection.engine.information()),
+        "ui_language" => Ok(json!({ "language": locale::persisted_ui_language(&state.home_dir) })),
+        "pick_workspace" => {
+            let path = workspace_picker::pick_workspace_path(&state.home_dir).await?;
+            Ok(json!({ "path": path.map(|path| path.to_string_lossy().to_string()) }))
+        }
+        "register_workspace" => {
+            let (workspace,): (PathBuf,) = params_from_value(params)?;
+            let workspace = state
+                .cli_workspaces
+                .register(&workspace)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok(json!({ "workspace": workspace }))
+        }
+        "capabilities" => Ok(capabilities(connection)),
+        "model_names" => to_json(state.runtime_models.current().await),
+        "reload_models" => to_json(
+            state
+                .runtime_models
+                .reload_from_config()
+                .await
+                .map_err(|err| err.to_string())?,
+        ),
+        "set_model" => handle_set_model(params, connection).await,
+        "auto_update_status" => to_json(state.auto_updater.state()),
+        "auto_update_check" => to_json(state.auto_updater.check_if_due().await),
+        "auto_update_install_and_restart" => to_json(
+            state
+                .auto_updater
+                .install_and_restart()
+                .await
+                .map_err(|err| err.to_string())?,
+        ),
         method => Err(format!("{method} on WebSocket engine RPC not implemented")),
-    };
-
-    if let Some(id) = id {
-        send_ws_result(write_sender, id, result, state.app_protocol).await;
     }
 }
 
-async fn handle_app_submit(
-    params: Value,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-    engine_id: Principal,
-) -> Result<Value, String> {
+async fn handle_app_submit(params: Value, connection: &Arc<WsConnection>) -> Result<Value, String> {
     let args: AppSubmit = serde_json::from_value(params).map_err(|e| e.to_string())?;
     let source = args
         .input
@@ -541,93 +581,62 @@ async fn handle_app_submit(
         .as_ref()
         .and_then(|m| m.get_extra_as::<String>("source"))
         .ok_or("Chat source is required")?;
-    if caller != state.cli_workspaces.owner()
-        || source.contains(":reply_target:")
-        || !args.input.name.is_empty()
-    {
+    if !connection.is_owner() || source.contains(":reply_target:") || !args.input.name.is_empty() {
         return Err("Desktop submissions require the local owner and a local chat".into());
     }
-    let input = serde_json::to_value(args.input).map_err(|e| e.to_string())?;
-    let request = json!([input]);
-    let service = state.clone();
-    let receipt = state
+    let input = serde_json::to_value(&args.input).map_err(|e| e.to_string())?;
+    let caller = connection.caller.to_string();
+    let run = connection.clone();
+    let receipt = connection
+        .state
         .submissions
-        .submit(
-            &caller.to_string(),
-            source,
-            args.request_id,
-            &input,
-            async move {
-                let result =
-                    crate::util::boxed(handle_agent_run(request, &service, caller, engine_id))
-                        .await;
-                service.events.changed(&caller.to_string());
-                result
-            },
-        )
+        .submit(&caller, source, args.request_id, &input, async move {
+            let result = crate::util::boxed(run_agent(&run, args.input)).await;
+            run.state.events.changed(&run.caller.to_string());
+            result
+        })
         .await?;
-    serde_json::to_value(receipt).map_err(|e| e.to_string())
+    to_json(receipt)
 }
 
-fn handle_browser_register(
-    params: Value,
-    state: &BrowserWebSocketState,
-    connection: &BrowserWsConnection,
-) -> Result<Value, String> {
+fn handle_browser_register(params: Value, connection: &WsConnection) -> Result<Value, String> {
     let (args,): (BrowserRegisterArgs,) = params_from_value(params)?;
-    let session = state
+    let session = connection
+        .state
         .bridge
         .register_ws_session(
             connection.id,
-            connection.sender.clone(),
+            connection.caller,
+            connection.actions.clone(),
             args,
-            state.app_protocol,
+            connection.state.app_protocol,
         )
         .map_err(|err| err.to_string())?;
     Ok(json!({ "registered": true, "session": session }))
 }
 
-async fn handle_agent_run(
-    params: Value,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-    engine_id: Principal,
-) -> Result<Value, String> {
-    let (input,): (AgentInput,) = params_from_value(params)?;
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
-    let output = engine
-        .agent_run(caller, input)
+async fn run_agent(connection: &WsConnection, input: AgentInput) -> Result<Value, String> {
+    let output = connection
+        .engine
+        .agent_run(connection.caller, input)
         .await
         .map_err(|err| format!("failed to run agent: {err:?}"))?;
-    serde_json::to_value(output).map_err(|err| err.to_string())
+    to_json(output)
 }
 
-async fn handle_tool_call(
-    params: Value,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-    engine_id: Principal,
-) -> Result<Value, String> {
+async fn handle_tool_call(params: Value, connection: &WsConnection) -> Result<Value, String> {
     let (input,): (ToolInput<Json>,) = params_from_value(params)?;
     let _permit = if crate::runtime_admission::MAINTENANCE_TOOLS.contains(&input.name.as_str()) {
         None
     } else {
-        Some(state.admission.enter().map_err(str::to_string)?)
+        Some(connection.state.admission.enter().map_err(str::to_string)?)
     };
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
-    let output = engine
-        .tool_call(caller, input)
+    let output = connection
+        .engine
+        .tool_call(connection.caller, input)
         .await
         .map_err(|err| format!("failed to call tool: {err:?}"))?;
-    serde_json::to_value(output).map_err(|err| err.to_string())
+    to_json(output)
 }
 
 async fn handle_brain_status(state: &BrowserWebSocketState) -> Result<Value, String> {
@@ -636,34 +645,32 @@ async fn handle_brain_status(state: &BrowserWebSocketState) -> Result<Value, Str
         .brain_status()
         .await
         .map_err(|err| format!("failed to query Brain status: {err:?}"))?;
-    serde_json::to_value(status).map_err(|err| err.to_string())
+    to_json(status)
 }
 
 async fn handle_brain_runtime(
     method: &str,
     params: Value,
-    state: &BrowserWebSocketState,
-    caller: Principal,
+    connection: &WsConnection,
 ) -> Result<Value, String> {
+    let brain = &connection.state.brain;
     let result: Result<Value, BoxError> = async {
         match method {
             "brain_attention" => {
                 let (query,): (brain::AttentionQuery,) = params_from_value(params)?;
-                Ok(serde_json::to_value(state.brain.attention(&query).await?)?)
+                Ok(serde_json::to_value(brain.attention(&query).await?)?)
             }
             "brain_respond" => {
                 let (id, response): (String, brain::AttentionResponse) = params_from_value(params)?;
-                Ok(serde_json::to_value(
-                    state.brain.respond(&id, &response).await?,
-                )?)
+                Ok(serde_json::to_value(brain.respond(&id, &response).await?)?)
             }
             _ => {
-                let mut status = serde_json::to_value(state.brain.runtime_status().await?)?;
+                let mut status = serde_json::to_value(brain.runtime_status().await?)?;
                 if let Some(status) = status.as_object_mut() {
                     // This is the already verified WebSocket caller. The UI
                     // uses it only to retain pending idempotency keys across
                     // bearer-token rotation without mixing different users.
-                    status.insert("caller".into(), caller.to_text().into());
+                    status.insert("caller".into(), connection.caller.to_text().into());
                 }
                 Ok(status)
             }
@@ -687,362 +694,33 @@ async fn handle_brain_kip_readonly(
         )
         .await
         .map_err(|err| format!("failed to execute read-only Brain KIP: {err:?}"))?;
-    serde_json::to_value(response).map_err(|err| err.to_string())
+    to_json(response)
 }
 
-fn handle_information(
-    state: &BrowserWebSocketState,
-    engine_id: Principal,
-) -> Result<Value, String> {
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
-    serde_json::to_value(engine.information()).map_err(|err| err.to_string())
-}
-
-async fn handle_pick_workspace() -> Result<Value, String> {
-    let path = select_workspace_path().await?;
-    Ok(json!({
-        "path": path.map(|path| path.to_string_lossy().to_string())
-    }))
-}
-
-async fn handle_register_workspace(
-    params: Value,
-    state: &BrowserWebSocketState,
-    caller: Principal,
-) -> Result<Value, String> {
-    if caller != state.cli_workspaces.owner() {
-        return Err("only the local owner can register a workspace".to_string());
-    }
-    let (workspace,): (PathBuf,) = params_from_value(params)?;
-    let workspace = state
-        .cli_workspaces
-        .register(&workspace)
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(json!({ "workspace": workspace }))
-}
-
-fn handle_ui_language(state: &BrowserWebSocketState) -> Result<Value, String> {
-    Ok(json!({ "language": persisted_ui_language(&state.home_dir) }))
-}
-
-/// Reads the UI language Anda Desktop persists at `launcher/ui.json` (the path
-/// the retired tray launcher used, kept so existing settings still apply),
-/// which the browser extension follows and approval cards are localized to.
-/// Read per call: the desktop may rewrite the file while the daemon runs.
-pub(super) fn persisted_ui_language(home_dir: &std::path::Path) -> Option<String> {
-    #[derive(Deserialize)]
-    struct UiSettings {
-        #[serde(default)]
-        language: String,
-    }
-
-    let content = std::fs::read_to_string(home_dir.join("launcher").join("ui.json")).ok()?;
-    let settings = serde_json::from_str::<UiSettings>(&content).ok()?;
-    let language = settings.language.trim().to_string();
-    (!language.is_empty()).then_some(language)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkspacePickerLanguage {
-    En,
-    ZhHans,
-}
-
-impl WorkspacePickerLanguage {
-    fn locale(self) -> &'static str {
-        match self {
-            WorkspacePickerLanguage::En => "en",
-            WorkspacePickerLanguage::ZhHans => "zh-Hans",
-        }
-    }
-}
-
-static WORKSPACE_PICKER_LANGUAGE: OnceLock<WorkspacePickerLanguage> = OnceLock::new();
-
-fn workspace_picker_title() -> String {
-    workspace_picker_title_for_language(workspace_picker_language())
-}
-
-fn workspace_picker_title_for_language(language: WorkspacePickerLanguage) -> String {
-    t!("browser.workspace_picker_title", locale = language.locale()).into_owned()
-}
-
-fn workspace_picker_language() -> WorkspacePickerLanguage {
-    *WORKSPACE_PICKER_LANGUAGE.get_or_init(detect_workspace_picker_language)
-}
-
-fn detect_workspace_picker_language() -> WorkspacePickerLanguage {
-    language_from_tags(locale::system_locale_tags())
-}
-
-fn language_from_tags<T>(tags: impl IntoIterator<Item = T>) -> WorkspacePickerLanguage
-where
-    T: AsRef<str>,
-{
-    locale::first_match(tags, language_from_tag).unwrap_or(WorkspacePickerLanguage::En)
-}
-
-/// Maps a locale tag normalized by [`locale::normalize_tag`] to a language the
-/// workspace picker has translations for.
-fn language_from_tag(tag: &str) -> Option<WorkspacePickerLanguage> {
-    if tag.starts_with("zh") || tag.contains("chinese") {
-        Some(WorkspacePickerLanguage::ZhHans)
-    } else if tag.starts_with("en") {
-        Some(WorkspacePickerLanguage::En)
-    } else {
-        None
-    }
-}
-
-async fn select_workspace_path() -> Result<Option<PathBuf>, String> {
-    #[cfg(target_os = "macos")]
-    {
-        pick_workspace_path_macos().await
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return pick_workspace_path_windows().await;
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        pick_workspace_path_linux().await
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn pick_workspace_path_macos() -> Result<Option<PathBuf>, String> {
-    let prompt = workspace_picker_title();
-    let script = workspace_picker_macos_script(&prompt);
-    let output = Command::new("osascript")
-        .args(["-e", script.as_str()])
-        .output()
-        .await
-        .map_err(|err| format!("failed to launch macOS folder picker: {err}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("-128") {
-            return Ok(None);
-        }
-        return Err(format!(
-            "macOS folder picker failed: {}",
-            stderr.trim().trim_matches('"')
-        ));
-    }
-
-    parse_selected_workspace_path(&output.stdout)
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn workspace_picker_macos_script(prompt: &str) -> String {
-    format!(
-        "POSIX path of (choose folder with prompt {})",
-        applescript_string(prompt)
-    )
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn applescript_string(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-#[cfg(target_os = "windows")]
-async fn pick_workspace_path_windows() -> Result<Option<PathBuf>, String> {
-    let title = workspace_picker_title();
-    let script = workspace_picker_windows_script(&title);
-    let mut command = Command::new("powershell.exe");
-    command
-        .arg("-NoProfile")
-        .arg("-STA")
-        .arg("-Command")
-        .arg(&script);
-    suppress_tokio_console_window(&mut command);
-    let output = command
-        .output()
-        .await
-        .map_err(|err| format!("failed to launch Windows folder picker: {err}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Windows folder picker failed: {}",
-            stderr.trim().trim_matches('"')
-        ));
-    }
-
-    parse_selected_workspace_path(&output.stdout)
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn workspace_picker_windows_script(title: &str) -> String {
-    format!(
-        concat!(
-            "$utf8 = [System.Text.UTF8Encoding]::new($false); ",
-            "try {{ [Console]::OutputEncoding = $utf8 }} catch {{ }}; ",
-            "$OutputEncoding = $utf8; ",
-            "$title = {title}; ",
-            "Add-Type -AssemblyName System.Windows.Forms > $null; ",
-            "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; ",
-            "$dialog.Description = $title; ",
-            "$dialog.UseDescriptionForTitle = $true; ",
-            "$owner = New-Object System.Windows.Forms.Form; ",
-            "$owner.Text = 'Anda Bot'; ",
-            "$owner.StartPosition = 'CenterScreen'; ",
-            "$owner.ShowInTaskbar = $false; ",
-            "$owner.TopMost = $true; ",
-            "$owner.Width = 1; ",
-            "$owner.Height = 1; ",
-            "$owner.Opacity = 0; ",
-            "try {{ ",
-            "$owner.Show(); ",
-            "$owner.Activate(); ",
-            "[void]$owner.Focus(); ",
-            "$result = $dialog.ShowDialog($owner); ",
-            "if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{ Write-Output $dialog.SelectedPath }} ",
-            "}} finally {{ $owner.Close(); $owner.Dispose(); $dialog.Dispose(); }}"
-        ),
-        title = powershell_single_quoted_string(title)
-    )
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn powershell_single_quoted_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-async fn pick_workspace_path_linux() -> Result<Option<PathBuf>, String> {
-    let mut errors = Vec::new();
-    let title = workspace_picker_title();
-
-    for (program, args) in [
-        (
-            "zenity",
-            vec![
-                "--file-selection".to_string(),
-                "--directory".to_string(),
-                format!("--title={title}"),
-            ],
-        ),
-        (
-            "kdialog",
-            vec![
-                "--getexistingdirectory".to_string(),
-                ".".to_string(),
-                title.clone(),
-            ],
-        ),
-    ] {
-        let output = match Command::new(program).args(&args).output().await {
-            Ok(output) => output,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => {
-                errors.push(format!("{program}: {err}"));
-                continue;
-            }
-        };
-
-        if output.status.success() {
-            return parse_selected_workspace_path(&output.stdout);
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if output.status.code() == Some(1) && stderr.trim().is_empty() {
-            return Ok(None);
-        }
-
-        errors.push(format!("{program}: {}", stderr.trim()));
-    }
-
-    if errors.is_empty() {
-        Err("no supported folder picker found; install zenity or kdialog".to_string())
-    } else {
-        Err(errors.join("; "))
-    }
-}
-
-fn parse_selected_workspace_path(stdout: &[u8]) -> Result<Option<PathBuf>, String> {
-    let selected = decode_selected_workspace_stdout(stdout)
-        .ok_or_else(|| "folder picker returned a non-text workspace path".to_string())?;
-    Ok(normalize_selected_workspace_path(&selected))
-}
-
-fn decode_selected_workspace_stdout(stdout: &[u8]) -> Option<String> {
-    if let Ok(text) = std::str::from_utf8(stdout) {
-        return Some(text.to_string());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(text) =
-            decode_bytes_with_windows_code_page(stdout, windows_console_output_code_page())
-        {
-            return Some(text);
-        }
-        return anda_core::text_from_bytes(stdout).map(|text| text.into_owned());
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        None
-    }
-}
-
-#[cfg(any(target_os = "windows", test))]
-fn decode_bytes_with_windows_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
-    anda_core::text_from_bytes_with_encoding(
-        bytes,
-        anda_core::windows_code_page_encoding(code_page),
-    )
-    .map(|text| text.into_owned())
-}
-
-#[cfg(target_os = "windows")]
-fn windows_console_output_code_page() -> u32 {
-    unsafe { windows_sys::Win32::Globalization::GetOEMCP() }
-}
-
-fn normalize_selected_workspace_path(selected: &str) -> Option<PathBuf> {
-    let trimmed = selected.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    let path: PathBuf = std::path::Path::new(trimmed).components().collect();
-    if path.as_os_str().is_empty() || !path.is_absolute() {
-        return None;
-    }
-    Some(path)
-}
-
-fn handle_capabilities(
-    state: &BrowserWebSocketState,
-    engine_id: Principal,
-) -> Result<Value, String> {
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
+fn capabilities(connection: &WsConnection) -> Value {
     let names = vec![
         TranscriptionManager::NAME.to_string(),
         TtsManager::NAME.to_string(),
     ];
-    let tools = engine.tools(Some(&names));
+    let tools = connection.engine.tools(Some(&names));
     let has_tool = |name: &str| {
         tools
             .iter()
             .any(|tool| tool.definition.name.as_str() == name)
     };
+    let voice = &connection.state.voice_capabilities;
+    let transcription: &[String] = if has_tool(TranscriptionManager::NAME) {
+        &voice.transcription
+    } else {
+        &[]
+    };
+    let tts: &[String] = if has_tool(TtsManager::NAME) {
+        &voice.tts
+    } else {
+        &[]
+    };
 
-    Ok(json!({
+    json!({
         "desktop": {
             "protocol": 1,
             "app_transport": true,
@@ -1051,84 +729,35 @@ fn handle_capabilities(
             "config_revision": true,
             "runtime_version": env!("CARGO_PKG_VERSION"),
         },
-        "transcription": if has_tool(TranscriptionManager::NAME) {
-            state.voice_capabilities.transcription.clone()
-        } else {
-            Vec::<String>::new()
-        },
-        "tts": if has_tool(TtsManager::NAME) {
-            state.voice_capabilities.tts.clone()
-        } else {
-            Vec::<String>::new()
-        },
-    }))
+        "transcription": transcription,
+        "tts": tts,
+    })
 }
 
-async fn handle_model_names(state: &BrowserWebSocketState) -> Result<Value, String> {
-    serde_json::to_value(state.runtime_models.current().await).map_err(|err| err.to_string())
-}
-
-async fn handle_reload_models(state: &BrowserWebSocketState) -> Result<Value, String> {
-    let models = state
-        .runtime_models
-        .reload_from_config()
-        .await
-        .map_err(|err| err.to_string())?;
-    serde_json::to_value(models).map_err(|err| err.to_string())
-}
-
-async fn handle_set_model(
-    params: Value,
-    state: &BrowserWebSocketState,
-    engine_id: Principal,
-) -> Result<Value, String> {
+async fn handle_set_model(params: Value, connection: &WsConnection) -> Result<Value, String> {
     let (model_name,): (String,) = params_from_value(params)?;
     let model_name = model_name.trim();
     if model_name.is_empty() {
         return Err("model name is required".to_string());
     }
 
-    let engine = state
-        .app
-        .engines
-        .get(&engine_id)
-        .ok_or_else(|| format!("engine {} not found", engine_id.to_text()))?;
-    let models = engine.models();
+    let models = connection.engine.models();
     let model = models
         .get(model_name)
         .ok_or_else(|| format!("model {model_name:?} not found"))?;
-    state
-        .runtime_models
+    let runtime_models = &connection.state.runtime_models;
+    runtime_models
         .check_plan_switch(model.model_name().starts_with("chatgpt:"))
         .map_err(|e| e.to_string())?;
     models.set_model(model);
-    let response = state
-        .runtime_models
-        .set_active_model(model_name.to_string())
-        .await;
-    serde_json::to_value(response).map_err(|err| err.to_string())
+    to_json(
+        runtime_models
+            .set_active_model(model_name.to_string())
+            .await,
+    )
 }
 
-fn handle_auto_update_status(state: &BrowserWebSocketState) -> Result<Value, String> {
-    serde_json::to_value(state.auto_updater.state()).map_err(|err| err.to_string())
-}
-
-async fn handle_auto_update_check(state: &BrowserWebSocketState) -> Result<Value, String> {
-    serde_json::to_value(state.auto_updater.check_if_due().await).map_err(|err| err.to_string())
-}
-
-async fn handle_auto_update_install_and_restart(
-    state: &BrowserWebSocketState,
-) -> Result<Value, String> {
-    let update_state = state
-        .auto_updater
-        .install_and_restart()
-        .await
-        .map_err(|err| err.to_string())?;
-    serde_json::to_value(update_state).map_err(|err| err.to_string())
-}
-
-async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &BrowserWebSocketState) {
+fn handle_browser_ws_response(connection: &WsConnection, incoming: BrowserWsIncoming) {
     let Some(id) = incoming.id else {
         return;
     };
@@ -1137,51 +766,24 @@ async fn handle_browser_ws_response(incoming: BrowserWsIncoming, state: &Browser
         return;
     };
 
-    let result = if let Some(error) = incoming.error {
-        BrowserActionResult {
-            ok: false,
-            value: Value::Null,
-            error: Some(error),
-            error_code: None,
-        }
-    } else {
-        match serde_json::from_value::<BrowserActionResult>(incoming.result.unwrap_or(Value::Null))
-        {
-            Ok(result) => result,
-            Err(err) => BrowserActionResult {
-                ok: false,
-                value: Value::Null,
-                error: Some(format!("invalid browser action response: {err}")),
-                error_code: None,
-            },
-        }
+    let result = match incoming.error {
+        Some(error) => BrowserActionResult::error(error),
+        None => serde_json::from_value(incoming.result.unwrap_or_default()).unwrap_or_else(|err| {
+            BrowserActionResult::error(format!("invalid browser action response: {err}"))
+        }),
     };
 
-    if let Err(err) = state.bridge.complete(session, id, result).await {
+    if let Err(err) = connection
+        .state
+        .bridge
+        .complete(connection.id, &session, id, result)
+    {
         log::warn!("failed to complete Chrome browser action {id}: {err}");
     }
 }
 
-async fn send_ws_result(
-    write_sender: &mpsc::Sender<String>,
-    id: u64,
-    result: Result<Value, String>,
-    app_protocol: bool,
-) {
-    let payload = if app_protocol {
-        match result {
-            Ok(result) => json!({"jsonrpc":"2.0", "id":id, "result":result}),
-            Err(error) => {
-                json!({"jsonrpc":"2.0", "id":id, "error":{"code":-32000,"message":error}})
-            }
-        }
-    } else {
-        match result {
-            Ok(result) => json!({ "id": id, "result": result }),
-            Err(error) => json!({ "id": id, "error": error }),
-        }
-    };
-    let _ = write_sender.send(payload.to_string()).await;
+fn to_json(value: impl Serialize) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|err| err.to_string())
 }
 
 fn params_from_value<T>(value: Value) -> Result<T, String>
@@ -1191,7 +793,7 @@ where
     serde_json::from_value(value).map_err(|err| format!("failed to decode params: {err}"))
 }
 
-fn resolve_engine_id(app: &AppState, id: &str) -> Result<Principal, (StatusCode, String)> {
+fn resolve_engine(app: &AppState, id: &str) -> Result<Arc<Engine>, (StatusCode, String)> {
     let id = if id == "default" {
         app.default_engine
     } else {
@@ -1203,14 +805,12 @@ fn resolve_engine_id(app: &AppState, id: &str) -> Result<Principal, (StatusCode,
         })?
     };
 
-    if app.engines.contains_key(&id) {
-        Ok(id)
-    } else {
-        Err((
+    app.engines.get(&id).cloned().ok_or_else(|| {
+        (
             StatusCode::NOT_FOUND,
             format!("engine {} not found", id.to_text()),
-        ))
-    }
+        )
+    })
 }
 
 /// Expiry of a bearer CWT that `verify_trusted_user` already accepted.
@@ -1300,120 +900,6 @@ fn percent_decode(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        WorkspacePickerLanguage, decode_bytes_with_windows_code_page, language_from_tags,
-        normalize_selected_workspace_path, persisted_ui_language, powershell_single_quoted_string,
-        workspace_picker_macos_script, workspace_picker_title_for_language,
-        workspace_picker_windows_script,
-    };
-    use std::{env, fs, path::MAIN_SEPARATOR};
-
-    #[test]
-    fn persisted_ui_language_reads_desktop_setting() {
-        let home = tempfile::tempdir().unwrap();
-        assert_eq!(persisted_ui_language(home.path()), None);
-
-        let launcher_dir = home.path().join("launcher");
-        fs::create_dir_all(&launcher_dir).unwrap();
-        let ui_path = launcher_dir.join("ui.json");
-
-        fs::write(&ui_path, r#"{"language": "zh-Hans"}"#).unwrap();
-        assert_eq!(
-            persisted_ui_language(home.path()),
-            Some("zh-Hans".to_string())
-        );
-
-        fs::write(&ui_path, r#"{"language": "  "}"#).unwrap();
-        assert_eq!(persisted_ui_language(home.path()), None);
-
-        fs::write(&ui_path, "not json").unwrap();
-        assert_eq!(persisted_ui_language(home.path()), None);
-    }
-
-    #[test]
-    fn workspace_picker_language_prefers_chinese_system_tags() {
-        assert_eq!(
-            language_from_tags(["zh_CN.UTF-8"]),
-            WorkspacePickerLanguage::ZhHans
-        );
-        assert_eq!(
-            language_from_tags(["Chinese (Simplified)"]),
-            WorkspacePickerLanguage::ZhHans
-        );
-        assert_eq!(language_from_tags(["en-US"]), WorkspacePickerLanguage::En);
-        assert_eq!(
-            language_from_tags(["fr-FR", "zh-Hans"]),
-            WorkspacePickerLanguage::ZhHans
-        );
-        assert_eq!(
-            language_from_tags(["fr-FR", "de-DE"]),
-            WorkspacePickerLanguage::En
-        );
-    }
-
-    #[test]
-    fn workspace_picker_title_uses_locale_resources() {
-        let en = workspace_picker_title_for_language(WorkspacePickerLanguage::En);
-        let zh = workspace_picker_title_for_language(WorkspacePickerLanguage::ZhHans);
-
-        assert_eq!(en, "Open a workspace folder for Anda");
-        assert_ne!(zh, en);
-        assert!(zh.contains("Anda"));
-    }
-
-    #[test]
-    fn macos_workspace_picker_script_escapes_prompt_text() {
-        let script = workspace_picker_macos_script("Choose \"Anda\" \\ folder");
-
-        assert_eq!(
-            script,
-            "POSIX path of (choose folder with prompt \"Choose \\\"Anda\\\" \\\\ folder\")"
-        );
-    }
-
-    #[test]
-    fn windows_workspace_picker_script_uses_localized_title_and_owner() {
-        let script = workspace_picker_windows_script("Choose Anda's workspace");
-
-        assert!(script.contains("$title = 'Choose Anda''s workspace';"));
-        assert!(script.contains("$dialog.Description = $title;"));
-        assert!(script.contains("$owner.TopMost = $true;"));
-        assert!(script.contains("$dialog.ShowDialog($owner);"));
-    }
-
-    #[test]
-    fn powershell_single_quoted_string_escapes_quotes() {
-        assert_eq!(
-            powershell_single_quoted_string("Anda's workspace"),
-            "'Anda''s workspace'"
-        );
-    }
-
-    #[test]
-    fn normalize_selected_workspace_path_trims_and_drops_trailing_separator() {
-        let expected = env::temp_dir().join("anda").join("workspace");
-        let selected = format!("  {}{}  ", expected.display(), MAIN_SEPARATOR);
-        let path = normalize_selected_workspace_path(&selected).unwrap();
-
-        assert_eq!(path, expected);
-    }
-
-    #[test]
-    fn normalize_selected_workspace_path_rejects_empty_or_relative_values() {
-        assert_eq!(normalize_selected_workspace_path("   "), None);
-        assert_eq!(normalize_selected_workspace_path("workspace/project"), None);
-    }
-
-    #[test]
-    fn selected_workspace_stdout_decodes_legacy_chinese_windows_bytes() {
-        let gbk_path = [b'E', b':', b'\\', 0xD6, 0xD0, 0xCE, 0xC4, b'\r', b'\n'];
-
-        assert_eq!(
-            decode_bytes_with_windows_code_page(&gbk_path, 936).as_deref(),
-            Some("E:\\中文\r\n")
-        );
-    }
-
     use super::*;
     use anda_core::{Agent, AgentOutput, FunctionDefinition, Resource, Tool, ToolOutput};
     use anda_engine::{
@@ -1581,18 +1067,35 @@ mod tests {
         (state, engine_id, auth_key)
     }
 
+    /// A connection context for `caller`, with the frames it writes and the
+    /// browser actions it forwards.
+    fn connect(
+        state: &BrowserWebSocketState,
+        caller: Principal,
+    ) -> (
+        Arc<WsConnection>,
+        mpsc::Receiver<String>,
+        mpsc::Receiver<BrowserCommand>,
+    ) {
+        let (id, actions, commands) = state.bridge.open_ws_connection();
+        let (writer, frames) = mpsc::channel(64);
+        let engine = state.app.engines[&state.app.default_engine].clone();
+        let connection = WsConnection {
+            state: state.clone(),
+            caller,
+            engine,
+            id,
+            actions,
+            writer,
+        };
+        (Arc::new(connection), frames, commands)
+    }
+
     #[tokio::test]
     async fn browser_ws_request_dispatches_all_methods() {
         let dir = tempfile::tempdir().unwrap();
-        let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
-        let caller = key.id();
-
-        let (cmd_tx, _cmd_rx) = mpsc::channel::<BrowserCommand>(8);
-        let connection = BrowserWsConnection {
-            id: 1,
-            sender: cmd_tx,
-        };
-        let (write_tx, mut write_rx) = mpsc::channel::<String>(64);
+        let (state, _, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let (connection, mut write_rx, _commands) = connect(&state, key.id());
 
         let call = |method: &str, params: Value| {
             serde_json::from_value::<BrowserWsIncoming>(json!({
@@ -1628,15 +1131,7 @@ mod tests {
             ("set_model", json!(["missing-model"])),
             ("unknown_method", json!({})),
         ] {
-            handle_browser_ws_request(
-                call(method, params),
-                &state,
-                caller,
-                engine_id,
-                &connection,
-                &write_tx,
-            )
-            .await;
+            handle_browser_ws_request(call(method, params), &connection).await;
         }
 
         // Every request carried an id, so each produced a response frame.
@@ -1650,35 +1145,16 @@ mod tests {
         // responses, and rejects malformed input.
         let request_tasks = CancellationToken::new();
         handle_browser_ws_text(
+            &connection,
             "{\"id\":2,\"method\":\"ping\"}",
-            &state,
-            caller,
-            engine_id,
-            &connection,
-            &write_tx,
             &request_tasks,
-        )
-        .await;
+        );
         handle_browser_ws_text(
+            &connection,
             "{\"id\":3,\"result\":{\"ok\":true},\"session\":\"chrome:tab:1\"}",
-            &state,
-            caller,
-            engine_id,
-            &connection,
-            &write_tx,
             &request_tasks,
-        )
-        .await;
-        handle_browser_ws_text(
-            "not-json",
-            &state,
-            caller,
-            engine_id,
-            &connection,
-            &write_tx,
-            &request_tasks,
-        )
-        .await;
+        );
+        handle_browser_ws_text(&connection, "not-json", &request_tasks);
     }
 
     #[tokio::test]
@@ -1686,13 +1162,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("project");
         tokio::fs::create_dir_all(&workspace).await.unwrap();
-        let (state, engine_id, key) = build_ws_state(dir.path().to_path_buf()).await;
-        let (cmd_tx, _cmd_rx) = mpsc::channel::<BrowserCommand>(1);
-        let connection = BrowserWsConnection {
-            id: 1,
-            sender: cmd_tx,
-        };
-        let (write_tx, mut write_rx) = mpsc::channel::<String>(4);
+        let (state, _, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let (stranger, mut stranger_rx, _) = connect(&state, Principal::anonymous());
+        let (owner, mut write_rx, _) = connect(&state, key.id());
         let request = |path: &std::path::Path| {
             serde_json::from_value::<BrowserWsIncoming>(json!({
                 "id": 1,
@@ -1702,21 +1174,11 @@ mod tests {
             .unwrap()
         };
 
-        handle_browser_ws_request(
-            request(&workspace),
-            &state,
-            Principal::anonymous(),
-            engine_id,
-            &connection,
-            &write_tx,
-        )
-        .await;
-        let denied: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
-        assert!(
-            denied["error"]
-                .as_str()
-                .unwrap()
-                .contains("only the local owner")
+        handle_browser_ws_request(request(&workspace), &stranger).await;
+        let denied: Value = serde_json::from_str(&stranger_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            denied["error"],
+            "Only the local owner may control the daemon"
         );
 
         // Other daemon controls are owner-only as well.
@@ -1728,46 +1190,22 @@ mod tests {
         ] {
             let request =
                 serde_json::from_value(json!({"id":1,"method":method,"params":["m"]})).unwrap();
-            handle_browser_ws_request(
-                request,
-                &state,
-                Principal::anonymous(),
-                engine_id,
-                &connection,
-                &write_tx,
-            )
-            .await;
-            let denied: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+            handle_browser_ws_request(request, &stranger).await;
+            let denied: Value = serde_json::from_str(&stranger_rx.recv().await.unwrap()).unwrap();
             assert_eq!(
                 denied["error"],
                 "Only the local owner may control the daemon"
             );
         }
 
-        handle_browser_ws_request(
-            request(&workspace),
-            &state,
-            key.id(),
-            engine_id,
-            &connection,
-            &write_tx,
-        )
-        .await;
+        handle_browser_ws_request(request(&workspace), &owner).await;
         let granted: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
         assert_eq!(
             granted["result"]["workspace"],
             json!(workspace.canonicalize().unwrap())
         );
 
-        handle_browser_ws_request(
-            request(&dir.path().join("missing")),
-            &state,
-            key.id(),
-            engine_id,
-            &connection,
-            &write_tx,
-        )
-        .await;
+        handle_browser_ws_request(request(&dir.path().join("missing")), &owner).await;
         let invalid: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
         assert!(
             invalid["error"]
@@ -1904,17 +1342,18 @@ mod tests {
     async fn desktop_browser_registration_preserves_other_chats_and_pending_actions() {
         for app_protocol in [false, true] {
             let dir = tempfile::tempdir().unwrap();
-            let (mut state, _, _) = build_ws_state(dir.path().to_path_buf()).await;
+            let (mut state, _, key) = build_ws_state(dir.path().to_path_buf()).await;
             state.app_protocol = app_protocol;
-            let (id, sender, mut commands) = state.bridge.open_ws_connection();
-            let connection = BrowserWsConnection { id, sender };
+            let owner = key.id();
+            let (connection, _frames, mut commands) = connect(&state, owner);
             let first = "browser:desktop:first";
             let second = "browser:desktop:second";
-            handle_browser_register(json!([{ "session": first }]), &state, &connection).unwrap();
+            handle_browser_register(json!([{ "session": first }]), &connection).unwrap();
             let bridge = state.bridge.clone();
             let task = tokio::spawn(async move {
                 bridge
                     .run_action(
+                        owner,
                         first.into(),
                         serde_json::from_value(json!({
                             "action": "snapshot", "timeout_ms": 1000
@@ -1924,34 +1363,39 @@ mod tests {
                     .await
             });
             let command = commands.recv().await.unwrap();
-            handle_browser_register(json!([{ "session": second }]), &state, &connection).unwrap();
+            handle_browser_register(json!([{ "session": second }]), &connection).unwrap();
             assert_eq!(
-                state.bridge.connected_session(Some(first)).is_some(),
+                state.bridge.connected_session(owner, Some(first)).is_some(),
                 app_protocol
             );
-            assert!(state.bridge.connected_session(Some(second)).is_some());
+            assert!(
+                state
+                    .bridge
+                    .connected_session(owner, Some(second))
+                    .is_some()
+            );
             if app_protocol {
                 state
                     .bridge
                     .complete(
-                        first.into(),
+                        connection.id,
+                        first,
                         command.request_id,
-                        BrowserActionResult {
-                            ok: true,
-                            value: json!({ "title": "First chat" }),
-                            error: None,
-                            error_code: None,
-                        },
+                        BrowserActionResult::ok(json!({ "title": "First chat" })),
                     )
-                    .await
                     .unwrap();
                 assert_eq!(task.await.unwrap().unwrap().value["title"], "First chat");
             } else {
                 assert!(task.await.unwrap().is_err());
             }
-            state.bridge.disconnect_ws_connection(id);
-            assert!(state.bridge.connected_session(Some(first)).is_none());
-            assert!(state.bridge.connected_session(Some(second)).is_none());
+            state.bridge.disconnect_ws_connection(connection.id);
+            assert!(state.bridge.connected_session(owner, Some(first)).is_none());
+            assert!(
+                state
+                    .bridge
+                    .connected_session(owner, Some(second))
+                    .is_none()
+            );
         }
     }
 
@@ -2057,7 +1501,7 @@ mod tests {
     #[tokio::test]
     async fn browser_requests_reject_expired_credentials_before_dispatch() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut state, engine_id, key) = build_ws_state(dir.path().into()).await;
+        let (mut state, _, key) = build_ws_state(dir.path().into()).await;
         let expired = key
             .sign_cwt(crate::identity::Claims {
                 expiration: Some(1.into()),
@@ -2066,9 +1510,7 @@ mod tests {
             .unwrap();
         state.credential_expires_at_ms = bearer_expires_at_ms(&expired).unwrap();
         assert_eq!(state.credential_expires_at_ms, 1000);
-        let (id, sender, _rx) = state.bridge.open_ws_connection();
-        let connection = BrowserWsConnection { id, sender };
-        let (tx, mut rx) = mpsc::channel(1);
+        let (connection, mut rx, _commands) = connect(&state, key.id());
         for method in [
             "browser_register",
             "agent_run",
@@ -2080,10 +1522,69 @@ mod tests {
                 json!({"id":1,"method":method,"params":[{"session":"expired"}]}),
             )
             .unwrap();
-            handle_browser_ws_request(request, &state, key.id(), engine_id, &connection, &tx).await;
+            handle_browser_ws_request(request, &connection).await;
             let response: Value = serde_json::from_str(&rx.recv().await.unwrap()).unwrap();
             assert_eq!(response["error"], "invalid or expired credential");
         }
-        assert!(state.bridge.connected_session(None).is_none());
+        assert!(state.bridge.connected_session(key.id(), None).is_none());
+    }
+
+    #[tokio::test]
+    async fn replies_follow_each_transport_and_only_the_sending_socket_completes_actions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut state, _, key) = build_ws_state(dir.path().into()).await;
+        let reply = async |connection: &WsConnection, frames: &mut mpsc::Receiver<String>| {
+            connection.reply(1, Ok(Value::Null)).await;
+            connection.reply(2, Err("boom".into())).await;
+            let ok: Value = serde_json::from_str(&frames.recv().await.unwrap()).unwrap();
+            let failed: Value = serde_json::from_str(&frames.recv().await.unwrap()).unwrap();
+            (ok, failed)
+        };
+        let (extension, mut frames, mut commands) = connect(&state, key.id());
+        assert_eq!(
+            reply(&extension, &mut frames).await,
+            (
+                json!({ "id": 1, "result": null }),
+                json!({ "id": 2, "error": "boom" })
+            )
+        );
+        state.app_protocol = true;
+        let (desktop, mut desktop_frames, _) = connect(&state, key.id());
+        assert_eq!(
+            reply(&desktop, &mut desktop_frames).await,
+            (
+                json!({ "jsonrpc": "2.0", "id": 1, "result": null }),
+                json!({ "jsonrpc": "2.0", "id": 2, "error": { "code": -32000, "message": "boom" } })
+            )
+        );
+
+        handle_browser_register(json!([{ "session": "browser:chrome:1" }]), &extension).unwrap();
+        let bridge = state.bridge.clone();
+        let owner = key.id();
+        let task = tokio::spawn(async move {
+            bridge
+                .run_action(
+                    owner,
+                    "browser:chrome:1".into(),
+                    serde_json::from_value(json!({ "action": "snapshot", "timeout_ms": 1000 }))
+                        .unwrap(),
+                )
+                .await
+        });
+        let command = commands.recv().await.unwrap();
+        let response = json!({
+            "id": command.request_id,
+            "session": "browser:chrome:1",
+            "result": { "ok": true, "value": { "title": "Spoofed" } }
+        })
+        .to_string();
+        let request_tasks = CancellationToken::new();
+        handle_browser_ws_text(&desktop, &response, &request_tasks);
+        handle_browser_ws_text(
+            &extension,
+            &response.replace("Spoofed", "Real"),
+            &request_tasks,
+        );
+        assert_eq!(task.await.unwrap().unwrap().value["title"], "Real");
     }
 }

@@ -173,11 +173,7 @@ fn base_tool_dependencies() -> Vec<String> {
         cron::ListCronJobsTool::NAME.to_string(),
         cron::ListCronRunsTool::NAME.to_string(),
     ];
-    tools.extend(
-        ChromeBrowserTool::dependency_tool_names()
-            .into_iter()
-            .map(str::to_string),
-    );
+    tools.extend(ChromeBrowserTool::NAMES.map(String::from));
     tools.extend(multimodal::media_agent_names());
     tools
 }
@@ -826,17 +822,19 @@ impl AndaBot {
     }
 
     /// The tools a session's first request loads: the base set, `extra`, the
-    /// browser tools while an extension is connected, and the caller's three
-    /// most used other tools.
-    fn initial_tools(&self, available_tools: &[String], extra: Vec<String>) -> UniqueVec<String> {
+    /// browser tools while the caller has a browser this request may drive,
+    /// and the caller's three most used other tools.
+    fn initial_tools(
+        &self,
+        caller: Principal,
+        meta: &RequestMeta,
+        available_tools: &[String],
+        extra: Vec<String>,
+    ) -> UniqueVec<String> {
         let mut tools = UniqueVec::from(base_tools());
         tools.extend(extra);
-        if self.inner.browser_manager.is_active() {
-            tools.extend(
-                ChromeBrowserTool::active_tool_names()
-                    .into_iter()
-                    .map(str::to_string),
-            );
+        if self.inner.browser_manager.is_available(caller, meta) {
+            tools.extend(ChromeBrowserTool::NAMES.map(String::from));
         }
         let most_used = self
             .inner
@@ -1312,7 +1310,7 @@ impl Agent<AgentCtx> for AndaBot {
         // Attachments reach the model as references, so load the tools that
         // can inspect them instead of making the model discover them first.
         session_tools.extend(multimodal::media_agent_names_for(&resources));
-        let tools = self.initial_tools(&available_tools, session_tools);
+        let tools = self.initial_tools(*caller, ctx.meta(), &available_tools, session_tools);
         let req = CompletionRequest {
             instructions,
             prompt,

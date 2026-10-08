@@ -180,7 +180,7 @@ impl AndaBot {
                 now_ms,
             )
             .await?;
-        let tools = self.initial_tools(&available_tools, Vec::new());
+        let tools = self.initial_tools(conversation.user, &meta, &available_tools, Vec::new());
         let initial_req = CompletionRequest {
             instructions,
             prompt,
