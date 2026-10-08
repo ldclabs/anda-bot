@@ -913,13 +913,7 @@ impl SessionRunner {
                 PromptCommand::Goal { prompt } => {
                     prepend_prompt_content(&mut content, prompt.clone());
                     follow_up_batch.append(&mut content);
-
-                    let mut next_goal = self.session.goal.write();
-                    if let Some(existing_goal) = next_goal.as_mut() {
-                        existing_goal.update_objective(prompt);
-                    } else {
-                        *next_goal = Some(goal::GoalState::new(prompt));
-                    };
+                    goal::set_goal(&mut self.session.goal.write(), prompt);
                 }
                 PromptCommand::Skill { skill, prompt } => {
                     let (_, directive) = skill_command_directive(
@@ -931,6 +925,14 @@ impl SessionRunner {
                     follow_up_batch.append(&mut content);
                 }
             }
+        }
+
+        // New input is what a goal waiting for the user needs: evaluate it
+        // again once this input has been worked on.
+        if (!follow_up_batch.is_empty() || !steer_batch.is_empty())
+            && let Some(goal) = self.session.goal.write().as_mut()
+        {
+            goal.waiting_for_user = false;
         }
 
         let now_ms = unix_ms();
@@ -1063,9 +1065,14 @@ impl SessionRunner {
                 // no-op, so pruning first keeps the next request lean.
                 self.runner.prune_req_raw_history();
 
+                // A goal waiting for the user stays put: asking the supervisor
+                // again before new input arrives would get the same verdict.
                 let maybe_goal =
                     if now_ms >= self.session.goal_check_backoff_until.load(Ordering::SeqCst) {
-                        self.session.goal.write().take()
+                        self.session
+                            .goal
+                            .write()
+                            .take_if(|goal| !goal.waiting_for_user)
                     } else {
                         None
                     };
@@ -1074,20 +1081,20 @@ impl SessionRunner {
                 if let Some(mut goal) = maybe_goal {
                     let check = tokio::select! {
                         _ = self.session.control.interrupted() => { return Ok(true); }
-                        result = goal.check_progress(&self.runner, &self.ctx) => result,
+                        result = goal.check_progress(&mut self.runner, &self.ctx) => result,
                     };
                     match check {
-                        Ok(check) => {
+                        Ok(action) => {
                             self.session
                                 .goal_check_backoff_until
                                 .store(0, Ordering::SeqCst);
-                            self.runner.accumulate(&check.usage);
-                            match check.action {
+                            match action {
                                 goal::GoalAction::Complete(reason) => {
                                     // The saved record must carry the verdict too:
                                     // the next save would otherwise drop it after
                                     // Formation already referenced its index.
-                                    let message = goal_completed_message(&reason, now_ms);
+                                    let message =
+                                        supervisor_message("Goal completed.", &reason, now_ms);
                                     self.runner.append_chat_history(vec![message.clone()]);
                                     self.conversation.append_messages(vec![message]);
                                     history_changed = true;
@@ -1097,6 +1104,20 @@ impl SessionRunner {
                                         total_usage:serde = self.runner.total_usage(),
                                         tools_usage:serde = self.runner.tools_usage();
                                         "Goal completed: {:?}", reason);
+                                }
+                                goal::GoalAction::Blocked(reason) => {
+                                    // Keep the goal, now waiting: the user sees
+                                    // what it needs, and their reply resumes it.
+                                    let message = supervisor_message(
+                                        "Goal paused: waiting for your input.",
+                                        &reason,
+                                        now_ms,
+                                    );
+                                    self.runner.append_chat_history(vec![message.clone()]);
+                                    self.conversation.append_messages(vec![message]);
+                                    history_changed = true;
+                                    log::info!("Goal waiting for user: {:?}", reason);
+                                    *self.session.goal.write() = Some(goal);
                                 }
                                 goal::GoalAction::Continue(prompt) => {
                                     let now_ms = unix_ms();
@@ -1505,13 +1526,14 @@ fn apply_action_event_to_conversation(conversation: &mut Conversation, event: Ac
     updated
 }
 
-fn goal_completed_message(reason: &str, timestamp: u64) -> Message {
-    let reason = reason.trim();
-    let text = if reason.is_empty() {
-        "Goal completed.\n\nSupervisor evaluation:\nNo reason provided.".to_string()
-    } else {
-        format!("Goal completed.\n\nSupervisor evaluation:\n{reason}")
+/// The goal supervisor's verdict, recorded in the conversation as its own
+/// assistant message.
+fn supervisor_message(verdict: &str, reason: &str, timestamp: u64) -> Message {
+    let reason = match reason.trim() {
+        "" => "No reason provided.",
+        reason => reason,
     };
+    let text = format!("{verdict}\n\nSupervisor evaluation:\n{reason}");
 
     Message {
         role: "assistant".to_string(),
@@ -2987,8 +3009,8 @@ mod tests {
     }
 
     #[test]
-    fn goal_completed_message_records_supervisor_result() {
-        let message = goal_completed_message("All deliverables verified", 42);
+    fn supervisor_message_records_the_verdict() {
+        let message = supervisor_message("Goal completed.", "All deliverables verified", 42);
 
         assert_eq!(message.role, "assistant");
         assert_eq!(message.name.as_deref(), Some(goal::SUPERVISOR_AGENT_NAME));
@@ -2998,6 +3020,11 @@ mod tests {
         assert!(text.contains("Goal completed."));
         assert!(text.contains("Supervisor evaluation:"));
         assert!(text.contains("All deliverables verified"));
+
+        let text = supervisor_message("Goal completed.", "  ", 42)
+            .text()
+            .expect("message should contain text");
+        assert!(text.contains("No reason provided."));
     }
 
     #[tokio::test]
@@ -3576,18 +3603,33 @@ mod tests {
         assert_eq!(saved.messages, vec![json!(history[0])]);
     }
 
+    /// Answers goal evaluations with `verdict` and counts them; any other
+    /// request is a turn of work.
     #[derive(Clone, Debug)]
-    struct GoalCompletingCompleter;
+    struct GoalVerdictCompleter {
+        verdict: &'static str,
+        evaluations: Arc<std::sync::atomic::AtomicUsize>,
+    }
 
-    impl CompletionFeaturesDyn for GoalCompletingCompleter {
+    impl GoalVerdictCompleter {
+        fn new(verdict: &'static str) -> Self {
+            Self {
+                verdict,
+                evaluations: Arc::default(),
+            }
+        }
+    }
+
+    impl CompletionFeaturesDyn for GoalVerdictCompleter {
         fn model_name(&self) -> String {
-            "goal-completing".to_string()
+            "goal-verdict".to_string()
         }
 
         fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
             let content = if request_text(&req).contains("Evaluate completion with a strict audit")
             {
-                r#"{"complete":true,"reason":"verified","follow_up":""}"#
+                self.evaluations.fetch_add(1, Ordering::SeqCst);
+                self.verdict
             } else {
                 "work done"
             };
@@ -3609,7 +3651,9 @@ mod tests {
     async fn goal_completion_verdict_is_saved_with_the_conversation() {
         let bot = build_runner_bot().await;
         let ctx = EngineBuilder::new()
-            .with_model(Model::new(Arc::new(GoalCompletingCompleter)))
+            .with_model(Model::new(Arc::new(GoalVerdictCompleter::new(
+                r#"{"complete":true,"blocked":false,"reason":"verified","follow_up":""}"#,
+            ))))
             .mock_ctx();
         let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
         *r.session.goal.write() = Some(crate::engine::goal::GoalState::new("ship it".into()));
@@ -3640,6 +3684,61 @@ mod tests {
                 .iter()
                 .any(|message| message.to_string().contains("Goal completed."))
         );
+    }
+
+    #[tokio::test]
+    async fn blocked_goal_waits_for_new_input_before_the_next_evaluation() {
+        let bot = build_runner_bot().await;
+        let completer = GoalVerdictCompleter::new(
+            r#"{"complete":false,"blocked":true,"reason":"needs the deploy token","follow_up":""}"#,
+        );
+        let evaluations = completer.evaluations.clone();
+        let ctx = EngineBuilder::new()
+            .with_model(Model::new(Arc::new(completer)))
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        *r.session.goal.write() = Some(crate::engine::goal::GoalState::new("deploy it".into()));
+        let waiting = |r: &SessionRunner| {
+            r.session
+                .goal
+                .read()
+                .as_ref()
+                .is_some_and(|goal| goal.waiting_for_user)
+        };
+        let mut snapshot = HashMap::new();
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "make progress".into(),
+            })],
+            &mut snapshot,
+        )
+        .await
+        .unwrap();
+        r.run(vec![], &mut snapshot).await.unwrap();
+        assert_eq!(evaluations.load(Ordering::SeqCst), 1);
+        assert!(waiting(&r), "a blocked goal stays active, waiting");
+        assert!(r.runner.chat_history().iter().any(|message| {
+            message
+                .text()
+                .is_some_and(|text| text.contains("Goal paused") && text.contains("deploy token"))
+        }));
+
+        // Idle ticks do not ask the supervisor again.
+        r.run(vec![], &mut snapshot).await.unwrap();
+        assert_eq!(evaluations.load(Ordering::SeqCst), 1);
+
+        // The user's reply resumes the goal, which is evaluated after it.
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "here is the token".into(),
+            })],
+            &mut snapshot,
+        )
+        .await
+        .unwrap();
+        assert!(!waiting(&r));
+        r.run(vec![], &mut snapshot).await.unwrap();
+        assert_eq!(evaluations.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

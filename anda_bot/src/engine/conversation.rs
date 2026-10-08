@@ -6,7 +6,7 @@ use anda_core::{
 use anda_db::{collection::Collection, database::AndaDB, schema::Fv};
 use anda_engine::{
     context::BaseCtx,
-    memory::{ConversationStatus, Conversations},
+    memory::{Conversation, ConversationStatus, Conversations},
     rfc3339_datetime,
 };
 use parking_lot::RwLock;
@@ -76,14 +76,21 @@ pub struct SourceState {
     #[serde(default, rename = "t", alias = "timestamp")]
     pub timestamp: u64,
     /// Owner of the bound conversation, so ownership checks need not load it.
-    /// Missing in states saved by earlier releases.
+    /// States saved by earlier releases lack it until the startup scan
+    /// records it; until then they belong to nobody.
     #[serde(default, rename = "u", skip_serializing_if = "Option::is_none")]
     pub user: Option<Principal>,
 }
 
-/// A status read for a source's conversation, recorded only while the source
-/// still holds the binding and status observed before that read.
-pub struct SourceStatusRepair {
+impl SourceState {
+    pub fn owned_by(&self, caller: &Principal) -> bool {
+        self.user.as_ref() == Some(caller)
+    }
+}
+
+/// What the startup scan read for a source's conversation, applied only while
+/// the source still holds the binding it observed.
+pub struct SourceStateRepair {
     pub observed: SourceState,
     pub status: ConversationStatus,
     pub user: Principal,
@@ -136,7 +143,7 @@ pub struct RequestState {
 /// Marks a context whose tool calls come from an agent rather than a client,
 /// which gets display-friendly and memory-policy-filtered results.
 #[derive(Debug, Clone)]
-pub struct AgentInfo;
+pub struct AgentCaller;
 
 /// A tool for conversation API
 pub struct ConversationsTool {
@@ -198,49 +205,37 @@ impl ConversationsTool {
 
     pub(crate) async fn may_reuse_memory(
         &self,
-        conversation: &anda_engine::memory::Conversation,
+        conversation: &Conversation,
     ) -> Result<bool, BoxError> {
-        if !crate::engine::MemoryPolicy::from_conversation(conversation)?.may_write() {
-            return Ok(false);
-        }
-        let Some(host) = &self.memory_host else {
-            return Ok(true);
-        };
-        let session = conversation.thread.as_ref().map(ToString::to_string);
-        let mut source = crate::brain::product::source_identity(
-            &conversation.user.to_string(),
-            conversation._id,
-            session.as_deref(),
-        );
-        if let Some(parents) = conversation
-            .extra
-            .as_ref()
-            .and_then(|value| value.get("memory_source_parents"))
-        {
-            source
-                .parents
-                .extend(serde_json::from_value::<Vec<String>>(parents.clone())?);
-            source.parents.sort();
-            source.parents.dedup();
-        }
-        Ok(host
-            .state
-            .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-            .await?
-            .product_source_allowed(&source))
+        let space = self.memory_space().await?;
+        memory_reusable(space.as_deref(), conversation)
     }
 
     pub(crate) async fn filter_memory_sources(
         &self,
-        conversations: Vec<anda_engine::memory::Conversation>,
-    ) -> Result<Vec<anda_engine::memory::Conversation>, BoxError> {
-        let mut visible = Vec::new();
+        conversations: Vec<Conversation>,
+    ) -> Result<Vec<Conversation>, BoxError> {
+        let space = self.memory_space().await?;
+        let mut visible = Vec::with_capacity(conversations.len());
         for conversation in conversations {
-            if self.may_reuse_memory(&conversation).await? {
+            if memory_reusable(space.as_deref(), &conversation)? {
                 visible.push(conversation)
             }
         }
         Ok(visible)
+    }
+
+    /// The Space whose source controls decide memory reuse, when a memory
+    /// host is attached.
+    async fn memory_space(&self) -> Result<Option<Arc<anda_brain::space::Space>>, BoxError> {
+        match &self.memory_host {
+            Some(host) => Ok(Some(
+                host.state
+                    .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
+                    .await?,
+            )),
+            None => Ok(None),
+        }
     }
 
     /// Number of stored conversations.
@@ -319,35 +314,53 @@ impl ConversationsTool {
 
     /// Records `conversation`'s status in the sources bound to it, so clients
     /// can show a channel's state without loading its conversation.
-    pub async fn sync_source_status(
-        &self,
-        conversation: &anda_engine::memory::Conversation,
-    ) -> Result<(), BoxError> {
+    pub async fn sync_source_status(&self, conversation: &Conversation) -> Result<(), BoxError> {
+        let stale = |state: &SourceState| {
+            state.conv_id == conversation._id && state.status != conversation.status
+        };
         // Most saves keep the status; they need no save lock.
-        let stale =
-            self.source_conversation.read().values().any(|state| {
-                state.conv_id == conversation._id && state.status != conversation.status
-            });
-        if stale {
-            self.set_source_statuses(|_, state| {
-                (state.conv_id == conversation._id).then(|| conversation.status.clone())
+        if self.source_conversation.read().values().any(stale) {
+            self.update_source_states(|_, state| {
+                if !stale(state) {
+                    return false;
+                }
+                state.status = conversation.status.clone();
+                true
             })
             .await?;
         }
         Ok(())
     }
 
-    /// Repairs statuses recorded before they were kept in sync, when they
-    /// were only written as a source was rebound.
-    pub async fn repair_source_statuses(
+    /// Applies what the startup scan read: the owner of states saved before
+    /// owners were recorded, and statuses recorded before they were kept in
+    /// sync. A source rebound, or a status recorded, since the scan read it
+    /// is newer and kept.
+    pub async fn repair_source_states(
         &self,
-        repairs: HashMap<String, SourceStatusRepair>,
+        repairs: HashMap<String, SourceStateRepair>,
     ) -> Result<(), BoxError> {
+        if repairs.is_empty() {
+            return Ok(());
+        }
         let changed = self
-            .set_source_statuses(|source, state| {
-                let repair = repairs.get(source)?;
-                (state.conv_id == repair.observed.conv_id && state.status == repair.observed.status)
-                    .then(|| repair.status.clone())
+            .update_source_states(|source, state| {
+                let Some(repair) = repairs.get(source) else {
+                    return false;
+                };
+                if state.conv_id != repair.observed.conv_id {
+                    return false;
+                }
+                let mut changed = false;
+                if state.user.is_none() {
+                    state.user = Some(repair.user);
+                    changed = true;
+                }
+                if state.status == repair.observed.status && state.status != repair.status {
+                    state.status = repair.status.clone();
+                    changed = true;
+                }
+                changed
             })
             .await?;
         if changed {
@@ -359,23 +372,18 @@ impl ConversationsTool {
         Ok(())
     }
 
-    /// Sets each source to the status `status_of` returns for it, saving the
-    /// bindings once if any changed. Returns whether they changed.
-    async fn set_source_statuses(
+    /// Runs `update` over every source binding and saves them once if it
+    /// changed any. Returns whether it did.
+    async fn update_source_states(
         &self,
-        status_of: impl Fn(&str, &SourceState) -> Option<ConversationStatus>,
+        mut update: impl FnMut(&str, &mut SourceState) -> bool,
     ) -> Result<bool, BoxError> {
         let _guard = self.extension_save_lock.lock().await;
         let fv = {
             let mut map = self.source_conversation.write();
             let mut changed = false;
             for (source, state) in map.iter_mut() {
-                if let Some(status) = status_of(source, state)
-                    && state.status != status
-                {
-                    state.status = status;
-                    changed = true;
-                }
+                changed |= update(source, state);
             }
             if !changed {
                 return Ok(false);
@@ -394,18 +402,16 @@ impl ConversationsTool {
         caller: &Principal,
     ) -> Result<Option<SourceState>, BoxError> {
         let _guard = self.extension_save_lock.lock().await;
-        if let Some(state) = self.get_source_state(source)
-            && !self.owns_source_state(caller, &state).await?
-        {
-            return Err("permission denied".into());
-        }
         let (removed, fv) = {
             let mut map = self.source_conversation.write();
-            let removed = map.remove(source);
-            if removed.is_none() {
-                return Ok(None);
+            match map.get(source) {
+                None => return Ok(None),
+                Some(state) if !state.owned_by(caller) => {
+                    return Err("permission denied".into());
+                }
+                Some(_) => {}
             }
-            (removed, Fv::serialized(&*map, None)?)
+            (map.remove(source), Fv::serialized(&*map, None)?)
         };
         self.store
             .save_extension("source_conversation".to_string(), fv)
@@ -414,51 +420,49 @@ impl ConversationsTool {
         Ok(removed)
     }
 
-    async fn owns_source_state(
-        &self,
-        caller: &Principal,
-        state: &SourceState,
-    ) -> Result<bool, BoxError> {
-        if let Some(user) = &state.user {
-            return Ok(user == caller);
-        }
-        Ok(!self
-            .conversations
-            .batch_get_conversations(caller, vec![state.conv_id])
-            .await?
-            .is_empty())
+    fn caller_source_states(&self, caller: &Principal) -> HashMap<String, SourceState> {
+        self.source_conversation
+            .read()
+            .iter()
+            .filter(|(_, state)| state.owned_by(caller))
+            .map(|(source, state)| (source.clone(), state.clone()))
+            .collect()
     }
 
-    async fn caller_source_states(
+    /// Fails unless `caller` owns `conversation` and, when an agent asks,
+    /// memory policy lets it be reused.
+    async fn check_readable(
         &self,
+        conversation: &Conversation,
         caller: &Principal,
-    ) -> Result<HashMap<String, SourceState>, BoxError> {
-        let mut states = self.source_conversations();
-        // Only states saved before owners were recorded need their
-        // conversation loaded to learn who owns it.
-        let unknown = states
-            .values()
-            .filter(|state| state.user.is_none())
-            .map(|state| state.conv_id)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
-        let mut owned = HashSet::new();
-        // Conversations caps a batch at 1000 IDs.
-        for ids in unknown.chunks(1000) {
-            owned.extend(
-                self.conversations
-                    .batch_get_conversations(caller, ids.to_vec())
-                    .await?
-                    .into_iter()
-                    .map(|conversation| conversation._id),
-            );
+        is_agent: bool,
+    ) -> Result<(), BoxError> {
+        if &conversation.user != caller {
+            return Err("permission denied".into());
         }
-        states.retain(|_, state| match &state.user {
-            Some(user) => user == caller,
-            None => owned.contains(&state.conv_id),
-        });
-        Ok(states)
+        if is_agent && !self.may_reuse_memory(conversation).await? {
+            return Err("This conversation is excluded from automatic memory reuse.".into());
+        }
+        Ok(())
+    }
+
+    /// Agents get the conversations memory policy lets them reuse, as pruned
+    /// documents; clients get the records as stored.
+    async fn render_conversations(
+        &self,
+        conversations: Vec<Conversation>,
+        is_agent: bool,
+    ) -> Result<Value, BoxError> {
+        if !is_agent {
+            return Ok(json!(conversations));
+        }
+        let docs = self
+            .filter_memory_sources(conversations)
+            .await?
+            .into_iter()
+            .map(Document::from)
+            .collect::<Vec<_>>();
+        Ok(json!(docs))
     }
 
     pub fn tools_usage(&self) -> HashMap<String, Usage> {
@@ -483,9 +487,8 @@ impl ConversationsTool {
         let _guard = self.extension_save_lock.lock().await;
         let tools_usage = {
             let mut tools_usage = self.tools_usage.write();
-            for (tool, usage) in tools_usage_delta.into_iter() {
-                let entry = tools_usage.entry(tool.clone()).or_default();
-                entry.accumulate(&usage);
+            for (tool, usage) in tools_usage_delta {
+                tools_usage.entry(tool).or_default().accumulate(&usage);
             }
             Fv::serialized(&*tools_usage, None)
         }?;
@@ -494,6 +497,43 @@ impl ConversationsTool {
             .await?;
         Ok(())
     }
+}
+
+/// Whether memory policy and, when there is one, the memory Space's source
+/// controls let `conversation` be reused.
+fn memory_reusable(
+    space: Option<&anda_brain::space::Space>,
+    conversation: &Conversation,
+) -> Result<bool, BoxError> {
+    if !crate::engine::MemoryPolicy::from_conversation(conversation)?.may_write() {
+        return Ok(false);
+    }
+    let Some(space) = space else {
+        return Ok(true);
+    };
+    let session = conversation.thread.as_ref().map(ToString::to_string);
+    let mut source = crate::brain::product::source_identity(
+        &conversation.user.to_string(),
+        conversation._id,
+        session.as_deref(),
+    );
+    if let Some(parents) = conversation
+        .extra
+        .as_ref()
+        .and_then(|value| value.get("memory_source_parents"))
+    {
+        source.parents.extend(Vec::<String>::deserialize(parents)?);
+        source.parents.sort();
+        source.parents.dedup();
+    }
+    Ok(space.product_source_allowed(&source))
+}
+
+fn ok(result: Value) -> ToolOutput<Response> {
+    ToolOutput::new(Response::Ok {
+        result,
+        next_cursor: None,
+    })
 }
 
 fn conversations_tool_parameters() -> Value {
@@ -581,24 +621,17 @@ impl Tool<BaseCtx> for ConversationsTool {
     }
 
     async fn init(&self, _ctx: BaseCtx) -> Result<(), BoxError> {
-        {
-            let mut source_conversation: HashMap<String, SourceState> = self
-                .store
-                .get_extension_as("source_conversation")
-                .unwrap_or_default();
-            prune_source_states(&mut source_conversation);
+        let mut source_conversation: HashMap<String, SourceState> = self
+            .store
+            .get_extension_as("source_conversation")
+            .unwrap_or_default();
+        prune_source_states(&mut source_conversation);
+        *self.source_conversation.write() = source_conversation;
 
-            *self.source_conversation.write() = source_conversation;
-        }
-        {
-            let tools_usage: HashMap<String, Usage> = self
-                .store
-                .get_extension_as("tools_usage")
-                .unwrap_or_default();
-
-            *self.tools_usage.write() = tools_usage;
-        }
-
+        *self.tools_usage.write() = self
+            .store
+            .get_extension_as("tools_usage")
+            .unwrap_or_default();
         Ok(())
     }
 
@@ -608,31 +641,23 @@ impl Tool<BaseCtx> for ConversationsTool {
         args: Self::Args,
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let is_agent = ctx.get_state::<AgentInfo>().is_some();
+        let is_agent = ctx.get_state::<AgentCaller>().is_some();
+        let caller = ctx.caller();
         match args {
             ConversationsToolArgs::GetSourceState {} => {
-                let mut state = self.state_from_meta(ctx.meta());
-                if state.source_state.conv_id != 0
-                    && !self
-                        .owns_source_state(ctx.caller(), &state.source_state)
-                        .await?
-                {
-                    state.source_state = SourceState::default();
+                let mut state = self.state_from_meta(ctx.meta()).source_state;
+                if !state.owned_by(caller) {
+                    state = SourceState::default();
                 }
-                let result = if is_agent {
-                    json!(SourceStateDisplay::from(state.source_state))
+                Ok(ok(if is_agent {
+                    json!(SourceStateDisplay::from(state))
                 } else {
-                    json!(state.source_state)
-                };
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result,
-                    next_cursor: None,
+                    json!(state)
                 }))
             }
             ConversationsToolArgs::ListSourceState {} => {
-                let states = self.caller_source_states(ctx.caller()).await?;
-                let result = if is_agent {
+                let states = self.caller_source_states(caller);
+                Ok(ok(if is_agent {
                     json!(
                         states
                             .into_iter()
@@ -641,11 +666,6 @@ impl Tool<BaseCtx> for ConversationsTool {
                     )
                 } else {
                     json!(states)
-                };
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result,
-                    next_cursor: None,
                 }))
             }
             ConversationsToolArgs::DeleteSourceState { source } => {
@@ -654,26 +674,18 @@ impl Tool<BaseCtx> for ConversationsTool {
                     return Err("source is required".into());
                 }
 
-                let removed = self.delete_source_state(source, ctx.caller()).await?;
+                let removed = self.delete_source_state(source, caller).await?;
                 let deleted = removed.is_some();
-                let result = if is_agent {
-                    json!({
-                        "source": source,
-                        "deleted": deleted,
-                        "state": removed.map(SourceStateDisplay::from),
-                    })
+                let state = if is_agent {
+                    json!(removed.map(SourceStateDisplay::from))
                 } else {
-                    json!({
-                        "source": source,
-                        "deleted": deleted,
-                        "state": removed,
-                    })
+                    json!(removed)
                 };
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result,
-                    next_cursor: None,
-                }))
+                Ok(ok(json!({
+                    "source": source,
+                    "deleted": deleted,
+                    "state": state,
+                })))
             }
             ConversationsToolArgs::GetConversation { _id } => {
                 // `_id == 0` means "the caller's latest conversation" — the
@@ -682,7 +694,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                 let conversation = if _id == 0 {
                     let (conversations, _) = self
                         .conversations
-                        .list_conversations_by_user(ctx.caller(), None, Some(1))
+                        .list_conversations_by_user(caller, None, Some(1))
                         .await?;
                     conversations
                         .into_iter()
@@ -691,23 +703,12 @@ impl Tool<BaseCtx> for ConversationsTool {
                 } else {
                     self.conversations.get_conversation(_id).await?
                 };
-                if &conversation.user != ctx.caller() {
-                    return Err("permission denied".into());
-                }
-                if is_agent && !self.may_reuse_memory(&conversation).await? {
-                    return Err("This conversation is excluded from automatic memory reuse.".into());
-                }
+                self.check_readable(&conversation, caller, is_agent).await?;
 
-                let result = if is_agent {
-                    let doc = Document::from(conversation);
-                    json!(doc)
+                Ok(ok(if is_agent {
+                    json!(Document::from(conversation))
                 } else {
                     json!(conversation)
-                };
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result,
-                    next_cursor: None,
                 }))
             }
             ConversationsToolArgs::GetConversationDelta {
@@ -716,77 +717,39 @@ impl Tool<BaseCtx> for ConversationsTool {
                 artifacts_offset,
             } => {
                 let conversation = self.conversations.get_conversation(_id).await?;
-                if &conversation.user != ctx.caller() {
-                    return Err("permission denied".into());
-                }
-                if is_agent && !self.may_reuse_memory(&conversation).await? {
-                    return Err("This conversation is excluded from automatic memory reuse.".into());
-                }
+                self.check_readable(&conversation, caller, is_agent).await?;
 
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(conversation.into_delta(messages_offset, artifacts_offset)),
-                    next_cursor: None,
-                }))
+                Ok(ok(json!(
+                    conversation.into_delta(messages_offset, artifacts_offset)
+                )))
             }
             ConversationsToolArgs::BatchGetConversations { ids } => {
-                let mut result = self
+                let conversations = self
                     .conversations
-                    .batch_get_conversations(ctx.caller(), ids)
+                    .batch_get_conversations(caller, ids)
                     .await?;
-                if is_agent {
-                    result = self.filter_memory_sources(result).await?;
-                }
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(result),
-                    next_cursor: None,
-                }))
+                Ok(ok(self
+                    .render_conversations(conversations, is_agent)
+                    .await?))
             }
             ConversationsToolArgs::ListPrevConversations { cursor, limit } => {
                 let (conversations, next_cursor) = self
                     .conversations
-                    .list_conversations_by_user(ctx.caller(), cursor, Some(limit.unwrap_or(10)))
+                    .list_conversations_by_user(caller, cursor, Some(limit.unwrap_or(10)))
                     .await?;
-
-                let result = if is_agent {
-                    let docs = self
-                        .filter_memory_sources(conversations)
-                        .await?
-                        .into_iter()
-                        .map(Document::from)
-                        .collect::<Vec<_>>();
-                    json!(docs)
-                } else {
-                    json!(conversations)
-                };
-
                 Ok(ToolOutput::new(Response::Ok {
-                    result,
+                    result: self.render_conversations(conversations, is_agent).await?,
                     next_cursor,
                 }))
             }
             ConversationsToolArgs::SearchConversations { query, limit } => {
                 let conversations = self
                     .conversations
-                    .search_conversations(ctx.caller(), query, Some(limit.unwrap_or(10)))
+                    .search_conversations(caller, query, Some(limit.unwrap_or(10)))
                     .await?;
-
-                let result = if is_agent {
-                    let docs = self
-                        .filter_memory_sources(conversations)
-                        .await?
-                        .into_iter()
-                        .map(Document::from)
-                        .collect::<Vec<_>>();
-                    json!(docs)
-                } else {
-                    json!(conversations)
-                };
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result,
-                    next_cursor: None,
-                }))
+                Ok(ok(self
+                    .render_conversations(conversations, is_agent)
+                    .await?))
             }
         }
     }
@@ -1003,7 +966,7 @@ mod tests {
                 conv_id: id,
                 status: ConversationStatus::Working,
                 timestamp: 1_750_000_000_000,
-                user: None,
+                user: Some(*ctx.caller()),
             },
         )
         .await
@@ -1050,11 +1013,11 @@ mod tests {
             .await
             .unwrap();
         }
-        let states = tool.caller_source_states(ctx.caller()).await.unwrap();
+        let states = tool.caller_source_states(ctx.caller());
         assert!(states.contains_key("mine"));
         assert!(!states.contains_key("theirs"));
         let theirs = tool.get_source_state("theirs").unwrap();
-        assert!(!tool.owns_source_state(ctx.caller(), &theirs).await.unwrap());
+        assert!(!theirs.owned_by(ctx.caller()));
 
         let mut states = (0..MAX_SOURCE_STATES as u64 + 2)
             .map(|i| {
@@ -1105,12 +1068,12 @@ mod tests {
         assert_eq!(status("b"), ConversationStatus::Idle);
         assert_eq!(status("c"), ConversationStatus::Submitted);
 
-        let repair = |observed, status| SourceStatusRepair {
+        let repair = |observed, status| SourceStateRepair {
             observed,
             status,
             user: Principal::anonymous(),
         };
-        tool.repair_source_statuses(HashMap::from([
+        tool.repair_source_states(HashMap::from([
             (
                 "a".to_string(),
                 repair(observed_a, ConversationStatus::Working),
@@ -1122,14 +1085,43 @@ mod tests {
         ]))
         .await
         .unwrap();
-        // A repair must not undo a status recorded after it was read.
+        // A repair must not undo a status recorded after it was read, but
+        // still records the owner the binding was saved without.
         assert_eq!(status("a"), ConversationStatus::Idle);
         assert_eq!(status("c"), ConversationStatus::Completed);
+        let user = |source| tool.get_source_state(source).unwrap().user;
+        assert_eq!(user("a"), Some(Principal::anonymous()));
+        assert_eq!(user("b"), None);
+        assert_eq!(user("c"), Some(Principal::anonymous()));
 
         let saved: HashMap<String, SourceState> =
             tool.store.get_extension_as("source_conversation").unwrap();
         assert_eq!(saved["b"].status, ConversationStatus::Idle);
         assert_eq!(saved["c"].status, ConversationStatus::Completed);
+        assert_eq!(saved["a"].user, Some(Principal::anonymous()));
+
+        // A source rebound since the scan read it is left alone.
+        tool.update_source_state(
+            "b".into(),
+            SourceState {
+                conv_id: 9,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let mut stale = tool.get_source_state("b").unwrap();
+        stale.conv_id = 7;
+        tool.repair_source_states(HashMap::from([(
+            "b".to_string(),
+            repair(stale, ConversationStatus::Failed),
+        )]))
+        .await
+        .unwrap();
+        let b = tool.get_source_state("b").unwrap();
+        assert_eq!(b.conv_id, 9);
+        assert_eq!(b.user, None);
+        assert_eq!(b.status, ConversationStatus::default());
     }
 
     #[tokio::test]
@@ -1210,7 +1202,7 @@ mod tests {
                 conv_id: id,
                 status: ConversationStatus::Idle,
                 timestamp: 1_750_000_000_000,
-                user: None,
+                user: Some(*ctx.caller()),
             },
         )
         .await
@@ -1229,7 +1221,7 @@ mod tests {
 
         // The agent-facing variant renders display-friendly fields.
         let agent_ctx = ctx.clone();
-        agent_ctx.set_state(AgentInfo);
+        agent_ctx.set_state(AgentCaller);
         let result = ok_result(
             tool.call(
                 agent_ctx.clone(),
@@ -1476,7 +1468,7 @@ mod tests {
 
         // Agent-facing variants render Document/display forms.
         let agent_ctx = ctx.clone();
-        agent_ctx.set_state(AgentInfo);
+        agent_ctx.set_state(AgentCaller);
         tool.call(
             agent_ctx.clone(),
             ConversationsToolArgs::GetConversation { _id: id },
@@ -1539,12 +1531,24 @@ mod tests {
                 source.into(),
                 SourceState {
                     conv_id: id,
+                    user: Some(user),
                     ..Default::default()
                 },
             )
             .await
             .unwrap();
         }
+        // A binding saved before owners were recorded belongs to nobody
+        // until the startup scan records its owner.
+        tool.update_source_state(
+            "legacy".into(),
+            SourceState {
+                conv_id: tool.get_source_state("mine").unwrap().conv_id,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         tool.init(ctx.clone()).await.unwrap();
         let listed = ok_result(
             tool.call(
@@ -1557,6 +1561,12 @@ mod tests {
         );
         assert!(listed.get("mine").is_some());
         assert!(listed.get("cli:/tmp/default-ws").is_none());
+        assert!(listed.get("legacy").is_none());
+        assert!(
+            tool.delete_source_state("legacy", ctx.caller())
+                .await
+                .is_err()
+        );
         let foreign_ctx = ctx.clone();
         let state = ok_result(
             tool.call(

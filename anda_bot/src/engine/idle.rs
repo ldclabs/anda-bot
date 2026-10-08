@@ -28,13 +28,13 @@ const BRAIN_SLEEP_RECHECK_MS: u64 = 10 * 60 * 1000;
 #[async_trait]
 pub trait IdleHook: Send + Sync {
     /// Called roughly once per [`IDLE_CHECK_INTERVAL`] for as long as the bot
-    /// stays idle, with the continuous idle duration so far. Implementations
-    /// must rate-limit their own work.
-    async fn on_idle(&self, idle_ms: u64);
+    /// stays idle past [`IDLE_HOOK_THRESHOLD_MS`]. Implementations must
+    /// rate-limit their own work.
+    async fn on_idle(&self);
 }
 
-/// Tracks busy/idle observations and reports when the continuous idle time
-/// has reached the threshold.
+/// Tracks busy/idle observations and reports whether the continuous idle
+/// time has reached the threshold.
 pub struct IdleTracker {
     threshold_ms: u64,
     idle_since: Option<u64>,
@@ -48,26 +48,25 @@ impl IdleTracker {
         }
     }
 
-    /// Records one observation. Returns the continuous idle duration once it
-    /// has reached the threshold; any busy observation restarts the clock.
-    pub fn observe(&mut self, busy: bool, now_ms: u64) -> Option<u64> {
+    /// Records one observation. Returns whether the bot has now been idle
+    /// for the threshold; any busy observation restarts the clock.
+    pub fn observe(&mut self, busy: bool, now_ms: u64) -> bool {
         if busy {
             self.idle_since = None;
-            return None;
+            return false;
         }
 
         let since = *self.idle_since.get_or_insert(now_ms);
-        let idle_ms = now_ms.saturating_sub(since);
-        (idle_ms >= self.threshold_ms).then_some(idle_ms)
+        now_ms.saturating_sub(since) >= self.threshold_ms
     }
 }
 
 /// Puts the brain to sleep (a full maintenance cycle) when the bot is idle
-/// and no maintenance cycle has started for 12 hours.
+/// and no maintenance cycle has started for 12 hours. The brain also runs a
+/// cycle on its own once one is a day overdue, whether or not the bot is busy;
+/// this hook gets it done sooner, at a quiet moment.
 pub struct BrainSleepIdleHook {
     brain: brain::Client,
-    sleep_interval_ms: u64,
-    recheck_backoff_ms: u64,
     // Unix ms before which idle calls are ignored; avoids querying the brain
     // every monitor tick during long idle stretches.
     next_check_at: AtomicU64,
@@ -75,18 +74,8 @@ pub struct BrainSleepIdleHook {
 
 impl BrainSleepIdleHook {
     pub fn new(brain: brain::Client) -> Self {
-        Self::with_intervals(brain, BRAIN_SLEEP_INTERVAL_MS, BRAIN_SLEEP_RECHECK_MS)
-    }
-
-    fn with_intervals(
-        brain: brain::Client,
-        sleep_interval_ms: u64,
-        recheck_backoff_ms: u64,
-    ) -> Self {
         Self {
             brain,
-            sleep_interval_ms,
-            recheck_backoff_ms,
             next_check_at: AtomicU64::new(0),
         }
     }
@@ -99,14 +88,14 @@ impl BrainSleepIdleHook {
         let due_at = status
             .maintenance_at
             .start_at
-            .saturating_add(self.sleep_interval_ms);
+            .saturating_add(BRAIN_SLEEP_INTERVAL_MS);
         if now_ms < due_at {
             return Ok(due_at);
         }
 
         if status.formation_processing || status.maintenance_processing {
             // The brain itself is still busy; sleeping now would be rejected.
-            return Ok(now_ms.saturating_add(self.recheck_backoff_ms));
+            return Ok(now_ms.saturating_add(BRAIN_SLEEP_RECHECK_MS));
         }
 
         let output = self
@@ -124,13 +113,13 @@ impl BrainSleepIdleHook {
         );
         // The cycle runs asynchronously and records its start time right
         // away, so the next check lands on the new start_at + interval.
-        Ok(now_ms.saturating_add(self.recheck_backoff_ms))
+        Ok(now_ms.saturating_add(BRAIN_SLEEP_RECHECK_MS))
     }
 }
 
 #[async_trait]
 impl IdleHook for BrainSleepIdleHook {
-    async fn on_idle(&self, _idle_ms: u64) {
+    async fn on_idle(&self) {
         let now_ms = unix_ms();
         if now_ms < self.next_check_at.load(Ordering::SeqCst) {
             return;
@@ -140,7 +129,7 @@ impl IdleHook for BrainSleepIdleHook {
             Ok(next_check_at) => next_check_at,
             Err(err) => {
                 log::warn!("brain sleep check failed: {err}");
-                now_ms.saturating_add(self.recheck_backoff_ms)
+                now_ms.saturating_add(BRAIN_SLEEP_RECHECK_MS)
             }
         };
         self.next_check_at.store(next_check_at, Ordering::SeqCst);
@@ -162,17 +151,17 @@ mod tests {
     fn idle_tracker_requires_continuous_idle_threshold() {
         let mut tracker = IdleTracker::new(1000);
 
-        assert_eq!(tracker.observe(true, 0), None);
-        assert_eq!(tracker.observe(false, 100), None);
-        assert_eq!(tracker.observe(false, 600), None);
-        assert_eq!(tracker.observe(false, 1100), Some(1000));
-        assert_eq!(tracker.observe(false, 2100), Some(2000));
+        assert!(!tracker.observe(true, 0));
+        assert!(!tracker.observe(false, 100));
+        assert!(!tracker.observe(false, 600));
+        assert!(tracker.observe(false, 1100));
+        assert!(tracker.observe(false, 2100));
 
         // Any busy observation restarts the idle clock.
-        assert_eq!(tracker.observe(true, 2200), None);
-        assert_eq!(tracker.observe(false, 2300), None);
-        assert_eq!(tracker.observe(false, 3200), None);
-        assert_eq!(tracker.observe(false, 3300), Some(1000));
+        assert!(!tracker.observe(true, 2200));
+        assert!(!tracker.observe(false, 2300));
+        assert!(!tracker.observe(false, 3200));
+        assert!(tracker.observe(false, 3300));
     }
 
     #[derive(Clone, Default)]
@@ -239,7 +228,7 @@ mod tests {
         let base_url = spawn_brain_mock(state.clone()).await;
         let hook = BrainSleepIdleHook::new(brain::Client::new(base_url, None));
 
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
 
         let calls = state.maintenance_calls.read().clone();
         assert_eq!(calls.len(), 1);
@@ -249,7 +238,7 @@ mod tests {
 
         // The triggered cycle runs asynchronously; further idle ticks are
         // ignored until the recheck backoff expires.
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
         assert_eq!(state.maintenance_calls.read().len(), 1);
     }
 
@@ -260,7 +249,7 @@ mod tests {
         let base_url = spawn_brain_mock(state.clone()).await;
         let hook = BrainSleepIdleHook::new(brain::Client::new(base_url, None));
 
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
 
         assert_eq!(state.maintenance_calls.read().len(), 1);
     }
@@ -273,14 +262,14 @@ mod tests {
         let base_url = spawn_brain_mock(state.clone()).await;
         let hook = BrainSleepIdleHook::new(brain::Client::new(base_url, None));
 
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
 
         assert!(state.maintenance_calls.read().is_empty());
         assert_eq!(*state.status_calls.read(), 1);
 
         // The next check is deferred until the 12-hour interval elapses, so
         // an immediate second tick does not query the brain at all.
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
         assert_eq!(*state.status_calls.read(), 1);
         assert!(state.maintenance_calls.read().is_empty());
     }
@@ -292,7 +281,7 @@ mod tests {
         let base_url = spawn_brain_mock(state.clone()).await;
         let hook = BrainSleepIdleHook::new(brain::Client::new(base_url, None));
 
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
 
         assert!(state.maintenance_calls.read().is_empty());
     }
@@ -305,7 +294,7 @@ mod tests {
             None,
         ));
 
-        hook.on_idle(IDLE_HOOK_THRESHOLD_MS).await;
+        hook.on_idle().await;
 
         let next_check_at = hook.next_check_at.load(Ordering::SeqCst);
         assert!(next_check_at > unix_ms());

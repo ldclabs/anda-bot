@@ -26,10 +26,7 @@ use std::{
 };
 
 use crate::engine::{
-    ActionSession, CompletionHook,
-    goal::{self, GoalStateSnapshot},
-    prompt::PromptCommand,
-    system::system_runtime_prompt,
+    ActionSession, CompletionHook, goal, prompt::PromptCommand, system::system_runtime_prompt,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -70,7 +67,7 @@ pub struct SessionState {
     pub memory_policy: super::memory_policy::MemoryPolicy,
     pub summary: SessionSummary,
     pub formation_context: Option<SessionFormationContext>,
-    pub goal: Option<GoalStateSnapshot>,
+    pub goal: Option<goal::GoalState>,
     pub background_tasks: HashMap<String, BackgroundTaskInfo>,
     pub submit_formation_at: u64,
 }
@@ -367,7 +364,7 @@ impl Session {
                 .formation_context
                 .as_ref()
                 .map(SessionFormationContext::from),
-            goal: self.goal.read().as_ref().map(|goal| goal.snapshot()),
+            goal: self.goal.read().clone(),
             background_tasks: self.background_tasks.read().clone(),
             submit_formation_at: self.submit_formation_at.load(Ordering::SeqCst),
         }

@@ -59,7 +59,7 @@ use session::{ConversationInput, Session};
 use super::{
     ActionEvent, ActionRuntime, ActionSession, AskUserChoiceTool, CompletionHook, McpServerTool,
     browser::ChromeBrowserTool,
-    conversation::{AgentInfo, ConversationsTool, RequestState, SourceState},
+    conversation::{AgentCaller, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalTool, GoalToolState},
     idle::{IDLE_CHECK_INTERVAL, IDLE_HOOK_THRESHOLD_MS, IdleHook, IdleTracker},
     multimodal,
@@ -507,12 +507,12 @@ impl AndaBot {
             let mut tracker = IdleTracker::new(IDLE_HOOK_THRESHOLD_MS);
             loop {
                 tokio::time::sleep(IDLE_CHECK_INTERVAL).await;
-                if let Some(idle_ms) = tracker.observe(this.has_busy_sessions(), unix_ms()) {
+                if tracker.observe(this.has_busy_sessions(), unix_ms()) {
                     for hook in this.inner.idle_hooks.iter() {
                         let Ok(_permit) = this.inner.admission.enter() else {
                             break;
                         };
-                        hook.on_idle(idle_ms).await;
+                        hook.on_idle().await;
                     }
                 }
             }
@@ -1012,7 +1012,7 @@ impl Agent<AgentCtx> for AndaBot {
         )?;
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
 
-        ctx.base.set_state(AgentInfo);
+        ctx.base.set_state(AgentCaller);
 
         if let PromptCommand::Side { prompt } = &command {
             let available_tools = available_tool_names(&ctx).await;
@@ -2666,7 +2666,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_self_check_repairs_stale_source_statuses() {
+    async fn startup_self_check_repairs_stale_source_states() {
         let dir = tempfile::tempdir().unwrap();
         let (_engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
         let conv = Conversation {
@@ -2699,6 +2699,8 @@ mod tests {
         bot.startup_self_check(mock_agent_ctx()).await;
         let state = bot.inner.conversations.get_source_state(&source).unwrap();
         assert_eq!(state.status, ConversationStatus::Idle);
+        // They did not record its owner either; the scan does.
+        assert_eq!(state.user, Some(test_caller()));
 
         let mut conv = bot
             .inner

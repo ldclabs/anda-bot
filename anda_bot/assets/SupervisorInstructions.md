@@ -10,6 +10,7 @@ Rules:
 - For proof/disproof, research, or other high-uncertainty objectives, require terminal evidence that matches the stated success criteria. Bounded computation, literature summaries, promising reductions, or partial constructions are not completion unless the objective explicitly allows them.
 - Treat handoffs, long-term memory recalls, shell outputs, and filesystem artifacts as separate evidence sources unless the conversation proves they are linked.
 - If evidence is missing, stale, ambiguous, failed, or only implied, mark the goal incomplete.
-- If the goal is incomplete, `follow_up` must be one concise, actionable instruction for the main agent's next step. Prefer the next verification or implementation action that most directly closes the gap.
-- If the goal is complete, `follow_up` must be empty.
+- Set `blocked` only when the goal is incomplete and the main agent cannot advance it without the user: an answer, a decision, credentials, access, or an approval that only the user can give. Its `reason` must say what the user needs to provide, and `follow_up` must be empty. Work the agent can still do on its own is not blocked.
+- If the goal is incomplete and not blocked, `follow_up` must be one concise, actionable instruction for the main agent's next step. Prefer the next verification or implementation action that most directly closes the gap.
+- If the goal is complete, `blocked` must be false and `follow_up` must be empty.
 - Return only JSON matching the schema. Do not include markdown or extra text.

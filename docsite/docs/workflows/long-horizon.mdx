@@ -16,7 +16,7 @@ Anda Bot is designed for complex goals that need continuity, not only one answer
 /goal Finish this release prep: run tests, check the changelog, verify install script docs, and summarize risk.
 ```
 
-When the main agent is idle, the goal checker evaluates whether the current result is complete. If more work is needed, it can generate a follow-up for the main agent. When context grows too long, Anda compacts the current state and opens a linked conversation to continue the same session.
+When the main agent is idle, the goal checker evaluates whether the current result is complete. If more work is needed, it can generate a follow-up for the main agent. If the work can only continue with your input, such as a decision, credentials, or an approval, the goal pauses and says what it needs; your next message resumes it. When context grows too long, Anda compacts the current state and opens a linked conversation to continue the same session.
 
 ## Use /loop
 

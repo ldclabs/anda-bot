@@ -16,7 +16,7 @@ El comando `/goal` marca una solicitud como un objetivo de largo alcance:
 /goal Finalizar esta preparación de lanzamiento: ejecutar pruebas, revisar el registro de cambios, verificar la documentación del script de instalación y resumir los riesgos.
 ```
 
-Cuando el agente principal se encuentra inactivo, el verificador de objetivos evalúa si el resultado actual está completo. Si se requiere más trabajo, genera una tarea de seguimiento para el agente principal. Si el contexto de la conversación se vuelve demasiado extenso, Anda compacta el estado actual y abre una conversación vinculada para continuar con la misma sesión sin perder el hilo.
+Cuando el agente principal se encuentra inactivo, el verificador de objetivos evalúa si el resultado actual está completo. Si se requiere más trabajo, genera una tarea de seguimiento para el agente principal. Si el trabajo solo puede continuar con su intervención, como una decisión, credenciales o una aprobación, el objetivo se pausa e indica lo que necesita; su siguiente mensaje lo reanuda. Si el contexto de la conversación se vuelve demasiado extenso, Anda compacta el estado actual y abre una conversación vinculada para continuar con la misma sesión sin perder el hilo.
 
 ## Usar /loop
 

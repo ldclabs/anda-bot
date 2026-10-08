@@ -140,6 +140,9 @@ fn print_session_state(session: &SessionState) {
     match &session.goal {
         Some(goal) => {
             println!("  goal: {}", single_line(&goal.objective));
+            if goal.waiting_for_user {
+                println!("  goal_status: waiting for user input");
+            }
             if let Some(prev_objective) = &goal.prev_objective {
                 println!("  previous_goal: {}", single_line(prev_objective));
             }

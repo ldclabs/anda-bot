@@ -1,5 +1,6 @@
 //! Startup self-check: resume interrupted source-bound conversations after a
-//! daemon restart, and repair the statuses recorded for their sources.
+//! daemon restart, and repair the statuses and owners recorded for their
+//! sources.
 
 use anda_core::{AgentContext, BoxError, CompletionRequest};
 use anda_engine::{
@@ -19,7 +20,7 @@ use super::{
     session::SessionRequestMeta,
 };
 use crate::engine::{
-    conversation::{RequestState, SourceStatusRepair},
+    conversation::{RequestState, SourceStateRepair},
     system::system_runtime_prompt,
 };
 
@@ -64,10 +65,10 @@ impl AndaBot {
             match self.latest_conversation_in_chain(state.conv_id, None).await {
                 Ok(None) => {}
                 Ok(Some(conversation)) => {
-                    if state.status != conversation.status {
+                    if state.status != conversation.status || state.user.is_none() {
                         repairs.insert(
                             source_key.clone(),
-                            SourceStatusRepair {
+                            SourceStateRepair {
                                 observed: state,
                                 status: conversation.status.clone(),
                                 user: conversation.user,
@@ -93,13 +94,8 @@ impl AndaBot {
             }
         }
 
-        if let Err(err) = self
-            .inner
-            .conversations
-            .repair_source_statuses(repairs)
-            .await
-        {
-            log::warn!("startup self-check could not repair source statuses: {err}");
+        if let Err(err) = self.inner.conversations.repair_source_states(repairs).await {
+            log::warn!("startup self-check could not repair source states: {err}");
         }
 
         candidates.sort_by(|left, right| {
