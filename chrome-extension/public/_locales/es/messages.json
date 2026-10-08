@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "Aún no hay marcadores"
   },
+  "bookmarksNoMatches": {
+    "message": "Ningún marcador cargado coincide con esta búsqueda."
+  },
   "allBookmarks": {
     "message": "Todos"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "Quitar de carpeta"
-  },
-  "bookmarkJump": {
-    "message": "Ir al mensaje"
   },
   "dashboardPageTitle": {
     "message": "Anda Dashboard"
@@ -735,7 +735,7 @@
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Metadatos del marcador seleccionado y enlaces de memoria (Brain)."
+    "message": "Mensaje, origen y carpetas del marcador seleccionado."
   },
   "bookmarkSelected": {
     "message": "Marcador seleccionado"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "Folders"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "Conceptos de memoria vinculados"
   },
   "loadMore": {
     "message": "Cargar más"

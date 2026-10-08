@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "No bookmarks yet"
   },
+  "bookmarksNoMatches": {
+    "message": "No loaded bookmarks match this search."
+  },
   "allBookmarks": {
     "message": "All"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "Remove from folder"
-  },
-  "bookmarkJump": {
-    "message": "Jump to message"
   },
   "dashboardPageTitle": {
     "message": "Anda Dashboard"
@@ -735,7 +735,7 @@
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Selected bookmark metadata and Brain links."
+    "message": "The selected bookmark's message, source, and folders."
   },
   "bookmarkSelected": {
     "message": "Selected bookmark"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "Folders"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "Linked Brain concepts"
   },
   "loadMore": {
     "message": "Load more"

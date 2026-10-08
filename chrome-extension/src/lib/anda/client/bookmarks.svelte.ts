@@ -5,7 +5,7 @@ import type {
   BookmarkFolders,
   BookmarkedMessage,
   ChatMessage,
-  Conversation
+  ConversationDelta
 } from './types'
 import { normalizeMessage } from './conversations'
 
@@ -278,15 +278,22 @@ export class BookmarksApi {
     }
 
     const meta = await this.#context.bookmarkRequestMeta(bookmark)
+    // A delta starting at the message skips the earlier messages and every
+    // artifact, which a full GetConversation would transfer for one message.
     const {
       output: { result }
-    } = await this.#daemon.toolCall<{ result: Conversation }>(
+    } = await this.#daemon.toolCall<{ result: ConversationDelta }>(
       'conversations_api',
-      { type: 'GetConversation', _id: bookmark.conversation },
+      {
+        type: 'GetConversationDelta',
+        _id: bookmark.conversation,
+        messages_offset: bookmark.message_index,
+        artifacts_offset: Number.MAX_SAFE_INTEGER
+      },
       [],
       meta
     )
-    const rawMessage = result.messages?.[bookmark.message_index]
+    const rawMessage = result.messages?.[0]
     if (!rawMessage) {
       return ''
     }

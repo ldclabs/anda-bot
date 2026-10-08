@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "还没有收藏"
   },
+  "bookmarksNoMatches": {
+    "message": "已加载的收藏中没有匹配项。"
+  },
   "allBookmarks": {
     "message": "全部"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "移出文件夹"
-  },
-  "bookmarkJump": {
-    "message": "跳转到消息"
   },
   "dashboardPageTitle": {
     "message": "Anda 仪表盘"
@@ -735,7 +735,7 @@
     "message": "上下文"
   },
   "bookmarkContextSubtitle": {
-    "message": "当前收藏的元数据和 Brain 关联。"
+    "message": "当前收藏的消息、来源和文件夹。"
   },
   "bookmarkSelected": {
     "message": "当前收藏"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "文件夹"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "关联的 Brain 概念"
   },
   "loadMore": {
     "message": "加载更多"

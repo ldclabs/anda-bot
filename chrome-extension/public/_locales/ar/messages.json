@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "لا توجد إشارات مرجعية بعد"
   },
+  "bookmarksNoMatches": {
+    "message": "لا توجد إشارات مرجعية محمّلة تطابق هذا البحث."
+  },
   "allBookmarks": {
     "message": "الكل"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "إزالة من المجلد"
-  },
-  "bookmarkJump": {
-    "message": "الانتقال إلى الرسالة"
   },
   "dashboardPageTitle": {
     "message": "Anda Dashboard"
@@ -735,7 +735,7 @@
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "بيانات التعريف للإشارة المرجعية المحددة وروابط الذاكرة."
+    "message": "رسالة الإشارة المرجعية المحددة ومصدرها ومجلداتها."
   },
   "bookmarkSelected": {
     "message": "الإشارة المرجعية المحددة"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "Folders"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "مفاهيم الذاكرة المرتبطة"
   },
   "loadMore": {
     "message": "تحميل المزيد"

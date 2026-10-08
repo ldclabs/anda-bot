@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "Пока нет закладок"
   },
+  "bookmarksNoMatches": {
+    "message": "Среди загруженных закладок совпадений нет."
+  },
   "allBookmarks": {
     "message": "Все"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "Убрать из папки"
-  },
-  "bookmarkJump": {
-    "message": "Перейти к сообщению"
   },
   "dashboardPageTitle": {
     "message": "Anda Dashboard"
@@ -735,7 +735,7 @@
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Метаданные выбранной закладки и связи с памятью."
+    "message": "Сообщение, источник и папки выбранной закладки."
   },
   "bookmarkSelected": {
     "message": "Выбранная закладка"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "Folders"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "Связанные концепты памяти"
   },
   "loadMore": {
     "message": "Загрузить ещё"

@@ -650,6 +650,9 @@
   "bookmarksEmpty": {
     "message": "Aucun favori pour l’instant"
   },
+  "bookmarksNoMatches": {
+    "message": "Aucun favori chargé ne correspond à cette recherche."
+  },
   "allBookmarks": {
     "message": "Tous"
   },
@@ -670,9 +673,6 @@
   },
   "removeFromBookmarkFolder": {
     "message": "Retirer du dossier"
-  },
-  "bookmarkJump": {
-    "message": "Aller au message"
   },
   "dashboardPageTitle": {
     "message": "Anda Dashboard"
@@ -735,7 +735,7 @@
     "message": "Context"
   },
   "bookmarkContextSubtitle": {
-    "message": "Métadonnées du favori sélectionné et liens vers la mémoire (Brain)."
+    "message": "Message, source et dossiers du favori sélectionné."
   },
   "bookmarkSelected": {
     "message": "Favori sélectionné"
@@ -754,9 +754,6 @@
   },
   "bookmarkFolders": {
     "message": "Folders"
-  },
-  "bookmarkLinkedBrain": {
-    "message": "Concepts de mémoire associés"
   },
   "loadMore": {
     "message": "Charger plus"

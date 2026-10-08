@@ -320,18 +320,17 @@ describe('BookmarksApi folder operations', () => {
 })
 
 describe('BookmarksApi.conversationMarkdown', () => {
-  it('loads the markdown from the source conversation message', async () => {
+  it('loads the markdown from a delta starting at the bookmarked message', async () => {
     const { daemon, toolCall } = createDaemon({
       result: {
         _id: 7,
-        user: 'alice',
         messages: [
-          { role: 'user', content: [{ type: 'Text', text: 'prompt' }] },
-          { role: 'assistant', content: [{ type: 'Text', text: '**conversation markdown**' }] }
+          { role: 'assistant', content: [{ type: 'Text', text: '**conversation markdown**' }] },
+          { role: 'user', content: [{ type: 'Text', text: 'later prompt' }] }
         ],
+        artifacts: [],
         status: 'completed',
         usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 0 },
-        created_at: 1,
         updated_at: 2
       }
     })
@@ -342,7 +341,12 @@ describe('BookmarksApi.conversationMarkdown', () => {
     expect(markdown).toBe('**conversation markdown**')
     expect(toolCall).toHaveBeenCalledWith(
       'conversations_api',
-      { type: 'GetConversation', _id: 7 },
+      {
+        type: 'GetConversationDelta',
+        _id: 7,
+        messages_offset: 1,
+        artifacts_offset: Number.MAX_SAFE_INTEGER
+      },
       [],
       expect.objectContaining({
         source: 'cli:/tmp/ws/',
@@ -357,11 +361,10 @@ describe('BookmarksApi.conversationMarkdown', () => {
     const { daemon } = createDaemon({
       result: {
         _id: 7,
-        user: 'alice',
         messages: [],
+        artifacts: [],
         status: 'completed',
         usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 0 },
-        created_at: 1,
         updated_at: 2
       }
     })

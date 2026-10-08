@@ -5,6 +5,7 @@ import {
   bookmarkPreviewText,
   compareBookmarkItems,
   emptyBookmarkFolders,
+  folderTree,
   type BookmarkPage,
   type BookmarkStore
 } from './browser.svelte'
@@ -121,7 +122,7 @@ describe('BookmarkBrowser.load', () => {
     await browser.load()
 
     expect(browser.items.map((item) => item.message_id)).toEqual(['m-2-0', 'm-1-0'])
-    expect(browser.folderList.map((folder) => folder.name)).toEqual(['Reading'])
+    expect(browser.folderList.map((entry) => entry.folder.name)).toEqual(['Reading'])
     expect(browser.folderName(1)).toBe('Reading')
     expect(browser.hasMore).toBe(true)
     expect(browser.loading).toBe(false)
@@ -297,21 +298,39 @@ describe('BookmarkBrowser folder CRUD', () => {
     expect(list).toHaveBeenCalledTimes(1)
     expect(browser.isDeletingFolder(4)).toBe(false)
   })
-})
 
-describe('BookmarkBrowser.folderCount', () => {
-  it('counts loaded items per folder', async () => {
+  it('falls back to all when the active subfolder was deleted with its parent', async () => {
+    const before = folders({ 1: 'Work', 2: 'Child' })
+    before.folders['2'].parent_id = 1
+    const list = vi.fn(async () => page([]))
     const browser = new BookmarkBrowser(
       createStore({
-        list: vi.fn(async () => page([bookmark(2, undefined, [4]), bookmark(1, undefined, [])]))
+        list,
+        listFolders: vi.fn(async () => before),
+        deleteFolder: vi.fn(async () => emptyBookmarkFolders())
       })
     )
 
-    await browser.load()
+    await browser.selectFolder(2)
+    await browser.deleteFolder(1)
 
-    expect(browser.folderCount('all')).toBe(2)
-    expect(browser.folderCount('unfiled')).toBe(1)
-    expect(browser.folderCount(4)).toBe(1)
-    expect(browser.folderCount(9)).toBe(0)
+    expect(browser.activeFolder).toBe('all')
+    expect(list).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('folderTree', () => {
+  it('orders folders depth-first and lifts orphans to the top level', () => {
+    const state = folders({ 1: 'Work', 2: 'Child', 3: 'Archive', 4: 'Orphan' })
+    state.folders['2'].parent_id = 1
+    state.folders['3'].order = 0
+    state.folders['4'].parent_id = 99
+
+    expect(folderTree(state).map(({ folder, depth, path }) => [folder._id, depth, path])).toEqual([
+      [3, 0, 'Archive'],
+      [1, 0, 'Work'],
+      [2, 1, 'Work / Child'],
+      [4, 0, 'Orphan']
+    ])
   })
 })

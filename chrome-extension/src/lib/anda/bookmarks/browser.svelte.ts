@@ -12,6 +12,13 @@ export interface BookmarkPage {
   nextCursor: string | null
 }
 
+/** A folder in display order, with its nesting depth and `Parent / Child` path. */
+export interface FolderEntry {
+  folder: BookmarkFolder
+  depth: number
+  path: string
+}
+
 /**
  * Everything `BookmarkBrowser` needs from the daemon. `andaClient` satisfies it
  * in production; tests pass a plain object, which is why the browser never
@@ -42,6 +49,8 @@ export class BookmarkBrowser {
 
   items = $state<BookmarkedMessage[]>([])
   folders = $state<BookmarkFolders>(emptyBookmarkFolders())
+  /** Folders depth-first in display order; derived once per folder change. */
+  folderList = $derived(folderTree(this.folders))
   activeFolder = $state<ActiveFolder>('all')
   error = $state('')
   loading = $state(false)
@@ -63,23 +72,8 @@ export class BookmarkBrowser {
     return Boolean(this.#cursor)
   }
 
-  /** Folders in display order. */
-  get folderList(): BookmarkFolder[] {
-    return Object.values(this.folders.folders).sort(
-      (left, right) => left.order - right.order || left._id - right._id
-    )
-  }
-
   folderName(folderId: number): string {
     return this.folders.folders[String(folderId)]?.name || ''
-  }
-
-  /** How many loaded items sit in `folder`; drives the folder-list counters. */
-  folderCount(folder: ActiveFolder): number {
-    if (folder === 'all') {
-      return this.items.length
-    }
-    return this.items.filter((item) => this.#matchesFolder(item, folder)).length
   }
 
   isRemoving(messageId: string): boolean {
@@ -167,7 +161,10 @@ export class BookmarkBrowser {
     }
   }
 
-  /** Deletes a folder, falling back to 'all' when it was the active one. */
+  /**
+   * Deletes a folder with its subfolders, falling back to 'all' when the
+   * active folder went with them.
+   */
   async deleteFolder(folderId: number): Promise<void> {
     if (this.#deletingFolderIds.has(folderId)) {
       return
@@ -176,7 +173,7 @@ export class BookmarkBrowser {
     this.error = ''
     try {
       this.folders = await this.#store.deleteFolder(folderId)
-      if (this.activeFolder === folderId) {
+      if (typeof this.activeFolder === 'number' && !this.folderName(this.activeFolder)) {
         this.activeFolder = 'all'
       }
       await this.load()
@@ -259,6 +256,35 @@ export class BookmarkBrowser {
     }
     return ids.includes(folder)
   }
+}
+
+/**
+ * Orders folders depth-first, siblings by `order` then id. A folder whose
+ * parent no longer exists is shown at the top level.
+ */
+export function folderTree(folders: BookmarkFolders): FolderEntry[] {
+  const all = Object.values(folders.folders)
+  const ids = new Set(all.map((folder) => folder._id))
+  const children = new Map<number | null, BookmarkFolder[]>()
+  for (const folder of all) {
+    const parent = folder.parent_id != null && ids.has(folder.parent_id) ? folder.parent_id : null
+    const siblings = children.get(parent)
+    if (siblings) siblings.push(folder)
+    else children.set(parent, [folder])
+  }
+
+  const entries: FolderEntry[] = []
+  const visit = (parent: number | null, depth: number, parentPath: string) => {
+    const siblings = children.get(parent) || []
+    siblings.sort((left, right) => left.order - right.order || left._id - right._id)
+    for (const folder of siblings) {
+      const path = parentPath ? `${parentPath} / ${folder.name}` : folder.name
+      entries.push({ folder, depth, path })
+      visit(folder._id, depth + 1, path)
+    }
+  }
+  visit(null, 0, '')
+  return entries
 }
 
 export function bookmarkFolderIds(bookmark: Bookmark | BookmarkedMessage): number[] {
