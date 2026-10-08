@@ -8,6 +8,7 @@ use anda_db::{
     schema::Fv,
     unix_ms,
 };
+use serde::de::DeserializeOwned;
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,
@@ -101,6 +102,8 @@ impl CronStore {
         let updated = args.into_update_with_origin(origin).apply_to(job, now_ms)?;
         let mut patch = cron_job_update_patch(&updated)?;
         patch.retain(|key, value| before.get(key) != Some(value));
+        // AndaDB rejects an empty patch; a no-op edit within the same
+        // millisecond leaves nothing to write.
         if patch.is_empty() {
             return Ok(updated);
         }
@@ -114,33 +117,7 @@ impl CronStore {
         cursor: Option<String>,
         limit: Option<usize>,
     ) -> Result<(Vec<CronJob>, Option<String>), BoxError> {
-        let limit = limit.unwrap_or(10).clamp(1, 100);
-        let cursor = match BTree::from_cursor::<u64>(&cursor)? {
-            Some(cursor) => cursor,
-            None => self.jobs.max_document_id() + 1,
-        };
-        let filter = Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))));
-        let ids = self.jobs.query_last_ids(filter, Some(limit)).await?;
-        // Derive the next cursor from the queried ids, not from the
-        // materialized rows: a concurrent `remove_job` between the id query
-        // and the reads below would otherwise shorten the page and stop
-        // pagination early.
-        let next_cursor = if ids.len() >= limit {
-            ids.first().and_then(BTree::to_cursor)
-        } else {
-            None
-        };
-        let mut rt = Vec::with_capacity(ids.len());
-        for id in ids {
-            match self.jobs.get_as::<CronJob>(id).await {
-                Ok(job) => rt.push(job),
-                // The job was removed after the id query; skip it instead of
-                // failing the whole listing.
-                Err(DBError::NotFound { .. }) => continue,
-                Err(err) => return Err(err.into()),
-            }
-        }
-        Ok((rt, next_cursor))
+        newest_page(&self.jobs, None, cursor, limit).await
     }
 
     pub async fn get_job(&self, id: u64) -> Result<CronJob, BoxError> {
@@ -169,8 +146,13 @@ impl CronStore {
         let _guard = self.mutations.lock().await;
         let job: CronJob = self.jobs.get_as(id).await?;
         let now_ms = unix_ms();
-        let schedule = job.schedule()?;
-        let next_run = schedule.next_run(now_ms);
+        let next_run = job.schedule()?.next_run(now_ms);
+        if next_run >= DISABLED_JOB_NEXT_RUN {
+            return Err(
+                "the job has no future run time (a one-time job that already ran); update its schedule instead"
+                    .into(),
+            );
+        }
 
         let job = self
             .jobs
@@ -205,57 +187,25 @@ impl CronStore {
         limit: Option<usize>,
         job_id: Option<u64>,
     ) -> Result<(Vec<CronRun>, Option<String>), BoxError> {
-        let limit = limit.unwrap_or(10).clamp(1, 100);
-        let cursor = match BTree::from_cursor::<u64>(&cursor)? {
-            Some(cursor) => cursor,
-            None => self.runs.max_document_id() + 1,
-        };
-        let filter = if let Some(job_id) = job_id {
-            Filter::And(vec![
-                Box::new(Filter::Field((
-                    "job_id".to_string(),
-                    RangeQuery::Eq(Fv::U64(job_id)),
-                ))),
-                Box::new(Filter::Field((
-                    "_id".to_string(),
-                    RangeQuery::Lt(Fv::U64(cursor)),
-                ))),
-            ])
-        } else {
-            Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))))
-        };
-
-        let ids = self.runs.query_last_ids(filter, Some(limit)).await?;
-        let next_cursor = if ids.len() >= limit {
-            ids.first().and_then(BTree::to_cursor)
-        } else {
-            None
-        };
-        let mut rt = Vec::with_capacity(ids.len());
-        for id in ids {
-            match self.runs.get_as::<CronRun>(id).await {
-                Ok(run) => rt.push(run),
-                Err(DBError::NotFound { .. }) => continue,
-                Err(err) => return Err(err.into()),
-            }
-        }
-        Ok((rt, next_cursor))
+        newest_page(&self.runs, job_id.map(runs_of_job), cursor, limit).await
     }
 
-    pub async fn due_jobs(
+    /// Ids of due jobs, earliest `next_run` first; [`Self::claim_job`]
+    /// rereads and rechecks each one.
+    pub fn due_job_ids(
         &self,
         now_ms: u64,
         limit: usize,
         exclude: &HashSet<u64>,
-    ) -> Result<Vec<CronJob>, BoxError> {
+    ) -> Result<Vec<u64>, BoxError> {
+        let mut ids = Vec::with_capacity(limit);
         if limit == 0 {
-            return Ok(Vec::new());
+            return Ok(ids);
         }
 
-        // AndaDB 0.11 makes bounded collection queries select by document ID.
-        // Walk the next_run index directly so the limit keeps the earliest due
-        // jobs, skipping in-flight IDs without letting them consume the page.
-        let mut ids = Vec::with_capacity(limit);
+        // Bounded collection queries select by document id, so walk the
+        // next_run index directly: the limit keeps the earliest due jobs and
+        // in-flight ids are skipped without using up the page.
         self.jobs
             .get_btree_index(&["next_run"])?
             .try_range_query_ids(RangeQuery::Le(Fv::U64(now_ms / 1000)), false, |matches| {
@@ -269,20 +219,7 @@ impl CronStore {
                 }
                 true
             })?;
-
-        let mut jobs = Vec::with_capacity(ids.len());
-        for id in ids {
-            match self.jobs.get_as::<CronJob>(id).await {
-                Ok(job) if job.next_run <= now_ms / 1000 => jobs.push(job),
-                Ok(_) => continue,
-                // A job removed between the index walk and this read must not
-                // fail the whole scheduler tick.
-                Err(DBError::NotFound { .. }) => continue,
-                Err(err) => return Err(err.into()),
-            }
-        }
-        jobs.sort_by_key(|job| (job.next_run, job._id));
-        Ok(jobs)
+        Ok(ids)
     }
 
     /// Recheck the definition under the same lock used by management and completion.
@@ -292,10 +229,9 @@ impl CronStore {
         now_ms: u64,
     ) -> Result<Option<(CronJob, CronRun)>, BoxError> {
         let _guard = self.mutations.lock().await;
-        let job: CronJob = match self.jobs.get_as(id).await {
-            Ok(job) => job,
-            Err(DBError::NotFound { .. }) => return Ok(None),
-            Err(err) => return Err(err.into()),
+        // A job removed after the index walk is simply not claimed.
+        let Some(job) = get_existing::<CronJob>(&self.jobs, id).await? else {
+            return Ok(None);
         };
         if job.is_paused() || job.next_run > now_ms / 1000 {
             return Ok(None);
@@ -345,10 +281,8 @@ impl CronStore {
         }
 
         self.runs.update(run._id, run_patch).await?;
-        let job = match self.jobs.get_as::<CronJob>(run.job_id).await {
-            Ok(job) => job,
-            Err(DBError::NotFound { .. }) => return Ok(()),
-            Err(err) => return Err(err.into()),
+        let Some(job) = get_existing::<CronJob>(&self.jobs, run.job_id).await? else {
+            return Ok(());
         };
         if job.origin == started_job.origin
             && let Some(conversation_id) = result.conversation_id
@@ -363,8 +297,15 @@ impl CronStore {
             && job.schedule == started_job.schedule
             && job.tz == started_job.tz
         {
-            let schedule = job.schedule()?;
-            let next_run = schedule.next_run(finished_at);
+            // A schedule that no longer parses must not leave the job due, or
+            // it would be claimed again as soon as this run is released.
+            let next_run = match job.schedule() {
+                Ok(schedule) => schedule.next_run(finished_at),
+                Err(err) => {
+                    log::warn!(name = "cron"; "disabling cron job {} with an invalid schedule: {err}", job._id);
+                    DISABLED_JOB_NEXT_RUN
+                }
+            };
             job_patch.insert("next_run".to_string(), Fv::U64(next_run));
         }
 
@@ -378,10 +319,7 @@ impl CronStore {
     async fn prune_runs(&self, job_id: u64, latest_run: u64) -> Result<(), BoxError> {
         let runs_before = |range: RangeQuery<Fv>| {
             Filter::And(vec![
-                Box::new(Filter::Field((
-                    "job_id".to_string(),
-                    RangeQuery::Eq(Fv::U64(job_id)),
-                ))),
+                Box::new(runs_of_job(job_id)),
                 Box::new(Filter::Field(("_id".to_string(), range))),
             ])
         };
@@ -413,6 +351,55 @@ impl CronStore {
         self.runs.flush(now_ms).await?;
         Ok(())
     }
+}
+
+/// Newest-first cursor page of `scope` matches, rows in ascending id order.
+async fn newest_page<T: DeserializeOwned>(
+    collection: &Collection,
+    scope: Option<Filter>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Result<(Vec<T>, Option<String>), BoxError> {
+    let limit = limit.unwrap_or(10).clamp(1, 100);
+    let cursor = match BTree::from_cursor::<u64>(&cursor)? {
+        Some(cursor) => cursor,
+        None => collection.max_document_id() + 1,
+    };
+    let below = Filter::Field(("_id".to_string(), RangeQuery::Lt(Fv::U64(cursor))));
+    let filter = match scope {
+        Some(scope) => Filter::And(vec![Box::new(scope), Box::new(below)]),
+        None => below,
+    };
+    let ids = collection.query_last_ids(filter, Some(limit)).await?;
+    // Derive the next cursor from the queried ids, not from the materialized
+    // rows: a concurrent removal between the id query and the reads below
+    // would otherwise shorten the page and stop pagination early.
+    let next_cursor = if ids.len() >= limit {
+        ids.first().and_then(BTree::to_cursor)
+    } else {
+        None
+    };
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in ids {
+        rows.extend(get_existing(collection, id).await?);
+    }
+    Ok((rows, next_cursor))
+}
+
+/// Reads a document that may have been removed concurrently.
+async fn get_existing<T: DeserializeOwned>(
+    collection: &Collection,
+    id: u64,
+) -> Result<Option<T>, BoxError> {
+    match collection.get_as(id).await {
+        Ok(doc) => Ok(Some(doc)),
+        Err(DBError::NotFound { .. }) => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn runs_of_job(job_id: u64) -> Filter {
+    Filter::Field(("job_id".to_string(), RangeQuery::Eq(Fv::U64(job_id))))
 }
 
 fn cron_job_update_patch(job: &CronJob) -> Result<BTreeMap<String, Fv>, BoxError> {
@@ -615,16 +602,14 @@ mod tests {
         )
         .await;
 
-        let due_jobs = store
-            .due_jobs(
+        let due_ids = store
+            .due_job_ids(
                 (base + Duration::seconds(60)).timestamp_millis() as u64,
                 2,
                 &HashSet::new(),
             )
-            .await
             .unwrap();
 
-        let due_ids: Vec<u64> = due_jobs.iter().map(|job| job._id).collect();
         assert_eq!(due_ids, vec![job_earliest._id, job_middle._id]);
         assert!(!due_ids.contains(&job_late._id));
     }
@@ -649,29 +634,17 @@ mod tests {
         }
         let exclude: HashSet<u64> = [jobs[3]._id, jobs[4]._id].into_iter().collect();
 
-        let due = store
-            .due_jobs(
+        let due_ids = store
+            .due_job_ids(
                 (base + Duration::seconds(60)).timestamp_millis() as u64,
                 2,
                 &exclude,
             )
-            .await
             .unwrap();
 
-        // Before the fetch budget accounted for `exclude`, the two highest ids
-        // (which the range query returns first) were the excluded ones, so the
-        // retain left nothing and both free slots went unused this tick.
-        let due_ids: Vec<u64> = due.iter().map(|job| job._id).collect();
-        assert_eq!(
-            due_ids.len(),
-            2,
-            "free slots should be filled, got {due_ids:?}"
-        );
-        assert!(due_ids.iter().all(|id| !exclude.contains(id)));
-        assert!(
-            due.windows(2).all(|w| w[0].next_run <= w[1].next_run),
-            "due jobs should be ordered by next_run"
-        );
+        // In-flight jobs must not use up the free slots, and the earliest
+        // remaining jobs come first.
+        assert_eq!(due_ids, vec![jobs[0]._id, jobs[1]._id]);
     }
 
     #[tokio::test]
@@ -824,8 +797,7 @@ mod tests {
         let job = insert_at_job(&store, "once", at).await;
         assert!(
             store
-                .due_jobs(at - 700, 8, &HashSet::new())
-                .await
+                .due_job_ids(at - 700, 8, &HashSet::new())
                 .unwrap()
                 .is_empty()
         );
@@ -836,11 +808,51 @@ mod tests {
             .unwrap();
         assert!(
             store
-                .due_jobs(at + 5100, 8, &HashSet::new())
-                .await
+                .due_job_ids(at + 5100, 8, &HashSet::new())
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn completed_one_shot_cannot_resume_and_a_bad_schedule_stops_the_job() {
+        let store = test_store().await;
+        let at = (unix_ms() / 1000 + 1) * 1000;
+        let job = insert_at_job(&store, "once", at).await;
+        tokio::time::sleep(std::time::Duration::from_millis(
+            at.saturating_sub(unix_ms()) + 5,
+        ))
+        .await;
+        let (snapshot, run) = store.claim_job(job._id, unix_ms()).await.unwrap().unwrap();
+        store
+            .job_finish(&snapshot, run, unix_ms(), CronJobResult::default())
+            .await
+            .unwrap();
+        assert!(store.get_job(job._id).await.unwrap().is_completed());
+        let err = store.resume_job(job._id).await.unwrap_err();
+        assert!(err.to_string().contains("no future run"));
+
+        // A persisted schedule that no longer parses disables the job instead
+        // of leaving it due for an immediate rerun.
+        let job = insert_test_job(&store, "broken").await;
+        store
+            .jobs
+            .update(
+                job._id,
+                BTreeMap::from([("schedule".to_string(), Fv::Text("soon".into()))]),
+            )
+            .await
+            .unwrap();
+        let (snapshot, run) = store
+            .claim_job(job._id, unix_ms() + 3_600_000)
+            .await
+            .unwrap()
+            .unwrap();
+        store
+            .job_finish(&snapshot, run, unix_ms(), CronJobResult::default())
+            .await
+            .unwrap();
+        assert!(store.get_job(job._id).await.unwrap().is_paused());
     }
 
     #[tokio::test]
@@ -876,10 +888,7 @@ mod tests {
             .unwrap();
         assert_eq!(updated.last_conversation_id, None);
         assert_eq!(
-            updated
-                .request_meta()
-                .unwrap()
-                .get_extra_as::<u64>("conversation"),
+            updated.request_meta(0).get_extra_as::<u64>("conversation"),
             Some(42)
         );
         store
@@ -899,8 +908,7 @@ mod tests {
                 .get_job(job._id)
                 .await
                 .unwrap()
-                .request_meta()
-                .unwrap()
+                .request_meta(0)
                 .get_extra_as::<u64>("conversation"),
             Some(42)
         );

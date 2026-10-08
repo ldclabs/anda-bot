@@ -3,6 +3,7 @@ pub mod fs;
 pub mod http_client;
 pub mod json_schema;
 pub mod locale;
+pub mod number_or_string;
 pub mod request_meta;
 pub mod text;
 pub mod tool_response;

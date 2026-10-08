@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use super::runtime::ChannelSender;
 use super::types::SendMessage;
-use crate::cron::deserialize_optional_usize_from_number_or_string;
 use crate::engine::SessionRequestMeta;
+use crate::util::number_or_string;
 use crate::util::request_meta::{keys, request_meta_extra_as};
 
 /// Stable id of the IM channel messaging capability group.
@@ -149,10 +149,7 @@ impl ListImChannelsTool {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ListImChannelsArgs {
     pub channel: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "deserialize_optional_usize_from_number_or_string"
-    )]
+    #[serde(default, deserialize_with = "number_or_string::deserialize_optional")]
     pub limit: Option<usize>,
 }
 

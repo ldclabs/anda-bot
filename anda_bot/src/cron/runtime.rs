@@ -6,12 +6,13 @@ use anda_db::{database::AndaDB, unix_ms};
 use anda_engine::{
     context::BaseCtx,
     engine::{Engine, EngineRef},
-    extension::shell::{CommandArgs, CommandState, ExecOutput, ShellSessionScope, ShellTool},
+    extension::shell::{CommandArgs, CommandState, ShellSessionScope, ShellTool},
     hook::{BackgroundHandle, DynToolJsonHook, ToolBackgroundHook},
 };
 use async_trait::async_trait;
 use futures::FutureExt;
 use parking_lot::Mutex;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
@@ -33,7 +34,7 @@ use super::{
     store::CronStore,
     types::*,
 };
-use crate::{engine::system_runtime_prompt, util::request_meta::keys};
+use crate::engine::system_runtime_prompt;
 
 const DEFAULT_POLL_SECS: u64 = 5;
 const MAX_CONCURRENT_JOBS: usize = 8;
@@ -62,19 +63,16 @@ impl CronRuntime {
         cancel: &CancellationToken,
     ) -> Result<usize, BoxError> {
         let available = MAX_CONCURRENT_JOBS.saturating_sub(running_ids.len());
-        let jobs = self
-            .store
-            .due_jobs(unix_ms(), available, running_ids)
-            .await?;
+        let ids = self.store.due_job_ids(unix_ms(), available, running_ids)?;
         let mut started = 0;
-        for job in jobs {
+        for id in ids {
             if cancel.is_cancelled() {
                 break;
             }
             let Ok(permit) = self.admission.enter() else {
                 break;
             };
-            let Some((job, run)) = self.store.claim_job(job._id, unix_ms()).await? else {
+            let Some((job, run)) = self.store.claim_job(id, unix_ms()).await? else {
                 continue;
             };
             running_ids.insert(job._id);
@@ -133,9 +131,7 @@ impl CronRuntime {
             .as_ref()
             .and_then(CronJobOrigin::caller_principal)
             .unwrap_or(Principal::management_canister());
-        let mut meta = job.request_meta().unwrap_or_default();
-        meta.extra.insert(keys::CRON_JOB_ID.into(), job._id.into());
-        meta.extra.insert(keys::CRON_RUN_ID.into(), run_id.into());
+        let meta = job.request_meta(run_id);
         match job.job_kind {
             JobKind::Agent => {
                 let prompt = system_runtime_prompt(
@@ -390,41 +386,71 @@ async fn wait_for_completion<T>(
     }
 }
 
+/// The parts of a shell command result that a cron run records.
+#[derive(Deserialize)]
+struct ShellExit {
+    state: CommandState,
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    #[serde(default)]
+    omitted_bytes: usize,
+}
+
+/// Records the command's output text as the result and a one-line reason as
+/// the error, so a failure keeps its output once and its error stays readable.
 fn shell_result(output: ToolOutput<Value>) -> CronJobResult {
-    let parsed = serde_json::from_value::<ExecOutput>(output.output.clone());
-    let mut result: CronJobResult = output.into();
-    match parsed {
-        Ok(output)
-            if matches!(
-                output.exit_status.as_deref(),
-                Some("exit status: 0" | "exit code: 0")
-            ) => {}
-        Ok(output) => {
-            result.error.get_or_insert_with(|| {
-                format!(
-                    "Shell command failed ({}): {}",
-                    output.exit_status.as_deref().unwrap_or("no exit status"),
-                    result.result.as_deref().unwrap_or_default()
-                )
-            });
-        }
-        Err(err) => {
-            result
-                .error
-                .get_or_insert_with(|| format!("Invalid shell result: {err}"));
-        }
+    if output.is_error == Some(true) {
+        return output.into();
     }
-    result
+    let shell = match ShellExit::deserialize(&output.output) {
+        Ok(shell) => shell,
+        Err(err) => {
+            return CronJobResult {
+                error: Some(format!("Invalid shell result: {err}")),
+                ..output.into()
+            };
+        }
+    };
+    let error = match shell.state {
+        CommandState::Exited if shell.exit_code == Some(0) => None,
+        CommandState::Exited => Some(match (shell.exit_code, shell.signal) {
+            (Some(code), _) => format!("Shell command exited with code {code}"),
+            (None, Some(signal)) => format!("Shell command was terminated by signal {signal}"),
+            (None, None) => "Shell command exited without a status".to_string(),
+        }),
+        CommandState::TimedOut => Some("Shell command timed out".to_string()),
+        CommandState::Cancelled => Some("Shell command was cancelled".to_string()),
+        CommandState::Failed => Some("Shell command could not be run".to_string()),
+        CommandState::Running => Some("Shell command did not report its exit".to_string()),
+    };
+    let trimmed = |text: Option<String>| {
+        text.map(|text| text.trim_end().to_string())
+            .filter(|text| !text.is_empty())
+    };
+    let mut sections: Vec<String> = trimmed(shell.stdout).into_iter().collect();
+    sections.extend(trimmed(shell.stderr).map(|stderr| format!("[stderr]\n{stderr}")));
+    if shell.omitted_bytes > 0 {
+        sections.push(format!("[{} bytes of output omitted]", shell.omitted_bytes));
+    }
+    CronJobResult {
+        conversation_id: None,
+        result: (!sections.is_empty()).then(|| sections.join("\n")),
+        error,
+    }
 }
 
 fn cron_shell_result_prompt(job: &CronJob, run_id: u64, result: &CronJobResult) -> String {
-    let outcome = if let Some(error) = &result.error {
-        format!("Shell command failed:\n\n{error}")
-    } else if let Some(result) = &result.result {
-        format!("Shell command completed:\n\n{result}")
-    } else {
-        "Shell command completed without a textual result.".to_string()
+    let status = match &result.error {
+        Some(error) => format!("Shell command failed: {error}"),
+        None => "Shell command completed.".to_string(),
     };
+    let output = match result.result.as_deref() {
+        Some(output) if !output.trim().is_empty() => format!("Output:\n{output}"),
+        _ => "The command produced no textual output.".to_string(),
+    };
+    let outcome = format!("{status}\n\n{output}");
     system_runtime_prompt(
         "cron shell job result",
         format!(
@@ -462,6 +488,45 @@ mod tests {
     }
 
     #[test]
+    fn shell_result_keeps_output_once_with_a_short_error() {
+        let failed = shell_result(ToolOutput::new(json!({
+            "task_id": "t1",
+            "state": "exited",
+            "exit_code": 7,
+            "stdout": "partial\n",
+            "stderr": "boom",
+            "workspace": "/tmp/ws",
+            "omitted_bytes": 10,
+        })));
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("Shell command exited with code 7")
+        );
+        assert_eq!(
+            failed.result.as_deref(),
+            Some("partial\n[stderr]\nboom\n[10 bytes of output omitted]")
+        );
+
+        let timed_out = shell_result(ToolOutput::new(json!({
+            "task_id": "t2",
+            "state": "timed_out",
+        })));
+        assert_eq!(timed_out.error.as_deref(), Some("Shell command timed out"));
+        assert_eq!(timed_out.result, None);
+
+        let ok = shell_result(ToolOutput::new(json!({
+            "task_id": "t3",
+            "state": "exited",
+            "exit_code": 0,
+            "stdout": "hi",
+        })));
+        assert_eq!((ok.result.as_deref(), ok.error), (Some("hi"), None));
+
+        let invalid = shell_result(ToolOutput::new(json!("not a command output")));
+        assert!(invalid.error.unwrap().starts_with("Invalid shell result"));
+    }
+
+    #[test]
     fn shell_result_prompt_reports_each_outcome() {
         let job = CronJob {
             _id: 5,
@@ -485,11 +550,13 @@ mod tests {
             &job,
             9,
             &CronJobResult {
-                error: Some("exit 1".to_string()),
+                error: Some("Shell command exited with code 1".to_string()),
+                result: Some("[stderr]\nno such file".to_string()),
                 ..Default::default()
             },
         );
         assert!(failed.contains("Shell command failed"));
+        assert!(failed.contains("no such file"));
         assert!(failed.contains("heartbeat"));
 
         let ok = cron_shell_result_prompt(
@@ -503,7 +570,7 @@ mod tests {
         assert!(ok.contains("Shell command completed"));
 
         let silent = cron_shell_result_prompt(&job, 9, &CronJobResult::default());
-        assert!(silent.contains("without a textual result"));
+        assert!(silent.contains("no textual output"));
     }
 
     #[tokio::test]
@@ -649,7 +716,12 @@ mod tests {
             _resources: Vec<Resource>,
         ) -> Result<ToolOutput<Self::Output>, CoreBoxError> {
             Ok(ToolOutput {
-                output: json!({"stdout": args["command"], "exit_status": "exit status: 0"}),
+                output: json!({
+                    "state": "exited",
+                    "exit_code": 0,
+                    "stdout": args["command"],
+                    "exit_status": "exit status: 0",
+                }),
                 ..Default::default()
             })
         }
@@ -879,12 +951,7 @@ mod tests {
             0
         );
         assert_eq!(
-            runtime
-                .store
-                .due_jobs(unix_ms(), 8, &running)
-                .await
-                .unwrap()[0]
-                ._id,
+            runtime.store.due_job_ids(unix_ms(), 8, &running).unwrap()[0],
             job._id
         );
         runtime.admission.renew(&lease, true).unwrap();

@@ -2,13 +2,7 @@
 
 use anda_core::{AgentOutput, Principal};
 use parking_lot::Mutex;
-use std::{
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{path::PathBuf, sync::Arc};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -16,8 +10,8 @@ use super::types::CronJobResult;
 
 #[derive(Clone)]
 pub(crate) struct AgentSubmission {
+    /// Taken at most once; an empty slot means the agent claimed the receipt.
     receipt: Arc<Mutex<Option<AgentReceipt>>>,
-    claimed: Arc<AtomicBool>,
     cancel: CancellationToken,
 }
 
@@ -32,7 +26,6 @@ impl AgentSubmission {
                     cancel: cancel.clone(),
                     cancellation_task: None,
                 }))),
-                claimed: Arc::new(AtomicBool::new(false)),
                 cancel,
             },
             receiver,
@@ -40,15 +33,11 @@ impl AgentSubmission {
     }
 
     pub fn take(&self) -> Option<AgentReceipt> {
-        let receipt = self.receipt.lock().take();
-        if receipt.is_some() {
-            self.claimed.store(true, Ordering::SeqCst);
-        }
-        receipt
+        self.receipt.lock().take()
     }
 
     pub fn was_claimed(&self) -> bool {
-        self.claimed.load(Ordering::SeqCst)
+        self.receipt.lock().is_none()
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {

@@ -2,10 +2,13 @@ use anda_core::{AgentOutput, Principal, RequestMeta, ToolOutput};
 use anda_db::schema::{AndaDBSchema, BoxError};
 use chrono::{DateTime, Utc};
 use cron::Schedule as CronExprSchedule;
-use serde::{Deserialize, Deserializer, Serialize, de};
-use std::{fmt, str::FromStr, time::Duration};
+use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt, str::FromStr, time::Duration};
 
-use crate::util::request_meta::{keys, request_meta_extra_as};
+use crate::util::{
+    number_or_string,
+    request_meta::{keys, request_meta_extra_as},
+};
 
 // Number.MAX_SAFE_INTEGER in JavaScript, used to represent "never" for disabled jobs
 pub const DISABLED_JOB_NEXT_RUN: u64 = (1 << 53) - 1;
@@ -21,7 +24,7 @@ pub enum Schedule {
 impl Schedule {
     pub fn initial_next_run(&self, now_ms: u64) -> Result<u64, BoxError> {
         match self {
-            Self::Cron { expr, tz } => Ok(schedule_next(expr, now_ms, tz)? / 1000),
+            Self::Cron { expr, tz } => Ok(schedule_next(expr, now_ms, tz.as_deref())? / 1000),
             Self::At { at } if *at <= now_ms => {
                 Err("scheduled 'at' time must be in the future".into())
             }
@@ -38,7 +41,7 @@ impl Schedule {
     /// Calculates the next run time based on the schedule, returning a unix timestamp in seconds.
     pub fn next_run(&self, from_ms: u64) -> u64 {
         match self {
-            Schedule::Cron { expr, tz } => schedule_next(expr, from_ms, tz)
+            Schedule::Cron { expr, tz } => schedule_next(expr, from_ms, tz.as_deref())
                 .map(|ms| ms / 1000) // convert to seconds
                 .unwrap_or(DISABLED_JOB_NEXT_RUN),
             Schedule::At { at } => {
@@ -107,13 +110,9 @@ pub struct CronJobOrigin {
 }
 
 impl CronJobOrigin {
-    pub fn from_meta_with_caller(meta: &RequestMeta, caller: &Principal) -> Option<Self> {
-        Self::from_meta_and_caller(meta, Some(caller))
-    }
-
-    fn from_meta_and_caller(meta: &RequestMeta, caller: Option<&Principal>) -> Option<Self> {
-        let origin = Self {
-            caller: caller.map(Principal::to_text),
+    pub fn from_meta(meta: &RequestMeta, caller: &Principal) -> Self {
+        Self {
+            caller: Some(caller.to_text()),
             user: meta.user.as_deref().and_then(normalize_optional_name),
             source: request_meta_extra_as::<String>(meta, keys::SOURCE)
                 .as_deref()
@@ -131,9 +130,7 @@ impl CronJobOrigin {
             conversation_id: request_meta_extra_as::<u64>(meta, keys::CONVERSATION)
                 .filter(|conversation_id| *conversation_id > 0),
             external_user: request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER),
-        };
-
-        (!origin.is_empty()).then_some(origin)
+        }
     }
 
     pub fn caller_principal(&self) -> Option<Principal> {
@@ -171,18 +168,6 @@ impl CronJobOrigin {
             extra,
             ..Default::default()
         }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.caller.is_none()
-            && self.user.is_none()
-            && self.source.is_none()
-            && self.reply_target.is_none()
-            && self.thread.is_none()
-            && self.workspace.is_none()
-            && self.workspace_grant.is_none()
-            && self.conversation_id.is_none()
-            && self.external_user.is_none()
     }
 }
 
@@ -222,58 +207,70 @@ impl CronJob {
         )
     }
 
-    /// Whether the job is paused. Storage encodes "paused" as the
-    /// [`DISABLED_JOB_NEXT_RUN`] sentinel in `next_run`.
+    /// Whether the job will not run again on its own. Storage encodes this as
+    /// the [`DISABLED_JOB_NEXT_RUN`] sentinel in `next_run`, for paused jobs
+    /// and for one-time jobs that already ran.
     pub fn is_paused(&self) -> bool {
         self.next_run >= DISABLED_JOB_NEXT_RUN
     }
 
-    /// Model-facing JSON for tool outputs: reports `paused` explicitly and
-    /// omits `next_run` while paused, so consumers never see the storage
-    /// sentinel.
+    /// A one-time job that already ran: done, not paused.
+    pub fn is_completed(&self) -> bool {
+        self.schedule_kind == ScheduleKind::At
+            && self.is_paused()
+            && self.last_finished_at.is_some()
+    }
+
+    /// Full model-facing JSON, for `manage_cron_job get`.
     pub fn to_view(&self) -> serde_json::Value {
         let mut view = serde_json::json!(self);
-        if let Some(object) = view.as_object_mut() {
-            object.insert("paused".to_string(), self.is_paused().into());
-            if self.is_paused() {
-                object.remove("next_run");
-            }
-        }
+        self.insert_state(&mut view);
         view
     }
 
+    /// Bounded JSON for lists and mutation results: full shell or agent
+    /// results can be tens of KB, so project before serialization.
     pub fn to_summary(&self) -> serde_json::Value {
-        fn preview(text: &str) -> std::borrow::Cow<'_, str> {
-            match text.char_indices().nth(512) {
-                Some((end, _)) => (text[..end].to_owned() + "…").into(),
-                None => text.into(),
-            }
-        }
-        // Project before serialization: full shell results can be hundreds of KB.
         let mut view = serde_json::json!({
             "_id": self._id, "origin": self.origin, "job_kind": self.job_kind,
             "job": preview(&self.job), "schedule_kind": self.schedule_kind,
             "schedule": self.schedule, "tz": self.tz, "name": self.name,
             "created_at": self.created_at, "updated_at": self.updated_at,
-            "paused": self.is_paused(), "last_finished_at": self.last_finished_at,
+            "next_run": self.next_run, "last_finished_at": self.last_finished_at,
             "last_error": self.last_error.as_deref().map(preview),
             "last_conversation_id": self.last_conversation_id,
         });
-        if !self.is_paused() {
-            view["next_run"] = self.next_run.into();
-        }
+        self.insert_state(&mut view);
         view
     }
 
-    pub fn request_meta(&self) -> Option<RequestMeta> {
-        let origin = self.origin.clone().unwrap_or_default();
-        let conversation_id = self.last_conversation_id.or(origin.conversation_id);
-        if origin.is_empty() && conversation_id.is_none() {
-            return None;
+    /// Reports `paused`/`completed` explicitly and drops `next_run` while the
+    /// job is inactive, so consumers never see the storage sentinel.
+    fn insert_state(&self, view: &mut serde_json::Value) {
+        if let Some(object) = view.as_object_mut() {
+            let completed = self.is_completed();
+            object.insert(
+                "paused".to_string(),
+                (self.is_paused() && !completed).into(),
+            );
+            object.insert("completed".to_string(), completed.into());
+            if self.is_paused() {
+                object.remove("next_run");
+            }
         }
-        let mut meta = origin.to_request_meta(conversation_id);
+    }
+
+    /// Request metadata for one run: the saved origin route plus the cron keys.
+    pub fn request_meta(&self, run_id: u64) -> RequestMeta {
+        let mut meta = self
+            .origin
+            .as_ref()
+            .unwrap_or(&CronJobOrigin::default())
+            .to_request_meta(self.last_conversation_id);
         meta.extra
             .insert(keys::CRON_JOB_ID.to_string(), self._id.into());
+        meta.extra
+            .insert(keys::CRON_RUN_ID.to_string(), run_id.into());
         meta.extra.insert(
             keys::CRON_JOB_NAME.to_string(),
             self.name.clone().unwrap_or_default().into(),
@@ -282,8 +279,15 @@ impl CronJob {
             keys::CRON_JOB_KIND.to_string(),
             self.job_kind.to_string().into(),
         );
+        meta
+    }
+}
 
-        Some(meta)
+/// Keeps list output bounded; `manage_cron_job get` returns full text.
+fn preview(text: &str) -> Cow<'_, str> {
+    match text.char_indices().nth(512) {
+        Some((end, _)) => (text[..end].to_owned() + "…").into(),
+        None => text.into(),
     }
 }
 
@@ -302,6 +306,25 @@ pub struct CronRun {
     pub conversation_id: Option<u64>,
 }
 
+impl CronRun {
+    /// Bounded JSON for `list_cron_runs`.
+    pub fn to_summary(&self) -> serde_json::Value {
+        let mut view = serde_json::json!({
+            "_id": self._id, "job_id": self.job_id,
+            "started_at": self.started_at, "finished_at": self.finished_at,
+        });
+        for (key, value) in [("result", &self.result), ("error", &self.error)] {
+            if let Some(value) = value {
+                view[key] = preview(value).into();
+            }
+        }
+        if let Some(conversation_id) = self.conversation_id {
+            view["conversation_id"] = conversation_id.into();
+        }
+        view
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreateCronJobArgs {
     pub job_kind: JobKind,
@@ -313,7 +336,7 @@ pub struct CreateCronJobArgs {
 }
 
 impl CreateCronJobArgs {
-    #[allow(unused)]
+    #[cfg(test)]
     pub fn into_cron_job(self, now_ms: u64) -> Result<CronJob, BoxError> {
         self.into_cron_job_with_origin(now_ms, None)
     }
@@ -326,12 +349,8 @@ impl CreateCronJobArgs {
         if self.job.trim().is_empty() {
             return Err("job must not be empty".into());
         }
-        let schedule = build_schedule_at(
-            &self.schedule_kind,
-            &self.schedule,
-            self.tz.as_ref(),
-            now_ms,
-        )?;
+        let tz = self.tz.as_deref().and_then(normalize_optional_name);
+        let schedule = build_schedule_at(&self.schedule_kind, &self.schedule, tz.as_ref(), now_ms)?;
         let next_run = schedule.initial_next_run(now_ms)?;
         let (schedule_kind, schedule_str) =
             persisted_schedule(&self.schedule_kind, &self.schedule, &schedule)?;
@@ -342,8 +361,8 @@ impl CreateCronJobArgs {
             job: self.job,
             schedule_kind,
             schedule: schedule_str,
-            tz: self.tz,
-            name: self.name,
+            tz,
+            name: self.name.as_deref().and_then(normalize_optional_name),
             created_at: now_ms,
             updated_at: now_ms,
             next_run,
@@ -357,7 +376,7 @@ impl CreateCronJobArgs {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UpdateCronJobArgs {
-    #[serde(deserialize_with = "deserialize_u64_from_number_or_string")]
+    #[serde(deserialize_with = "number_or_string::deserialize")]
     pub id: u64,
     #[serde(default)]
     pub job_kind: Option<JobKind>,
@@ -425,7 +444,20 @@ impl CronJobUpdate {
             tz,
             origin,
         } = self;
-        let schedule_changed = schedule_kind.is_some() || schedule.is_some() || tz.is_some();
+        // Clients resend the current schedule with other edits; only a
+        // different value reschedules the job.
+        let schedule_changed = schedule_kind
+            .as_ref()
+            .is_some_and(|kind| *kind != job.schedule_kind)
+            || schedule
+                .as_deref()
+                .is_some_and(|value| value.trim() != job.schedule.trim())
+            || tz
+                .as_deref()
+                .is_some_and(|tz| normalize_optional_name(tz) != job.tz);
+        // Rescheduling keeps a paused job paused but reactivates a one-time
+        // job that already ran.
+        let paused = job.is_paused() && !job.is_completed();
 
         if let Some(job_kind) = job_kind {
             job.job_kind = job_kind;
@@ -465,7 +497,7 @@ impl CronJobUpdate {
             job.schedule_kind = persisted_kind;
             job.schedule = persisted_schedule;
             job.tz = next_tz;
-            if !job.is_paused() {
+            if !paused {
                 job.next_run = next_run;
             }
         }
@@ -473,82 +505,6 @@ impl CronJobUpdate {
         job.updated_at = now_ms;
         Ok(job)
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum U64OrString {
-    U64(u64),
-    String(String),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum UsizeOrString {
-    Usize(usize),
-    String(String),
-}
-
-pub(crate) fn deserialize_u64_from_number_or_string<'de, D>(
-    deserializer: D,
-) -> Result<u64, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    parse_u64_or_string(U64OrString::deserialize(deserializer)?).map_err(de::Error::custom)
-}
-
-pub(crate) fn deserialize_optional_u64_from_number_or_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<u64>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<U64OrString>::deserialize(deserializer)?
-        .map(parse_u64_or_string)
-        .transpose()
-        .map_err(de::Error::custom)
-}
-
-pub(crate) fn deserialize_optional_usize_from_number_or_string<'de, D>(
-    deserializer: D,
-) -> Result<Option<usize>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Option::<UsizeOrString>::deserialize(deserializer)?
-        .map(parse_usize_or_string)
-        .transpose()
-        .map_err(de::Error::custom)
-}
-
-fn parse_u64_or_string(value: U64OrString) -> Result<u64, String> {
-    match value {
-        U64OrString::U64(value) => Ok(value),
-        U64OrString::String(value) => parse_unsigned_integer_string(&value),
-    }
-}
-
-fn parse_usize_or_string(value: UsizeOrString) -> Result<usize, String> {
-    match value {
-        UsizeOrString::Usize(value) => Ok(value),
-        UsizeOrString::String(value) => parse_unsigned_integer_string(&value),
-    }
-}
-
-fn parse_unsigned_integer_string<T>(value: &str) -> Result<T, String>
-where
-    T: FromStr,
-    T::Err: fmt::Display,
-{
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("expected a non-empty unsigned integer string".to_string());
-    }
-
-    value
-        .parse::<T>()
-        .map_err(|err| format!("invalid unsigned integer '{value}': {err}"))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -626,7 +582,7 @@ fn persisted_schedule(
     }
 }
 
-fn schedule_next(expr: &str, from_ms: u64, tz: &Option<String>) -> Result<u64, BoxError> {
+fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxError> {
     let normalized = normalize_expression(expr)?;
     let from = i64::try_from(from_ms)
         .ok()
@@ -635,23 +591,22 @@ fn schedule_next(expr: &str, from_ms: u64, tz: &Option<String>) -> Result<u64, B
     let cron = CronExprSchedule::from_str(&normalized)
         .map_err(|err| format!("invalid cron expression '{expr}': {err}"))?;
 
-    if let Some(tz_name) = tz {
-        let timezone = chrono_tz::Tz::from_str(tz_name)
-            .map_err(|err| format!("invalid IANA timezone '{tz_name}': {err}"))?;
-        let localized_from = from.with_timezone(&timezone);
-        let next_local = cron
-            .after(&localized_from)
+    // The expression is evaluated in the job's timezone, or the host's.
+    let next = match tz {
+        Some(tz_name) => {
+            let timezone = chrono_tz::Tz::from_str(tz_name)
+                .map_err(|err| format!("invalid IANA timezone '{tz_name}': {err}"))?;
+            cron.after(&from.with_timezone(&timezone))
+                .next()
+                .map(|next| next.timestamp_millis())
+        }
+        None => cron
+            .after(&from.with_timezone(&chrono::Local))
             .next()
-            .ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
-        Ok(next_local.with_timezone(&Utc).timestamp_millis() as u64)
-    } else {
-        let local_from = from.with_timezone(&chrono::Local);
-        let next_local = cron
-            .after(&local_from)
-            .next()
-            .ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
-        Ok(next_local.with_timezone(&Utc).timestamp_millis() as u64)
-    }
+            .map(|next| next.timestamp_millis()),
+    };
+    let next = next.ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
+    Ok(next as u64)
 }
 
 #[cfg(test)]
@@ -722,15 +677,17 @@ fn parse_delay(input: &str) -> Result<Duration, BoxError> {
         .unwrap_or(input.len());
     let (num, unit) = input.split_at(split);
     let amount: u64 = num.parse()?;
-    let unit = if unit.is_empty() { "s" } else { unit };
-
-    match unit {
-        "s" => Ok(Duration::from_secs(amount)),
-        "m" => Ok(Duration::from_mins(amount)),
-        "h" => Ok(Duration::from_hours(amount)),
-        "d" => Ok(Duration::from_hours(amount * 24)),
-        _ => Err(format!("unsupported delay unit '{unit}', use s/m/h/d").into()),
-    }
+    let unit_secs = match unit {
+        "" | "s" => 1,
+        "m" => 60,
+        "h" => 60 * 60,
+        "d" => 24 * 60 * 60,
+        _ => return Err(format!("unsupported delay unit '{unit}', use s/m/h/d").into()),
+    };
+    amount
+        .checked_mul(unit_secs)
+        .map(Duration::from_secs)
+        .ok_or_else(|| format!("delay '{input}' is too large").into())
 }
 
 fn normalize_optional_name(value: &str) -> Option<String> {
@@ -891,7 +848,7 @@ mod tests {
             ..Default::default()
         };
 
-        let origin = CronJobOrigin::from_meta_with_caller(&meta, &caller).unwrap();
+        let origin = CronJobOrigin::from_meta(&meta, &caller);
         assert_eq!(origin.caller, Some(caller.to_text()));
         assert_eq!(origin.caller_principal(), Some(caller));
         assert_eq!(origin.user, Some("alice".to_string()));
@@ -941,8 +898,9 @@ mod tests {
         .unwrap();
         job.last_conversation_id = Some(88);
 
-        let meta = job.request_meta().unwrap();
+        let meta = job.request_meta(5);
         assert_eq!(meta.get_extra_as::<u64>("conversation"), Some(88));
+        assert_eq!(meta.get_extra_as::<u64>(keys::CRON_RUN_ID), Some(5));
         assert_eq!(
             meta.get_extra_as::<String>("source"),
             Some("wechat:daily".to_string())
@@ -1153,10 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_meta_yields_no_origin_and_no_request_meta() {
-        let meta = RequestMeta::default();
-        assert_eq!(CronJobOrigin::from_meta_and_caller(&meta, None), None);
-
+    fn a_job_without_origin_still_carries_its_cron_keys() {
         let job = CreateCronJobArgs {
             job_kind: JobKind::Shell,
             job: "echo hi".to_string(),
@@ -1167,7 +1122,14 @@ mod tests {
         }
         .into_cron_job(1_750_000_000_000)
         .unwrap();
-        assert!(job.request_meta().is_none());
+        let meta = job.request_meta(3);
+        assert_eq!(meta.get_extra_as::<u64>(keys::CONVERSATION), None);
+        assert_eq!(meta.get_extra_as::<u64>(keys::CRON_JOB_ID), Some(job._id));
+        assert_eq!(meta.get_extra_as::<u64>(keys::CRON_RUN_ID), Some(3));
+        assert_eq!(
+            meta.get_extra_as::<String>(keys::CRON_JOB_KIND).as_deref(),
+            Some("shell")
+        );
 
         // schedule() rebuilds the schedule from persisted fields.
         assert_eq!(job.schedule().unwrap(), Schedule::Every { every: 60 });
@@ -1301,6 +1263,100 @@ mod tests {
         assert!(parse_delay("  ").is_err());
         assert!(parse_delay("5y").is_err());
         assert!(parse_delay("y").is_err());
+        // Overflowing delays are rejected, not a panic.
+        assert!(
+            parse_delay("999999999999999999d")
+                .unwrap_err()
+                .to_string()
+                .contains("too large")
+        );
+    }
+
+    #[test]
+    fn resending_the_current_schedule_keeps_next_run() {
+        let now = 1_750_000_000_000;
+        let job = CreateCronJobArgs {
+            job_kind: JobKind::Agent,
+            job: "old".into(),
+            schedule_kind: ScheduleKind::Every,
+            schedule: "1d".into(),
+            name: Some("  ".into()),
+            tz: None,
+        }
+        .into_cron_job(now)
+        .unwrap();
+        assert_eq!(job.name, None);
+        let update = CronJobUpdate {
+            job: Some("new".into()),
+            schedule_kind: Some(ScheduleKind::Every),
+            schedule: Some(" 1d ".into()),
+            ..Default::default()
+        };
+        let updated = update.apply_to(job.clone(), now + 3_600_000).unwrap();
+        assert_eq!(updated.job, "new");
+        assert_eq!(updated.next_run, job.next_run);
+    }
+
+    #[test]
+    fn completed_one_shot_is_not_paused_and_can_be_rescheduled() {
+        let now = 1_750_000_000_000;
+        let at = unix_ms_to_rfc3339(now + 60_000).unwrap();
+        let mut job = CreateCronJobArgs {
+            job_kind: JobKind::Agent,
+            job: "remind me".into(),
+            schedule_kind: ScheduleKind::At,
+            schedule: at.clone(),
+            name: None,
+            tz: None,
+        }
+        .into_cron_job(now)
+        .unwrap();
+        job.next_run = DISABLED_JOB_NEXT_RUN;
+        assert!(!job.is_completed(), "paused before it ran");
+        assert_eq!(job.to_summary()["paused"], true);
+        job.last_finished_at = Some(now + 61_000);
+        assert!(job.is_completed());
+        for view in [job.to_view(), job.to_summary()] {
+            assert_eq!(view["paused"], false);
+            assert_eq!(view["completed"], true);
+            assert!(view.get("next_run").is_none());
+        }
+
+        // Editing only the prompt resends the past timestamp without failing.
+        let later = now + 120_000;
+        let edited = CronJobUpdate {
+            job: Some("remind me again".into()),
+            schedule_kind: Some(ScheduleKind::At),
+            schedule: Some(at),
+            ..Default::default()
+        }
+        .apply_to(job.clone(), later)
+        .unwrap();
+        assert!(edited.is_completed());
+
+        // A new time reactivates it, unlike a paused job.
+        let rescheduled = CronJobUpdate {
+            schedule_kind: Some(ScheduleKind::Once),
+            schedule: Some("5m".into()),
+            ..Default::default()
+        }
+        .apply_to(job, later)
+        .unwrap();
+        assert!(!rescheduled.is_paused());
+        assert_eq!(rescheduled.next_run, (later + 300_000).div_ceil(1000));
+    }
+
+    #[test]
+    fn run_summary_previews_large_output() {
+        let run = CronRun {
+            _id: 1,
+            job_id: 2,
+            result: Some("x".repeat(2000)),
+            ..Default::default()
+        };
+        let summary = run.to_summary();
+        assert_eq!(summary["result"].as_str().unwrap().chars().count(), 513);
+        assert!(summary.get("error").is_none());
     }
 
     #[test]
@@ -1371,15 +1427,15 @@ mod tests {
             .timestamp_millis() as u64;
         for expression in ["0 9 * * 0-7", "0 9 * * 1-7"] {
             assert_eq!(
-                schedule_next(expression, from, &Some("UTC".into())).unwrap(),
-                schedule_next("0 9 * * *", from, &Some("UTC".into())).unwrap()
+                schedule_next(expression, from, Some("UTC")).unwrap(),
+                schedule_next("0 9 * * *", from, Some("UTC")).unwrap()
             );
         }
         let friday = DateTime::parse_from_rfc3339("2026-09-25T09:00:00Z")
             .unwrap()
             .timestamp_millis() as u64;
         assert_eq!(
-            schedule_next("0 9 * * 5-7", from, &Some("UTC".into())).unwrap(),
+            schedule_next("0 9 * * 5-7", from, Some("UTC")).unwrap(),
             friday
         );
         assert_eq!(normalize_weekday_field("MON,0").unwrap(), "MON,1");

@@ -10,14 +10,13 @@ use std::sync::Arc;
 
 use super::{
     store::CronStore,
-    types::{
-        CreateCronJobArgs, CronJobOrigin, UpdateCronJobArgs,
-        deserialize_optional_u64_from_number_or_string,
-        deserialize_optional_usize_from_number_or_string, deserialize_u64_from_number_or_string,
-    },
+    types::{CreateCronJobArgs, CronJobOrigin, UpdateCronJobArgs},
 };
 use crate::engine::{CliWorkspaceGrants, SessionRequestMeta};
-use crate::util::request_meta::{keys, request_meta_extra_as};
+use crate::util::{
+    number_or_string,
+    request_meta::{keys, request_meta_extra_as},
+};
 
 fn trusted_meta(ctx: &BaseCtx) -> Result<anda_core::RequestMeta, BoxError> {
     let meta = ctx
@@ -35,14 +34,13 @@ async fn job_origin(
     meta: &anda_core::RequestMeta,
     grants: Option<&CliWorkspaceGrants>,
 ) -> Result<Option<CronJobOrigin>, BoxError> {
-    let mut origin = CronJobOrigin::from_meta_with_caller(meta, ctx.caller());
+    let mut origin = CronJobOrigin::from_meta(meta, ctx.caller());
     if let Some(grants) = grants
         && let Some(path) = grants.authorize_workspace(ctx.caller(), meta).await?
-        && let Some(origin) = &mut origin
     {
         origin.workspace_grant = Some(path.to_string_lossy().into_owned());
     }
-    Ok(origin)
+    Ok(Some(origin))
 }
 
 /// Stable id of the cron scheduler capability group.
@@ -127,7 +125,7 @@ impl Tool<BaseCtx> for CreateCronTool {
         let origin = job_origin(&ctx, &meta, self.workspace_grants.as_ref()).await?;
         let job = self.store.insert_job(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
-            result: job.to_view(),
+            result: job.to_summary(),
             next_cursor: None,
         }))
     }
@@ -167,7 +165,8 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
             "Updates an existing cron job without changing its run history. ",
             "Pass null for fields that should stay unchanged. ",
             "Pass origin=true to replace the job origin with the current caller and request context. ",
-            "Schedule edits preserve paused state; use manage_cron_job resume to reactivate. ",
+            "Resending the current schedule keeps the next run time. ",
+            "Schedule edits preserve paused state (use manage_cron_job resume to reactivate) and give a completed one-time job a new run. ",
             "Use an empty string for name or tz to clear that field."
         )
         .to_string()
@@ -200,7 +199,7 @@ impl Tool<BaseCtx> for UpdateCronJobTool {
         };
         let job = self.store.update_job_with_origin(args, origin).await?;
         Ok(ToolOutput::new(Response::Ok {
-            result: job.to_view(),
+            result: job.to_summary(),
             next_cursor: None,
         }))
     }
@@ -218,22 +217,16 @@ pub enum CronJobAction {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ManageCronJobArgs {
     pub action: CronJobAction,
-    #[serde(deserialize_with = "deserialize_u64_from_number_or_string")]
+    #[serde(deserialize_with = "number_or_string::deserialize")]
     pub id: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ListCronArgs {
-    #[serde(
-        default,
-        deserialize_with = "deserialize_optional_u64_from_number_or_string"
-    )]
+    #[serde(default, deserialize_with = "number_or_string::deserialize_optional")]
     pub job_id: Option<u64>,
     pub cursor: Option<String>,
-    #[serde(
-        default,
-        deserialize_with = "deserialize_optional_usize_from_number_or_string"
-    )]
+    #[serde(default, deserialize_with = "number_or_string::deserialize_optional")]
     pub limit: Option<usize>,
 }
 
@@ -257,7 +250,7 @@ fn create_cron_job_parameters() -> Value {
             },
             "schedule": {
                 "type": "string",
-                "description": "The schedule value. For 'cron', provide a cron expression. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
+                "description": "The schedule value. For 'cron', provide a standard 5-field expression (minute hour day-of-month month day-of-week, 0 or 7 = Sunday), such as '0 9 * * 1-5'; 6- and 7-field forms add seconds and year but count weekdays from 1 = Sunday, so use day names such as MON-FRI there. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
             },
             "name": {
                 "type": ["string", "null"],
@@ -297,7 +290,7 @@ fn update_cron_job_parameters() -> Value {
             },
             "schedule": {
                 "type": ["string", "null"],
-                "description": "New schedule value, or null to leave unchanged. For 'cron', provide a cron expression. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units."
+                "description": "New schedule value, or null to leave unchanged. For 'cron', provide a standard 5-field expression (0 or 7 = Sunday); in 6- and 7-field forms use day names such as MON-FRI. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units."
             },
             "name": {
                 "type": ["string", "null"],
@@ -376,16 +369,6 @@ fn list_cron_runs_parameters() -> Value {
     })
 }
 
-fn paginated_response<T>(items: T, next_cursor: Option<String>) -> ToolOutput<Response>
-where
-    T: Serialize,
-{
-    ToolOutput::new(Response::Ok {
-        result: json!(items),
-        next_cursor,
-    })
-}
-
 #[derive(Clone)]
 pub struct ManageCronJobTool {
     store: CronStore,
@@ -411,8 +394,9 @@ impl Tool<BaseCtx> for ManageCronJobTool {
         concat!(
             "Manages an existing cron job by action. ",
             "Supported actions are get, pause, resume, and remove. ",
-            "get returns the full job, including last_result and untruncated fields. ",
+            "get returns the full job, including last_result and untruncated fields; other actions return a summary. ",
             "pause stops future runs until resume. ",
+            "resume fails for a one-time job that already ran; give it a new schedule with update_cron_job instead. ",
             "remove deletes the job definition permanently (it cannot be resumed) but keeps its run history for list_cron_runs; removing an unknown id succeeds. ",
             "Use update_cron_job to change a job's command, prompt, or schedule."
         )
@@ -446,11 +430,11 @@ impl Tool<BaseCtx> for ManageCronJobTool {
             }),
             CronJobAction::Pause => json!({
                 "action": "pause",
-                "job": self.store.pause_job(args.id).await?.to_view(),
+                "job": self.store.pause_job(args.id).await?.to_summary(),
             }),
             CronJobAction::Resume => json!({
                 "action": "resume",
-                "job": self.store.resume_job(args.id).await?.to_view(),
+                "job": self.store.resume_job(args.id).await?.to_summary(),
             }),
             CronJobAction::Remove => {
                 self.store.remove_job(args.id).await?;
@@ -492,7 +476,7 @@ impl Tool<BaseCtx> for ListCronJobsTool {
     fn description(&self) -> String {
         concat!(
             "Lists scheduled cron jobs with optional cursor pagination. Returns up to 100 jobs per call. ",
-            "Paused jobs report paused=true and omit next_run. Lists omit last_result and truncate job/last_error to 512 characters; use manage_cron_job get for full details."
+            "Paused jobs report paused=true and one-time jobs that already ran report completed=true; both omit next_run. Lists omit last_result and truncate job/last_error to 512 characters; use manage_cron_job get for full details."
         )
         .to_string()
     }
@@ -518,9 +502,8 @@ impl Tool<BaseCtx> for ListCronJobsTool {
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         trusted_meta(&ctx)?;
         let (jobs, next_cursor) = self.store.list_jobs(args.cursor, args.limit).await?;
-        let jobs: Vec<serde_json::Value> = jobs.iter().map(|job| job.to_summary()).collect();
         Ok(ToolOutput::new(Response::Ok {
-            result: Value::Array(jobs),
+            result: jobs.iter().map(|job| job.to_summary()).collect(),
             next_cursor,
         }))
     }
@@ -550,7 +533,8 @@ impl Tool<BaseCtx> for ListCronRunsTool {
     fn description(&self) -> String {
         concat!(
             "Lists recent cron run history with optional cursor pagination. ",
-            "When job_id is provided, only runs for that cron job are returned."
+            "When job_id is provided, only runs for that cron job are returned. ",
+            "Each run's result and error are truncated to 512 characters; manage_cron_job get returns the latest full result."
         )
         .to_string()
     }
@@ -579,7 +563,10 @@ impl Tool<BaseCtx> for ListCronRunsTool {
             .store
             .list_runs(args.cursor, args.limit, args.job_id)
             .await?;
-        Ok(paginated_response(runs, next_cursor))
+        Ok(ToolOutput::new(Response::Ok {
+            result: runs.iter().map(|run| run.to_summary()).collect(),
+            next_cursor,
+        }))
     }
 }
 

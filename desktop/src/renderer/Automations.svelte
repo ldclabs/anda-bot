@@ -18,6 +18,7 @@
     tz?: string
     next_run?: number
     paused?: boolean
+    completed?: boolean
     last_error?: string
   }
   interface Run {
@@ -97,8 +98,9 @@
     busy = true
     error = ''
     try {
+      // An empty name clears it on update; creation stores no name.
       const args = {
-        name: name.trim() || null,
+        name: name.trim(),
         job_kind: kind,
         job: prompt,
         schedule_kind: scheduleKind,
@@ -168,17 +170,20 @@
         >
         <div class="job-footer">
           <span
-            >{job.paused
-              ? t('pause')
-              : job.next_run
-                ? `${t('nextRun')} ${new Date(job.next_run * 1000).toLocaleString()}`
-                : '—'}</span
-          ><button onclick={() => void history(job)}>{t('runHistory')}</button><button
-            class="icon-button"
-            title={job.paused ? t('resume') : t('pause')}
-            onclick={() => void manage(job, job.paused ? 'resume' : 'pause')}
-            >{#if job.paused}<Play size={15} />{:else}<Pause size={15} />{/if}</button
-          ><button
+            >{job.completed
+              ? t('jobCompleted')
+              : job.paused
+                ? t('pause')
+                : job.next_run
+                  ? `${t('nextRun')} ${new Date(job.next_run * 1000).toLocaleString()}`
+                  : '—'}</span
+          ><button onclick={() => void history(job)}>{t('runHistory')}</button
+          >{#if !job.completed}<button
+              class="icon-button"
+              title={job.paused ? t('resume') : t('pause')}
+              onclick={() => void manage(job, job.paused ? 'resume' : 'pause')}
+              >{#if job.paused}<Play size={15} />{:else}<Pause size={15} />{/if}</button
+            >{/if}<button
             class="icon-button"
             title={t('remove')}
             onclick={() => void manage(job, 'remove')}><Trash2 size={15} /></button
@@ -199,7 +204,7 @@
       </div>
       {#each runs as run}<article>
           <time>{new Date(run.started_at).toLocaleString()}</time>
-          <pre>{run.error || run.result || '—'}</pre>
+          <pre>{[run.error, run.result].filter(Boolean).join('\n\n') || '—'}</pre>
         </article>{/each}
     </section>{/if}
 </div>
