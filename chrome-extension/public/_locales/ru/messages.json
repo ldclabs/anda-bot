@@ -776,6 +776,18 @@
   "allSources": {
     "message": "Все источники"
   },
+  "skillSourcePersonal": {
+    "message": "Личные"
+  },
+  "skillSourceBundled": {
+    "message": "Встроенные"
+  },
+  "skillSourceShared": {
+    "message": "Общие"
+  },
+  "skillSourceScanIncomplete": {
+    "message": "$1: сканирование не завершено ($2)"
+  },
   "allStatuses": {
     "message": "Все статусы"
   },

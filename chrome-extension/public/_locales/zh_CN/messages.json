@@ -776,6 +776,18 @@
   "allSources": {
     "message": "全部来源"
   },
+  "skillSourcePersonal": {
+    "message": "个人"
+  },
+  "skillSourceBundled": {
+    "message": "内置"
+  },
+  "skillSourceShared": {
+    "message": "共享"
+  },
+  "skillSourceScanIncomplete": {
+    "message": "$1：扫描不完整（$2 处）"
+  },
   "allStatuses": {
     "message": "全部状态"
   },

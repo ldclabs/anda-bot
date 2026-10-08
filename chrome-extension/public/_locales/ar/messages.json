@@ -776,6 +776,18 @@
   "allSources": {
     "message": "جميع المصادر"
   },
+  "skillSourcePersonal": {
+    "message": "شخصية"
+  },
+  "skillSourceBundled": {
+    "message": "مضمّنة"
+  },
+  "skillSourceShared": {
+    "message": "مشتركة"
+  },
+  "skillSourceScanIncomplete": {
+    "message": "$1: الفحص غير مكتمل ($2)"
+  },
   "allStatuses": {
     "message": "جميع الحالات"
   },

@@ -149,7 +149,7 @@ export interface PromptSkill {
   description?: string
 }
 
-export type SkillSourceKind = 'personal' | 'bundled' | 'shared' | 'legacy'
+export type SkillSourceKind = 'personal' | 'bundled' | 'shared'
 export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error'
 
 export interface SkillDiagnostic {
@@ -165,6 +165,8 @@ export interface SkillSourceInfo {
   path: string
   editable: boolean
   exists: boolean
+  /** What the last scan could not read here; the skills it reached are still listed. */
+  diagnostics?: SkillDiagnostic[]
 }
 
 export interface SkillUsageSummary {
@@ -203,7 +205,6 @@ export interface ManagedSkill {
   diagnostics: SkillDiagnostic[]
   updated_at?: number | null
   size?: number | null
-  file_count: number
   usage?: SkillUsageSummary | null
   version: string
 }

@@ -776,6 +776,18 @@
   "allSources": {
     "message": "Todas las fuentes"
   },
+  "skillSourcePersonal": {
+    "message": "Personales"
+  },
+  "skillSourceBundled": {
+    "message": "Incluidas"
+  },
+  "skillSourceShared": {
+    "message": "Compartidas"
+  },
+  "skillSourceScanIncomplete": {
+    "message": "$1: análisis incompleto ($2)"
+  },
   "allStatuses": {
     "message": "Todos los estados"
   },

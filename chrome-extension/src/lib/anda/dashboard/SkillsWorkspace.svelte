@@ -5,9 +5,9 @@
   import type {
     ManagedSkill,
     ManagedSkillDetail,
-    SkillDiagnostic,
     SkillFileEntry,
-    SkillSourceInfo
+    SkillSourceInfo,
+    SkillSourceKind
   } from '$lib/anda/client/types'
   import { badgeClass, buttonClass, inputClass, textareaClass } from '$lib/anda/ui'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
@@ -37,9 +37,14 @@
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
-  type SourceFilter = 'all' | ManagedSkill['source']
-  type StatusFilter = 'all' | 'active' | 'disabled' | 'shadowed' | 'error'
+  type SourceFilter = 'all' | SkillSourceKind
+  type SkillStatus = 'active' | 'disabled' | 'shadowed' | 'error' | 'inactive'
+  type StatusFilter = 'all' | Exclude<SkillStatus, 'inactive'>
   type DetailTab = 'overview' | 'files' | 'optimize'
+  /** One library operation at a time; `load` is the first fetch. */
+  type BusyAction = '' | 'load' | 'reload' | 'clone' | 'toggle' | 'delete' | 'optimize'
+
+  const SKILL_MD = 'SKILL.md'
 
   let skills = $state<ManagedSkill[]>([])
   let sources = $state<SkillSourceInfo[]>([])
@@ -48,37 +53,72 @@
   let searchQuery = $state('')
   let sourceFilter = $state<SourceFilter>('all')
   let statusFilter = $state<StatusFilter>('all')
-  const sourceFilterItems = $derived<{ value: SourceFilter; label: string }[]>([
-    { value: 'all', label: getMessage('allSources') },
-    ...sources.map((source) => ({
-      value: source.source,
-      label: `${source.source_label} (${sourceCount(source)})`
-    }))
-  ])
-  const statusFilterItems: { value: StatusFilter; label: string }[] = [
-    { value: 'all', label: getMessage('allStatuses') },
-    { value: 'active', label: getMessage('skillStatusActive') },
-    { value: 'disabled', label: getMessage('skillStatusDisabled') },
-    { value: 'shadowed', label: getMessage('skillStatusShadowed') },
-    { value: 'error', label: getMessage('skillStatusError') }
-  ]
   let activeTab = $state<DetailTab>('overview')
-  let loading = $state(false)
+  let busyAction = $state<BusyAction>('')
   let detailLoading = $state(false)
-  let reloading = $state(false)
-  let cloning = $state(false)
-  let toggling = $state(false)
-  let deleting = $state(false)
   let error = $state('')
   let notice = $state('')
-  let selectedFilePath = $state('SKILL.md')
+  let selectedFilePath = $state(SKILL_MD)
   let viewedFileContent = $state('')
   let viewedFileTruncated = $state(false)
   let fileLoading = $state(false)
   let fileError = $state('')
   let optimizeGoal = $state('')
-  let optimizing = $state(false)
   let detailRequestId = 0
+  let fileRequestId = 0
+
+  const sourceLabels: Record<SkillSourceKind, string> = {
+    personal: getMessage('skillSourcePersonal'),
+    bundled: getMessage('skillSourceBundled'),
+    shared: getMessage('skillSourceShared')
+  }
+  const statusLabels: Record<SkillStatus, string> = {
+    active: getMessage('skillStatusActive'),
+    disabled: getMessage('skillStatusDisabled'),
+    shadowed: getMessage('skillStatusShadowed'),
+    error: getMessage('skillStatusError'),
+    inactive: getMessage('skillStatusInactive')
+  }
+  const statusFilterItems: { value: StatusFilter; label: string }[] = [
+    { value: 'all', label: getMessage('allStatuses') },
+    { value: 'active', label: statusLabels.active },
+    { value: 'disabled', label: statusLabels.disabled },
+    { value: 'shadowed', label: statusLabels.shadowed },
+    { value: 'error', label: statusLabels.error }
+  ]
+  const detailTabs: { value: DetailTab; label: string }[] = [
+    { value: 'overview', label: getMessage('skillOverview') },
+    { value: 'files', label: getMessage('skillFiles') },
+    { value: 'optimize', label: getMessage('skillOptimize') }
+  ]
+  /** File extension to a grammar registered in `$lib/utils/prismjs`. */
+  const fileLanguages: Record<string, string> = {
+    md: 'markdown',
+    markdown: 'markdown',
+    json: 'json',
+    jsonc: 'json',
+    json5: 'json5',
+    yaml: 'yaml',
+    yml: 'yaml',
+    toml: 'toml',
+    py: 'python',
+    rs: 'rust',
+    ts: 'typescript',
+    mts: 'typescript',
+    cts: 'typescript',
+    tsx: 'tsx',
+    js: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    jsx: 'jsx',
+    sh: 'bash',
+    bash: 'bash',
+    zsh: 'bash',
+    html: 'markup',
+    xml: 'markup',
+    svg: 'markup',
+    css: 'css'
+  }
 
   const compactNumberFormatter = new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 1,
@@ -86,38 +126,41 @@
   })
   const numberFormatter = new Intl.NumberFormat()
 
+  // Several directories can share a kind (more than one Shared folder), but
+  // the filter offers each kind once.
+  const sourceFilterItems = $derived<{ value: SourceFilter; label: string }[]>([
+    { value: 'all', label: getMessage('allSources') },
+    ...[...new Set(sources.map((source) => source.source))].map((kind) => ({
+      value: kind,
+      label: `${sourceLabels[kind] || kind} (${skills.filter((skill) => skill.source === kind).length})`
+    }))
+  ])
+  const incompleteSources = $derived(sources.filter((source) => source.diagnostics?.length))
   const visibleSkills = $derived.by(() => {
     const query = searchQuery.trim().toLowerCase()
-    return skills.filter((skill) => {
-      const matchesQuery =
-        !query ||
-        skill.name.toLowerCase().includes(query) ||
-        (skill.description || '').toLowerCase().includes(query) ||
-        skill.path.toLowerCase().includes(query) ||
-        skill.directory.toLowerCase().includes(query)
-      const matchesSource = sourceFilter === 'all' || skill.source === sourceFilter
-      const matchesStatus =
-        statusFilter === 'all' ||
-        (statusFilter === 'active' && skill.active) ||
-        (statusFilter === 'disabled' && skill.disabled) ||
-        (statusFilter === 'shadowed' && Boolean(skill.shadowed_by)) ||
-        (statusFilter === 'error' && hasError(skill.diagnostics))
-      return matchesQuery && matchesSource && matchesStatus
-    })
+    return skills.filter(
+      (skill) =>
+        (sourceFilter === 'all' || skill.source === sourceFilter) &&
+        (statusFilter === 'all' || skillStatus(skill) === statusFilter) &&
+        (!query ||
+          skill.name.toLowerCase().includes(query) ||
+          skill.description.toLowerCase().includes(query))
+    )
   })
   const selectedSkill = $derived(skills.find((skill) => skill.id === selectedId) || null)
   const selectedFile = $derived(
     detail?.files.find((file) => file.path === selectedFilePath) || null
   )
+  const fileCount = $derived(detail?.files.filter((file) => file.kind === 'file').length ?? 0)
   const selectedFileContent = $derived(
-    detail && selectedFilePath === 'SKILL.md' ? detail.content : viewedFileContent
+    selectedFilePath === SKILL_MD ? detail?.content || '' : viewedFileContent
   )
   const selectedFileLanguage = $derived(skillFileLanguage(selectedFilePath))
   const highlightedFileContent = $derived(
     highlightSkillFileContent(selectedFileContent, selectedFileLanguage)
   )
   const optimizationBusy = $derived(
-    optimizing ||
+    busyAction === 'optimize' ||
       andaClient.sending ||
       Boolean(andaClient.activeChannel?.sending) ||
       ['sending', 'submitted', 'working', 'connecting', 'reconnecting'].includes(andaClient.status)
@@ -140,67 +183,68 @@
       .init({ conversations: false })
       .catch(() => undefined)
       .finally(() => {
-        void loadLibrary()
+        void run('load', async () => {
+          await loadList()
+          await showSkill(pickSelection(selectedId))
+          return ''
+        })
       })
   })
 
-  async function loadLibrary(keepSelection = true) {
-    loading = true
+  /** Runs one library operation, reporting its outcome in the banner. */
+  async function run(action: Exclude<BusyAction, ''>, work: () => Promise<string>) {
+    if (busyAction) {
+      return
+    }
+    busyAction = action
     error = ''
+    notice = ''
     try {
-      const [nextSources, nextSkills] = await Promise.all([
-        andaClient.skills.listSources(),
-        andaClient.skills.list(true)
-      ])
-      sources = nextSources
-      skills = sortSkills(nextSkills)
-      if (!keepSelection || !skills.some((skill) => skill.id === selectedId)) {
-        selectedId = skills.find((skill) => skill.active)?.id || skills[0]?.id || ''
-      }
-      if (selectedId) {
-        await loadDetail(selectedId)
-      } else {
-        detail = null
-        selectedFilePath = 'SKILL.md'
-        viewedFileContent = ''
-        viewedFileTruncated = false
-        fileError = ''
-      }
+      notice = await work()
     } catch (err) {
       error = errorToMessage(err)
     } finally {
-      loading = false
+      busyAction = ''
     }
   }
 
-  async function reloadSkills() {
-    reloading = true
-    error = ''
-    try {
-      skills = sortSkills(await andaClient.skills.reload())
-      await loadLibrary(true)
-      notice = getMessage('skillsReloaded')
-    } catch (err) {
-      error = errorToMessage(err)
-    } finally {
-      reloading = false
-    }
+  /** Refreshes sources and skills; `nextSkills` is a list a mutation already returned. */
+  async function loadList(nextSkills?: ManagedSkill[]) {
+    const [nextSources, listed] = await Promise.all([
+      andaClient.skills.listSources(),
+      nextSkills ?? andaClient.skills.list(true)
+    ])
+    sources = nextSources
+    skills = sortSkills(listed)
   }
 
-  async function loadDetail(id: string) {
+  /** `preferredId` while it is listed, otherwise the first active skill. */
+  function pickSelection(preferredId: string): string {
+    return skills.some((skill) => skill.id === preferredId)
+      ? preferredId
+      : skills.find((skill) => skill.active)?.id || skills[0]?.id || ''
+  }
+
+  /**
+   * Shows `id` in the detail pane. Switching skills shows a spinner; refreshing
+   * the one already open swaps its detail in place.
+   */
+  async function showSkill(id: string) {
     const requestId = ++detailRequestId
-    detailLoading = true
-    error = ''
+    selectedId = id
+    if (detail?.id !== id) {
+      detail = null
+      void openFile()
+    }
+    if (!id) {
+      return
+    }
+    detailLoading = !detail
     try {
       const next = await andaClient.skills.get(id)
-      if (requestId !== detailRequestId) {
-        return
+      if (requestId === detailRequestId) {
+        showDetail(next)
       }
-      detail = next
-      selectedFilePath = 'SKILL.md'
-      viewedFileContent = next.content
-      viewedFileTruncated = false
-      fileError = ''
     } catch (err) {
       if (requestId === detailRequestId) {
         error = errorToMessage(err)
@@ -212,131 +256,125 @@
     }
   }
 
+  /** Puts `next` on screen, keeping the open file while the same skill still has it. */
+  function showDetail(next: ManagedSkillDetail) {
+    const keepFile =
+      detail?.id === next.id &&
+      next.files.some((file) => file.kind === 'file' && file.path === selectedFilePath)
+    detailRequestId += 1
+    detailLoading = false
+    selectedId = next.id
+    detail = next
+    void openFile(keepFile ? selectedFilePath : SKILL_MD)
+  }
+
   function selectSkill(id: string) {
     if (selectedId === id) {
       return
     }
-    selectedId = id
     activeTab = 'overview'
-    void loadDetail(id)
+    optimizeGoal = ''
+    error = ''
+    notice = ''
+    void showSkill(id)
   }
 
-  async function cloneSelected(nextTab: DetailTab = 'files') {
-    if (!selectedSkill || cloning) {
+  function reloadSkills() {
+    void run('reload', async () => {
+      await loadList(await andaClient.skills.reload())
+      await showSkill(pickSelection(selectedId))
+      return getMessage('skillsReloaded')
+    })
+  }
+
+  function cloneSelected(nextTab: DetailTab = 'files') {
+    const skill = selectedSkill
+    if (!skill) {
       return
     }
-    cloning = true
-    error = ''
-    try {
-      const cloned = await andaClient.skills.clone(selectedSkill.id)
-      notice = getMessage('skillCloned')
-      selectedId = cloned.id
-      detail = cloned
-      viewedFileContent = cloned.content
-      selectedFilePath = 'SKILL.md'
-      viewedFileTruncated = false
+    void run('clone', async () => {
+      const cloned = await andaClient.skills.clone(skill.id)
+      await loadList()
+      showDetail(cloned)
       activeTab = nextTab
-      await loadLibrary(true)
-    } catch (err) {
-      error = errorToMessage(err)
-    } finally {
-      cloning = false
-    }
+      return getMessage('skillCloned')
+    })
   }
 
-  async function toggleSelected() {
-    if (!selectedSkill || toggling) {
+  function toggleSelected() {
+    const skill = selectedSkill
+    if (!skill) {
       return
     }
-    const enabling = selectedSkill.disabled
-    toggling = true
-    error = ''
-    try {
-      skills = sortSkills(await andaClient.skills.setEnabled(selectedSkill.id, enabling))
-      notice = enabling ? getMessage('skillEnabled') : getMessage('skillDisabled')
-      await loadLibrary(true)
-    } catch (err) {
-      error = errorToMessage(err)
-    } finally {
-      toggling = false
-    }
+    const enabling = skill.disabled
+    void run('toggle', async () => {
+      await loadList(await andaClient.skills.setEnabled(skill.id, enabling))
+      await showSkill(pickSelection(skill.id))
+      return enabling ? getMessage('skillEnabled') : getMessage('skillDisabled')
+    })
   }
 
-  async function deleteSelected() {
-    if (!selectedSkill?.editable || deleting) {
+  function deleteSelected() {
+    const skill = selectedSkill
+    if (busyAction || !skill?.editable || !confirm(getMessage('skillDeleteConfirm'))) {
       return
     }
-    if (!confirm(getMessage('skillDeleteConfirm'))) {
-      return
-    }
-    deleting = true
-    error = ''
-    try {
-      await andaClient.skills.deletePersonal(selectedSkill.id)
-      selectedId = ''
-      detail = null
-      viewedFileContent = ''
-      selectedFilePath = 'SKILL.md'
-      viewedFileTruncated = false
-      notice = getMessage('skillDeleted')
-      await loadLibrary(false)
-    } catch (err) {
-      error = errorToMessage(err)
-    } finally {
-      deleting = false
-    }
+    void run('delete', async () => {
+      await andaClient.skills.deletePersonal(skill.id)
+      await loadList()
+      await showSkill(pickSelection(''))
+      return getMessage('skillDeleted')
+    })
   }
 
-  async function selectSkillFile(file: SkillFileEntry) {
-    if (!detail || file.kind !== 'file' || file.path === selectedFilePath) {
-      return
-    }
-    selectedFilePath = file.path
-    fileError = ''
+  /** Opens `path` in the Files tab; SKILL.md comes with the detail itself. */
+  async function openFile(path = SKILL_MD) {
+    const requestId = ++fileRequestId
+    selectedFilePath = path
+    viewedFileContent = ''
     viewedFileTruncated = false
-    if (file.path === 'SKILL.md') {
-      viewedFileContent = detail.content
+    fileError = ''
+    fileLoading = path !== SKILL_MD && Boolean(detail)
+    if (!fileLoading || !detail) {
       return
     }
-    fileLoading = true
     try {
-      const loaded = await andaClient.skills.getFile(detail.id, file.path)
-      if (selectedFilePath !== file.path) {
-        return
+      const loaded = await andaClient.skills.getFile(detail.id, path)
+      if (requestId === fileRequestId) {
+        viewedFileContent = loaded.content
+        viewedFileTruncated = loaded.truncated
       }
-      viewedFileContent = loaded.content
-      viewedFileTruncated = loaded.truncated
     } catch (err) {
-      if (selectedFilePath === file.path) {
+      if (requestId === fileRequestId) {
         fileError = errorToMessage(err)
-        viewedFileContent = ''
       }
     } finally {
-      if (selectedFilePath === file.path) {
+      if (requestId === fileRequestId) {
         fileLoading = false
       }
     }
   }
 
-  async function sendOptimizationRequest() {
-    if (!detail || !canOptimize || optimizationBusy) {
+  function selectSkillFile(file: SkillFileEntry) {
+    if (file.kind === 'file' && file.path !== selectedFilePath) {
+      void openFile(file.path)
+    }
+  }
+
+  function sendOptimizationRequest() {
+    const skill = detail
+    if (!skill || !canOptimize || optimizationBusy) {
       return
     }
-    optimizing = true
-    error = ''
-    try {
+    void run('optimize', async () => {
       await storeClientState({
         [promptDraftRequestStorageKey]: createPromptDraftRequest(
-          skillOptimizationPrompt(detail, optimizeGoal)
+          skillOptimizationPrompt(skill, optimizeGoal)
         )
       })
       await openAndaSidePanel()
-      notice = getMessage('skillOptimizationPromptReady')
-    } catch (err) {
-      error = errorToMessage(err)
-    } finally {
-      optimizing = false
-    }
+      return getMessage('skillOptimizationPromptReady')
+    })
   }
 
   function skillOptimizationPrompt(skill: ManagedSkillDetail, goal: string): string {
@@ -374,28 +412,26 @@
     return skill.usage?.requests ?? 0
   }
 
-  function hasError(diagnostics: SkillDiagnostic[] = []): boolean {
-    return diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-  }
-
-  function statusText(skill: ManagedSkill): string {
-    if (hasError(skill.diagnostics)) {
-      return getMessage('skillStatusError')
+  /** The one status a skill is listed, labelled, and filtered by. */
+  function skillStatus(skill: ManagedSkill): SkillStatus {
+    if (skill.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      return 'error'
     }
     if (skill.disabled) {
-      return getMessage('skillStatusDisabled')
+      return 'disabled'
     }
     if (skill.shadowed_by) {
-      return getMessage('skillStatusShadowed')
+      return 'shadowed'
     }
-    if (skill.active) {
-      return getMessage('skillStatusActive')
-    }
-    return getMessage('skillStatusInactive')
+    return skill.active ? 'active' : 'inactive'
   }
 
-  function sourceCount(source: SkillSourceInfo): number {
-    return skills.filter((skill) => skill.source === source.source).length
+  function sourceLabel(source: { source: SkillSourceKind; source_label: string }): string {
+    return sourceLabels[source.source] || source.source_label
+  }
+
+  function statusLine(skill: ManagedSkill): string {
+    return `${sourceLabel(skill)} / ${statusLabels[skillStatus(skill)]} / ${usageCallsText(skill)}`
   }
 
   function formatSize(size?: number | null): string {
@@ -454,53 +490,8 @@
   }
 
   function skillFileLanguage(path: string): string {
-    const filename = path.split('/').pop()?.toLowerCase() || ''
-    if (filename === 'skill.md' || filename.endsWith('.md') || filename.endsWith('.markdown')) {
-      return 'markdown'
-    }
-    if (filename === 'package.json' || filename.endsWith('.json')) {
-      return 'json'
-    }
-    if (filename.endsWith('.jsonc')) {
-      return 'json'
-    }
-    if (filename.endsWith('.json5')) {
-      return 'json5'
-    }
-    if (filename.endsWith('.yaml') || filename.endsWith('.yml')) {
-      return 'yaml'
-    }
-    if (filename.endsWith('.toml')) {
-      return 'toml'
-    }
-    if (filename.endsWith('.py')) {
-      return 'python'
-    }
-    if (filename.endsWith('.rs')) {
-      return 'rust'
-    }
-    if (filename.endsWith('.ts') || filename.endsWith('.mts') || filename.endsWith('.cts')) {
-      return 'typescript'
-    }
-    if (filename.endsWith('.tsx')) {
-      return 'tsx'
-    }
-    if (filename.endsWith('.js') || filename.endsWith('.mjs') || filename.endsWith('.cjs')) {
-      return 'javascript'
-    }
-    if (filename.endsWith('.jsx')) {
-      return 'jsx'
-    }
-    if (filename.endsWith('.sh') || filename.endsWith('.bash') || filename.endsWith('.zsh')) {
-      return 'bash'
-    }
-    if (filename.endsWith('.html') || filename.endsWith('.xml') || filename.endsWith('.svg')) {
-      return 'markup'
-    }
-    if (filename.endsWith('.css')) {
-      return 'css'
-    }
-    return ''
+    const extension = /\.([^./]+)$/.exec(path)?.[1].toLowerCase()
+    return (extension && fileLanguages[extension]) || ''
   }
 
   function highlightSkillFileContent(content: string, language: string): string {
@@ -523,10 +514,10 @@
         <div class="flex items-center gap-2">
           <div class="relative min-w-0 flex-1">
             <Search
-              class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+              class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
             />
             <input
-              class={inputClass('h-8 pl-8 pr-8 text-xs')}
+              class={inputClass('h-8 pr-8 pl-8 text-xs')}
               bind:value={searchQuery}
               placeholder={getMessage('skillsSearchPlaceholder')}
             />
@@ -536,7 +527,7 @@
                 class={buttonClass(
                   'ghost',
                   'icon-xs',
-                  'absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground'
+                  'absolute top-1/2 right-1.5 -translate-y-1/2 text-muted-foreground hover:text-foreground'
                 )}
                 title={getMessage('clearSearch')}
                 aria-label={getMessage('clearSearch')}
@@ -551,10 +542,10 @@
             class={buttonClass('outline', 'icon-sm')}
             title={getMessage('reloadSkills')}
             aria-label={getMessage('reloadSkills')}
-            disabled={reloading}
+            disabled={Boolean(busyAction)}
             onclick={reloadSkills}
           >
-            {#if reloading}
+            {#if busyAction === 'reload'}
               <LoaderCircle class="size-3.5 animate-spin" />
             {:else}
               <RefreshCw class="size-3.5" />
@@ -565,10 +556,24 @@
           <DropdownMenu class="h-8 text-xs" items={sourceFilterItems} bind:value={sourceFilter} />
           <DropdownMenu class="h-8 text-xs" items={statusFilterItems} bind:value={statusFilter} />
         </div>
+        {#each incompleteSources as source (source.path)}
+          <div
+            class="flex min-w-0 items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+            title={source.diagnostics?.map((diagnostic) => diagnostic.message).join('\n')}
+          >
+            <AlertTriangle class="size-3 shrink-0" />
+            <span class="truncate"
+              >{getMessage('skillSourceScanIncomplete', [
+                sourceLabel(source),
+                formatNumber(source.diagnostics?.length ?? 0)
+              ])}</span
+            >
+          </div>
+        {/each}
       </div>
 
       <div class="min-h-0 overflow-y-auto p-2">
-        {#if loading}
+        {#if busyAction === 'load' && skills.length === 0}
           <div class="grid h-28 place-items-center text-muted-foreground">
             <LoaderCircle class="size-5 animate-spin" />
           </div>
@@ -582,6 +587,7 @@
         {:else}
           <div class="grid gap-1.5">
             {#each visibleSkills as skill (skill.id)}
+              {@const status = skillStatus(skill)}
               <button
                 type="button"
                 class={cn(
@@ -593,11 +599,11 @@
                 onclick={() => selectSkill(skill.id)}
               >
                 <div class="flex min-w-0 items-center gap-2">
-                  {#if hasError(skill.diagnostics)}
+                  {#if status === 'error'}
                     <AlertTriangle class="size-3.5 shrink-0 text-destructive" />
-                  {:else if skill.disabled}
+                  {:else if status === 'disabled'}
                     <Ban class="size-3.5 shrink-0 text-muted-foreground" />
-                  {:else if skill.active}
+                  {:else if status === 'active'}
                     <CheckCircle2 class="size-3.5 shrink-0 text-emerald-700" />
                   {:else}
                     <FileText class="size-3.5 shrink-0 text-muted-foreground" />
@@ -607,9 +613,9 @@
                 <p class="line-clamp-2 text-xs text-muted-foreground">{skill.description}</p>
                 <div class="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
                   <span class={badgeClass('outline', 'h-4 px-1.5 text-[10px]')}
-                    >{skill.source_label}</span
+                    >{sourceLabel(skill)}</span
                   >
-                  <span class="truncate">{statusText(skill)}</span>
+                  <span class="truncate">{statusLabels[status]}</span>
                   <span class="ml-auto flex min-w-0 shrink items-center gap-1 tabular-nums">
                     <Activity class="size-3 shrink-0" />
                     <span class="truncate">{usageCallsText(skill, true)}</span>
@@ -631,9 +637,7 @@
       <div class="min-w-0">
         <h1 class="truncate text-base font-bold">{selectedSkill?.name || getMessage('skills')}</h1>
         <p class="truncate text-xs text-muted-foreground">
-          {selectedSkill
-            ? `${selectedSkill.source_label} / ${statusText(selectedSkill)} / ${usageCallsText(selectedSkill)}`
-            : getMessage('skillsEmpty')}
+          {selectedSkill ? statusLine(selectedSkill) : getMessage('skillsEmpty')}
         </p>
       </div>
       <div class="flex shrink-0 items-center gap-2">
@@ -641,10 +645,10 @@
           <button
             type="button"
             class={buttonClass('outline', 'sm')}
-            disabled={cloning}
+            disabled={Boolean(busyAction)}
             onclick={selectedSkill.editable ? () => (activeTab = 'files') : () => cloneSelected()}
           >
-            {#if cloning}
+            {#if busyAction === 'clone'}
               <LoaderCircle class="size-3.5 animate-spin" />
             {:else if selectedSkill.editable}
               <FileText class="size-3.5" />
@@ -656,10 +660,10 @@
           <button
             type="button"
             class={buttonClass('outline', 'sm')}
-            disabled={toggling}
+            disabled={Boolean(busyAction)}
             onclick={toggleSelected}
           >
-            {#if toggling}
+            {#if busyAction === 'toggle'}
               <LoaderCircle class="size-3.5 animate-spin" />
             {:else}
               <Ban class="size-3.5" />
@@ -670,10 +674,10 @@
             <button
               type="button"
               class={buttonClass('destructive', 'sm')}
-              disabled={deleting}
+              disabled={Boolean(busyAction)}
               onclick={deleteSelected}
             >
-              {#if deleting}
+              {#if busyAction === 'delete'}
                 <LoaderCircle class="size-3.5 animate-spin" />
               {:else}
                 <Trash2 class="size-3.5" />
@@ -704,24 +708,20 @@
             <LoaderCircle class="size-6 animate-spin" />
           </div>
         {:else if detail && selectedSkill}
-          <div class="grid h-full min-h-0 gap-0 grid-rows-[auto_minmax(0,1fr)]">
+          <div class="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-0">
             <div class="flex gap-1 border-b px-4 pt-3">
-              {#each ['overview', 'files', 'optimize'] as tab}
+              {#each detailTabs as tab (tab.value)}
                 <button
                   type="button"
                   class={cn(
                     'rounded-t-md px-3 py-2 text-xs font-semibold',
-                    activeTab === tab
+                    activeTab === tab.value
                       ? 'bg-muted text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   )}
-                  onclick={() => (activeTab = tab as DetailTab)}
+                  onclick={() => (activeTab = tab.value)}
                 >
-                  {tab === 'overview'
-                    ? getMessage('skillOverview')
-                    : tab === 'files'
-                      ? getMessage('skillFiles')
-                      : getMessage('skillOptimize')}
+                  {tab.label}
                 </button>
               {/each}
             </div>
@@ -734,7 +734,7 @@
                       <div class="text-xs font-semibold text-muted-foreground">
                         {getMessage('skillDirectory')}
                       </div>
-                      <div class="break-all font-mono text-xs">{detail.directory}</div>
+                      <div class="font-mono text-xs break-all">{detail.directory}</div>
                     </div>
                     <div class="grid gap-1 rounded-md border p-3">
                       <div class="text-xs font-semibold text-muted-foreground">
@@ -753,7 +753,7 @@
                         {getMessage('skillFiles')}
                       </div>
                       <div class="text-xs">
-                        {getMessage('skillFileCount', formatNumber(detail.file_count))}
+                        {getMessage('skillFileCount', formatNumber(fileCount))}
                       </div>
                       <div class="text-[11px] text-muted-foreground">
                         SKILL.md {formatSize(detail.size) || '-'}
@@ -844,11 +844,11 @@
             {:else if activeTab === 'files'}
               <div class="grid h-full min-h-0 p-4">
                 <div
-                  class="grid h-full min-h-0 gap-3 grid-rows-[minmax(0,0.45fr)_minmax(0,1fr)] lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-none"
+                  class="grid h-full min-h-0 grid-rows-[minmax(0,0.45fr)_minmax(0,1fr)] gap-3 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-none"
                 >
                   <div class="min-h-0 overflow-auto rounded-md border bg-muted/20 p-2">
                     <div class="grid gap-1">
-                      {#each detail.files as file}
+                      {#each detail.files as file (file.path)}
                         <button
                           type="button"
                           class={cn(
@@ -912,7 +912,7 @@
                         <div class="p-3 text-sm text-destructive">{fileError}</div>
                       {:else}
                         <pre
-                          class="skill-file-code h-full overflow-auto whitespace-pre-wrap p-3 font-mono text-xs"><code
+                          class="skill-file-code h-full overflow-auto p-3 font-mono text-xs whitespace-pre-wrap"><code
                             class={selectedFileLanguage
                               ? `language-${selectedFileLanguage}`
                               : 'language-text'}>{@html highlightedFileContent}</code
@@ -930,15 +930,15 @@
                       class="grid max-w-3xl gap-3 rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground"
                     >
                       <div>{getMessage('skillOptimizePersonalOnly')}</div>
-                      <div class="break-all font-mono text-xs">{detail.directory}</div>
+                      <div class="font-mono text-xs break-all">{detail.directory}</div>
                       <div>
                         <button
                           type="button"
                           class={buttonClass('default', 'sm')}
-                          disabled={cloning}
+                          disabled={Boolean(busyAction)}
                           onclick={() => cloneSelected('optimize')}
                         >
-                          {#if cloning}
+                          {#if busyAction === 'clone'}
                             <LoaderCircle class="size-3.5 animate-spin" />
                           {:else}
                             <Copy class="size-3.5" />
@@ -956,7 +956,7 @@
                     <div
                       class="grid max-w-3xl gap-1 rounded-md border bg-muted/25 px-3 py-2 text-sm text-muted-foreground"
                     >
-                      <div class="break-all font-mono text-xs">{detail.directory}</div>
+                      <div class="font-mono text-xs break-all">{detail.directory}</div>
                       <div class="text-xs">{getMessage('skillOptimizeAndaHint')}</div>
                     </div>
                     <div class="flex items-center gap-2">
