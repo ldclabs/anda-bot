@@ -6,7 +6,10 @@ use serde_json::Value;
 
 use super::{text::truncate_visual, theme};
 pub(super) use crate::engine::ActionApiOutput;
-use crate::engine::{ActionStatus, ActionsTool, ActionsToolArgs, update_action_payload_resolution};
+use crate::engine::{
+    ActionResponseArgs, ActionStatus, ActionsTool, ActionsToolArgs,
+    update_action_payload_resolution,
+};
 
 pub(super) const ACTION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_CHOICE_KEYS: usize = 6;
@@ -125,12 +128,12 @@ impl TuiActionResponseRequest {
     pub(super) fn tool_input(&self) -> ToolInput<ActionsToolArgs> {
         ToolInput::new(
             ActionsTool::NAME.to_string(),
-            ActionsToolArgs::RespondAction {
+            ActionsToolArgs::RespondAction(ActionResponseArgs {
                 action_id: self.action_id.clone(),
                 approve: self.approve,
                 choice_id: self.choice_id.clone(),
                 choice_text: self.choice_text.clone(),
-            },
+            }),
         )
     }
 }

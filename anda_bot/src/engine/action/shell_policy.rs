@@ -10,8 +10,10 @@
 
 use anda_core::{BoxError, CompletionRequest, ContentPart, ModelEffort, RequestMeta};
 use anda_engine::{extension::shell::CommandArgs, model::Models};
+use parking_lot::Mutex;
 use rust_i18n::t;
 use serde_json::{Value, json};
+use std::{collections::HashSet, time::Duration};
 
 use crate::util::request_meta::keys;
 
@@ -53,12 +55,49 @@ pub(super) enum ApprovalDecision {
     Ask(String),
 }
 
+/// Upper bound for one risk classification: a stalled provider must not hold
+/// the shell tool for the engine's multi-minute request timeout.
+const SHELL_RISK_MODEL_TIMEOUT: Duration = Duration::from_secs(20);
+const SHELL_RISK_CACHE_CAPACITY: usize = 256;
+
+/// Commands the model cleared in one session, so repeated builds and tests do
+/// not pay for another classification. Only clearances are kept, and the set
+/// starts over when full.
+#[derive(Default)]
+pub(super) struct ShellRiskCache(Mutex<HashSet<String>>);
+
+impl ShellRiskCache {
+    fn key(args: &CommandArgs, workspace: &str) -> String {
+        json!([
+            args.command,
+            args.cwd,
+            args.background,
+            args.env_keys,
+            workspace
+        ])
+        .to_string()
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        self.0.lock().contains(key)
+    }
+
+    fn insert(&self, key: String) {
+        let mut cleared = self.0.lock();
+        if cleared.len() >= SHELL_RISK_CACHE_CAPACITY {
+            cleared.clear();
+        }
+        cleared.insert(key);
+    }
+}
+
 pub(super) async fn shell_approval_decision_with_model(
     args: &CommandArgs,
     mode: ApprovalMode,
     workspace: &str,
     models: &Models,
     language_hint: Option<&str>,
+    cache: &ShellRiskCache,
 ) -> ApprovalDecision {
     match mode {
         ApprovalMode::FullAccess => return ApprovalDecision::Allow,
@@ -81,15 +120,35 @@ pub(super) async fn shell_approval_decision_with_model(
         return localize_shell_approval_decision(static_decision, language_hint);
     }
 
-    match model_shell_approval_decision(args, workspace, models, language_hint).await {
-        Ok(decision) => localize_shell_approval_decision(decision, language_hint),
-        Err(err) => {
+    let key = ShellRiskCache::key(args, workspace);
+    if cache.contains(&key) {
+        return ApprovalDecision::Allow;
+    }
+    let decision = match tokio::time::timeout(
+        SHELL_RISK_MODEL_TIMEOUT,
+        model_shell_approval_decision(args, workspace, models, language_hint),
+    )
+    .await
+    {
+        Ok(Ok(decision)) => decision,
+        Ok(Err(err)) => {
             log::warn!(
                 "Shell approval risk model unavailable or invalid; falling back to static policy: {err:?}"
             );
-            localize_shell_approval_decision(static_decision, language_hint)
+            static_decision
         }
+        Err(_) => {
+            log::warn!(
+                "Shell approval risk model timed out after {}s; falling back to static policy",
+                SHELL_RISK_MODEL_TIMEOUT.as_secs()
+            );
+            static_decision
+        }
+    };
+    if decision == ApprovalDecision::Allow {
+        cache.insert(key);
     }
+    localize_shell_approval_decision(decision, language_hint)
 }
 
 const EMPTY_COMMAND: &str = "empty command";
@@ -137,7 +196,7 @@ async fn model_shell_approval_decision(
                 text: request.to_string(),
             }],
             output_schema: Some(shell_risk_output_schema()),
-            effort: Some(ModelEffort::Medium),
+            effort: Some(ModelEffort::Low),
             ..Default::default()
         })
         .await?;
@@ -1011,6 +1070,7 @@ mod tests {
             "/tmp/workspace",
             &models,
             Some("zh-CN"),
+            &ShellRiskCache::default(),
         )
         .await;
 
@@ -1018,6 +1078,7 @@ mod tests {
         let lite_requests = lite_requests.lock().unwrap();
         assert_eq!(lite_requests.len(), 1);
         assert_eq!(flash_requests.lock().unwrap().len(), 0);
+        assert_eq!(lite_requests[0].effort, Some(ModelEffort::Low));
         assert!(
             lite_requests[0]
                 .instructions
@@ -1072,7 +1133,8 @@ mod tests {
                 ApprovalMode::OnRisk,
                 "/tmp/workspace",
                 &models,
-                Some("zh-CN")
+                Some("zh-CN"),
+                &ShellRiskCache::default(),
             )
             .await,
             ApprovalDecision::Ask("这个命令会删除项目文件，删除后可能很难恢复。".to_string())
@@ -1086,27 +1148,44 @@ mod tests {
         models.set(
             "lite".to_string(),
             Model::with_completer(Arc::new(RecordingCompleter {
-                requests,
+                requests: requests.clone(),
                 response: r#"{"decision":"allow","reason":"ordinary workspace write"}"#.to_string(),
                 name: "lite-recorder",
             })),
         );
+        let cache = ShellRiskCache::default();
+        let decide = |args: CommandArgs| {
+            let models = &models;
+            let cache = &cache;
+            async move {
+                shell_approval_decision_with_model(
+                    &args,
+                    ApprovalMode::OnRisk,
+                    "/tmp/workspace",
+                    models,
+                    None,
+                    cache,
+                )
+                .await
+            }
+        };
         let args = CommandArgs {
             command: "git add anda_bot/src/engine/action.rs".to_string(),
             ..Default::default()
         };
 
-        assert_eq!(
-            shell_approval_decision_with_model(
-                &args,
-                ApprovalMode::OnRisk,
-                "/tmp/workspace",
-                &models,
-                None
-            )
-            .await,
-            ApprovalDecision::Allow
-        );
+        assert_eq!(decide(args.clone()).await, ApprovalDecision::Allow);
+        // The same command in the same place is cleared from the cache.
+        assert_eq!(decide(args.clone()).await, ApprovalDecision::Allow);
+        assert_eq!(requests.lock().unwrap().len(), 1);
+
+        // Another working directory is another question for the model.
+        let elsewhere = CommandArgs {
+            cwd: Some("anda_bot".to_string()),
+            ..args
+        };
+        assert_eq!(decide(elsewhere).await, ApprovalDecision::Allow);
+        assert_eq!(requests.lock().unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -1137,7 +1216,8 @@ mod tests {
                     ApprovalMode::OnRisk,
                     "/tmp/workspace",
                     &models,
-                    None
+                    None,
+                    &ShellRiskCache::default(),
                 )
                 .await,
                 ApprovalDecision::Ask(_)
@@ -1168,7 +1248,8 @@ mod tests {
                 ApprovalMode::OnRisk,
                 "/tmp/workspace",
                 &models,
-                None
+                None,
+                &ShellRiskCache::default(),
             )
             .await,
             ApprovalDecision::Ask(

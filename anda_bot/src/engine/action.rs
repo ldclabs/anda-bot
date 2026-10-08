@@ -8,11 +8,20 @@ use anda_engine::{
     unix_ms,
 };
 use ic_auth_types::Xid;
+use parking_lot::Mutex;
 use rust_i18n::t;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, mpsc, oneshot};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::{mpsc, oneshot};
 
 use super::{agent::SessionRequestMeta, goal::GoalToolState};
 use crate::util::request_meta::keys;
@@ -20,7 +29,8 @@ use crate::util::request_meta::keys;
 mod shell_policy;
 
 use shell_policy::{
-    ApprovalDecision, ApprovalMode, shell_approval_decision_with_model, shell_risk_language_hint,
+    ApprovalDecision, ApprovalMode, ShellRiskCache, shell_approval_decision_with_model,
+    shell_risk_language_hint,
 };
 
 mod protocol;
@@ -34,19 +44,23 @@ pub(crate) use protocol::{
 };
 use protocol::{ActionPayload, ActionToolRef};
 
+/// How long an approval, or a choice without a default, waits for the user.
 const ACTION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// A choice with a default waits less: the agent then proceeds with it.
+const CHOICE_DEFAULT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+/// Marks a choice the user answered by writing in chat instead.
+const ANSWERED_IN_CHAT: &str = "answered_in_chat";
 
 impl ApprovalMode {
-    fn from_ctx(ctx: &BaseCtx) -> Self {
-        let meta = live_request_meta(ctx);
+    fn from_ctx(ctx: &BaseCtx, meta: &RequestMeta) -> Self {
         // Unattended runs have nobody on the other end of an approval card:
         // it would sit pending until ACTION_RESPONSE_TIMEOUT and then fail the
         // whole task. Grant full access instead so scheduled and autonomous
         // work can complete.
-        let declared = Self::from_meta(&meta);
-        if let Some(reason) = unattended_run_reason(ctx, &meta) {
+        let declared = Self::from_meta(meta);
+        if let Some(reason) = unattended_run_reason(ctx, meta) {
             if declared != Self::FullAccess {
-                log::info!(
+                log::debug!(
                     "Approval elevated from {} to full_access for an unattended run ({reason}); agent {}",
                     declared.as_str(),
                     ctx.agent
@@ -86,6 +100,16 @@ fn unattended_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static s
     None
 }
 
+/// Returns why nobody can answer a choice card here, or `None` when one can be
+/// shown. IM channels relay replies as text and never render action cards.
+fn choice_unanswerable_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
+    unattended_run_reason(ctx, meta).or_else(|| {
+        meta.get_extra_as::<String>(keys::REPLY_TARGET)
+            .is_some()
+            .then_some("IM channel")
+    })
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum ActionEvent {
     Add(Message),
@@ -109,45 +133,38 @@ impl ActionRuntime {
         }
     }
 
-    async fn register(&self, pending: PendingAction) -> oneshot::Receiver<ActionResponse> {
-        let action_id = pending.action_id.clone();
-        let (tx, rx) = oneshot::channel();
+    fn insert(&self, pending: PendingAction) {
         self.pending
             .lock()
-            .await
-            .insert(action_id, PendingAction { tx, ..pending });
-        rx
+            .insert(pending.action_id.clone(), pending);
     }
 
-    async fn expire(&self, action_id: &str) -> Option<PendingAction> {
-        self.pending.lock().await.remove(action_id)
+    fn take(&self, action_id: &str) -> Option<PendingAction> {
+        self.pending.lock().remove(action_id)
     }
 
-    async fn cancel_session(&self, session: &str) -> Vec<ActionEvent> {
-        let pending = {
-            let mut actions = self.pending.lock().await;
-            let ids = actions
-                .iter()
-                .filter(|(_, action)| action.session == session)
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>();
-            ids.into_iter()
-                .filter_map(|id| actions.remove(&id))
-                .collect::<Vec<_>>()
-        };
-        pending
+    /// Removes the pending actions of `session` whose kind matches `filter`.
+    fn take_session(
+        &self,
+        session: &str,
+        mut filter: impl FnMut(&PendingActionKind) -> bool,
+    ) -> Vec<PendingAction> {
+        self.pending
+            .lock()
+            .extract_if(|_, action| action.session == session && filter(&action.kind))
+            .map(|(_, action)| action)
+            .collect()
+    }
+
+    /// Denies every pending action of `session` and returns the resolutions
+    /// for the caller to apply: it is the runner draining the event channel.
+    fn cancel_session(&self, session: &str) -> Vec<ActionEvent> {
+        self.take_session(session, |_| true)
             .into_iter()
             .map(|action| {
-                let response = ActionResponse {
-                    status: ActionStatus::Denied,
-                    payload: json!({"reason": "task stopped"}),
-                };
-                let event = ActionEvent::Resolve {
-                    action_id: action.action_id,
-                    status: response.status,
-                    response: response.payload.clone(),
-                    responded_at: unix_ms(),
-                };
+                let response =
+                    ActionResponse::new(ActionStatus::Denied, json!({"reason": "task stopped"}));
+                let event = response.event(action.action_id);
                 let _ = action.tx.send(response);
                 event
             })
@@ -161,7 +178,7 @@ impl ActionRuntime {
         args: ActionResponseArgs,
     ) -> Result<ActionApiOutput, BoxError> {
         let (pending, response) = {
-            let mut pending_actions = self.pending.lock().await;
+            let mut pending_actions = self.pending.lock();
             let pending = pending_actions
                 .get(&args.action_id)
                 .ok_or_else(|| format!("action {} is not pending", args.action_id))?;
@@ -172,30 +189,21 @@ impl ActionRuntime {
                 return Err("action belongs to a different conversation".into());
             }
             let response = pending.kind.response_from_args(&args)?;
-            pending_actions
+            let pending = pending_actions
                 .remove(&args.action_id)
-                .map(|pending| (pending, response))
-                .expect("pending action exists")
+                .expect("pending action exists");
+            (pending, response)
         };
 
-        let status = response.status;
-        let responded_at = unix_ms();
-        let event = ActionEvent::Resolve {
+        let output = ActionApiOutput {
             action_id: pending.action_id.clone(),
-            status,
-            response: response.payload.clone(),
-            responded_at,
-        };
-        let _ = pending.event_sender.send(event).await;
-        let _ = pending.tx.send(response.clone());
-
-        Ok(ActionApiOutput {
-            action_id: pending.action_id,
             conversation: pending.conversation,
-            status: status.as_str().to_string(),
-            response: response.payload,
-            responded_at,
-        })
+            status: response.status.as_str().to_string(),
+            response: response.payload.clone(),
+            responded_at: response.responded_at,
+        };
+        pending.resolve(response).await;
+        Ok(output)
     }
 }
 
@@ -205,9 +213,10 @@ pub(crate) struct ActionSession {
     event_sender: mpsc::Sender<ActionEvent>,
     caller: String,
     session_id: String,
-    conversation_id: Arc<std::sync::atomic::AtomicU64>,
+    conversation_id: Arc<AtomicU64>,
     models: Arc<Models>,
     home_dir: PathBuf,
+    risk_cache: Arc<ShellRiskCache>,
 }
 
 impl ActionSession {
@@ -216,7 +225,7 @@ impl ActionSession {
         event_sender: mpsc::Sender<ActionEvent>,
         caller: String,
         session_id: String,
-        conversation_id: Arc<std::sync::atomic::AtomicU64>,
+        conversation_id: Arc<AtomicU64>,
         models: Arc<Models>,
         home_dir: PathBuf,
     ) -> Self {
@@ -228,11 +237,54 @@ impl ActionSession {
             conversation_id,
             models,
             home_dir,
+            risk_cache: Arc::default(),
         }
     }
 
-    pub(crate) async fn cancel_pending(&self) -> Vec<ActionEvent> {
-        self.runtime.cancel_session(&self.session_id).await
+    pub(crate) fn cancel_pending(&self) -> Vec<ActionEvent> {
+        self.runtime.cancel_session(&self.session_id)
+    }
+
+    /// The user wrote in chat while a choice card was waiting. Release the
+    /// waiting tool now, so the agent reads that message instead of the card
+    /// running out its timeout. Approvals keep waiting for an explicit answer.
+    pub(crate) async fn answer_choices_in_chat(&self) {
+        let answered = self.runtime.take_session(&self.session_id, |kind| {
+            matches!(kind, PendingActionKind::Choice { .. })
+        });
+        for action in answered {
+            action
+                .resolve(ActionResponse::new(
+                    ActionStatus::Expired,
+                    json!({
+                        "reason": "answered in chat",
+                        ANSWERED_IN_CHAT: true,
+                        "note": "The user replied in chat instead of picking an option. Their message reaches you after this step: do not pick an option yourself; stop here and follow that message.",
+                    }),
+                ))
+                .await;
+        }
+    }
+
+    fn conversation(&self) -> u64 {
+        self.conversation_id.load(Ordering::SeqCst)
+    }
+
+    /// The fields every card shares; callers fill in their kind-specific ones.
+    fn new_payload(&self, ctx: &BaseCtx, kind: &PendingActionKind, title: String) -> ActionPayload {
+        let now_ms = unix_ms();
+        ActionPayload {
+            id: next_action_id(),
+            kind: kind.payload_kind().to_string(),
+            agent: ctx.agent.clone(),
+            conversation: self.conversation(),
+            session: self.session_id.clone(),
+            title,
+            status: ActionStatus::Pending,
+            created_at: now_ms,
+            expires_at: now_ms + kind.timeout().as_millis() as u64,
+            ..Default::default()
+        }
     }
 
     pub(crate) async fn request_shell_approval(
@@ -240,14 +292,14 @@ impl ActionSession {
         ctx: &BaseCtx,
         args: CommandArgs,
     ) -> Result<CommandArgs, BoxError> {
-        let conversation = self
-            .conversation_id
-            .load(std::sync::atomic::Ordering::SeqCst);
         let meta = live_request_meta(ctx);
+        let approval_mode = ApprovalMode::from_ctx(ctx, &meta);
+        if approval_mode == ApprovalMode::FullAccess {
+            return Ok(args);
+        }
         let workspace = meta
             .get_extra_as::<String>(keys::WORKSPACE)
             .unwrap_or_default();
-        let approval_mode = ApprovalMode::from_ctx(ctx);
         let language_hint = shell_risk_language_hint(&meta)
             .or_else(|| super::browser_ws::persisted_ui_language(&self.home_dir));
         let approval_reason = match shell_approval_decision_with_model(
@@ -256,6 +308,7 @@ impl ActionSession {
             &workspace,
             self.models.as_ref(),
             language_hint.as_deref(),
+            &self.risk_cache,
         )
         .await
         {
@@ -293,16 +346,14 @@ impl ActionSession {
             details.push(approval_detail("Environment keys", &args.env_keys, "list"));
         }
 
-        let now_ms = unix_ms();
-        let action_id = next_action_id();
+        let kind = PendingActionKind::Approval {
+            approved_payload: json!({
+                "tool": ShellTool::NAME,
+                "command": &args.command,
+            }),
+        };
         let payload = ActionPayload {
-            id: action_id.clone(),
-            kind: "tool_approval".to_string(),
             tool: Some(ActionToolRef::labeled(ShellTool::NAME, "Shell command")),
-            agent: ctx.agent.clone(),
-            conversation,
-            session: self.session_id.clone(),
-            title: "Approve shell command".to_string(),
             message: Some("The agent wants to run a local shell command.".to_string()),
             summary: Some(args.command.clone()),
             command: Some(args.command.clone()),
@@ -316,32 +367,19 @@ impl ActionSession {
                 "approval_mode": approval_mode.as_str(),
                 "approval_reason": &approval_reason,
             })),
-            status: ActionStatus::Pending,
-            created_at: now_ms,
-            expires_at: now_ms + ACTION_RESPONSE_TIMEOUT.as_millis() as u64,
-            ..Default::default()
+            ..self.new_payload(ctx, &kind, "Approve shell command".to_string())
         };
-        let approved_payload = json!({
-            "tool": ShellTool::NAME,
-            "command": &args.command,
-        });
-        self.publish_approval_and_wait(
-            action_id,
-            conversation,
-            approved_payload,
-            payload.into_value(),
-            "shell command",
-        )
-        .await
-        .map(|()| args)
+        self.request_approval(payload, kind, "shell command")
+            .await
+            .map(|()| args)
     }
 
     /// Requests user approval before an MCP server is added or connected.
     /// Unlike shell commands there is no risk classification: outside
     /// FullAccess mode these tools always require explicit confirmation,
     /// because they spawn local processes or open connections to arbitrary
-    /// endpoints.
-    pub(crate) async fn request_mcp_approval(
+    /// endpoints. Reached only through [`require_mcp_approval`].
+    async fn request_mcp_approval(
         &self,
         ctx: &BaseCtx,
         tool_name: &str,
@@ -349,163 +387,126 @@ impl ActionSession {
         details: Vec<ActionDetail>,
         metadata: Value,
     ) -> Result<(), BoxError> {
-        if ApprovalMode::from_ctx(ctx) == ApprovalMode::FullAccess {
-            return Ok(());
-        }
-        let conversation = self
-            .conversation_id
-            .load(std::sync::atomic::Ordering::SeqCst);
-        let now_ms = unix_ms();
-        let action_id = next_action_id();
+        let kind = PendingActionKind::Approval {
+            approved_payload: json!({
+                "tool": tool_name,
+                "summary": &summary,
+            }),
+        };
         let payload = ActionPayload {
-            id: action_id.clone(),
-            kind: "tool_approval".to_string(),
             tool: Some(ActionToolRef::labeled(tool_name, "MCP server")),
-            agent: ctx.agent.clone(),
-            conversation,
-            session: self.session_id.clone(),
-            title: "Approve MCP server connection".to_string(),
             message: Some(
                 "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint."
                     .to_string(),
             ),
-            summary: Some(summary.clone()),
+            summary: Some(summary),
             details: Some(details),
             approval: Some(ApprovalLabels::approve_deny()),
             metadata: Some(metadata),
-            status: ActionStatus::Pending,
-            created_at: now_ms,
-            expires_at: now_ms + ACTION_RESPONSE_TIMEOUT.as_millis() as u64,
-            ..Default::default()
+            ..self.new_payload(ctx, &kind, "Approve MCP server connection".to_string())
         };
-        let approved_payload = json!({
-            "tool": tool_name,
-            "summary": summary,
-        });
-        self.publish_approval_and_wait(
-            action_id,
-            conversation,
-            approved_payload,
-            payload.into_value(),
-            "MCP server",
-        )
-        .await
+        self.request_approval(payload, kind, "MCP server").await
     }
 
-    async fn publish_approval_and_wait(
+    async fn request_approval(
         &self,
-        action_id: String,
-        conversation: u64,
-        approved_payload: Value,
-        payload: Value,
+        payload: ActionPayload,
+        kind: PendingActionKind,
         what: &str,
     ) -> Result<(), BoxError> {
-        let response = self
-            .publish_and_wait(
-                action_id,
-                conversation,
-                PendingActionKind::Approval { approved_payload },
-                action_message(TOOL_APPROVAL_ACTION, payload),
-                what,
-                "approval",
+        let response = self.publish_and_wait(payload, kind, what).await?;
+        match response.status {
+            ActionStatus::Approved => Ok(()),
+            // Approvals never pass by default: an unanswered one is refused,
+            // and the error says so plainly so the model neither mistakes it
+            // for a failed run nor queues the same card again.
+            ActionStatus::Expired => Err(format!(
+                "approval for the {what} expired: the user did not respond within {} minutes, \
+                 so it was NOT carried out. Do not retry the same request now; continue another \
+                 way, or tell the user what needs approval.",
+                ACTION_RESPONSE_TIMEOUT.as_secs() / 60
             )
-            .await?;
-        if response.status == ActionStatus::Approved {
-            Ok(())
-        } else {
-            Err(action_denied_error(&response.payload))
+            .into()),
+            _ => Err(action_denied_error(&response.payload)),
         }
     }
 
+    /// Publishes an action card and waits for it to resolve. A card nobody
+    /// answers in time resolves through [`PendingActionKind::unanswered`].
     async fn publish_and_wait(
         &self,
-        action_id: String,
-        conversation: u64,
+        payload: ActionPayload,
         kind: PendingActionKind,
-        message: Message,
         what: &str,
-        timeout_kind: &str,
     ) -> Result<ActionResponse, BoxError> {
-        let rx = self
-            .runtime
-            .register(PendingAction {
-                session: self.session_id.clone(),
-                action_id: action_id.clone(),
-                caller: self.caller.clone(),
-                conversation,
-                kind,
-                event_sender: self.event_sender.clone(),
-                tx: oneshot::channel().0,
-            })
-            .await;
+        let action_id = payload.id.clone();
+        let conversation = payload.conversation;
+        let timeout = kind.timeout();
+        let message = action_message(kind.message_name(), payload.into_value());
+        let (tx, mut rx) = oneshot::channel();
+        self.runtime.insert(PendingAction {
+            session: self.session_id.clone(),
+            action_id: action_id.clone(),
+            caller: self.caller.clone(),
+            conversation,
+            kind,
+            event_sender: self.event_sender.clone(),
+            tx,
+        });
         if self
             .event_sender
             .send(ActionEvent::Add(message))
             .await
             .is_err()
         {
-            self.runtime.expire(&action_id).await;
+            self.runtime.take(&action_id);
             return Err(format!("failed to publish {what} request").into());
         }
-        match tokio::time::timeout(ACTION_RESPONSE_TIMEOUT, rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(format!("{what} was cancelled").into()),
-            Err(_) => {
-                if let Some(pending) = self.runtime.expire(&action_id).await {
-                    let _ = pending
-                        .event_sender
-                        .send(ActionEvent::Resolve {
-                            action_id,
-                            status: ActionStatus::Expired,
-                            response: json!({"reason": format!("{timeout_kind} timed out")}),
-                            responded_at: unix_ms(),
-                        })
-                        .await;
+
+        let cancelled = || -> BoxError { format!("{what} was cancelled").into() };
+        match tokio::time::timeout(timeout, &mut rx).await {
+            Ok(response) => response.map_err(|_| cancelled()),
+            Err(_) => match self.runtime.take(&action_id) {
+                Some(pending) => {
+                    let response = pending.kind.unanswered(&format!(
+                        "no response within {} minutes",
+                        timeout.as_secs() / 60
+                    ));
+                    let _ = self.event_sender.send(response.event(action_id)).await;
+                    Ok(response)
                 }
-                Err(format!("{what} timed out").into())
-            }
+                // An answer or a stop took the action right at the deadline;
+                // its response is already on the way.
+                None => rx.await.map_err(|_| cancelled()),
+            },
         }
     }
 
-    async fn request_choice(&self, ctx: &BaseCtx, args: UserChoiceArgs) -> Result<Value, BoxError> {
-        validate_choice_args(&args)?;
-        let action_id = next_action_id();
-        let now_ms = unix_ms();
-        let conversation = self
-            .conversation_id
-            .load(std::sync::atomic::Ordering::SeqCst);
-        let choices = args.choices.clone();
-        let payload = ActionPayload {
-            id: action_id.clone(),
-            kind: "choice".to_string(),
-            tool: Some(ActionToolRef::Name(AskUserChoiceTool::NAME.to_string())),
-            agent: ctx.agent.clone(),
-            conversation,
-            session: self.session_id.clone(),
-            title: args.title.clone(),
-            message: args.message.clone(),
-            choices: Some(args.choices),
-            status: ActionStatus::Pending,
-            created_at: now_ms,
-            expires_at: now_ms + ACTION_RESPONSE_TIMEOUT.as_millis() as u64,
-            ..Default::default()
+    async fn request_choice(
+        &self,
+        ctx: &BaseCtx,
+        mut args: UserChoiceArgs,
+    ) -> Result<Value, BoxError> {
+        normalize_choice_args(&mut args)?;
+        let kind = PendingActionKind::Choice {
+            choices: args.choices.clone(),
+            default_choice_id: args.default_choice_id.clone(),
         };
-        let message = action_message(USER_CHOICE_ACTION, payload.into_value());
-        let response = self
-            .publish_and_wait(
-                action_id,
-                conversation,
-                PendingActionKind::Choice { choices },
-                message,
-                "user choice",
-                "choice",
-            )
-            .await?;
-        if response.status == ActionStatus::Selected {
-            Ok(response.payload)
-        } else {
-            Err(action_denied_error(&response.payload))
+        let meta = live_request_meta(ctx);
+        if let Some(reason) = choice_unanswerable_reason(ctx, &meta) {
+            return choice_result(
+                kind.unanswered(&format!("nobody can answer choice cards in this {reason}")),
+            );
         }
+
+        let payload = ActionPayload {
+            tool: Some(ActionToolRef::Name(AskUserChoiceTool::NAME.to_string())),
+            message: args.message,
+            choices: Some(args.choices),
+            default_choice_id: args.default_choice_id,
+            ..self.new_payload(ctx, &kind, args.title)
+        };
+        choice_result(self.publish_and_wait(payload, kind, "user choice").await?)
     }
 }
 
@@ -519,83 +520,145 @@ struct PendingAction {
     tx: oneshot::Sender<ActionResponse>,
 }
 
+impl PendingAction {
+    /// Publishes the resolution, then releases the waiting tool. The event goes
+    /// first so the card is resolved before the tool result reaches the model.
+    async fn resolve(self, response: ActionResponse) {
+        let _ = self.event_sender.send(response.event(self.action_id)).await;
+        let _ = self.tx.send(response);
+    }
+}
+
 enum PendingActionKind {
-    Approval { approved_payload: Value },
-    Choice { choices: Vec<UserChoiceOption> },
+    Approval {
+        approved_payload: Value,
+    },
+    Choice {
+        choices: Vec<UserChoiceOption>,
+        default_choice_id: Option<String>,
+    },
 }
 
 impl PendingActionKind {
+    fn payload_kind(&self) -> &'static str {
+        match self {
+            Self::Approval { .. } => "tool_approval",
+            Self::Choice { .. } => "choice",
+        }
+    }
+
+    fn message_name(&self) -> &'static str {
+        match self {
+            Self::Approval { .. } => TOOL_APPROVAL_ACTION,
+            Self::Choice { .. } => USER_CHOICE_ACTION,
+        }
+    }
+
+    fn timeout(&self) -> Duration {
+        match self {
+            Self::Choice {
+                default_choice_id: Some(_),
+                ..
+            } => CHOICE_DEFAULT_TIMEOUT,
+            _ => ACTION_RESPONSE_TIMEOUT,
+        }
+    }
+
     fn response_from_args(&self, args: &ActionResponseArgs) -> Result<ActionResponse, BoxError> {
         match self {
             Self::Approval { approved_payload } => {
-                let approved = args.approve.ok_or("approve is required")?;
-                let status = if approved {
-                    ActionStatus::Approved
-                } else {
-                    ActionStatus::Denied
-                };
-                let payload = if approved {
-                    merge_approval_payload(approved_payload.clone(), true)
-                } else {
-                    json!({ "approve": false })
-                };
-                Ok(ActionResponse { status, payload })
+                if !args.approve.ok_or("approve is required")? {
+                    return Ok(ActionResponse::new(
+                        ActionStatus::Denied,
+                        json!({ "approve": false }),
+                    ));
+                }
+                let mut payload = approved_payload.clone();
+                payload["approve"] = true.into();
+                Ok(ActionResponse::new(ActionStatus::Approved, payload))
             }
-            Self::Choice { choices } => {
+            Self::Choice { choices, .. } => {
                 let choice_id = args
                     .choice_id
                     .as_deref()
                     .map(str::trim)
                     .filter(|choice_id| !choice_id.is_empty())
                     .ok_or("choice_id is required")?;
-                let Some(choice) = choices.iter().find(|choice| choice.id == choice_id) else {
-                    return Err("unknown choice_id".into());
-                };
-                let choice_text = if choice.input.is_some() {
-                    args.choice_text
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|text| !text.is_empty())
-                } else {
-                    None
-                };
-                if choice.input.as_ref().is_some_and(|input| input.required)
-                    && choice_text.is_none()
-                {
-                    return Err("choice_text is required".into());
-                }
-                let value = choice_text
-                    .or(choice.value.as_deref())
-                    .unwrap_or(&choice.label);
-                let mut payload = json!({
-                    "choice_id": choice_id,
-                    "label": &choice.label,
-                    "value": value,
-                });
-                if let Some(choice_text) = choice_text
-                    && let Some(object) = payload.as_object_mut()
-                {
-                    object.insert("choice_text".to_string(), choice_text.into());
-                }
-                Ok(ActionResponse {
-                    status: ActionStatus::Selected,
-                    payload,
-                })
+                select_choice(choices, choice_id, args.choice_text.as_deref())
             }
         }
     }
+
+    /// What an action resolves to when nobody answers it: a choice with a
+    /// default takes that default, everything else expires.
+    fn unanswered(&self, reason: &str) -> ActionResponse {
+        if let Self::Choice {
+            choices,
+            default_choice_id: Some(choice_id),
+        } = self
+            && let Ok(mut response) = select_choice(choices, choice_id, None)
+        {
+            response.payload["auto_selected"] = true.into();
+            response.payload["reason"] = reason.into();
+            return response;
+        }
+        ActionResponse::new(ActionStatus::Expired, json!({ "reason": reason }))
+    }
 }
 
-fn merge_approval_payload(payload: Value, approved: bool) -> Value {
-    match payload {
-        Value::Object(mut object) => {
-            object.insert("approve".to_string(), approved.into());
-            Value::Object(object)
+fn select_choice(
+    choices: &[UserChoiceOption],
+    choice_id: &str,
+    choice_text: Option<&str>,
+) -> Result<ActionResponse, BoxError> {
+    let Some(choice) = choices.iter().find(|choice| choice.id == choice_id) else {
+        return Err("unknown choice_id".into());
+    };
+    let choice_text = choice_text
+        .filter(|_| choice.input.is_some())
+        .map(str::trim)
+        .filter(|text| !text.is_empty());
+    if choice.input.as_ref().is_some_and(|input| input.required) && choice_text.is_none() {
+        return Err("choice_text is required".into());
+    }
+    let value = choice_text
+        .or(choice.value.as_deref())
+        .unwrap_or(&choice.label);
+    let mut payload = json!({
+        "choice_id": choice_id,
+        "label": &choice.label,
+        "value": value,
+    });
+    if let Some(choice_text) = choice_text {
+        payload["choice_text"] = choice_text.into();
+    }
+    Ok(ActionResponse::new(ActionStatus::Selected, payload))
+}
+
+/// Maps a choice resolution to the tool result. An option picked, by the user
+/// or by default, and a reply in chat are answers; anything else fails the call.
+fn choice_result(response: ActionResponse) -> Result<Value, BoxError> {
+    let answered_in_chat = response
+        .payload
+        .get(ANSWERED_IN_CHAT)
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    match response.status {
+        ActionStatus::Selected => Ok(response.payload),
+        ActionStatus::Expired if answered_in_chat => Ok(response.payload),
+        ActionStatus::Expired => {
+            let reason = response
+                .payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("no response");
+            Err(format!(
+                "user choice got no answer ({reason}) and has no default_choice_id. \
+                 Do not guess: tell the user which decision you need, then end your turn."
+            )
+            .into())
         }
-        value => json!({
-            "approve": approved,
-            "value": value,
-        }),
+        _ => Err(action_denied_error(&response.payload)),
     }
 }
 
@@ -603,46 +666,43 @@ fn merge_approval_payload(payload: Value, approved: bool) -> Value {
 struct ActionResponse {
     status: ActionStatus,
     payload: Value,
+    responded_at: u64,
+}
+
+impl ActionResponse {
+    fn new(status: ActionStatus, payload: Value) -> Self {
+        Self {
+            status,
+            payload,
+            responded_at: unix_ms(),
+        }
+    }
+
+    fn event(&self, action_id: String) -> ActionEvent {
+        ActionEvent::Resolve {
+            action_id,
+            status: self.status,
+            response: self.payload.clone(),
+            responded_at: self.responded_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub(crate) enum ActionsToolArgs {
-    RespondAction {
-        action_id: String,
-        #[serde(default)]
-        approve: Option<bool>,
-        #[serde(default)]
-        choice_id: Option<String>,
-        #[serde(default)]
-        choice_text: Option<String>,
-    },
+    RespondAction(ActionResponseArgs),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct ActionResponseArgs {
     pub(crate) action_id: String,
+    #[serde(default)]
     pub(crate) approve: Option<bool>,
+    #[serde(default)]
     pub(crate) choice_id: Option<String>,
+    #[serde(default)]
     pub(crate) choice_text: Option<String>,
-}
-
-impl From<ActionsToolArgs> for ActionResponseArgs {
-    fn from(value: ActionsToolArgs) -> Self {
-        match value {
-            ActionsToolArgs::RespondAction {
-                action_id,
-                approve,
-                choice_id,
-                choice_text,
-            } => Self {
-                action_id,
-                approve,
-                choice_id,
-                choice_text,
-            },
-        }
-    }
 }
 
 pub(crate) struct ActionsTool {
@@ -687,15 +747,13 @@ impl Tool<BaseCtx> for ActionsTool {
         if ctx.get_state::<ActionSession>().is_some() {
             return Err("actions_api cannot be called from an active agent session".into());
         }
+        let ActionsToolArgs::RespondAction(args) = args;
         let conversation = ctx
             .meta()
             .get_extra_as::<u64>(keys::CONVERSATION)
             .unwrap_or(0);
         let caller = ctx.caller().to_text();
-        let output = self
-            .runtime
-            .respond(&caller, conversation, args.into())
-            .await?;
+        let output = self.runtime.respond(&caller, conversation, args).await?;
         Ok(ToolOutput::new(output))
     }
 }
@@ -706,6 +764,10 @@ pub(crate) struct UserChoiceArgs {
     #[serde(default)]
     pub message: Option<String>,
     pub choices: Vec<UserChoiceOption>,
+    /// The option taken when the user does not answer in time or cannot be
+    /// asked; `None` makes the question blocking.
+    #[serde(default)]
+    pub default_choice_id: Option<String>,
 }
 
 pub(crate) struct AskUserChoiceTool;
@@ -723,7 +785,7 @@ impl Tool<BaseCtx> for AskUserChoiceTool {
     }
 
     fn description(&self) -> String {
-        "Ask the user to choose one option from a small set of suggested next actions. Use this when user intent is ambiguous or confirmation should be collected with buttons instead of free-form text. A choice can include an input field when the selected option needs the user to type details.".to_string()
+        "Ask the user to choose one option from a small set of suggested next actions. Use this when user intent is ambiguous or confirmation should be collected with buttons instead of free-form text. A choice can include an input field when the selected option needs the user to type details. Set `default_choice_id` to the option you recommend whenever a reasonable default exists: if the user does not answer within a few minutes, or cannot be asked, it is selected for them, the result carries `auto_selected: true`, and you continue the task with it. If the result carries `answered_in_chat: true`, the user replied in chat instead: stop this step and follow their message.".to_string()
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -840,9 +902,13 @@ fn user_choice_tool_parameters() -> Value {
                     "additionalProperties": false
                 },
                 "description": "The choices to show. Keep this list small and concrete. Set `input` when an option needs the user to fill in details before submitting."
+            },
+            "default_choice_id": {
+                "type": ["string", "null"],
+                "description": "Id of the choice you recommend. It is selected automatically when the user does not answer within a few minutes or cannot be asked (scheduled or unattended runs, IM chats). It cannot be a choice whose input is required. Use null only when continuing without the user's own decision would be unsafe or meaningless; the question then blocks until it expires."
             }
         },
-        "required": ["title", "message", "choices"],
+        "required": ["title", "message", "choices", "default_choice_id"],
         "additionalProperties": false
     })
 }
@@ -861,7 +927,7 @@ pub(crate) async fn require_mcp_approval(
     details: Vec<ActionDetail>,
     metadata: Value,
 ) -> Result<(), BoxError> {
-    if ApprovalMode::from_ctx(ctx) == ApprovalMode::FullAccess {
+    if ApprovalMode::from_ctx(ctx, &live_request_meta(ctx)) == ApprovalMode::FullAccess {
         return Ok(());
     }
     let Some(session) = ctx.get_state::<ActionSession>() else {
@@ -876,23 +942,40 @@ pub(crate) async fn require_mcp_approval(
         .await
 }
 
-fn validate_choice_args(args: &UserChoiceArgs) -> Result<(), BoxError> {
+/// Validates the choices and trims the ids the model wrote, so a response
+/// (which is trimmed too) and the default match them exactly.
+fn normalize_choice_args(args: &mut UserChoiceArgs) -> Result<(), BoxError> {
     if args.title.trim().is_empty() {
         return Err("title is required".into());
     }
     if args.choices.is_empty() || args.choices.len() > 6 {
         return Err("choices must contain 1 to 6 items".into());
     }
-    let mut seen = std::collections::HashSet::new();
-    for choice in &args.choices {
-        if choice.id.trim().is_empty() {
+    let mut seen = HashSet::new();
+    for choice in &mut args.choices {
+        choice.id = choice.id.trim().to_string();
+        if choice.id.is_empty() {
             return Err("choice id is required".into());
         }
         if choice.label.trim().is_empty() {
             return Err("choice label is required".into());
         }
-        if !seen.insert(choice.id.trim().to_string()) {
+        if !seen.insert(choice.id.clone()) {
             return Err("choice ids must be unique".into());
+        }
+    }
+    args.default_choice_id = args
+        .default_choice_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    if let Some(default_id) = &args.default_choice_id {
+        let Some(choice) = args.choices.iter().find(|choice| &choice.id == default_id) else {
+            return Err("default_choice_id must be one of the choice ids".into());
+        };
+        if choice.input.as_ref().is_some_and(|input| input.required) {
+            return Err("default_choice_id cannot be a choice whose input is required".into());
         }
     }
     Ok(())
@@ -946,6 +1029,10 @@ mod tests {
         );
     }
 
+    fn approval_mode(ctx: &BaseCtx) -> ApprovalMode {
+        ApprovalMode::from_ctx(ctx, &live_request_meta(ctx))
+    }
+
     fn meta_with(entries: &[(&str, Value)]) -> RequestMeta {
         let mut extra = serde_json::Map::new();
         for (key, value) in entries {
@@ -963,13 +1050,13 @@ mod tests {
         // later request that joins it (a CLI started with --full-access) only
         // shows up in SessionRequestMeta.
         let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::OnRisk);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::OnRisk);
 
         ctx.set_state(SessionRequestMeta::new(meta_with(&[(
             "approval_mode",
             json!("full_access"),
         )])));
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::FullAccess);
     }
 
     #[test]
@@ -982,7 +1069,7 @@ mod tests {
             ("approval_mode", json!("request_approval")),
         ])));
 
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::FullAccess);
     }
 
     #[test]
@@ -996,16 +1083,16 @@ mod tests {
         let goal = Arc::new(parking_lot::RwLock::new(None));
         ctx.set_state(GoalToolState::new(
             goal.clone(),
-            Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
         ));
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::RequestApproval);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::RequestApproval);
 
         *goal.write() = Some(crate::engine::goal::GoalState::new("ship it".to_string()));
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::FullAccess);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::FullAccess);
 
         // Completing the objective hands control back to the declared mode.
         *goal.write() = None;
-        assert_eq!(ApprovalMode::from_ctx(&ctx), ApprovalMode::RequestApproval);
+        assert_eq!(approval_mode(&ctx), ApprovalMode::RequestApproval);
     }
 
     #[test]
@@ -1042,7 +1129,7 @@ mod tests {
 
         let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
         let caller = ctx.caller().to_text();
-        let conversation_id = Arc::new(std::sync::atomic::AtomicU64::new(42));
+        let conversation_id = Arc::new(AtomicU64::new(42));
         let runtime = Arc::new(ActionRuntime::new());
         let (event_sender, mut event_rx) = mpsc::channel(4);
         let session = ActionSession::new(
@@ -1126,7 +1213,7 @@ mod tests {
         // With a session, an approval card is published; a deny resolves to an
         // error and the tool must not proceed.
         let caller = ctx.caller().to_text();
-        let conversation_id = Arc::new(std::sync::atomic::AtomicU64::new(7));
+        let conversation_id = Arc::new(AtomicU64::new(7));
         let runtime = Arc::new(ActionRuntime::new());
         let (event_sender, mut event_rx) = mpsc::channel(4);
         let session = ActionSession::new(
@@ -1177,25 +1264,212 @@ mod tests {
         assert!(request.await.unwrap().is_err());
     }
 
-    #[test]
-    fn choice_args_validate_ids() {
-        let args = UserChoiceArgs {
+    fn option(id: &str, input: Option<UserChoiceInput>) -> UserChoiceOption {
+        UserChoiceOption {
+            id: id.to_string(),
+            label: id.to_uppercase(),
+            value: None,
+            description: None,
+            input,
+        }
+    }
+
+    fn required_input() -> Option<UserChoiceInput> {
+        Some(UserChoiceInput {
+            placeholder: None,
+            required: true,
+            multiline: false,
+        })
+    }
+
+    fn choice_args(choices: Vec<UserChoiceOption>, default: Option<&str>) -> UserChoiceArgs {
+        UserChoiceArgs {
             title: "Pick".to_string(),
             message: None,
-            choices: vec![UserChoiceOption {
-                id: "a".to_string(),
-                label: "A".to_string(),
-                value: None,
-                description: None,
-                input: None,
-            }],
+            choices,
+            default_choice_id: default.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn choice_args_validate_ids_and_default() {
+        let mut args = choice_args(vec![option(" a ", None)], Some(" a"));
+        normalize_choice_args(&mut args).unwrap();
+        assert_eq!(args.choices[0].id, "a");
+        assert_eq!(args.default_choice_id.as_deref(), Some("a"));
+
+        // A blank default from a strict-schema model means "no default".
+        let mut args = choice_args(vec![option("a", None)], Some("  "));
+        normalize_choice_args(&mut args).unwrap();
+        assert_eq!(args.default_choice_id, None);
+
+        let mut args = choice_args(vec![option("a", None)], Some("b"));
+        assert!(normalize_choice_args(&mut args).is_err());
+
+        // Nobody can type the required text on the user's behalf.
+        let mut args = choice_args(vec![option("a", required_input())], Some("a"));
+        assert!(normalize_choice_args(&mut args).is_err());
+
+        let mut args = choice_args(vec![option("a", None), option(" a", None)], None);
+        assert!(normalize_choice_args(&mut args).is_err());
+    }
+
+    #[test]
+    fn unanswered_choice_takes_its_default_or_expires() {
+        let with_default = PendingActionKind::Choice {
+            choices: vec![option("a", None), option("b", None)],
+            default_choice_id: Some("b".to_string()),
         };
-        assert!(validate_choice_args(&args).is_ok());
+        assert_eq!(with_default.timeout(), CHOICE_DEFAULT_TIMEOUT);
+        let response = with_default.unanswered("no response within 3 minutes");
+        assert_eq!(response.status, ActionStatus::Selected);
+        assert_eq!(response.payload["choice_id"], "b");
+        assert_eq!(response.payload["value"], "B");
+        assert_eq!(response.payload["auto_selected"], true);
+        assert_eq!(response.payload["reason"], "no response within 3 minutes");
+        assert_eq!(choice_result(response).unwrap()["choice_id"], "b");
+
+        let blocking = PendingActionKind::Choice {
+            choices: vec![option("a", None)],
+            default_choice_id: None,
+        };
+        assert_eq!(blocking.timeout(), ACTION_RESPONSE_TIMEOUT);
+        let response = blocking.unanswered("no response within 10 minutes");
+        assert_eq!(response.status, ActionStatus::Expired);
+        let err = choice_result(response).unwrap_err().to_string();
+        assert!(err.contains("no default_choice_id"), "{err}");
+
+        // Approvals never pass by default.
+        let approval = PendingActionKind::Approval {
+            approved_payload: json!({"tool": "shell"}),
+        };
+        assert_eq!(approval.unanswered("late").status, ActionStatus::Expired);
+    }
+
+    fn test_session(
+        ctx: &BaseCtx,
+    ) -> (
+        Arc<ActionRuntime>,
+        ActionSession,
+        mpsc::Receiver<ActionEvent>,
+    ) {
+        let runtime = Arc::new(ActionRuntime::new());
+        let (event_sender, event_rx) = mpsc::channel(4);
+        let session = ActionSession::new(
+            runtime.clone(),
+            event_sender,
+            ctx.caller().to_text(),
+            "session_1".to_string(),
+            Arc::new(AtomicU64::new(9)),
+            Arc::new(Models::default()),
+            std::env::temp_dir(),
+        );
+        (runtime, session, event_rx)
+    }
+
+    #[tokio::test]
+    async fn choices_nobody_can_answer_resolve_without_a_card() {
+        for (key, value) in [
+            ("cron_job_id", json!(7u64)),
+            ("reply_target", json!("chat_1")),
+        ] {
+            let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+            ctx.set_state(SessionRequestMeta::new(meta_with(&[(key, value)])));
+            let (_runtime, session, mut event_rx) = test_session(&ctx);
+
+            let output = session
+                .request_choice(
+                    &ctx,
+                    choice_args(vec![option("a", None), option("b", None)], Some("a")),
+                )
+                .await
+                .unwrap();
+            assert_eq!(output["choice_id"], "a");
+            assert_eq!(output["auto_selected"], true);
+
+            let err = session
+                .request_choice(&ctx, choice_args(vec![option("a", None)], None))
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("nobody can answer"), "{err}");
+            // No card was published for either question.
+            assert!(event_rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_chat_reply_releases_a_waiting_choice_but_not_an_approval() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let (runtime, session, mut event_rx) = test_session(&ctx);
+
+        let choice_session = session.clone();
+        let choice_ctx = ctx.clone();
+        let choice = tokio::spawn(async move {
+            choice_session
+                .request_choice(
+                    &choice_ctx,
+                    choice_args(vec![option("a", None), option("b", None)], Some("a")),
+                )
+                .await
+        });
+        let Some(ActionEvent::Add(message)) = event_rx.recv().await else {
+            panic!("expected choice action");
+        };
+        let Some(ContentPart::Action { payload, .. }) = message.content.first() else {
+            panic!("expected action payload");
+        };
+        assert_eq!(payload["default_choice_id"], "a");
+        let choice_id = payload["id"].as_str().unwrap().to_string();
+        let (approval_tx, _approval_rx) = oneshot::channel();
+        runtime.insert(PendingAction {
+            session: "session_1".to_string(),
+            action_id: "act_approval".to_string(),
+            caller: "caller".to_string(),
+            conversation: 9,
+            kind: PendingActionKind::Approval {
+                approved_payload: json!({}),
+            },
+            event_sender: mpsc::channel(1).0,
+            tx: approval_tx,
+        });
+
+        session.answer_choices_in_chat().await;
+
+        let Some(ActionEvent::Resolve {
+            action_id, status, ..
+        }) = event_rx.recv().await
+        else {
+            panic!("expected resolve event");
+        };
+        assert_eq!(action_id, choice_id);
+        assert_eq!(status, ActionStatus::Expired);
+        let output = choice.await.unwrap().unwrap();
+        assert_eq!(output[ANSWERED_IN_CHAT], true);
+        let pending = runtime.pending.lock();
+        assert_eq!(pending.len(), 1);
+        assert!(pending.contains_key("act_approval"));
+    }
+
+    #[test]
+    fn actions_tool_args_keep_the_respond_action_wire_shape() {
+        let wire = json!({
+            "type": "RespondAction",
+            "action_id": "act_1",
+            "approve": null,
+            "choice_id": "a",
+            "choice_text": null,
+        });
+        let args: ActionsToolArgs = serde_json::from_value(wire.clone()).unwrap();
+        let ActionsToolArgs::RespondAction(response) = &args;
+        assert_eq!(response.action_id, "act_1");
+        assert_eq!(response.choice_id.as_deref(), Some("a"));
+        assert_eq!(serde_json::to_value(&args).unwrap(), wire);
     }
 
     #[test]
     fn choice_response_returns_selected_value() {
         let kind = PendingActionKind::Choice {
+            default_choice_id: None,
             choices: vec![UserChoiceOption {
                 id: "a".to_string(),
                 label: "Option A".to_string(),
@@ -1223,6 +1497,7 @@ mod tests {
     #[test]
     fn choice_response_returns_entered_text() {
         let kind = PendingActionKind::Choice {
+            default_choice_id: None,
             choices: vec![UserChoiceOption {
                 id: "custom".to_string(),
                 label: "Custom".to_string(),
@@ -1258,6 +1533,7 @@ mod tests {
     #[test]
     fn choice_response_rejects_missing_required_text() {
         let kind = PendingActionKind::Choice {
+            default_choice_id: None,
             choices: vec![UserChoiceOption {
                 id: "custom".to_string(),
                 label: "Custom".to_string(),
@@ -1330,25 +1606,25 @@ mod tests {
         let runtime = ActionRuntime::new();
         let (event_sender, mut event_rx) = mpsc::channel(4);
         let action_id = "act_retry".to_string();
-        let rx = runtime
-            .register(PendingAction {
-                session: "test".to_string(),
-                action_id: action_id.clone(),
-                caller: "caller".to_string(),
-                conversation: 42,
-                kind: PendingActionKind::Choice {
-                    choices: vec![UserChoiceOption {
-                        id: "a".to_string(),
-                        label: "Option A".to_string(),
-                        value: None,
-                        description: None,
-                        input: None,
-                    }],
-                },
-                event_sender,
-                tx: oneshot::channel().0,
-            })
-            .await;
+        let (tx, rx) = oneshot::channel();
+        runtime.insert(PendingAction {
+            session: "test".to_string(),
+            action_id: action_id.clone(),
+            caller: "caller".to_string(),
+            conversation: 42,
+            kind: PendingActionKind::Choice {
+                default_choice_id: None,
+                choices: vec![UserChoiceOption {
+                    id: "a".to_string(),
+                    label: "Option A".to_string(),
+                    value: None,
+                    description: None,
+                    input: None,
+                }],
+            },
+            event_sender,
+            tx,
+        });
 
         let err = runtime
             .respond(
@@ -1365,7 +1641,7 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(err.to_string(), "unknown choice_id");
-        assert!(runtime.pending.lock().await.contains_key(&action_id));
+        assert!(runtime.pending.lock().contains_key(&action_id));
 
         let output = runtime
             .respond(
@@ -1403,20 +1679,19 @@ mod tests {
     async fn cancelling_session_resolves_pending_approval_and_rejects_late_response() {
         let runtime = ActionRuntime::new();
         let (event_sender, _event_rx) = mpsc::channel(4);
-        let rx = runtime
-            .register(PendingAction {
-                session: "cancelled-session".into(),
-                action_id: "cancelled-action".into(),
-                caller: "caller".into(),
-                conversation: 1,
-                kind: PendingActionKind::Approval {
-                    approved_payload: json!({}),
-                },
-                event_sender,
-                tx: oneshot::channel().0,
-            })
-            .await;
-        let events = runtime.cancel_session("cancelled-session").await;
+        let (tx, rx) = oneshot::channel();
+        runtime.insert(PendingAction {
+            session: "cancelled-session".into(),
+            action_id: "cancelled-action".into(),
+            caller: "caller".into(),
+            conversation: 1,
+            kind: PendingActionKind::Approval {
+                approved_payload: json!({}),
+            },
+            event_sender,
+            tx,
+        });
+        let events = runtime.cancel_session("cancelled-session");
         assert_eq!(events.len(), 1);
         assert_eq!(rx.await.unwrap().status, ActionStatus::Denied);
         assert!(
@@ -1434,6 +1709,6 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(runtime.pending.lock().await.is_empty());
+        assert!(runtime.pending.lock().is_empty());
     }
 }

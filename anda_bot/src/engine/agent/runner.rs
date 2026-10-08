@@ -99,7 +99,7 @@ impl AndaBot {
                 Ok((None, events)) => (Vec::new(), events),
                 Ok((Some(Err(err)), _)) | Err(err) => {
                     session.stop_background_tasks();
-                    for event in session.actions.cancel_pending().await {
+                    for event in session.actions.cancel_pending() {
                         apply_action_event_to_conversation(&mut conversation, event);
                     }
                     conversation.status = ConversationStatus::Failed;
@@ -368,7 +368,7 @@ impl SessionRunner {
             .store(0, Ordering::SeqCst);
         self.session.stop_background_tasks();
         self.drain_action_events().await?;
-        for event in self.session.actions.cancel_pending().await {
+        for event in self.session.actions.cancel_pending() {
             self.apply_action_event(event);
         }
         self.collect_artifacts();
@@ -404,7 +404,7 @@ impl SessionRunner {
         while let Ok(event) = self.action_rx.try_recv() {
             self.apply_action_event(event);
         }
-        for event in self.session.actions.cancel_pending().await {
+        for event in self.session.actions.cancel_pending() {
             self.apply_action_event(event);
         }
         self.collect_artifacts();
@@ -1228,7 +1228,7 @@ impl SessionRunner {
                 if self.conversation.status == ConversationStatus::Failed {
                     self.session.stop_background_tasks();
                     *self.session.goal.write() = None;
-                    for event in self.session.actions.cancel_pending().await {
+                    for event in self.session.actions.cancel_pending() {
                         apply_action_event_to_conversation(&mut self.conversation, event);
                     }
                 }
@@ -3473,7 +3473,7 @@ mod tests {
                 .iter()
                 .any(|message| message["content"][0]["payload"]["status"] == "denied")
         );
-        assert!(r.session.actions.cancel_pending().await.is_empty());
+        assert!(r.session.actions.cancel_pending().is_empty());
     }
 
     #[tokio::test]

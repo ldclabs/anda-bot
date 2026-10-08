@@ -955,6 +955,13 @@ impl Agent<AgentCtx> for AndaBot {
                         input.command,
                         PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
                     );
+                    // A user writing in chat answers any choice card the agent is
+                    // waiting on; scheduled prompts are not the user's answer.
+                    let answers_choices = matches!(
+                        input.command,
+                        PromptCommand::Plain { .. } | PromptCommand::Steer { .. }
+                    ) && input.cron_receipt.is_none()
+                        && !input.extra.contains_key(keys::CRON_JOB_ID);
                     if let Some(receipt) = &mut input.cron_receipt {
                         session.bind_cron_receipt(receipt);
                     }
@@ -963,6 +970,9 @@ impl Agent<AgentCtx> for AndaBot {
                         Ok(_) => {
                             if control {
                                 session.control.request();
+                            }
+                            if answers_choices {
+                                session.actions.answer_choices_in_chat().await;
                             }
                             return Ok(AgentOutput {
                                 conversation: (response_conversation_id > 0)

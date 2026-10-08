@@ -144,6 +144,9 @@ pub(crate) struct ActionPayload {
     pub approval: Option<ApprovalLabels>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub choices: Option<Vec<UserChoiceOption>>,
+    /// The choice taken automatically when nobody answers in time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_choice_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
     pub status: ActionStatus,
@@ -164,7 +167,7 @@ impl ActionPayload {
 /// Result of responding to an action through the `actions_api` tool. The TUI
 /// deserializes this from the daemon, so fields stay individually defaulted
 /// for cross-version tolerance.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub(crate) struct ActionApiOutput {
     pub action_id: String,
@@ -172,18 +175,6 @@ pub(crate) struct ActionApiOutput {
     pub status: String,
     pub response: Value,
     pub responded_at: u64,
-}
-
-impl Default for ActionApiOutput {
-    fn default() -> Self {
-        Self {
-            action_id: String::new(),
-            conversation: 0,
-            status: String::new(),
-            response: Value::Null,
-            responded_at: 0,
-        }
-    }
 }
 
 pub(crate) fn action_message(name: &str, payload: Value) -> Message {
@@ -374,6 +365,7 @@ mod tests {
         // only added by `update_action_payload_resolution`.
         let object = approval.as_object().unwrap();
         assert!(!object.contains_key("choices"));
+        assert!(!object.contains_key("default_choice_id"));
         assert!(!object.contains_key("response"));
         assert!(!object.contains_key("responded_at"));
 
@@ -393,6 +385,7 @@ mod tests {
                 description: None,
                 input: None,
             }]),
+            default_choice_id: Some("a".to_string()),
             status: ActionStatus::Pending,
             created_at: 1,
             expires_at: 2,
@@ -401,6 +394,7 @@ mod tests {
         .into_value();
 
         assert_eq!(choice["tool"], "ask_user_choice");
+        assert_eq!(choice["default_choice_id"], "a");
         // A choice without a message keeps the key on the wire as null.
         let object = choice.as_object().unwrap();
         assert!(object.contains_key("message"));
