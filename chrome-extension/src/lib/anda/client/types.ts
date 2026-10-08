@@ -242,12 +242,7 @@ export interface SkillValidationResult {
 export type VoiceProvider = 'chrome' | 'anda'
 
 export type ConversationStatus =
-  | 'submitted'
-  | 'working'
-  | 'idle'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
+  'submitted' | 'working' | 'idle' | 'completed' | 'cancelled' | 'failed'
 
 export interface VoiceRecordingInput {
   voiceProvider?: VoiceProvider
@@ -268,10 +263,24 @@ export interface ChatMessage {
   text: string
   externalUser?: ExternalUserMessageInfo
   thinkingText?: string
+  /** Tool calls this message made, or tool results it carries (role `tool`). */
+  tools?: ChatToolCall[]
   attachments?: ChatAttachment[]
   actions?: ChatAction[]
   timestamp?: number
   pending?: boolean
+}
+
+/**
+ * One tool invocation. A call carries `args`; its result arrives later in a
+ * `tool` message and is paired back by `callId` for display.
+ */
+export interface ChatToolCall {
+  callId?: string
+  name: string
+  args?: Json
+  /** Absent until the tool has returned. */
+  output?: Json
 }
 
 export interface ExternalUserMessageInfo {

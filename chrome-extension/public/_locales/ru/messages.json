@@ -1499,17 +1499,23 @@
   "configFieldReceiveMode": {
     "message": "Режим приёма"
   },
-  "showToolOutput": {
-    "message": "Показать вывод инструмента"
+  "thinkingProcess": {
+    "message": "Размышления"
   },
-  "hideToolOutput": {
-    "message": "Скрыть вывод инструмента"
+  "runtimeNotice": {
+    "message": "Системное уведомление"
   },
-  "showThinkingTools": {
-    "message": "Показать рассуждения и инструменты"
+  "toolInput": {
+    "message": "Ввод"
   },
-  "hideThinkingTools": {
-    "message": "Скрыть рассуждения и инструменты"
+  "toolOutput": {
+    "message": "Вывод"
+  },
+  "toolFailed": {
+    "message": "Ошибка"
+  },
+  "toolNoResult": {
+    "message": "Результата пока нет"
   },
   "saveAttachment": {
     "message": "Сохранить $1"

@@ -1499,17 +1499,23 @@
   "configFieldReceiveMode": {
     "message": "Receive mode"
   },
-  "showToolOutput": {
-    "message": "Show tool output"
+  "thinkingProcess": {
+    "message": "Thinking"
   },
-  "hideToolOutput": {
-    "message": "Hide tool output"
+  "runtimeNotice": {
+    "message": "Runtime notice"
   },
-  "showThinkingTools": {
-    "message": "Show thinking and tools"
+  "toolInput": {
+    "message": "Input"
   },
-  "hideThinkingTools": {
-    "message": "Hide thinking and tools"
+  "toolOutput": {
+    "message": "Output"
+  },
+  "toolFailed": {
+    "message": "Failed"
+  },
+  "toolNoResult": {
+    "message": "No result yet"
   },
   "saveAttachment": {
     "message": "Save $1"

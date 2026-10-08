@@ -8,6 +8,7 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import { displayMessages } from '$lib/anda/chat/message-display'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
@@ -502,54 +503,6 @@
     await andaClient.voice.cancelAudioCapture()
   }
 
-  function displayMessages(sourceMessages: ChatMessage[]): ChatMessage[] {
-    const compacted: ChatMessage[] = []
-    let detailRun: ChatMessage[] = []
-
-    const flushDetails = () => {
-      if (!detailRun.length) {
-        return
-      }
-      if (detailRun.length === 1) {
-        const [message] = detailRun
-        const detailText = thinkingOnlyText(message)
-        compacted.push({
-          ...message,
-          id: detailRunId(message),
-          text: '',
-          thinkingText: detailText || message.thinkingText
-        })
-        detailRun = []
-        return
-      }
-
-      const first = detailRun[0]
-      const last = detailRun[detailRun.length - 1]
-      const attachments = detailRun.flatMap((message) => message.attachments || [])
-      compacted.push({
-        id: detailRunId(first),
-        role: 'assistant',
-        text: '',
-        thinkingText: detailRun.map(thinkingOnlyText).filter(Boolean).join('\n\n---\n\n'),
-        timestamp: last.timestamp || first.timestamp,
-        conversation: first.conversation,
-        attachments: attachments.length ? attachments : undefined
-      })
-      detailRun = []
-    }
-
-    for (const message of sourceMessages) {
-      if (thinkingOnlyText(message)) {
-        detailRun = [...detailRun, message]
-        continue
-      }
-      flushDetails()
-      compacted.push(message)
-    }
-    flushDetails()
-    return compacted
-  }
-
   function displayMessageGroups(sourceGroups: MessageGroup[]): MessageGroup[] {
     return sourceGroups
       .map((group) => ({ ...group, messages: displayMessages(group.messages) }))
@@ -563,19 +516,6 @@
         id: `side-${index}-${message.id}`
       }))
     )
-  }
-
-  function detailRunId(message: ChatMessage): string {
-    return `${message.id}-detail-run`
-  }
-
-  function thinkingOnlyText(message: ChatMessage): string {
-    const mainText = message.text.trim()
-    const thinkingText = (message.thinkingText || '').trim()
-    if (mainText && message.role !== 'tool') {
-      return ''
-    }
-    return [thinkingText, message.role === 'tool' ? mainText : ''].filter(Boolean).join('\n\n')
   }
 
   function statusIconClass() {
@@ -710,7 +650,8 @@
         {/if}
 
         {#each visibleMessageGroups as group (group._id)}
-          <section class="grid w-full gap-4">
+          <!-- Keeps a reading width when the chat fills a wide tab; the side panel is narrower. -->
+          <section class="mx-auto grid w-full max-w-3xl gap-4">
             {#if visibleMessageGroups.length > 1}
               <div
                 class="message-group-divider flex items-center justify-center gap-2 py-1 text-[10px] font-semibold"

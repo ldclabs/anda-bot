@@ -1499,17 +1499,23 @@
   "configFieldReceiveMode": {
     "message": "接收模式"
   },
-  "showToolOutput": {
-    "message": "显示工具输出"
+  "thinkingProcess": {
+    "message": "思考过程"
   },
-  "hideToolOutput": {
-    "message": "隐藏工具输出"
+  "runtimeNotice": {
+    "message": "运行时消息"
   },
-  "showThinkingTools": {
-    "message": "显示思考和工具"
+  "toolInput": {
+    "message": "输入"
   },
-  "hideThinkingTools": {
-    "message": "隐藏思考和工具"
+  "toolOutput": {
+    "message": "输出"
+  },
+  "toolFailed": {
+    "message": "失败"
+  },
+  "toolNoResult": {
+    "message": "尚无结果"
   },
   "saveAttachment": {
     "message": "保存 $1"

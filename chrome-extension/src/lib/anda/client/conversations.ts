@@ -6,6 +6,7 @@ import type {
   ChatActionChoice,
   ChatActionDetail,
   ChatMessage,
+  ChatToolCall,
   ContentPart,
   Conversation,
   ExternalUserMessageInfo,
@@ -263,6 +264,7 @@ function isActionOnlyMessage(message: ChatMessage): boolean {
   return Boolean(
     !message.text.trim() &&
     !message.thinkingText?.trim() &&
+    !message.tools?.length &&
     !message.attachments?.length &&
     message.actions?.length
   )
@@ -304,6 +306,7 @@ export function normalizeMessages(
     !content.text &&
     !content.thinkingText &&
     !content.runtimeToolText &&
+    content.tools.length === 0 &&
     attachments.length === 0 &&
     content.actions.length === 0
   ) {
@@ -319,6 +322,7 @@ export function normalizeMessages(
   if (
     content.text ||
     content.thinkingText ||
+    content.tools.length > 0 ||
     attachments.length > 0 ||
     content.actions.length > 0
   ) {
@@ -329,6 +333,7 @@ export function normalizeMessages(
       text: content.text,
       externalUser,
       thinkingText: content.thinkingText,
+      tools: content.tools.length ? content.tools : undefined,
       attachments: attachments.length ? attachments : undefined,
       actions: content.actions.length ? content.actions : undefined,
       timestamp
@@ -357,6 +362,7 @@ function contentToMessageContent(
   thinkingText: string
   runtimeToolText?: string
   externalUser?: ExternalUserMessageInfo
+  tools: ChatToolCall[]
   actions: ChatAction[]
 } {
   if (typeof content === 'string') {
@@ -366,23 +372,31 @@ function contentToMessageContent(
         text: externalUserMessage.body,
         thinkingText: '',
         externalUser: externalUserMessage.externalUser,
+        tools: [],
         actions: []
       }
     }
     if (shouldHideTextPart(content, options)) {
-      return { text: '', thinkingText: '', actions: [] }
+      return { text: '', thinkingText: '', tools: [], actions: [] }
     }
     if (isSystemRuntimeText(content)) {
-      return { text: '', thinkingText: '', runtimeToolText: content.trim(), actions: [] }
+      return {
+        text: '',
+        thinkingText: '',
+        runtimeToolText: content.trim(),
+        tools: [],
+        actions: []
+      }
     }
-    return { ...splitLegacyThoughtText(content), actions: [] }
+    return { ...splitLegacyThoughtText(content), tools: [], actions: [] }
   }
   if (!Array.isArray(content)) {
-    return { text: '', thinkingText: '', actions: [] }
+    return { text: '', thinkingText: '', tools: [], actions: [] }
   }
   const textParts: string[] = []
   const thinkingParts: string[] = []
   const runtimeToolParts: string[] = []
+  const tools: ChatToolCall[] = []
   const actions: ChatAction[] = []
   let externalUser: ExternalUserMessageInfo | undefined
   const addTextPart = (text: string) => {
@@ -421,12 +435,10 @@ function contentToMessageContent(
         thinkingParts.push(part.text)
         continue
       case 'ToolOutput':
-        thinkingParts.push(formatToolDetail('Tool output', part.output))
+        tools.push({ callId: part.callId, name: part.name, output: part.output ?? null })
         continue
       case 'ToolCall':
-        thinkingParts.push(
-          formatToolDetail(`Tool call${part.name ? `: ${part.name}` : ''}`, part.args)
-        )
+        tools.push({ callId: part.callId, name: part.name, args: part.args })
         continue
       case 'Action':
         actions.push(normalizeAction(part))
@@ -443,6 +455,7 @@ function contentToMessageContent(
     thinkingText: thinkingParts.filter(Boolean).join('\n\n').trim(),
     runtimeToolText: runtimeToolParts.filter(Boolean).join('\n\n---\n\n').trim(),
     externalUser,
+    tools,
     actions
   }
 }
@@ -700,7 +713,7 @@ function extractExternalUserBody(text: string): string {
   return decodeQuotedString(body).trim()
 }
 
-function decodeQuotedString(value: string): string {
+export function decodeQuotedString(value: string): string {
   const trimmed = value.trim()
   if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
     try {
@@ -724,21 +737,6 @@ function externalUserFromName(name: string | undefined): ExternalUserMessageInfo
     externalUser.scope = decodeQuotedString(scopeMatch[1])
   }
   return externalUser
-}
-
-function fencedJson(value: unknown): string {
-  if (value === undefined || value === null) {
-    return ''
-  }
-  if (typeof value === 'string') {
-    return value
-  }
-  return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``
-}
-
-function formatToolDetail(title: string, value: unknown): string {
-  const body = fencedJson(value)
-  return body ? `**${title}**\n\n${body}` : `**${title}**`
 }
 
 export function splitLegacyThoughtText(content: string): { text: string; thinkingText: string } {

@@ -74,6 +74,38 @@ describe('normalizeMessage', () => {
     })
   })
 
+  it('keeps tool calls and results structured, apart from reasoning', () => {
+    const call: Message = {
+      role: 'assistant',
+      content: [
+        { type: 'Reasoning', text: 'Check the tree first.' },
+        { type: 'Text', text: 'Looking at the repo.' },
+        { type: 'ToolCall', name: 'shell', args: { command: 'ls' }, callId: 'call-1' }
+      ],
+      timestamp: 1234
+    }
+    const result: Message = {
+      role: 'tool',
+      content: [
+        { type: 'ToolOutput', name: 'shell', output: { stdout: 'README' }, callId: 'call-1' }
+      ],
+      timestamp: 1235
+    }
+
+    expect(normalizeMessage(call, { conversation: 55, index: 1 })).toMatchObject({
+      role: 'assistant',
+      text: 'Looking at the repo.',
+      thinkingText: 'Check the tree first.',
+      tools: [{ callId: 'call-1', name: 'shell', args: { command: 'ls' } }]
+    })
+    expect(normalizeMessage(result, { conversation: 55, index: 2 })).toMatchObject({
+      role: 'tool',
+      text: '',
+      thinkingText: '',
+      tools: [{ callId: 'call-1', name: 'shell', output: { stdout: 'README' } }]
+    })
+  })
+
   it('splits embedded runtime system text into a standalone tool message', () => {
     const message: Message = {
       role: 'user',

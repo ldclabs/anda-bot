@@ -1,9 +1,6 @@
-<script lang="ts" module>
-  const expandedDetailMessageIds = new Set<string>()
-</script>
-
 <script lang="ts">
   import type { Activity } from './memory/api'
+  import ChatDetailRow from './ChatDetailRow.svelte'
   import { memoryActivityLabel } from './memory/labels'
   import { getClientPlatform } from '$lib/anda/client/platform'
   import { useAndaClient } from '$lib/anda/client/context'
@@ -54,13 +51,27 @@
     safeDownloadName,
     type AttachmentCaches
   } from '$lib/anda/chat/attachment-view'
+  import { isProcessStep } from '$lib/anda/chat/message-display'
+  import {
+    firstLine,
+    runtimeNotices,
+    toolCallStatus,
+    toolCallSummary,
+    toolDetailSections,
+    toolKind,
+    type ToolDetailSection,
+    type ToolKind
+  } from '$lib/anda/chat/tool-view'
   import { escapeHtml, formatFileSize, formatTimestamp } from '$lib/utils/format'
   import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import {
+    Bell,
     Bookmark,
     BookmarkCheck,
+    Bot,
+    BrainCircuit,
     Check,
     CircleCheck,
     CircleX,
@@ -69,7 +80,9 @@
     CreditCard,
     Download,
     FileText,
+    Globe,
     Image,
+    Lightbulb,
     ListChecks,
     LoaderCircle,
     Plus,
@@ -78,7 +91,7 @@
     Terminal,
     Wrench
   } from '@lucide/svelte'
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, type Component } from 'svelte'
 
   let {
     message,
@@ -97,7 +110,6 @@
   let visible = $state(false)
   let disposed = false
   let richCopied = $state(false)
-  let detailsExpanded = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
   let respondingActionIds = $state(new Set<string>())
   let actionErrors = $state(new Map<string, string>())
@@ -127,8 +139,14 @@
   )
   const hasActions = $derived(Boolean(message.actions?.length))
   const hasThinkingText = $derived(Boolean(thinkingText))
+  const tools = $derived(message.tools || [])
+  // Runtime-injected notices arrive as tool messages that carry text, not calls.
+  const notices = $derived(isTool && !tools.length ? runtimeNotices(thinkingText) : [])
+  const hasCard = $derived(hasMainText || hasAttachments || hasActions)
+  // Narration that led to tool calls: the turn's final answer carries the footer.
+  const processStep = $derived(isProcessStep(message))
   // Only settled assistant messages with a stable server id can be bookmarked
-  // (excludes optimistic/local, side, and compacted tool/thinking-only items).
+  // (excludes optimistic/local, side, and runtime-notice items).
   const canBookmark = $derived(
     isAssistant && hasMainText && !message.pending && /^m-\d+-\d+$/.test(message.id)
   )
@@ -141,13 +159,7 @@
   const externalUserContextLabel = $derived(
     [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
   )
-  const detailToggleLabel = $derived(
-    isTool
-      ? getMessage(detailsExpanded ? 'hideToolOutput' : 'showToolOutput')
-      : getMessage(detailsExpanded ? 'hideThinkingTools' : 'showThinkingTools')
-  )
   const html = $derived(renderMarkdown(mainText))
-  const thinkingHtml = $derived(detailsExpanded ? renderMarkdown(thinkingText) : '')
   const messageActionButtonClass = buttonClass(
     'ghost',
     'icon-xs',
@@ -270,17 +282,23 @@
     })
   }
 
-  function toggleDetails() {
-    setDetailsExpanded(!detailsExpanded)
+  const toolIcons: Record<ToolKind, Component<{ class?: string }>> = {
+    shell: Terminal,
+    file: FileText,
+    memory: BrainCircuit,
+    web: Globe,
+    agent: Bot,
+    tool: Wrench
   }
 
-  function setDetailsExpanded(expanded: boolean) {
-    detailsExpanded = expanded
-    if (expanded) {
-      expandedDetailMessageIds.add(message.id)
-      return
-    }
-    expandedDetailMessageIds.delete(message.id)
+  function toolSectionLabel(section: ToolDetailSection): string {
+    const label =
+      section.kind === 'input'
+        ? getMessage('toolInput')
+        : section.kind === 'output'
+          ? getMessage('toolOutput')
+          : 'stderr'
+    return section.meta ? `${label} · ${section.meta}` : label
   }
 
   function choiceInputValue(action: ChatAction, choiceId: string): string {
@@ -526,12 +544,6 @@
     return () => observer.disconnect()
   })
 
-  onMount(() => {
-    if (expandedDetailMessageIds.has(message.id)) {
-      detailsExpanded = true
-    }
-  })
-
   onDestroy(() => {
     disposed = true
     for (const url of resourceObjectUrls.values()) {
@@ -543,28 +555,27 @@
 <article
   bind:this={articleElement}
   id={message.id}
-  class="grid min-w-0 w-full gap-1 {isUser
-    ? 'justify-items-end'
-    : isTool || (!hasMainText && !hasAttachments && !hasActions)
-      ? 'justify-items-center'
-      : 'justify-items-start'}"
+  class="grid w-full min-w-0 gap-1 {isUser ? 'justify-items-end' : 'justify-items-start'}"
+  class:chat-message-step={processStep}
 >
-  {#if hasThinkingText && (isTool || (!hasMainText && !hasAttachments && !hasActions))}
-    <button
-      type="button"
-      class={buttonClass(
-        'outline',
-        'xs',
-        'chat-message-muted-button rounded-full shadow-sm hover:border-emerald-200 hover:text-emerald-700'
-      )}
-      onclick={toggleDetails}
-    >
-      <Wrench class="size-3" />
-      <span class="text-xs">{detailToggleLabel}</span>
-    </button>
+  {#if hasThinkingText && !isTool}
+    <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
+      <ChatDetailRow
+        rowKey={`${message.id}:thinking`}
+        icon={Lightbulb}
+        name={getMessage('thinkingProcess')}
+        summary={firstLine(thinkingText)}
+      >
+        <div
+          class="chat-message-thinking md-content w-full min-w-0 text-xs leading-relaxed text-pretty wrap-break-word"
+        >
+          {@html renderMarkdown(thinkingText)}
+        </div>
+      </ChatDetailRow>
+    </div>
   {/if}
 
-  {#if hasMainText || hasAttachments || hasActions}
+  {#if hasCard}
     <div
       class={cardClass(
         `relative max-w-[92%] min-w-0 gap-0 overflow-hidden rounded-lg py-0 leading-relaxed shadow-2xs ${
@@ -589,7 +600,7 @@
           >
             <span class="chat-external-sender inline-flex min-w-0 items-center gap-1 font-semibold">
               <span class="chat-external-dot size-1.5 shrink-0 rounded-full"></span>
-              <span class="min-w-0 max-w-48 truncate" title={externalUserSenderLabel}>
+              <span class="max-w-48 min-w-0 truncate" title={externalUserSenderLabel}>
                 {externalUserSenderLabel}
               </span>
             </span>
@@ -609,7 +620,7 @@
           <div class="{hasMainText ? 'mt-2' : ''} grid min-w-0 gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
               <div
-                class="chat-message-attachment min-w-0 max-w-full overflow-hidden rounded-md border p-1.5 text-xs"
+                class="chat-message-attachment max-w-full min-w-0 overflow-hidden rounded-md border p-1.5 text-xs"
               >
                 <div class="flex min-w-0 items-center gap-2">
                   <div
@@ -668,7 +679,7 @@
 
                 {#if attachmentDescription(attachment)}
                   <div
-                    class="chat-message-attachment-description mt-1.5 max-h-44 overflow-x-hidden overflow-y-auto rounded-sm border px-2 py-1.5 whitespace-pre-wrap text-xs leading-relaxed wrap-break-word"
+                    class="chat-message-attachment-description mt-1.5 max-h-44 overflow-x-hidden overflow-y-auto rounded-sm border px-2 py-1.5 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
                   >
                     {attachmentDescription(attachment)}
                   </div>
@@ -716,7 +727,7 @@
 
                 {#if actionMessage(action)}
                   <div
-                    class="chat-action-message leading-relaxed whitespace-pre-wrap wrap-break-word"
+                    class="chat-action-message leading-relaxed wrap-break-word whitespace-pre-wrap"
                   >
                     {actionMessage(action)}
                   </div>
@@ -864,7 +875,7 @@
                             class={buttonClass(
                               'outline',
                               'sm',
-                              'chat-action-choice-button h-auto min-w-0 justify-start whitespace-normal px-2 py-1.5 text-left'
+                              'chat-action-choice-button h-auto min-w-0 justify-start px-2 py-1.5 text-left whitespace-normal'
                             )}
                             disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
                             onclick={() => selectChoiceAction(action, choice.id)}
@@ -899,7 +910,7 @@
                             {/if}
                             {#if actionChoiceSelected(action, choice.id) && actionChoiceText(action)}
                               <span
-                                class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal whitespace-pre-wrap wrap-break-word"
+                                class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal wrap-break-word whitespace-pre-wrap"
                               >
                                 {actionChoiceText(action)}
                               </span>
@@ -914,48 +925,53 @@
             {/each}
           </div>
         {/if}
-
-        {#if hasThinkingText}
-          <div
-            class="mt-1.5 flex min-h-5 items-center gap-2 {hasThinkingText && !isAssistant
-              ? 'chat-message-detail-divider border-t pt-1.5'
-              : ''}"
-          >
-            {#if hasThinkingText}
-              <button
-                type="button"
-                class={buttonClass(
-                  'ghost',
-                  'xs',
-                  'chat-message-details-button h-auto min-w-0 px-1.5 py-0.5 font-semibold'
-                )}
-                onclick={toggleDetails}
-              >
-                <Wrench class="size-3 shrink-0" />
-                <span class="truncate text-xs">
-                  {getMessage(detailsExpanded ? 'hideThinkingTools' : 'showThinkingTools')}
-                </span>
-              </button>
-            {/if}
-          </div>
-        {/if}
-
-        {#if hasThinkingText && detailsExpanded}
-          <div
-            class="chat-message-thinking md-content mt-1 w-full min-w-0 text-xs leading-relaxed text-pretty wrap-break-word"
-          >
-            {@html thinkingHtml}
-          </div>
-        {/if}
       </div>
     </div>
+  {/if}
 
+  {#if tools.length || notices.length}
+    <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
+      {#each tools as tool, index (index)}
+        <ChatDetailRow
+          rowKey={`${message.id}:tool:${index}`}
+          icon={toolIcons[toolKind(tool.name)]}
+          name={tool.name}
+          summary={toolCallSummary(tool)}
+          mono
+          status={toolCallStatus(tool)}
+        >
+          <div class="grid min-w-0 gap-1.5">
+            {#each toolDetailSections(tool) as section, sectionIndex (sectionIndex)}
+              <div class="grid min-w-0 gap-0.5">
+                <div class="chat-tool-section-label text-[10px] font-semibold">
+                  {toolSectionLabel(section)}
+                </div>
+                <pre
+                  class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{section.text}</pre>
+              </div>
+            {/each}
+          </div>
+        </ChatDetailRow>
+      {/each}
+      {#each notices as notice, index (index)}
+        <ChatDetailRow
+          rowKey={`${message.id}:notice:${index}`}
+          icon={Bell}
+          name={notice.kind || getMessage('runtimeNotice')}
+          summary={firstLine(notice.body)}
+        >
+          <pre
+            class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{notice.body}</pre>
+        </ChatDetailRow>
+      {/each}
+    </div>
+  {/if}
+
+  {#if hasCard && !processStep}
     <div
       class="chat-message-meta flex min-h-5 max-w-[92%] items-center gap-1 px-0.5 text-[10px] leading-none {isUser
         ? 'justify-end'
-        : isTool
-          ? 'justify-center'
-          : 'justify-start'}"
+        : 'justify-start'}"
     >
       {#if mainText}
         <button
@@ -1051,25 +1067,6 @@
       {/if}
     </div>
   {/if}
-
-  {#if hasThinkingText && !hasMainText && detailsExpanded}
-    <div
-      class={cardClass(
-        'chat-message-thinking-only relative max-w-[92%] min-w-0 gap-0 rounded-lg border-dashed py-0 text-xs leading-relaxed shadow-2xs'
-      )}
-    >
-      <div class={cardContentClass('px-3 py-2')}>
-        <div class="md-content w-full min-w-0 text-pretty wrap-break-word opacity-80">
-          {@html thinkingHtml}
-        </div>
-        {#if messageTimeLabel}
-          <div class="chat-message-time mt-1 text-right text-[10px]">
-            {messageTimeLabel}
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
 </article>
 
 <style>
@@ -1085,8 +1082,7 @@
     color: var(--message-text, #171717);
   }
 
-  .chat-message-card-tool,
-  .chat-message-thinking-only {
+  .chat-message-card-tool {
     border-color: var(--message-border, #e6e6e6);
     background: var(--message-surface, #f7f7f7);
     color: var(--message-muted, #737373);
@@ -1116,20 +1112,11 @@
     color: rgba(15, 118, 110, 0.72);
   }
 
-  .chat-message-muted-button,
-  .chat-message-action,
-  .chat-message-details-button {
+  .chat-message-action {
     color: var(--message-muted, #737373);
   }
 
-  .chat-message-muted-button {
-    border-color: var(--message-border, #e6e6e6);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 76%, var(--message-surface, #f7f7f7));
-  }
-
-  .chat-message-muted-button:hover,
-  .chat-message-action:hover,
-  .chat-message-details-button:hover {
+  .chat-message-action:hover {
     background: var(--message-surface-hover, #eeeeee);
     color: var(--message-text, #171717);
   }
@@ -1262,8 +1249,28 @@
     color: #065f46;
   }
 
-  .chat-message-detail-divider {
+  /* Steps of one turn sit closer together than separate messages. */
+  .chat-message-step {
+    margin-bottom: -0.5rem;
+  }
+
+  /* Rows start flush with the prose: the row padding hangs into the gutter. */
+  .chat-message-rows {
+    margin-left: -0.375rem;
+  }
+
+  .chat-tool-section-label {
+    color: var(--message-muted, #737373);
+  }
+
+  .chat-tool-section-text {
     border-color: var(--message-border, #e6e6e6);
+    background: var(--message-surface-strong, #f4f4f4);
+    color: color-mix(in srgb, var(--message-text, #171717) 86%, transparent);
+  }
+
+  :global(.dark) .chat-tool-section-text {
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
   }
 
   :global(.dark) .chat-message-card-external {

@@ -1499,17 +1499,23 @@
   "configFieldReceiveMode": {
     "message": "وضع الاستقبال"
   },
-  "showToolOutput": {
-    "message": "عرض مخرجات الأداة"
+  "thinkingProcess": {
+    "message": "التفكير"
   },
-  "hideToolOutput": {
-    "message": "إخفاء مخرجات الأداة"
+  "runtimeNotice": {
+    "message": "إشعار وقت التشغيل"
   },
-  "showThinkingTools": {
-    "message": "عرض الاستدلال والأدوات"
+  "toolInput": {
+    "message": "المدخلات"
   },
-  "hideThinkingTools": {
-    "message": "إخفاء الاستدلال والأدوات"
+  "toolOutput": {
+    "message": "المخرجات"
+  },
+  "toolFailed": {
+    "message": "فشل"
+  },
+  "toolNoResult": {
+    "message": "لا توجد نتيجة بعد"
   },
   "saveAttachment": {
     "message": "حفظ $1"

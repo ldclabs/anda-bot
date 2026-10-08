@@ -7,6 +7,7 @@
   import pandaLogo from '../../../anda_bot/assets/logo.png'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import { displayMessages } from '$lib/anda/chat/message-display'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { buttonClass } from '$lib/anda/ui'
   import { delay } from '$lib/utils/async'
@@ -106,6 +107,11 @@
     ...(channel?.sideMessages || [])
   ])
   const resources = $derived(messages.flatMap((message) => message.attachments || []))
+  // Each agent turn reads as one flow: tool results fold into their calls.
+  const transcriptGroups = $derived(
+    groups.map((group) => ({ ...group, messages: displayMessages(group.messages) }))
+  )
+  const transcriptSideMessages = $derived(displayMessages(channel?.sideMessages || []))
   const submitting = $derived(client.sending || Boolean(channel?.sending))
   const working = $derived(
     ['working', 'submitted', 'sending'].includes(channel?.status || '') || client.sending
@@ -568,7 +574,7 @@
             {#if channel?.hasPreviousConversations}<button
                 class="history-button"
                 onclick={() => void channel?.loadPreviousConversations()}>{t('history')}</button
-              >{/if}{#each groups as group (group._id)}{#each group.messages as message (message.id)}<div
+              >{/if}{#each transcriptGroups as group (group._id)}{#each group.messages as message (message.id)}<div
                   data-message-id={message.id}
                   class="transcript-item"
                 >
@@ -577,7 +583,7 @@
                     quickPromptActive={client.quickPrompts.has(message.text)}
                     onToggleQuickPrompt={(text) => client.quickPrompts.toggle(text)}
                   />
-                </div>{/each}{/each}{#each channel?.sideMessages || [] as message (message.id)}<ChatMessageItem
+                </div>{/each}{/each}{#each transcriptSideMessages as message (message.id)}<ChatMessageItem
                 {message}
               />{/each}{#if working}<div class="working-indicator">
                 <span class="working-dot"></span>{t('working')}
