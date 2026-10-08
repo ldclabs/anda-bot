@@ -15,6 +15,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- **A scheduled shell job can no longer hang its cron slot**: a shell job whose command exited at the moment the shell handed it to the background could be reported as running without ever reporting its exit, so the job waited forever and kept one of the scheduler's concurrent slots. anda_engine now always reports the exit of a command it reported as running (fixed in the engine release after 0.16.5), and the scheduler stops waiting once the shell's 24-hour runtime limit plus a minute has passed, failing the run instead.
 - **Resending an attachment keeps a working reference**: sending a file whose content was already stored, for example the same screenshot twice, gave the message an `_id` that was never saved, so loading or downloading it failed with "not found". It now points at the stored copy.
 
 ## [0.13.3] — 2026-10-01

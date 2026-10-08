@@ -347,10 +347,29 @@ async fn run_shell(
     // can come back running before the start hook has fired; its end still comes.
     let running = output.output.get("state") == Some(&json!(CommandState::Running));
     if running || hook.started.load(Ordering::SeqCst) {
-        wait_for_completion(receiver, cancel, || context_cancel.cancel()).await
+        wait_for_shell_exit(receiver, cancel, SHELL_EXIT_REPORT_LIMIT, || {
+            context_cancel.cancel()
+        })
+        .await
     } else {
         Ok(output)
     }
+}
+
+/// The shell ends a session command by its maximum runtime and reports the exit
+/// within seconds, so a missing report must not hold a cron slot forever.
+const SHELL_EXIT_REPORT_LIMIT: Duration =
+    crate::engine::SHELL_MAX_RUNTIME.saturating_add(Duration::from_secs(60));
+
+async fn wait_for_shell_exit(
+    receiver: oneshot::Receiver<ToolOutput<Value>>,
+    cancel: &CancellationToken,
+    limit: Duration,
+    stop: impl FnOnce(),
+) -> Result<ToolOutput<Value>, BoxError> {
+    tokio::time::timeout(limit, wait_for_completion(receiver, cancel, stop))
+        .await
+        .unwrap_or_else(|_| Err("Scheduled shell command never reported its exit".into()))
 }
 
 // A cancellation request is followed by bounded cleanup, so scheduler shutdown
@@ -422,6 +441,25 @@ fn cron_shell_result_prompt(job: &CronJob, run_id: u64, result: &CronJobResult) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shell_wait_ends_when_the_exit_is_never_reported() {
+        let cancel = CancellationToken::new();
+        let limit = Duration::from_millis(20);
+        let (sender, receiver) = oneshot::channel::<ToolOutput<Value>>();
+        let err = wait_for_shell_exit(receiver, &cancel, limit, || {})
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("never reported its exit"));
+        drop(sender);
+
+        let (sender, receiver) = oneshot::channel();
+        sender.send(ToolOutput::new(json!("done"))).unwrap();
+        let output = wait_for_shell_exit(receiver, &cancel, limit, || {})
+            .await
+            .unwrap();
+        assert_eq!(output.output, json!("done"));
+    }
 
     #[test]
     fn shell_result_prompt_reports_each_outcome() {

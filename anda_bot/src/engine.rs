@@ -472,7 +472,8 @@ fn build_shell_tools(
 
 /// The longest a shell command may run, including in the background: the
 /// engine's ceiling.
-const SHELL_MAX_RUNTIME: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+pub(crate) const SHELL_MAX_RUNTIME: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
 
 fn model_setup_issues(config: &config::Config) -> Vec<String> {
     config
