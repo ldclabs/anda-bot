@@ -6,7 +6,7 @@ use anda_core::{
     Agent, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, ContentPart,
     FunctionDefinition, RequestMeta, Resource, StateFeatures, ToolGroupInfo,
 };
-use anda_engine::context::AgentCtx;
+use anda_engine::{context::AgentCtx, model::Model};
 use serde::Deserialize;
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc};
@@ -466,6 +466,67 @@ pub fn supported_media_resource_tags() -> Vec<String> {
     tags
 }
 
+/// Image formats every built-in provider accepts inline. Others stay references, because a
+/// rejected attachment would fail the whole turn rather than one tool call.
+const INLINE_IMAGE_MIME_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+/// Largest image sent inline, within the providers' per-image limits.
+const MAX_INLINE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+/// Inline bytes allowed per message, so several images stay under request size limits.
+const MAX_INLINE_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+
+/// The images among `attachments` that `model` reads itself, aligned with `attachments`.
+///
+/// A model labeled `image` gets PNG, JPEG, GIF and WebP attachments directly. The session runner
+/// keeps those bytes for the current task only, so each one travels next to its `Resource`
+/// reference (see [`attachment_content`]); everything else is inspected through an
+/// understanding agent.
+pub fn inline_images(model: Option<&Model>, attachments: &[Resource]) -> Vec<Option<ContentPart>> {
+    let reads_images = model.is_some_and(|model| {
+        model
+            .labels
+            .iter()
+            .any(|label| label.eq_ignore_ascii_case(MediaKind::Image.model_label()))
+    });
+    let mut budget = MAX_INLINE_MESSAGE_BYTES;
+    attachments
+        .iter()
+        .map(|resource| {
+            let blob = resource.blob.as_ref().filter(|blob| {
+                reads_images && !blob.is_empty() && blob.len() <= MAX_INLINE_IMAGE_BYTES.min(budget)
+            })?;
+            let mime_type = source::mime_type_for_data_or_name(
+                blob,
+                &resource.name,
+                resource.mime_type.as_deref(),
+                "application/octet-stream",
+            );
+            if !INLINE_IMAGE_MIME_TYPES.contains(&mime_type.as_str()) {
+                return None;
+            }
+            budget -= blob.len();
+            Some(ContentPart::InlineData {
+                mime_type,
+                data: blob.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Message content for stored attachments: each `Resource` reference, followed by the bytes
+/// [`inline_images`] chose for it.
+pub fn attachment_content(
+    stored: Vec<Resource>,
+    inline: Vec<Option<ContentPart>>,
+) -> Vec<ContentPart> {
+    let mut content = Vec::with_capacity(stored.len() * 2);
+    let mut inline = inline.into_iter();
+    for resource in stored {
+        content.push(ContentPart::any_from("Resource", resource));
+        content.extend(inline.next().flatten());
+    }
+    content
+}
+
 /// Understanding agents a session should load up front so the model can
 /// inspect these attachments without discovering the tools first.
 pub fn media_agent_names_for(resources: &[Resource]) -> Vec<String> {
@@ -584,6 +645,108 @@ mod tests {
         // A zero id is the strict-schema "absent" value some models send.
         let args = MediaUnderstandingArgs::from_prompt(r#"{"resource_id":0,"path":"a.png"}"#);
         assert_eq!(args.resource_id(), None);
+    }
+
+    fn image_model(labels: &[&str]) -> Model {
+        Model::mock_implemented().with_labels(labels.iter().map(|l| l.to_string()).collect())
+    }
+
+    fn png(name: &str, len: usize) -> Resource {
+        let mut bytes = PNG_SIGNATURE.to_vec();
+        bytes.resize(len.max(PNG_SIGNATURE.len()), 0);
+        Resource {
+            name: name.to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(bytes)),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn inline_images_go_to_models_labeled_image_only() {
+        let attachments = vec![png("a.png", 16), text_resource("notes.txt", "hi")];
+
+        let inline = inline_images(Some(&image_model(&["flash", "Image"])), &attachments);
+        assert!(matches!(
+            &inline[0],
+            Some(ContentPart::InlineData { mime_type, .. }) if mime_type == "image/png"
+        ));
+        assert!(inline[1].is_none());
+
+        for model in [Some(image_model(&["flash"])), None] {
+            assert!(
+                inline_images(model.as_ref(), &attachments)
+                    .iter()
+                    .all(Option::is_none)
+            );
+        }
+    }
+
+    #[test]
+    fn inline_images_skip_unsupported_formats_and_oversized_bytes() {
+        let model = image_model(&["image"]);
+        // Labeled PNG but really a BMP: the sniffed type decides, and BMP is not portable.
+        let bmp = Resource {
+            name: "scan.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(b"BM\x00\x00\x00\x00\x00\x00\x00\x00".to_vec())),
+            ..Default::default()
+        };
+        let big = png("big.png", MAX_INLINE_IMAGE_BYTES + 1);
+        let referenced = Resource {
+            name: "remote.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            uri: Some("https://example.com/remote.png".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            inline_images(Some(&model), &[bmp, big, referenced])
+                .iter()
+                .all(Option::is_none)
+        );
+
+        // The message budget stops inlining once it is spent.
+        let near_cap = MAX_INLINE_IMAGE_BYTES;
+        let inline = inline_images(
+            Some(&model),
+            &[
+                png("1.png", near_cap),
+                png("2.png", near_cap),
+                png("3.png", 16),
+            ],
+        );
+        assert!(inline[0].is_some());
+        assert!(inline[1].is_some());
+        assert!(inline[2].is_none());
+    }
+
+    #[test]
+    fn attachment_content_puts_bytes_after_their_reference() {
+        let stored = vec![
+            Resource {
+                _id: 1,
+                name: "a.png".to_string(),
+                ..Default::default()
+            },
+            Resource {
+                _id: 2,
+                name: "b.txt".to_string(),
+                ..Default::default()
+            },
+        ];
+        let bytes = ContentPart::InlineData {
+            mime_type: "image/png".to_string(),
+            data: ByteBufB64(PNG_SIGNATURE.to_vec()),
+        };
+
+        let content = attachment_content(stored, vec![Some(bytes.clone()), None]);
+
+        assert_eq!(content.len(), 3);
+        let first = content[0].clone().any_into::<Resource>("Resource").unwrap();
+        assert_eq!(first._id, 1);
+        assert_eq!(content[1], bytes);
+        let second = content[2].clone().any_into::<Resource>("Resource").unwrap();
+        assert_eq!(second._id, 2);
     }
 
     #[test]

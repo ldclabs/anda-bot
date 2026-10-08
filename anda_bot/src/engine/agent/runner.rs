@@ -3,7 +3,7 @@
 //! submission.
 
 use anda_core::{
-    BoxError, CompletionRequest, ContentPart, Message, Resource, StateFeatures, Usage,
+    AgentContext, BoxError, CompletionRequest, ContentPart, Message, Resource, StateFeatures, Usage,
 };
 use anda_engine::{
     context::{AgentCtx, CompletionRunner},
@@ -28,7 +28,7 @@ use crate::engine::{
     apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
     conversation::SourceState,
     goal::{self},
-    is_action_message_value,
+    is_action_message_value, multimodal,
     prompt::{PromptCommand, skill_command_directive},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -76,9 +76,16 @@ impl AndaBot {
         tokio::spawn(async move {
             let mut cron_receipts = crate::cron::AgentReceipts::default();
             cron_receipts.push(cron_receipt);
-            // Attachments enter the conversation as stored references only: the
-            // model inspects one on demand by its `_id`, so nothing slow runs
-            // before the session starts and no blob reaches the history.
+            // Attachments enter the conversation as stored references, so nothing
+            // slow runs before the session starts. Images the model reads itself
+            // also go along inline for the current task only; the runner keeps
+            // their bytes out of the history.
+            let inline = multimodal::inline_images(
+                assistant
+                    .next_turn_model(&ctx, req.model.as_deref())
+                    .as_ref(),
+                &resources,
+            );
             let prepared = drive_session_operation(
                 &assistant,
                 &mut conversation,
@@ -107,12 +114,10 @@ impl AndaBot {
                     return;
                 }
             };
-            req.content.extend(
-                resources
-                    .into_iter()
-                    .map(|res| ContentPart::any_from("Resource", res)),
-            );
+            req.content
+                .extend(multimodal::attachment_content(resources, inline));
             let mut runner = ctx.clone().completion_iter(req, vec![]).unbound();
+            runner.set_transient_inline_data(true);
             assistant.inner.apply_merge_discovered_tools(&mut runner);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
@@ -841,6 +846,13 @@ impl SessionRunner {
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&usage);
 
+            let inline = multimodal::inline_images(
+                self.assistant
+                    .next_turn_model(&self.ctx, self.runner.req().model.as_deref())
+                    .as_ref(),
+                &resources,
+            );
+            let media_agents = multimodal::media_agent_names_for(&resources);
             let (prepared, events) = drive_session_operation(
                 &self.assistant,
                 &mut self.conversation,
@@ -856,10 +868,13 @@ impl SessionRunner {
             let Some(prepared) = prepared else {
                 return Ok(true);
             };
-            let mut content = prepared?
-                .into_iter()
-                .map(|res| ContentPart::any_from("Resource", res))
-                .collect::<Vec<_>>();
+            let mut content = multimodal::attachment_content(prepared?, inline);
+            if !media_agents.is_empty() {
+                // Offer the tools that inspect these attachments, keeping what
+                // the model already discovered in this session.
+                self.runner
+                    .add_tools(self.ctx.definitions(Some(&media_agents)).await);
+            }
 
             if let Some(msg) = system_extra_user_context(&extra)
                 && self.last_extra_user_context.as_ref() != Some(&msg)

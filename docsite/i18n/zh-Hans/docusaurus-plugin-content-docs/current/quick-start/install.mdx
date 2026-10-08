@@ -97,6 +97,8 @@ model:
 
 `brain` 标签会让记忆大脑优先使用这个 provider。没有 provider 带这个标签时，记忆任务会使用当前 active model。
 
+`image`、`audio`、`video` 标签指定理解对应附件的 provider。当前 active model 也带有 `image` 标签时，消息中 5 MiB 以内的 PNG、JPEG、GIF 和 WebP 图片会直接随消息发给它，在该消息开启的任务内有效；不能读图的模型不要加这个标签。
+
 ## 从源码运行
 
 如果你想直接从仓库运行：

@@ -19,7 +19,7 @@ use anda_engine::{
     },
     hook::DynAgentHook,
     memory::{Conversation, ConversationRef, ConversationStatus},
-    model::Models,
+    model::{Model, Models},
     subagent::SubAgentManager,
     unix_ms,
 };
@@ -565,6 +565,12 @@ impl AndaBot {
             .resource_store
             .persist_resources(user, resources)
             .await
+    }
+
+    /// The model a session's next turn runs on, resolved as the completion
+    /// runner does: the pinned request model, otherwise the context's label.
+    fn next_turn_model(&self, ctx: &AgentCtx, pinned: Option<&str>) -> Option<Model> {
+        self.inner.models.resolve(pinned.unwrap_or(&ctx.label))
     }
 
     async fn complete_conversation_if_unfinished(
@@ -2618,14 +2624,148 @@ mod tests {
             &self,
             req: CompletionRequest,
         ) -> anda_core::BoxPinFut<Result<AgentOutput, BoxError>> {
-            self.0.lock().push(req);
+            self.0.lock().push(req.clone());
+            // Echo the sent content into the history, as real adapters do.
+            let mut content = req.content;
+            if !req.prompt.is_empty() {
+                content.insert(0, req.prompt.into());
+            }
+            let chat_history = vec![
+                Message {
+                    role: req.role.unwrap_or_else(|| "user".into()),
+                    content,
+                    ..Default::default()
+                },
+                Message {
+                    role: "assistant".into(),
+                    content: vec!["done".to_string().into()],
+                    ..Default::default()
+                },
+            ];
             Box::pin(async {
                 Ok(AgentOutput {
                     content: "done".into(),
+                    chat_history,
                     ..Default::default()
                 })
             })
         }
+    }
+
+    async fn first_request_after(
+        requests: &parking_lot::Mutex<Vec<CompletionRequest>>,
+        seen: usize,
+    ) -> CompletionRequest {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if let Some(req) = requests.lock().get(seen).cloned() {
+                    break req;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session never sent the expected request")
+    }
+
+    fn png_attachment(bytes: &[u8]) -> Resource {
+        let mut blob = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+        blob.extend_from_slice(bytes);
+        Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ic_auth_types::ByteBufB64(blob)),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn image_reaches_a_vision_model_inline_but_not_the_saved_conversation() {
+        let dir = tempfile::tempdir().unwrap();
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let model = Model::new(Arc::new(RecordingCompleter(requests.clone())))
+            .with_labels(vec!["image".to_string()]);
+        let (engine, bot) =
+            build_bot_engine_with_model(dir.path().into(), spawn_brain_mock().await, model.clone())
+                .await;
+        // Production shares one registry between the engine and the bot.
+        bot.inner.models.set_model(model);
+
+        let attachment = png_attachment(b"vision pixels");
+        let encoded = attachment.blob.as_ref().unwrap().to_base64();
+        let mut input = input_for_source("what is in this picture?", "cli:vision");
+        input.resources = vec![attachment];
+        let ack = engine.agent_run(test_caller(), input).await.unwrap();
+
+        let req = first_request_after(&requests, 0).await;
+        let reference = req.content[0]
+            .clone()
+            .any_into::<Resource>("Resource")
+            .expect("the reference comes first");
+        assert_eq!(reference.name, "photo.png");
+        assert!(reference.blob.is_none());
+        assert!(matches!(
+            &req.content[1],
+            ContentPart::InlineData { mime_type, .. } if mime_type == "image/png"
+        ));
+
+        let conversation_id = ack.conversation.unwrap();
+        assert_conversation_reaches_status(&bot, conversation_id, ConversationStatus::Idle).await;
+        let conversation = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(conversation_id)
+            .await
+            .unwrap();
+        let saved = serde_json::to_string(&conversation.messages).unwrap();
+        assert!(saved.contains("photo.png"), "{saved}");
+        assert!(!saved.contains(&encoded), "{saved}");
+        assert!(!saved.contains("InlineData"), "{saved}");
+    }
+
+    #[tokio::test]
+    async fn attachment_mid_session_loads_its_inspection_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (engine, bot) = build_bot_engine_with_model(
+            dir.path().into(),
+            spawn_brain_mock().await,
+            Model::new(Arc::new(RecordingCompleter(requests.clone()))),
+        )
+        .await;
+
+        let ack = engine
+            .agent_run(test_caller(), input_for_source("hello", "cli:mid-session"))
+            .await
+            .unwrap();
+        let first = first_request_after(&requests, 0).await;
+        let offers_image_tool = |req: &CompletionRequest| {
+            req.tools
+                .iter()
+                .any(|tool| tool.name == multimodal::IMAGE_UNDERSTANDING_AGENT_NAME)
+        };
+        assert!(!offers_image_tool(&first));
+        assert_conversation_reaches_status(
+            &bot,
+            ack.conversation.unwrap(),
+            ConversationStatus::Idle,
+        )
+        .await;
+
+        let mut input = input_for_source("and this one?", "cli:mid-session");
+        input.resources = vec![png_attachment(b"later pixels")];
+        engine.agent_run(test_caller(), input).await.unwrap();
+
+        let second = first_request_after(&requests, 1).await;
+        assert!(offers_image_tool(&second));
+        // A model without the `image` label gets the reference only.
+        assert!(
+            !second
+                .content
+                .iter()
+                .any(|part| matches!(part, ContentPart::InlineData { .. }))
+        );
     }
 
     #[tokio::test]

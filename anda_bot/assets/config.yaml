@@ -6,7 +6,9 @@
 # or export a matching API key environment variable.
 # To switch models later, point `model.active` at a different provider key.
 # The built-in image_understanding, audio_understanding, and video_understanding
-# agents route to providers labeled image, audio, and video respectively.
+# agents route to providers labeled image, audio, and video respectively. An
+# active model labeled image also receives PNG, JPEG, GIF, and WebP attachments
+# (up to 5 MiB) directly with the message, so label only models that read images.
 # Supported model API key env vars include DEEPSEEK_API_KEY, MINIMAX_API_KEY,
 # OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY,
 # MIMO_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, BIGMODEL_API_KEY, and GLM_API_KEY.

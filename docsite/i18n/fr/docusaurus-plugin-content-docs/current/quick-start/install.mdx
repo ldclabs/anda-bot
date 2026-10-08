@@ -95,6 +95,8 @@ model:
 
 Le label `brain` permet au cerveau de mémoire de privilégier ce fournisseur. Si aucun fournisseur ne possède ce label, les tâches de mémoire utiliseront le modèle actif.
 
+Les labels `image`, `audio` et `video` désignent les fournisseurs qui examinent ces pièces jointes. Si le modèle actif possède aussi le label `image`, il reçoit directement avec votre message les pièces jointes PNG, JPEG, GIF et WebP de 5 Mio au plus, pendant la tâche que ce message lance ; retirez ce label d'un modèle qui ne sait pas lire les images.
+
 ## Exécuter depuis le code source
 
 Pour exécuter le projet directement à partir du dépôt :

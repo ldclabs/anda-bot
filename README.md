@@ -164,6 +164,8 @@ Supported model key environment variables include `OPENAI_API_KEY`, `ANTHROPIC_A
 
 The `brain` label designates the preferred provider for memory processing. If no provider has this label, the active model is used.
 
+The `image`, `audio` and `video` labels pick the providers that inspect those attachments. When the active model also has the `image` label, it receives PNG, JPEG, GIF and WebP attachments of up to 5 MiB directly with your message, for the task that message starts; remove the label from a model that cannot read images.
+
 Use a separate home directory when you want an isolated profile:
 
 ```bash

@@ -95,6 +95,8 @@ model:
 
 La etiqueta `brain` hace que el cerebro de memoria prefiera ese proveedor. Si ningún proveedor tiene la etiqueta, las tareas de memoria utilizarán el modelo activo.
 
+Las etiquetas `image`, `audio` y `video` eligen los proveedores que examinan esos adjuntos. Si el modelo activo también tiene la etiqueta `image`, recibe directamente con tu mensaje los adjuntos PNG, JPEG, GIF y WebP de hasta 5 MiB, durante la tarea que inicia ese mensaje; quita la etiqueta de un modelo que no pueda leer imágenes.
+
 ## Ejecutar desde el código fuente
 
 Para ejecutar el proyecto directamente desde el repositorio:

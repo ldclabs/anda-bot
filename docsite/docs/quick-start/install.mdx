@@ -97,6 +97,8 @@ model:
 
 The `brain` label makes the memory brain prefer that provider. If no provider has the label, memory tasks use the active model.
 
+The `image`, `audio` and `video` labels pick the providers that inspect those attachments. When the active model also has the `image` label, it receives PNG, JPEG, GIF and WebP attachments of up to 5 MiB directly with your message, for the task that message starts; remove the label from a model that cannot read images.
+
 ## Run from Source
 
 To run directly from the repository:
