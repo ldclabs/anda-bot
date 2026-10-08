@@ -524,20 +524,18 @@ impl ActivityStore {
             refreshed?;
             Ok(needs_refresh(&row))
         } else {
+            // A delivery never changes once indexed with its order key, so
+            // the startup scan skips its journal read.
+            let existing = self.indexed(key).await?;
+            if existing.as_ref().is_some_and(|old| old.order.is_some()) {
+                return Ok(false);
+            }
             let Some(row) = self.journal.read::<super::RecallDelivery>(key).await? else {
                 return Ok(false);
             };
             let Some(id) = row.bot_conversation else {
                 return Ok(false);
             };
-            let existing = self.indexed(key).await?;
-            // A delivery never changes once indexed with its order key.
-            if existing.as_ref().is_some_and(|old| {
-                old.order.as_deref()
-                    == Some(activity_order(&old.user, row.delivered_at, key).as_str())
-            }) {
-                return Ok(false);
-            }
             let conversation = self
                 .conversations
                 .conversations
@@ -576,6 +574,8 @@ impl ActivityStore {
             .map(|s| s.parse::<u64>())
             .transpose()
             .map_err(|_| "invalid_request")?;
+        // Read each conversation once: a page often lists many of one's rows.
+        let mut conversations = HashMap::new();
         if let Some(id) = conversation {
             let conv = self
                 .conversations
@@ -586,6 +586,7 @@ impl ActivityStore {
             if conv.user != caller {
                 return Err("not_found".into());
             }
+            conversations.insert(id, Some(conv));
         }
         let user = caller.to_string();
         let cursor = match &query.cursor {
@@ -656,10 +657,13 @@ impl ActivityStore {
                     true
                 },
             )?;
-        let next_cursor = if ids.len() == limit {
-            let last: ActivityIndex = self.index.get_as(*ids.last().unwrap()).await?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            rows.push(self.index.get_as::<ActivityIndex>(id).await?);
+        }
+        let next_cursor = if rows.len() == limit {
             Some(serde_json::to_string(&ActivityCursor {
-                before: last.order,
+                before: rows.last().and_then(|row| row.order.clone()),
                 ..cursor
             })?)
         } else {
@@ -667,20 +671,22 @@ impl ActivityStore {
         };
         let mut items = Vec::new();
         let mut partial = !self.initialized.load(Ordering::SeqCst);
-        for id in ids {
-            let row: ActivityIndex = self.index.get_as(id).await?;
+        for row in rows {
             // Neither index ownership nor its cached state is authoritative.
-            let conv = match self
-                .conversations
-                .conversations
-                .get_conversation(row.conversation)
-                .await
-            {
-                Ok(c) if c.user == caller => c,
-                _ => {
-                    partial = true;
-                    continue;
-                }
+            let conv = match conversations.entry(row.conversation) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(
+                    self.conversations
+                        .conversations
+                        .get_conversation(row.conversation)
+                        .await
+                        .ok()
+                        .filter(|conv| conv.user == caller),
+                ),
+            };
+            let Some(conv) = conv.as_ref() else {
+                partial = true;
+                continue;
             };
             if row.journal_key.starts_with("recall/") {
                 let Some(recall) = self
@@ -1241,7 +1247,7 @@ mod tests {
             .await
             .unwrap();
         db.close().await.unwrap();
-        for _ in 0..3 {
+        for round in 0..3 {
             let db =
                 crate::test_support::db_on_object_store(object_store.clone(), "activity_upgrade")
                     .await;
@@ -1259,6 +1265,8 @@ mod tests {
             .await
             .unwrap();
             store.reconcile().await.unwrap();
+            // Once indexed with its order key, a delivery is never reread.
+            assert_eq!(store.journal.read_count(), if round == 0 { 2 } else { 1 });
             let page = store.page(owner, ActivityQuery::default()).await.unwrap();
             assert_eq!(page.items.len(), 2);
             assert!(page.items.iter().any(|item| item.id == key));

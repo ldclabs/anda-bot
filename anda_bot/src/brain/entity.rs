@@ -126,9 +126,18 @@ struct EntityCursor {
     skip: usize,
 }
 
+/// A visible claim, with what its page needs from the native record.
+struct ScannedClaim {
+    proposition_id: String,
+    /// The other end's id; none for a literal value.
+    other_id: Option<String>,
+    outgoing: bool,
+    record: MemoryRecordView,
+}
+
 #[derive(Default)]
 struct Scan {
-    claims: Vec<(anda_brain::product::MemoryRecord, MemoryRecordView, bool)>,
+    claims: Vec<ScannedClaim>,
     next: Option<EntityCursor>,
     hidden: bool,
     scan_limited: bool,
@@ -183,7 +192,7 @@ pub async fn page(
     let propositions: Vec<String> = scan
         .claims
         .iter()
-        .map(|(native, _, _)| native.proposition_id.clone())
+        .map(|claim| claim.proposition_id.clone())
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
@@ -191,33 +200,31 @@ pub async fn page(
     let items = scan
         .claims
         .into_iter()
-        .map(|(native, record, outgoing)| {
-            let endpoint = if outgoing {
-                &native.object
-            } else {
-                &native.subject
-            };
+        .map(|claim| {
+            // The record keeps the Assertion id its exclusions are keyed by.
             let belief = beliefs
-                .get(&native.proposition_id)
+                .get(&claim.proposition_id)
                 .map(|(status, excluded)| BeliefView {
                     status: status.clone(),
-                    excluded_reason: excluded.get(&native.id).cloned(),
+                    excluded_reason: excluded.get(&claim.record.id).cloned(),
                 });
             EntityClaim {
-                direction: if outgoing { "outgoing" } else { "incoming" }.into(),
+                direction: if claim.outgoing {
+                    "outgoing"
+                } else {
+                    "incoming"
+                }
+                .into(),
                 other: EntityLink {
-                    id: endpoint
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    label: if outgoing {
-                        record.object_label.clone()
+                    id: claim.other_id,
+                    label: if claim.outgoing {
+                        claim.record.object_label.clone()
                     } else {
-                        record.subject_label.clone()
+                        claim.record.subject_label.clone()
                     },
                 },
                 belief,
-                record,
+                record: claim.record,
             }
         })
         .collect();
@@ -383,7 +390,16 @@ async fn scan(
                 result.hidden = true;
                 continue;
             };
-            let Some(mut record) = catalog::project(native.clone(), resolver, viewer).await? else {
+            let proposition_id = native.proposition_id.clone();
+            let other_id = if outgoing {
+                &native.object
+            } else {
+                &native.subject
+            }
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+            let Some(mut record) = catalog::project(native, resolver, viewer).await? else {
                 result.hidden = true;
                 continue;
             };
@@ -405,7 +421,12 @@ async fn scan(
                 return Ok(result);
             }
             bytes += size + 1;
-            result.claims.push((native, record, outgoing));
+            result.claims.push(ScannedClaim {
+                proposition_id,
+                other_id,
+                outgoing,
+                record,
+            });
             if result.claims.len() == limit {
                 result.next = after(&position, index);
                 return Ok(result);

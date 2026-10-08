@@ -2,6 +2,10 @@
 //!
 //! The HTTP routes and the WebSocket methods decode into one [`MemoryRequest`]
 //! and share its authorization, execution and response shape.
+
+// Replies carry the shared ToolResponse error contract by value.
+#![allow(clippy::result_large_err)]
+
 use anda_core::{BoxError, Principal};
 use anda_engine_server::handler::AppState;
 use axum::{
@@ -74,8 +78,6 @@ enum MemoryRequest {
     ChangeDiscard(String),
 }
 
-// The WebSocket reply carries the shared ToolResponse error contract.
-#[allow(clippy::result_large_err)]
 impl MemoryRequest {
     fn from_websocket(method: &str, params: Value) -> Result<Self, ToolResponse> {
         fn one<T: DeserializeOwned>(params: Value, message: &str) -> Result<T, ToolResponse> {
@@ -194,31 +196,24 @@ impl MemoryApiState {
                 ok(json!(overview), None)
             }
             MemoryRequest::Activity(query) => self.activity(caller, query).await,
-            MemoryRequest::Records(query) => match service.records(owner, query).await {
-                Ok((page, next_cursor)) => ok(json!(page), next_cursor),
-                Err(error) => service_error(error),
-            },
+            MemoryRequest::Records(query) => paged(service.records(owner, query).await),
             MemoryRequest::Record(id) => respond(
                 service
                     .record(owner, &id)
                     .await
                     .map(|record| json!({"schema_version":1,"record":record})),
             ),
-            MemoryRequest::Entity(query) => match service.entity(owner, query).await {
-                Ok((page, next_cursor)) => ok(json!(page), next_cursor),
-                Err(error) => service_error(error),
-            },
+            MemoryRequest::Entity(query) => paged(service.entity(owner, query).await),
             MemoryRequest::EntitySearch(query) => {
                 respond(service.entity_search(owner, query).await)
             }
             MemoryRequest::Search(request) => respond(service.search(owner, token, request).await),
-            MemoryRequest::Watches(query) => match service.watches(owner, query).await {
-                Ok(mut result) => {
-                    let next_cursor = result.next_cursor.take();
-                    ok(json!(result), next_cursor)
-                }
-                Err(error) => service_error(error),
-            },
+            MemoryRequest::Watches(query) => {
+                paged(service.watches(owner, query).await.map(|mut page| {
+                    let next_cursor = page.next_cursor.take();
+                    (page, next_cursor)
+                }))
+            }
             MemoryRequest::Watch(request) => watch_reply(service.watch(owner, request).await),
             MemoryRequest::CancelWatch(id) => watch_reply(service.cancel_watch(owner, id).await),
             MemoryRequest::SetupPrepare => respond(service.setup_preview(owner).await),
@@ -241,7 +236,6 @@ impl MemoryApiState {
         }
     }
 
-    #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
     fn authenticate(&self, headers: &HeaderMap) -> Result<(Principal, String), Reply> {
         let caller = self
             .app
@@ -268,14 +262,12 @@ impl MemoryApiState {
             })
     }
 
-    #[allow(clippy::result_large_err)] // Preserve the shared ToolResponse error contract.
     fn authorize(&self, headers: &HeaderMap) -> Result<(Principal, String), Reply> {
         let (caller, token) = self.authenticate(headers)?;
         self.authorize_caller(caller)?;
         Ok((caller, token))
     }
 
-    #[allow(clippy::result_large_err)]
     fn authorize_caller(&self, caller: Principal) -> Result<(), Reply> {
         if caller != self.owner {
             return Err((
@@ -296,31 +288,16 @@ impl MemoryApiState {
                 error("forbidden", "Select one of your conversations."),
             );
         }
-        match self.service.activity(caller, query).await {
-            Ok(mut page) => {
-                let cursor = page.next_cursor.take();
-                ok(json!(page), cursor)
-            }
-            // Activity reads conversations, so its messages say so.
+        let page = self.service.activity(caller, query).await.map(|mut page| {
+            let next_cursor = page.next_cursor.take();
+            (page, next_cursor)
+        });
+        match page {
             Err(err) => match err.to_string().as_str() {
-                "payload_too_large" => (
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    error("payload_too_large", "Query exceeds 8192 UTF-8 bytes."),
-                ),
-                "search_result_unknown" => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    error(
-                        "search_result_unknown",
-                        "No complete search result was received. A new search may incur another model charge.",
-                    ),
-                ),
+                // Activity reads conversations, so its messages say so.
                 "invalid_request" => (
                     StatusCode::BAD_REQUEST,
                     error("invalid_request", "Invalid conversation or page limit."),
-                ),
-                "invalid_cursor" => (
-                    StatusCode::CONFLICT,
-                    error("invalid_cursor", "Refresh from the first page."),
                 ),
                 "not_found" => (
                     StatusCode::NOT_FOUND,
@@ -333,11 +310,9 @@ impl MemoryApiState {
                         "Activity is unavailable in this server.",
                     ),
                 ),
-                _ => (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    error("service_unavailable", "Memory activity could not be read."),
-                ),
+                _ => service_error(err),
             },
+            page => paged(page),
         }
     }
 
@@ -398,8 +373,12 @@ fn ok(result: Value, next_cursor: Option<String>) -> Reply {
 }
 
 fn respond<T: Serialize>(result: Result<T, BoxError>) -> Reply {
+    paged(result.map(|value| (value, None)))
+}
+
+fn paged<T: Serialize>(result: Result<(T, Option<String>), BoxError>) -> Reply {
     match result {
-        Ok(value) => ok(json!(value), None),
+        Ok((value, next_cursor)) => ok(json!(value), next_cursor),
         Err(error) => service_error(error),
     }
 }
@@ -465,7 +444,7 @@ fn service_error(err: BoxError) -> Reply {
         ),
         "capacity" => (
             StatusCode::TOO_MANY_REQUESTS,
-            error("capacity", "Too many memory changes are pending."),
+            error("capacity", "Too many memory requests are in progress."),
         ),
         "payload_too_large" => (
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -516,26 +495,48 @@ fn invalid(message: &str) -> Response {
     reply((StatusCode::BAD_REQUEST, error("invalid_request", message)))
 }
 
-fn json_rejection(rejection: JsonRejection) -> Response {
-    let (status, reason) = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large")
-    } else {
-        (StatusCode::BAD_REQUEST, "invalid_request")
-    };
-    reply((
-        status,
-        error(reason, "Invalid or oversized memory request."),
-    ))
+fn from_json<T>(
+    body: Result<Json<T>, JsonRejection>,
+    into: impl FnOnce(T) -> MemoryRequest,
+) -> Result<MemoryRequest, Response> {
+    body.map(|Json(body)| into(body)).map_err(|rejection| {
+        let (status, reason) = if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large")
+        } else {
+            (StatusCode::BAD_REQUEST, "invalid_request")
+        };
+        reply((
+            status,
+            error(reason, "Invalid or oversized memory request."),
+        ))
+    })
 }
 
-/// Serves one owner-only HTTP route: authorization first, then the input the
-/// route's extractors produced.
-async fn owner_route(
+fn from_query<T>(
+    query: Result<Query<T>, QueryRejection>,
+    into: impl FnOnce(T) -> MemoryRequest,
+    message: &str,
+) -> Result<MemoryRequest, Response> {
+    query
+        .map(|Query(query)| into(query))
+        .map_err(|_| invalid(message))
+}
+
+/// Serves one HTTP route: identity first, then the input the route's
+/// extractors produced. Every route but the caller's own activity is the
+/// owner's.
+async fn serve(
     state: &MemoryApiState,
     headers: &HeaderMap,
+    owner_only: bool,
     request: Result<MemoryRequest, Response>,
 ) -> Response {
-    let (caller, token) = match state.authorize(headers) {
+    let identity = if owner_only {
+        state.authorize(headers)
+    } else {
+        state.authenticate(headers)
+    };
+    let (caller, token) = match identity {
         Ok(identity) => identity,
         Err(rejected) => return reply(rejected),
     };
@@ -545,25 +546,33 @@ async fn owner_route(
     }
 }
 
+async fn owner_route(
+    state: &MemoryApiState,
+    headers: &HeaderMap,
+    request: Result<MemoryRequest, Response>,
+) -> Response {
+    serve(state, headers, true, request).await
+}
+
 async fn overview(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
     query: Result<Query<OverviewQuery>, QueryRejection>,
 ) -> Response {
-    let request = query
-        .map(|_| MemoryRequest::Overview)
-        .map_err(|_| invalid("The overview accepts no query parameters."));
+    let request = from_query(
+        query,
+        |_| MemoryRequest::Overview,
+        "The overview accepts no query parameters.",
+    );
     owner_route(&state, &headers, request).await
 }
 
 async fn search(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<SearchRequest>, JsonRejection>,
+    body: Result<Json<SearchRequest>, JsonRejection>,
 ) -> Response {
-    let request = request
-        .map(|Json(request)| MemoryRequest::Search(request))
-        .map_err(json_rejection);
+    let request = from_json(body, MemoryRequest::Search);
     owner_route(&state, &headers, request).await
 }
 
@@ -572,18 +581,8 @@ async fn activity(
     headers: HeaderMap,
     query: Result<Query<ActivityQuery>, QueryRejection>,
 ) -> Response {
-    let (caller, token) = match state.authenticate(&headers) {
-        Ok(identity) => identity,
-        Err(rejected) => return reply(rejected),
-    };
-    match query {
-        Ok(Query(query)) => reply(
-            state
-                .execute(caller, token, MemoryRequest::Activity(query))
-                .await,
-        ),
-        Err(_) => invalid("Invalid activity query."),
-    }
+    let request = from_query(query, MemoryRequest::Activity, "Invalid activity query.");
+    serve(&state, &headers, false, request).await
 }
 
 async fn records(
@@ -591,9 +590,7 @@ async fn records(
     headers: HeaderMap,
     query: Result<Query<RecordQuery>, QueryRejection>,
 ) -> Response {
-    let request = query
-        .map(|Query(query)| MemoryRequest::Records(query))
-        .map_err(|_| invalid("Invalid memory query."));
+    let request = from_query(query, MemoryRequest::Records, "Invalid memory query.");
     owner_route(&state, &headers, request).await
 }
 
@@ -610,9 +607,7 @@ async fn entity(
     headers: HeaderMap,
     query: Result<Query<EntityQuery>, QueryRejection>,
 ) -> Response {
-    let request = query
-        .map(|Query(query)| MemoryRequest::Entity(query))
-        .map_err(|_| invalid("Invalid entity query."));
+    let request = from_query(query, MemoryRequest::Entity, "Invalid entity query.");
     owner_route(&state, &headers, request).await
 }
 
@@ -621,20 +616,16 @@ async fn entity_search(
     headers: HeaderMap,
     query: Result<Query<EntitySearchQuery>, QueryRejection>,
 ) -> Response {
-    let request = query
-        .map(|Query(query)| MemoryRequest::EntitySearch(query))
-        .map_err(|_| invalid("Invalid entity search."));
+    let request = from_query(query, MemoryRequest::EntitySearch, "Invalid entity search.");
     owner_route(&state, &headers, request).await
 }
 
 async fn create_watch(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<WatchRequest>, JsonRejection>,
+    body: Result<Json<WatchRequest>, JsonRejection>,
 ) -> Response {
-    let request = request
-        .map(|Json(request)| MemoryRequest::Watch(request))
-        .map_err(|_| invalid("Invalid record watch request."));
+    let request = from_json(body, MemoryRequest::Watch);
     owner_route(&state, &headers, request).await
 }
 
@@ -643,9 +634,7 @@ async fn list_watches(
     headers: HeaderMap,
     query: Result<Query<WatchQuery>, QueryRejection>,
 ) -> Response {
-    let request = query
-        .map(|Query(query)| MemoryRequest::Watches(query))
-        .map_err(|_| invalid("Invalid watch query."));
+    let request = from_query(query, MemoryRequest::Watches, "Invalid watch query.");
     owner_route(&state, &headers, request).await
 }
 
@@ -664,22 +653,18 @@ async fn setup_preview(State(state): State<MemoryApiState>, headers: HeaderMap) 
 async fn setup_commit(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<CommitRequest>, JsonRejection>,
+    body: Result<Json<CommitRequest>, JsonRejection>,
 ) -> Response {
-    let request = request
-        .map(|Json(request)| MemoryRequest::SetupCommit(request))
-        .map_err(json_rejection);
+    let request = from_json(body, MemoryRequest::SetupCommit);
     owner_route(&state, &headers, request).await
 }
 
 async fn prepare_change(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
-    request: Result<Json<ChangeRequest>, JsonRejection>,
+    body: Result<Json<ChangeRequest>, JsonRejection>,
 ) -> Response {
-    let request = request
-        .map(|Json(request)| MemoryRequest::ChangePrepare(request))
-        .map_err(json_rejection);
+    let request = from_json(body, MemoryRequest::ChangePrepare);
     owner_route(&state, &headers, request).await
 }
 
@@ -687,11 +672,9 @@ async fn commit_change(
     State(state): State<MemoryApiState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-    request: Result<Json<CommitRequest>, JsonRejection>,
+    body: Result<Json<CommitRequest>, JsonRejection>,
 ) -> Response {
-    let request = request
-        .map(|Json(request)| MemoryRequest::ChangeCommit(id, request))
-        .map_err(json_rejection);
+    let request = from_json(body, |body| MemoryRequest::ChangeCommit(id, body));
     owner_route(&state, &headers, request).await
 }
 
@@ -834,6 +817,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        // Every JSON route reports an oversized body the same way.
+        let response = client
+            .post(format!("{url}/daemon/memory/v1/watches"))
+            .headers(headers(&owner, false))
+            .json(&json!({"operation_id":"x".repeat(70 * 1024),"record_id":"A-1"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        // Activity alone admits other callers, and only for a conversation.
+        for (path, status) in [("activity", 403), ("activity?conversation=1", 503)] {
+            let response = client
+                .get(format!("{url}/daemon/memory/v1/{path}"))
+                .headers(headers(&other, false))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), status, "{path}");
+        }
     }
 
     #[tokio::test]

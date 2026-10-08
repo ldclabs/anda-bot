@@ -1,6 +1,12 @@
 use super::{Client, HttpError, product::*};
 use anda_core::BoxError;
-use std::{future::Future, time::Duration};
+use std::{future::Future, sync::LazyLock, time::Duration};
+
+/// The bundled learning workflow contract, parsed once.
+static WORKFLOW_TEMPLATE: LazyLock<serde_json::Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../assets/memory/workflow-template.json"))
+        .expect("bundled workflow contract")
+});
 
 #[derive(Clone)]
 pub struct MemoryService {
@@ -141,11 +147,15 @@ impl MemoryService {
                     record_id: record.id,
                     summary: record.text.chars().take(512).collect(),
                 };
-                journal.create(&key, &intent).await?;
-                journal
-                    .read::<WatchIntent>(&key)
-                    .await?
-                    .ok_or("watch intent missing")?
+                if journal.create(&key, &intent).await? {
+                    intent
+                } else {
+                    // A concurrent request recorded it first; its intent wins.
+                    journal
+                        .read::<WatchIntent>(&key)
+                        .await?
+                        .ok_or("watch intent missing")?
+                }
             }
         };
         if intent.caller != caller.to_string() || intent.record_id != input.record_id {
@@ -438,9 +448,6 @@ impl MemoryService {
             ("records", "native_record_contract_not_verified"),
             ("entities", "native_record_contract_not_verified"),
             ("changes", "native_mutation_contract_not_verified"),
-            ("memory_policy", "memory_policy_not_enforced"),
-            ("evaluation", "evaluation_runner_not_installed"),
-            ("learning", "learning_template_contract_not_verified"),
         ]
         .into_iter()
         .map(|(name, reason)| (name.into(), Capability::unsupported(reason)))
@@ -457,72 +464,26 @@ impl MemoryService {
                 reason: inbox.reason.clone(),
             },
         );
-        if self.activity.is_some() {
-            capabilities.insert(
-                "activity".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
-        }
-        if self.activity.is_some() && self.client.embedded_host().is_some() {
-            for name in ["records", "entities"] {
-                capabilities.insert(
-                    name.into(),
-                    Capability {
-                        state: CapabilityState::Available,
-                        reason: None,
-                    },
-                );
-            }
-        }
-        if self.mutations.is_some() {
-            capabilities.insert(
-                "changes".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
-        }
-        if self.setup.is_some() {
-            capabilities.insert(
-                "inbox_setup".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
-        }
-        if self.client.embedded_host().is_some() {
+        let embedded = self.client.embedded_host().is_some();
+        for (name, available) in [
+            ("activity", self.activity.is_some()),
+            ("records", self.activity.is_some() && embedded),
+            ("entities", self.activity.is_some() && embedded),
+            ("changes", self.mutations.is_some()),
+            ("inbox_setup", self.setup.is_some()),
             // Formation windows, recall barriers, session briefings and
             // memory attention go through the embedded Memory Interface.
-            capabilities.insert(
-                "memory_interface".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
-        }
-        if self.client.embedded_host().is_some() && inbox.state == ReadState::Available {
-            capabilities.insert(
-                "record_watches".into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
-        }
-        for name in ["memory_policy", "search"] {
-            capabilities.insert(
-                name.into(),
-                Capability {
-                    state: CapabilityState::Available,
-                    reason: None,
-                },
-            );
+            ("memory_interface", embedded),
+            (
+                "record_watches",
+                embedded && inbox.state == ReadState::Available,
+            ),
+            ("memory_policy", true),
+            ("search", true),
+        ] {
+            if available {
+                capabilities.insert(name.into(), Capability::available());
+            }
         }
         capabilities.insert(
             "evaluation".into(),
@@ -548,9 +509,7 @@ impl MemoryService {
         } else {
             readiness
         };
-        readiness["template_contract"] =
-            serde_json::from_str(include_str!("../../assets/memory/workflow-template.json"))
-                .expect("bundled workflow contract");
+        readiness["template_contract"] = WORKFLOW_TEMPLATE.clone();
         readiness["scope"] = "isolated_learning".into();
         readiness["business_application_authorized"] = false.into();
         capabilities.insert(

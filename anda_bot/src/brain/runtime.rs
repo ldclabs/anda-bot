@@ -82,40 +82,38 @@ impl Brain {
             app_state = app_state.with_runtime_config(runtime_config, resolve_secret)?;
         }
 
-        let _ = match app_state.load_space(config::ANDA_BOT_SPACE_ID, true).await {
-            Ok(space) => space,
-            Err(e) => {
-                if e.to_string().contains("not found") {
-                    log::warn!(
-                        target: "brain",
-                        name = "brain";
-                        "Space '{}' not found, creating a new one",
-                        config::ANDA_BOT_SPACE_ID
-                    );
-
-                    let _ = app_state
-                        .admin_create_space(
-                            admin,
-                            admin,
-                            config::ANDA_BOT_SPACE_ID.to_string(),
-                            7,
-                            unix_ms(),
-                        )
-                        .await?;
-                    log::warn!(
-                        target: "brain",
-                        name = "brain";
-                        "Space '{}' created successfully",
-                        config::ANDA_BOT_SPACE_ID
-                    );
-                    app_state
-                        .load_space(config::ANDA_BOT_SPACE_ID, true)
-                        .await?
-                } else {
-                    return Err(e);
-                }
+        if let Err(error) = app_state.load_space(config::ANDA_BOT_SPACE_ID, true).await {
+            if !matches!(
+                error.downcast_ref::<anda_db::error::DBError>(),
+                Some(anda_db::error::DBError::NotFound { .. })
+            ) {
+                return Err(error);
             }
-        };
+            log::warn!(
+                target: "brain",
+                name = "brain";
+                "Space '{}' not found, creating a new one",
+                config::ANDA_BOT_SPACE_ID
+            );
+            app_state
+                .admin_create_space(
+                    admin,
+                    admin,
+                    config::ANDA_BOT_SPACE_ID.to_string(),
+                    7,
+                    unix_ms(),
+                )
+                .await?;
+            log::warn!(
+                target: "brain",
+                name = "brain";
+                "Space '{}' created successfully",
+                config::ANDA_BOT_SPACE_ID
+            );
+            app_state
+                .load_space(config::ANDA_BOT_SPACE_ID, true)
+                .await?;
+        }
         Ok(Self { state: app_state })
     }
 

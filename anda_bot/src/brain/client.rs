@@ -118,6 +118,8 @@ impl Client {
         self
     }
 
+    /// Observes a window through the embedded Brain's journal. A client
+    /// without it (tests, host-less callers) posts the window directly.
     pub async fn submit_formation_window(
         &self,
         mut submission: super::FormationSubmission,
@@ -132,9 +134,6 @@ impl Client {
                     &serde_json::to_value(message)?,
                 )?);
             }
-            provenance.input_digest = Some(anda_cognitive_nexus::content_digest(
-                &serde_json::to_value(&input)?,
-            )?);
         }
         match &self.journal {
             Some(journal) => journal.submit_formation(self, submission, input).await,
@@ -157,49 +156,6 @@ impl Client {
     }
     pub(super) fn journal(&self) -> Option<super::Journal> {
         self.journal.clone()
-    }
-
-    pub(super) async fn formation_submission(
-        &self,
-        input: FormationInputRef<'_>,
-        submission: &super::FormationSubmission,
-    ) -> Result<AgentOutput, BoxError> {
-        if let (Some(host), Some(provenance)) = (&self.host, &submission.provenance) {
-            let space = host
-                .state
-                .load_space(crate::config::ANDA_BOT_SPACE_ID, true)
-                .await?;
-            return space
-                .ingest_product(
-                    anda_brain::agents::SELF_USER_ID,
-                    anda_brain::types::FormationInput {
-                        messages: input.messages.to_vec(),
-                        context: input.context.clone(),
-                        timestamp: input.timestamp.clone(),
-                    },
-                    provenance.source_identity.clone().unwrap_or_else(|| {
-                        super::product::source_identity(
-                            &provenance.caller,
-                            submission.bot_conversation,
-                            provenance.session.as_deref(),
-                        )
-                    }),
-                )
-                .await
-                .map_err(|error| {
-                    if matches!(
-                        error.downcast_ref::<anda_brain::product::SourceAdmissionError>(),
-                        Some(anda_brain::product::SourceAdmissionError::Busy)
-                    ) {
-                        Box::new(RpcFailure {
-                            message: "memory_change_pending".into(),
-                        }) as BoxError
-                    } else {
-                        error
-                    }
-                });
-        }
-        self.formation(input).await
     }
 
     /// Forward the original verified bearer across a transport boundary.
@@ -257,7 +213,7 @@ impl Client {
 
     pub async fn recall_structured(&self, input: &RecallInput) -> Result<RecallOutput, BoxError> {
         rpc_result(
-            self.post_with_timeout("/recall_structured", input, RECALL_TIMEOUT)
+            self.post_with("/recall_structured", input, Some(RECALL_TIMEOUT))
                 .await?,
         )
     }
@@ -282,7 +238,7 @@ impl Client {
     pub async fn recall<'a>(&self, input: RecallInputRef<'a>) -> Result<AgentOutput, BoxError> {
         let started_at = Instant::now();
         let result: Result<RpcResponse<AgentOutput>, BoxError> = self
-            .post_with_timeout("/recall", &input, RECALL_TIMEOUT)
+            .post_with("/recall", &input, Some(RECALL_TIMEOUT))
             .await;
         let elapsed = started_at.elapsed();
         if elapsed > SLOW_RECALL_WARN_AFTER {
@@ -381,24 +337,24 @@ impl Client {
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
-        let req = self.request(reqwest::Method::POST, path);
-        let response = req.json(&input).send().await?;
-        self.decode_response(reqwest::Method::POST, path, response)
-            .await
+        self.post_with(path, input, None).await
     }
 
-    async fn post_with_timeout<I, O>(
+    async fn post_with<I, O>(
         &self,
         path: &str,
         input: &I,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<O, BoxError>
     where
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
-        let req = self.request(reqwest::Method::POST, path).timeout(timeout);
-        let response = req.json(&input).send().await?;
+        let mut req = self.request(reqwest::Method::POST, path).json(input);
+        if let Some(timeout) = timeout {
+            req = req.timeout(timeout);
+        }
+        let response = req.send().await?;
         self.decode_response(reqwest::Method::POST, path, response)
             .await
     }

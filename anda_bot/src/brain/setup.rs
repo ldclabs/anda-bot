@@ -58,27 +58,22 @@ impl InboxSetup {
     pub async fn prepare(&self, caller: Principal) -> Result<SetupPreview, BoxError> {
         self.reject_override()?;
         let _guard = self.lock.lock().await;
-        if let Some(record) = self.journal.read::<SetupRecord>(JOURNAL_KEY).await?
+        let stored = self.journal.read::<SetupRecord>(JOURNAL_KEY).await?;
+        if let Some(record) = &stored
             && record.caller == caller.to_string()
             && record.view.state == "applying"
         {
-            return Ok(record.view);
+            return Ok(record.view.clone());
         }
         let bytes = tokio::fs::read(self.home.join(crate::config::CONFIG_FILE_NAME)).await?;
-        let text =
-            crate::util::text::read_text_file(&self.home.join(crate::config::CONFIG_FILE_NAME))
-                .await?;
+        let text = config_text(&bytes)?;
         let config = crate::config::Config::from_contents(&text)?;
         if config.brain.runtime_config.as_deref() == Some(Path::new(RUNTIME_FILE)) {
-            let old = self
-                .journal
-                .read::<SetupRecord>(JOURNAL_KEY)
-                .await?
-                .ok_or("custom_runtime_config")?;
+            let old = stored.as_ref().ok_or("custom_runtime_config")?;
             if old.caller == caller.to_string()
                 && tokio::fs::read(self.home.join(RUNTIME_FILE)).await? == old.runtime.as_bytes()
             {
-                return Ok(old.view);
+                return Ok(old.view.clone());
             }
         }
         if config.brain.runtime_config.is_some() {
@@ -88,11 +83,7 @@ impl InboxSetup {
         let runtime_path = self.home.join(RUNTIME_FILE);
         match tokio::fs::symlink_metadata(&runtime_path).await {
             Ok(_) => {
-                let old = self
-                    .journal
-                    .read::<SetupRecord>(JOURNAL_KEY)
-                    .await?
-                    .ok_or("runtime_file_exists")?;
+                let old = stored.as_ref().ok_or("runtime_file_exists")?;
                 if old.caller != caller.to_string()
                     || old.runtime != runtime
                     || tokio::fs::read(&runtime_path).await? != runtime.as_bytes()
@@ -161,8 +152,9 @@ impl InboxSetup {
     async fn apply(&self, record: &mut SetupRecord) -> Result<(), BoxError> {
         let path = self.home.join(crate::config::CONFIG_FILE_NAME);
         let bytes = tokio::fs::read(&path).await?;
+        let config_digest = digest(&bytes);
         let runtime_path = self.home.join(RUNTIME_FILE);
-        if digest(&bytes) == record.updated_config_digest {
+        if config_digest == record.updated_config_digest {
             if tokio::fs::read(&runtime_path).await? != record.runtime.as_bytes() {
                 return Err("revision_conflict".into());
             }
@@ -170,11 +162,10 @@ impl InboxSetup {
             self.journal.write(JOURNAL_KEY, record).await?;
             return Ok(());
         }
-        if digest(&bytes) != record.config_digest {
+        if config_digest != record.config_digest {
             return Err("revision_conflict".into());
         }
-        let text = crate::util::text::read_text_file(&path).await?;
-        let updated = update_config(&text)?;
+        let updated = update_config(&config_text(&bytes)?)?;
         if digest(updated.as_bytes()) != record.updated_config_digest {
             return Err("revision_conflict".into());
         }
@@ -206,16 +197,16 @@ impl InboxSetup {
         Ok(())
     }
 
+    /// Only an interrupted process leaves an admitted apply behind, so it is
+    /// resumed once at startup; a commit that failed is the owner's to retry.
     pub async fn run(&self, cancel: tokio_util::sync::CancellationToken) {
-        loop {
-            let failed = match self.recover().await {
-                Ok(()) => false,
-                Err(error) => {
+        tokio::select! {
+            _ = cancel.cancelled() => {}
+            result = self.recover() => {
+                if let Err(error) = result {
                     log::warn!("Inbox configuration needs review: {error}");
-                    true
                 }
-            };
-            tokio::select! {_=cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(if failed {60} else {5}))=>{}}
+            }
         }
     }
 
@@ -226,6 +217,12 @@ impl InboxSetup {
             Ok(())
         }
     }
+}
+
+fn config_text(bytes: &[u8]) -> Result<String, BoxError> {
+    anda_core::text_from_bytes(bytes)
+        .map(|text| text.into_owned())
+        .ok_or_else(|| "config.yaml is not text".into())
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -268,13 +265,8 @@ fn runtime_config(caller: Principal) -> Result<String, BoxError> {
 }
 
 pub(super) async fn create_exact(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
-    if tokio::fs::symlink_metadata(path).await.is_ok() {
-        if tokio::fs::symlink_metadata(path)
-            .await?
-            .file_type()
-            .is_symlink()
-            || tokio::fs::read(path).await? != bytes
-        {
+    if let Ok(metadata) = tokio::fs::symlink_metadata(path).await {
+        if metadata.file_type().is_symlink() || tokio::fs::read(path).await? != bytes {
             return Err("runtime_file_exists".into());
         }
         return Ok(());

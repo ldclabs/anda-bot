@@ -1,7 +1,7 @@
 //! Small host associations, separate from model context and native authority.
 //! Versioned object keys use the existing MetaStore's conditional writes.
 use anda_brain::recall_receipt::RecallReceiptRef;
-use anda_core::{AgentOutput, BoxError, Usage};
+use anda_core::{BoxError, Usage};
 use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, path::Path};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -256,118 +256,31 @@ impl Journal {
         self.write(&format!("recall/{}", delivery.invocation), delivery)
             .await
     }
+
+    /// Submits a window through the embedded Memory Interface; see
+    /// [`Self::observe_formation`].
     pub async fn submit_formation(
         &self,
         client: &super::Client,
-        mut submission: FormationSubmission,
+        submission: FormationSubmission,
         input: anda_brain::types::FormationInputRef<'_>,
     ) -> Result<FormationSubmission, BoxError> {
-        let key = format!(
-            "formation/{}/{}",
-            submission.bot_conversation, submission.window_start
-        );
+        let host = client
+            .embedded_host()
+            .ok_or("memory formation needs the embedded Brain")?;
+        let key = formation_key(&submission);
         let lock = self.formation_lock(&key);
         let _guard = lock.lock().await;
-        if let (Some(host), Some(_)) = (client.embedded_host(), &submission.provenance) {
-            return self
-                .observe_formation(client, &host, &key, submission, input)
-                .await;
-        }
-        let requested_window = submission.clone();
-        if !self.create(&key, &submission).await? {
-            submission = self
-                .read(&key)
-                .await?
-                .ok_or("formation journal disappeared")?;
-            if submission.state == FormationState::Suppressed {
-                return Ok(submission);
-            }
-            // A crash or transport failure may have happened after acceptance.
-            // No server idempotency key exists; do not blindly resend this window.
-            if submission.brain_conversation.is_some() {
-                self.refresh_formation_unlocked(client, &mut submission)
-                    .await?;
-                return Ok(submission);
-            }
-            if submission.state == FormationState::Failed {
-                submission = requested_window;
-                submission.state = FormationState::Pending;
-                self.write(&key, &submission).await?;
-            } else {
-                return Err("formation acceptance is unknown; retained the original window for reconciliation".into());
-            }
-        }
-        let result = client.formation_submission(input, &submission).await;
-        match result {
-            Ok(AgentOutput {
-                conversation,
-                failed_reason,
-                ..
-            }) => {
-                submission.brain_conversation = conversation;
-                submission.state = if failed_reason.is_some() {
-                    FormationState::Failed
-                } else if conversation.is_some() {
-                    FormationState::Accepted
-                } else {
-                    FormationState::Unknown
-                };
-                submission.error = failed_reason.map(|s| s.chars().take(512).collect());
-                submission.failure_stage = match submission.state {
-                    FormationState::Failed => Some(FormationFailure::SubmissionRejected),
-                    FormationState::Unknown => Some(FormationFailure::Unknown),
-                    _ => None,
-                };
-            }
-            Err(err) => {
-                if matches!(
-                    err.downcast_ref::<anda_brain::product::SourceAdmissionError>(),
-                    Some(anda_brain::product::SourceAdmissionError::Suppressed)
-                ) {
-                    submission.state = FormationState::Suppressed;
-                    submission.updated_at = Some(anda_engine::unix_ms());
-                    submission.error = None;
-                    self.write(&key, &submission).await?;
-                    return Ok(submission);
-                }
-                // Any completed HTTP/RPC response is a definite rejection and
-                // can be retried with backoff. Only transport failures may have
-                // lost an acceptance response and must remain unresolved.
-                let confirmed_http_status = err
-                    .downcast_ref::<super::HttpError>()
-                    .map(|response| response.status);
-                submission.state = if confirmed_http_status.is_some()
-                    || err.downcast_ref::<super::RpcFailure>().is_some()
-                {
-                    FormationState::Failed
-                } else {
-                    FormationState::Unknown
-                };
-                submission.error = Some(err.to_string().chars().take(512).collect());
-                submission.failure_stage = Some(if submission.state == FormationState::Failed {
-                    FormationFailure::SubmissionRejected
-                } else {
-                    FormationFailure::Unknown
-                });
-            }
-        }
-        submission.updated_at = Some(anda_engine::unix_ms());
-        self.write(&key, &submission).await?;
-        if submission.state == FormationState::Accepted {
-            Ok(submission)
-        } else {
-            Err(format!("formation {}: {:?}", key, submission.state).into())
-        }
+        self.observe_formation(client, &host, &key, submission, input)
+            .await
     }
+
     pub async fn refresh_formation(
         &self,
         client: &super::Client,
         submission: &mut FormationSubmission,
     ) -> Result<(), BoxError> {
-        let key = format!(
-            "formation/{}/{}",
-            submission.bot_conversation, submission.window_start
-        );
+        let key = formation_key(submission);
         let lock = self.formation_lock(&key);
         let _guard = lock.lock().await;
         if let Some(latest) = self.read(&key).await? {
@@ -398,7 +311,11 @@ impl Journal {
             .clone()
             .or_else(|| anda_engine::rfc3339_datetime(submission.submitted_at));
         let requested_time = submission.observed_at.clone();
-        if !self.create(key, &submission).await? {
+        bind_input_digest(&mut submission, &input)?;
+        // The row holds the attempt about to be observed: a new window is
+        // created with it, a replayed or replaced one is saved first.
+        let created = self.create(key, &submission).await?;
+        if !created {
             let mut existing: FormationSubmission = self
                 .read(key)
                 .await?
@@ -430,22 +347,21 @@ impl Journal {
                 },
                 ..requested
             };
+            bind_input_digest(&mut submission, &input)?;
         }
+        let mut save = !created;
         let mut replaced = false;
         let outcome = loop {
+            if save {
+                self.write(key, &submission).await?;
+            }
             let timestamp = submission.observed_at.clone();
-            let replay_input = anda_brain::types::FormationInputRef {
+            let observed = anda_brain::types::FormationInputRef {
                 messages: input.messages,
                 context: input.context,
                 timestamp: &timestamp,
             };
-            if let Some(provenance) = &mut submission.provenance {
-                provenance.input_digest = Some(anda_cognitive_nexus::content_digest(
-                    &serde_json::to_value(&replay_input)?,
-                )?);
-            }
-            self.write(key, &submission).await?;
-            match super::memory::observe_window(host, &submission, &replay_input).await {
+            match super::memory::observe_window(host, &submission, &observed).await {
                 // The key was bound to other bytes (an interrupted, shorter
                 // window): this window is a new submission.
                 Err(error)
@@ -458,6 +374,8 @@ impl Journal {
                     submission.attempt += 1;
                     submission.submitted_at = requested_at;
                     submission.observed_at = requested_time.clone();
+                    bind_input_digest(&mut submission, &input)?;
+                    save = true;
                 }
                 outcome => break outcome,
             }
@@ -510,6 +428,8 @@ impl Journal {
         }
     }
 
+    /// Reads a window's progress from its receipt; a row from before the
+    /// Memory Interface has none and reads its native Formation conversation.
     async fn refresh_formation_unlocked(
         &self,
         client: &super::Client,
@@ -530,43 +450,55 @@ impl Journal {
             submission.brain_conversation =
                 state.brain_conversation.or(submission.brain_conversation);
             apply_progress(submission, &state.progress);
-            submission.updated_at = Some(anda_engine::unix_ms());
-            return self
-                .write(
-                    &format!(
-                        "formation/{}/{}",
-                        submission.bot_conversation, submission.window_start
-                    ),
-                    submission,
-                )
-                .await;
+        } else {
+            use anda_engine::memory::ConversationStatus;
+            let id = submission
+                .brain_conversation
+                .ok_or("formation acceptance is unknown")?;
+            let conversation = client.formation_conversation(id).await?;
+            submission.state = match conversation.status {
+                ConversationStatus::Submitted => FormationState::Accepted,
+                ConversationStatus::Working | ConversationStatus::Idle => {
+                    FormationState::Processing
+                }
+                ConversationStatus::Completed => FormationState::Completed,
+                ConversationStatus::Failed | ConversationStatus::Cancelled => {
+                    FormationState::Failed
+                }
+            };
+            submission.error = conversation
+                .failed_reason
+                .map(|s| s.chars().take(512).collect());
+            submission.failure_stage = (submission.state == FormationState::Failed)
+                .then_some(FormationFailure::NativeFailed);
         }
-        use anda_engine::memory::ConversationStatus;
-        let id = submission
-            .brain_conversation
-            .ok_or("formation acceptance is unknown")?;
-        let conversation = client.formation_conversation(id).await?;
-        submission.state = match conversation.status {
-            ConversationStatus::Submitted => FormationState::Accepted,
-            ConversationStatus::Working | ConversationStatus::Idle => FormationState::Processing,
-            ConversationStatus::Completed => FormationState::Completed,
-            ConversationStatus::Failed | ConversationStatus::Cancelled => FormationState::Failed,
-        };
-        submission.error = conversation
-            .failed_reason
-            .map(|s| s.chars().take(512).collect());
         submission.updated_at = Some(anda_engine::unix_ms());
-        submission.failure_stage =
-            (submission.state == FormationState::Failed).then_some(FormationFailure::NativeFailed);
-        self.write(
-            &format!(
-                "formation/{}/{}",
-                submission.bot_conversation, submission.window_start
-            ),
-            submission,
-        )
-        .await
+        self.write(&formation_key(submission), submission).await
     }
+}
+
+fn formation_key(submission: &FormationSubmission) -> String {
+    format!(
+        "formation/{}/{}",
+        submission.bot_conversation, submission.window_start
+    )
+}
+
+/// Records the bytes an attempt observes, its observation time included.
+fn bind_input_digest(
+    submission: &mut FormationSubmission,
+    input: &anda_brain::types::FormationInputRef<'_>,
+) -> Result<(), BoxError> {
+    let observed = anda_brain::types::FormationInputRef {
+        messages: input.messages,
+        context: input.context,
+        timestamp: &submission.observed_at,
+    };
+    let digest = anda_cognitive_nexus::content_digest(&serde_json::to_value(&observed)?)?;
+    if let Some(provenance) = &mut submission.provenance {
+        provenance.input_digest = Some(digest);
+    }
+    Ok(())
 }
 
 /// A receipt's phase as the window's state: recorded is accepted, processed
@@ -651,9 +583,8 @@ impl RecallTurn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Router, response::IntoResponse, routing};
+    use axum::{Router, routing};
     use serde_json::json;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn submission() -> FormationSubmission {
         FormationSubmission {
@@ -672,137 +603,47 @@ mod tests {
             attempt: 0,
         }
     }
+
     #[tokio::test]
-    async fn formation_acceptance_survives_restart_and_exact_status_is_read() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let count = calls.clone();
-        let app = Router::new().route("/formation", routing::post(move || {
-            count.fetch_add(1, Ordering::SeqCst);
-            async { axum::Json(json!({"result": AgentOutput { conversation: Some(7), ..Default::default() }})) }
-        })).route("/conversations/7", routing::get(|| async {
+    async fn rows_from_before_the_memory_interface_refresh_from_their_native_conversation() {
+        let app = Router::new().route("/conversations/7", routing::get(|| async {
             axum::Json(json!({"result": anda_engine::memory::Conversation { _id:7, status: anda_engine::memory::ConversationStatus::Completed, ..Default::default() }}))
         }));
-        let url = crate::test_support::spawn_http_mock(app).await;
-        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
-        let client = super::super::Client::new(url, None);
-        let input = || anda_brain::types::FormationInputRef {
-            messages: &[],
-            context: &None,
-            timestamp: &None,
-        };
-        let journal = Journal::new(store.clone());
-        let accepted = journal
-            .submit_formation(&client, submission(), input())
-            .await
-            .unwrap();
-        assert_eq!(accepted.brain_conversation, Some(7));
-        assert_eq!(accepted.state, FormationState::Accepted);
-        drop(journal);
-        let recovered = Journal::new(store)
-            .submit_formation(&client, submission(), input())
-            .await
-            .unwrap();
-        assert_eq!(recovered.state, FormationState::Completed);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[tokio::test]
-    async fn lost_acceptance_is_durable_and_never_blindly_resent() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let count = calls.clone();
-        let app = Router::new().route(
-            "/formation",
-            routing::post(move || {
-                count.fetch_add(1, Ordering::SeqCst);
-                async { "truncated response after acceptance" }
-            }),
-        );
-        let client =
-            super::super::Client::new(crate::test_support::spawn_http_mock(app).await, None);
-        let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
-        for end in [2, 4] {
-            let mut window = submission();
-            window.window_end = end;
-            let journal = Journal::new(store.clone());
-            assert!(
-                journal
-                    .submit_formation(
-                        &client,
-                        window,
-                        anda_brain::types::FormationInputRef {
-                            messages: &[],
-                            context: &None,
-                            timestamp: &None
-                        }
-                    )
-                    .await
-                    .is_err()
-            );
-            let row: FormationSubmission = journal.read("formation/42/0").await.unwrap().unwrap();
-            assert_eq!(row.state, FormationState::Unknown);
-            assert!(row.brain_conversation.is_none());
-        }
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    async fn confirmed_failure_retries(status: Option<http::StatusCode>) {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let count = calls.clone();
-        let app = Router::new().route(
-            "/formation",
-            routing::post(move || {
-                let attempt = count.fetch_add(1, Ordering::SeqCst);
-                async move {
-                    if attempt == 0 {
-                        let body = axum::Json(json!({"error": {"message": "queue full"}}));
-                        return match status {
-                            Some(status) => (status, body).into_response(),
-                            None => body.into_response(),
-                        };
-                    }
-                    axum::Json(json!({
-                        "result": AgentOutput {
-                            conversation: Some(8),
-                            ..Default::default()
-                        }
-                    }))
-                    .into_response()
-                }
-            }),
-        );
         let client =
             super::super::Client::new(crate::test_support::spawn_http_mock(app).await, None);
         let journal = Journal::new(Arc::new(object_store::memory::InMemory::new()));
-        let input = || anda_brain::types::FormationInputRef {
+        let mut accepted = submission();
+        accepted.brain_conversation = Some(7);
+        accepted.state = FormationState::Accepted;
+        journal.write("formation/42/0", &accepted).await.unwrap();
+
+        let mut row = submission();
+        journal.refresh_formation(&client, &mut row).await.unwrap();
+        assert_eq!(row.state, FormationState::Completed);
+        let stored: FormationSubmission = journal.read("formation/42/0").await.unwrap().unwrap();
+        assert_eq!(stored.state, FormationState::Completed);
+
+        // Without a native conversation, acceptance stays unknown.
+        let mut unknown = submission();
+        unknown.window_start = 2;
+        assert!(
+            journal
+                .refresh_formation(&client, &mut unknown)
+                .await
+                .is_err()
+        );
+        // Only the embedded Brain observes windows.
+        let input = anda_brain::types::FormationInputRef {
             messages: &[],
             context: &None,
             timestamp: &None,
         };
-
         assert!(
             journal
-                .submit_formation(&client, submission(), input())
+                .submit_formation(&client, submission(), input)
                 .await
                 .is_err()
         );
-        let failed: FormationSubmission = journal.read("formation/42/0").await.unwrap().unwrap();
-        assert_eq!(failed.state, FormationState::Failed);
-
-        let mut expanded = submission();
-        expanded.window_end = 4;
-        let accepted = journal
-            .submit_formation(&client, expanded, input())
-            .await
-            .unwrap();
-        assert_eq!(accepted.state, FormationState::Accepted);
-        assert_eq!(accepted.window_end, 4);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn confirmed_http_and_rpc_failures_remain_retryable() {
-        confirmed_failure_retries(Some(http::StatusCode::SERVICE_UNAVAILABLE)).await;
-        confirmed_failure_retries(None).await;
     }
 
     #[test]

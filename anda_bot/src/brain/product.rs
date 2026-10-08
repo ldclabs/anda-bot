@@ -120,6 +120,13 @@ pub(crate) struct WatchIntent {
 }
 
 impl Capability {
+    pub fn available() -> Self {
+        Self {
+            state: CapabilityState::Available,
+            reason: None,
+        }
+    }
+
     pub fn unsupported(reason: &str) -> Self {
         Self {
             state: CapabilityState::Unsupported,

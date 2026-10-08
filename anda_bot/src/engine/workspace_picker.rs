@@ -8,9 +8,16 @@ use crate::util::locale;
 #[cfg(target_os = "windows")]
 use crate::util::windows_process::suppress_tokio_console_window;
 
+/// One native dialog at a time: a repeated request (a double click, or a
+/// dialog hidden behind the browser) must not stack another one.
+static PICKER: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Asks the user for a workspace folder, titled in the UI language; `None`
 /// when they cancel.
 pub(super) async fn pick_workspace_path(home_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let _open = PICKER
+        .try_lock()
+        .map_err(|_| "a folder picker is already open".to_string())?;
     let title = workspace_picker_title(locale::ui_locale(home_dir));
 
     #[cfg(target_os = "macos")]
@@ -20,7 +27,7 @@ pub(super) async fn pick_workspace_path(home_dir: &Path) -> Result<Option<PathBu
 
     #[cfg(target_os = "windows")]
     {
-        return pick_workspace_path_windows(&title).await;
+        pick_workspace_path_windows(&title).await
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -166,12 +173,13 @@ async fn pick_workspace_path_linux(title: &str) -> Result<Option<PathBuf>, Strin
         if output.status.success() {
             return parse_selected_workspace_path(&output.stdout);
         }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        if output.status.code() == Some(1) && stderr.trim().is_empty() {
+        // Both exit with 1 on cancel, often after toolkit warnings on stderr;
+        // trying the next picker would open a second dialog.
+        if output.status.code() == Some(1) {
             return Ok(None);
         }
 
+        let stderr = String::from_utf8_lossy(&output.stderr);
         errors.push(format!("{program}: {}", stderr.trim()));
     }
 
@@ -229,7 +237,7 @@ fn normalize_selected_workspace_path(selected: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let path: PathBuf = std::path::Path::new(trimmed).components().collect();
+    let path: PathBuf = Path::new(trimmed).components().collect();
     if path.as_os_str().is_empty() || !path.is_absolute() {
         return None;
     }
@@ -250,6 +258,13 @@ mod tests {
         assert_ne!(zh, en);
         assert!(zh.contains("Anda"));
         assert_ne!(workspace_picker_title("fr"), en);
+    }
+
+    #[tokio::test]
+    async fn a_second_picker_request_is_refused_while_one_is_open() {
+        let _open = PICKER.try_lock().unwrap();
+        let error = pick_workspace_path(&env::temp_dir()).await.unwrap_err();
+        assert!(error.contains("already open"), "{error}");
     }
 
     #[test]
