@@ -507,7 +507,8 @@ pub struct McpOAuthSettings {
 
 /// Placeholder redirect URI stored in reconnect configs. Reconnection uses the
 /// persisted credentials and never visits this URI; an interactive
-/// (re-)authorization always rebinds a fresh loopback port first.
+/// (re-)authorization first replaces it with the gateway's callback URI
+/// (`mcp_oauth::CALLBACK_PATH`).
 pub const MCP_OAUTH_REDIRECT_PLACEHOLDER: &str = "http://127.0.0.1/callback";
 
 impl McpOAuthSettings {

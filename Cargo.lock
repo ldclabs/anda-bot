@@ -203,6 +203,7 @@ dependencies = [
  "rand 0.10.3",
  "ratatui",
  "reqwest",
+ "rmcp",
  "rust-i18n",
  "rustls",
  "serde",

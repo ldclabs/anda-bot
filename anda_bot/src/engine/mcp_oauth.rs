@@ -23,19 +23,19 @@
 //! router rather than a trust boundary.
 
 use anda_core::BoxError;
-use anda_engine::{
-    extension::mcp::{McpServerConfig, McpToolProvider},
-    unix_ms,
-};
+use anda_engine::extension::mcp::{McpServerConfig, McpToolProvider};
 use axum::{
     extract::{RawQuery, State},
     http::StatusCode,
     response::{Html, IntoResponse},
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, oneshot};
+use tokio::{
+    sync::{Mutex, oneshot},
+    time::Instant,
+};
 
-use super::mcp_server::persist_oauth_server;
+use super::mcp_server::{McpServerConfigs, persist_oauth_server};
 
 /// Path the gateway serves the MCP OAuth redirect on.
 pub const CALLBACK_PATH: &str = "/mcp/oauth/callback";
@@ -46,13 +46,20 @@ pub const CALLBACK_PATH: &str = "/mcp/oauth/callback";
 /// page, and a remote user may still be opening their tunnel.
 const FLOW_TTL: Duration = Duration::from_secs(600);
 
+/// What a caller blocked on a flow learns: whether the server was newly
+/// written to mcp.json, or why the flow failed.
+pub type FlowOutcome = Result<bool, String>;
+
 /// An authorization that has been started and is waiting for its redirect.
 struct PendingFlow {
     server: McpServerConfig,
-    expires_at: u64,
+    /// Handed out again while the flow is pending, so asking twice does not
+    /// invalidate the URL the user is already working through.
+    auth_url: String,
+    expires_at: Instant,
     /// Present while a caller is blocked on this flow; absent once the caller
     /// handed the authorization URL to the user and returned.
-    waiter: Option<oneshot::Sender<Result<(), String>>>,
+    waiter: Option<oneshot::Sender<FlowOutcome>>,
 }
 
 /// Outcome of a completed redirect.
@@ -72,6 +79,7 @@ pub struct McpOAuthFlows {
 
 struct Inner {
     provider: Arc<McpToolProvider>,
+    configs: McpServerConfigs,
     redirect_uri: String,
     config_path: PathBuf,
     config_write_lock: Arc<Mutex<()>>,
@@ -81,6 +89,7 @@ struct Inner {
 impl McpOAuthFlows {
     pub fn new(
         provider: Arc<McpToolProvider>,
+        configs: McpServerConfigs,
         gateway_addr: std::net::SocketAddr,
         config_path: PathBuf,
         config_write_lock: Arc<Mutex<()>>,
@@ -88,6 +97,7 @@ impl McpOAuthFlows {
         Self {
             inner: Arc::new(Inner {
                 provider,
+                configs,
                 // Always loopback, whatever the gateway binds: this is the
                 // address the *browser* resolves, reaching the daemon directly
                 // on the desktop and through the user's tunnel over SSH.
@@ -113,7 +123,7 @@ impl McpOAuthFlows {
         &self,
         server: McpServerConfig,
         auth_url: &str,
-    ) -> Result<oneshot::Receiver<Result<(), String>>, BoxError> {
+    ) -> Result<oneshot::Receiver<FlowOutcome>, BoxError> {
         let state = state_from_url(auth_url)
             .ok_or("authorization URL carries no state parameter to match its redirect against")?;
         let (tx, rx) = oneshot::channel();
@@ -126,15 +136,26 @@ impl McpOAuthFlows {
             state,
             PendingFlow {
                 server,
-                expires_at: unix_ms() + FLOW_TTL.as_millis() as u64,
+                auth_url: auth_url.to_string(),
+                expires_at: Instant::now() + FLOW_TTL,
                 waiter: Some(tx),
             },
         );
         Ok(rx)
     }
 
-    /// Finishes the flow the redirect belongs to: exchanges the code, connects,
-    /// and persists the server.
+    /// The authorization URL of the flow still waiting for this server, if any.
+    pub async fn pending_url(&self, server_id: &str) -> Option<String> {
+        let mut pending = self.inner.pending.lock().await;
+        self.expire_locked(&mut pending);
+        pending
+            .values()
+            .find(|flow| flow.server.id == server_id)
+            .map(|flow| flow.auth_url.clone())
+    }
+
+    /// Finishes the flow the redirect belongs to: exchanges the code, persists
+    /// the server, and connects it.
     pub async fn complete(&self, redirect_url: &str) -> Result<CompletedFlow, BoxError> {
         let state =
             state_from_url(redirect_url).ok_or("redirect URL carries no state parameter")?;
@@ -145,27 +166,18 @@ impl McpOAuthFlows {
         };
         // An unknown state is the normal shape of a stray or replayed request:
         // say nothing about which servers exist.
-        let Some(mut flow) = flow else {
+        let Some(flow) = flow else {
             return Err("no pending MCP authorization matches this redirect".into());
         };
 
-        let waiter = flow.waiter.take();
-        let result = self.finish(&flow, redirect_url).await;
-        if let Some(waiter) = waiter {
-            let _ = waiter.send(
-                result
-                    .as_ref()
-                    .map(|_| ())
-                    .map_err(|err: &BoxError| err.to_string()),
-            );
-        }
-        if result.is_err() {
-            // The pending PKCE state is consumed either way, so leaving the
-            // registration behind would only produce a server that can never
-            // connect.
-            self.inner.provider.remove_server(&flow.server.id);
-        }
-        result
+        // The flow is consumed now, so it must run to the end even if the
+        // browser closes the tab or the tool call is cancelled meanwhile:
+        // stopping halfway would strand a stored grant with no server.
+        let flows = self.clone();
+        let redirect_url = redirect_url.to_string();
+        tokio::spawn(async move { flows.finish(flow, &redirect_url).await })
+            .await
+            .map_err(|err| format!("MCP authorization task failed: {err}"))?
     }
 
     /// Drops a flow that was started but will not be finished.
@@ -175,29 +187,68 @@ impl McpOAuthFlows {
         };
         let flow = self.inner.pending.lock().await.remove(&state);
         if let Some(flow) = flow {
-            self.inner.provider.cancel_authorization(&flow.server.id);
             self.inner.provider.remove_server(&flow.server.id);
         }
     }
 
     async fn finish(
         &self,
-        flow: &PendingFlow,
+        mut flow: PendingFlow,
         redirect_url: &str,
     ) -> Result<CompletedFlow, BoxError> {
+        let waiter = flow.waiter.take();
+        let result = self.authorize(&flow.server, redirect_url).await;
+        if let Some(waiter) = waiter {
+            let _ = waiter.send(
+                result
+                    .as_ref()
+                    .map(|completed| completed.persisted)
+                    .map_err(|err| err.to_string()),
+            );
+        }
+        result
+    }
+
+    async fn authorize(
+        &self,
+        server: &McpServerConfig,
+        redirect_url: &str,
+    ) -> Result<CompletedFlow, BoxError> {
+        let provider = &self.inner.provider;
+        let id = &server.id;
+        if let Err(err) = provider.complete_authorization(id, redirect_url).await {
+            // The pending PKCE state is consumed either way, so leaving the
+            // registration behind would only produce a server that can never
+            // connect.
+            provider.remove_server(id);
+            return Err(err);
+        }
+
+        // The grant is stored from here on. Record and persist the server
+        // before connecting, so a server that is slow to answer right after
+        // consent keeps its registration and reconnects on the next call
+        // instead of needing the browser again.
         self.inner
-            .provider
-            .complete_authorization(&flow.server.id, redirect_url)
-            .await?;
-        self.inner.provider.refresh_server(&flow.server.id).await?;
-        let persisted = persist_oauth_server(
-            &self.inner.config_path,
-            &self.inner.config_write_lock,
-            &flow.server,
-        )
-        .await?;
+            .configs
+            .write()
+            .insert(id.clone(), server.clone());
+        let config_path = &self.inner.config_path;
+        let persisted = persist_oauth_server(config_path, &self.inner.config_write_lock, server)
+            .await
+            .map_err(|err| {
+                format!(
+                    "MCP server {id} is authorized, but failed to persist to {}: {err}",
+                    config_path.display()
+                )
+            })?;
+        provider.refresh_server(id).await.map_err(|err| {
+            format!(
+                "MCP server {id} is authorized and saved, but connecting failed: {err}; \
+                 call connect_mcp_server again to retry"
+            )
+        })?;
         Ok(CompletedFlow {
-            server_id: flow.server.id.clone(),
+            server_id: id.clone(),
             persisted,
         })
     }
@@ -205,12 +256,11 @@ impl McpOAuthFlows {
     /// Drops flows whose authorization window has closed, releasing the
     /// half-registered server each one left behind.
     fn expire_locked(&self, pending: &mut HashMap<String, PendingFlow>) {
-        let now = unix_ms();
+        let now = Instant::now();
         pending.retain(|_, flow| {
             if flow.expires_at > now {
                 return true;
             }
-            self.inner.provider.cancel_authorization(&flow.server.id);
             self.inner.provider.remove_server(&flow.server.id);
             false
         });
@@ -287,6 +337,7 @@ mod tests {
     fn flows() -> McpOAuthFlows {
         McpOAuthFlows::new(
             Arc::new(McpToolProvider::new(Vec::new()).unwrap()),
+            Default::default(),
             "127.0.0.1:8042".parse().unwrap(),
             PathBuf::from("/tmp/anda-mcp-oauth-test/mcp.json"),
             Arc::new(Mutex::new(())),
@@ -339,14 +390,15 @@ mod tests {
     #[tokio::test]
     async fn a_started_flow_is_matched_by_state_and_consumed_once() {
         let flows = flows();
-        let auth_url = "https://as.example.com/authorize?client_id=x&state=s-1";
-        let _waiter = flows
-            .begin(
-                McpServerConfig::streamable_http("srv", "https://mcp.example.com/mcp"),
-                auth_url,
-            )
-            .await
+        let server = McpServerConfig::streamable_http("srv", "https://mcp.example.com/mcp");
+        flows
+            .inner
+            .provider
+            .register_server(server.clone())
             .unwrap();
+        let auth_url = "https://as.example.com/authorize?client_id=x&state=s-1";
+        let waiter = flows.begin(server, auth_url).await.unwrap();
+        assert_eq!(flows.pending_url("srv").await.as_deref(), Some(auth_url));
 
         // The exchange fails (there is no real authorization server), but it got
         // as far as naming the server — which is the point: `state` routed it.
@@ -355,6 +407,11 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("srv"), "{err}");
+        // A failed exchange leaves nothing to connect with, so the
+        // registration goes too, and a blocked caller hears why.
+        assert!(!flows.inner.provider.contains_server("srv"));
+        assert!(flows.pending_url("srv").await.is_none());
+        assert!(waiter.await.unwrap().unwrap_err().contains("srv"));
 
         // And it is gone afterwards, so a replayed redirect matches nothing.
         let err = flows
@@ -364,6 +421,91 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "no pending MCP authorization matches this redirect"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_grant_that_landed_keeps_its_server_when_connecting_fails() {
+        use anda_engine::extension::mcp::{
+            McpOAuthConfig, McpTransportConfig, OAuthAuthorizationCodeConfig,
+        };
+        use axum::{Json, http::HeaderMap, routing};
+
+        // An authorization server that grants any code, in front of an MCP
+        // endpoint that is down right after consent.
+        let app = axum::Router::new()
+            .route(
+                "/.well-known/oauth-authorization-server",
+                routing::get(|headers: HeaderMap| async move {
+                    let host = headers["host"].to_str().unwrap().to_string();
+                    Json(serde_json::json!({
+                        "issuer": format!("http://{host}"),
+                        "authorization_endpoint": format!("http://{host}/authorize"),
+                        "token_endpoint": format!("http://{host}/token"),
+                        "response_types_supported": ["code"],
+                        "code_challenge_methods_supported": ["S256"],
+                    }))
+                }),
+            )
+            .route(
+                "/token",
+                routing::post(|| async {
+                    Json(serde_json::json!({
+                        "access_token": "access",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                        "refresh_token": "refresh",
+                    }))
+                }),
+            )
+            .route(
+                "/mcp",
+                routing::post(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+            );
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("mcp.json");
+        let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
+        let configs = McpServerConfigs::default();
+        let flows = McpOAuthFlows::new(
+            provider.clone(),
+            configs.clone(),
+            "127.0.0.1:8042".parse().unwrap(),
+            config_path.clone(),
+            Arc::new(Mutex::new(())),
+        );
+        let mut server = McpServerConfig::streamable_http("srv", format!("{base_url}/mcp"));
+        if let McpTransportConfig::StreamableHttp(http) = &mut server.transport {
+            http.auth = Some(McpOAuthConfig::AuthorizationCode(
+                OAuthAuthorizationCodeConfig {
+                    redirect_uri: flows.redirect_uri().to_string(),
+                    scopes: vec!["read".to_string()],
+                    client_name: None,
+                    client_id: Some("test-client".to_string()),
+                },
+            ));
+        }
+        provider.register_server(server.clone()).unwrap();
+        let auth_url = provider.begin_authorization("srv").await.unwrap();
+        let waiter = flows.begin(server, &auth_url).await.unwrap();
+        let state = state_from_url(&auth_url).unwrap();
+
+        let err = flows
+            .complete(&format!("{}?code=c&state={state}", flows.redirect_uri()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("authorized and saved"), "{err}");
+        assert!(waiter.await.unwrap().is_err());
+        // The grant landed, so the server stays: registered, remembered, and
+        // in mcp.json, ready for the next connect to retry without consent.
+        assert!(provider.contains_server("srv"));
+        assert!(configs.read().contains_key("srv"));
+        let content = tokio::fs::read_to_string(&config_path).await.unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            json["mcpServers"]["srv"]["oauth"]["client_id"],
+            "test-client"
         );
     }
 

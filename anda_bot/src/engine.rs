@@ -730,6 +730,7 @@ impl Engines {
         ));
         let mcp_oauth_flows = McpOAuthFlows::new(
             mcp_provider.clone(),
+            mcp_configs.clone(),
             cfg.gateway_addr,
             mcp_config_path,
             config_write_lock.clone(),
@@ -1458,14 +1459,6 @@ pub(crate) fn normalize_config_file_content(mut content: String) -> String {
     content
 }
 
-async fn daemon_config_needs_backup(path: &Path, next_content: &[u8]) -> Result<bool, BoxError> {
-    match tokio::fs::read(path).await {
-        Ok(existing) => Ok(existing != next_content),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err.into()),
-    }
-}
-
 // Backups beyond this count are pruned oldest-first after each new backup.
 const MAX_CONFIG_BACKUPS: usize = 10;
 
@@ -1699,22 +1692,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_config_backup_copies_existing_file_when_content_changes() {
+    async fn daemon_config_backup_copies_existing_file() {
         let home = tempfile::tempdir().unwrap();
         let config_path = home.path().join(config::CONFIG_FILE_NAME);
         let existing = b"addr: 127.0.0.1:8042\n";
         tokio::fs::write(&config_path, existing).await.unwrap();
-
-        assert!(
-            !daemon_config_needs_backup(&config_path, existing)
-                .await
-                .unwrap()
-        );
-        assert!(
-            daemon_config_needs_backup(&config_path, b"addr: 127.0.0.1:9000\n")
-                .await
-                .unwrap()
-        );
 
         let backup_path = backup_daemon_config(&config_path).await.unwrap();
         assert_eq!(tokio::fs::read(&backup_path).await.unwrap(), existing);

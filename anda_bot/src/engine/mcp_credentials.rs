@@ -10,26 +10,34 @@
 use anda_core::BoxError;
 use anda_engine::extension::mcp::{McpCredentialStore, StoredCredentials};
 use async_trait::async_trait;
-use std::path::PathBuf;
-use tokio::io::AsyncWriteExt;
+use rmcp::transport::auth::CredentialRefreshGuard;
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use crate::util::fs::{restrict_secret_dir_permissions, restrict_secret_file_permissions};
+use super::write_daemon_config_atomically;
+use crate::util::fs::restrict_secret_dir_permissions;
 
 /// Directory name under ANDA_HOME holding per-server credential files.
 pub const MCP_CREDENTIALS_DIR_NAME: &str = "mcp_credentials";
 
 /// [`McpCredentialStore`] backed by one owner-only JSON file per server.
 ///
-/// Writes go through a temp file + rename so a crash mid-save never leaves a
-/// torn credential file, and the OAuth token rotation (each refresh replaces
-/// the refresh token) cannot lose the only working copy.
+/// Writes go through a unique temp file + rename so a crash mid-save never
+/// leaves a torn credential file, and the OAuth token rotation (each refresh
+/// replaces the refresh token) cannot lose the only working copy.
 pub struct FileMcpCredentialStore {
     dir: PathBuf,
+    /// One lock per server, held by the engine across a whole refresh, code
+    /// exchange, or sign-out. Without it a refresh that loaded the old grant
+    /// could save it back over a newer one, or over a sign-out.
+    refresh_locks: parking_lot::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl FileMcpCredentialStore {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            refresh_locks: Default::default(),
+        }
     }
 
     fn path_for(&self, server_id: &str) -> Result<PathBuf, BoxError> {
@@ -76,25 +84,8 @@ impl McpCredentialStore for FileMcpCredentialStore {
         let path = self.path_for(server_id)?;
         tokio::fs::create_dir_all(&self.dir).await?;
         restrict_secret_dir_permissions(&self.dir)?;
-
         let json = serde_json::to_vec_pretty(&credentials)?;
-        let tmp = path.with_extension("json.tmp");
-        {
-            let mut options = tokio::fs::OpenOptions::new();
-            options.write(true).create(true).truncate(true);
-            #[cfg(unix)]
-            {
-                options.mode(0o600);
-            }
-            let mut file = options.open(&tmp).await?;
-            // A pre-existing temp file keeps its old mode (`mode(0o600)` only
-            // applies on create); tighten before any secret bytes land in it.
-            restrict_secret_file_permissions(&tmp)?;
-            file.write_all(&json).await?;
-            file.sync_all().await?;
-        }
-        tokio::fs::rename(&tmp, &path).await?;
-        Ok(())
+        write_daemon_config_atomically(&path, &json).await
     }
 
     async fn clear(&self, server_id: &str) -> Result<(), BoxError> {
@@ -104,6 +95,19 @@ impl McpCredentialStore for FileMcpCredentialStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+
+    async fn acquire_refresh_guard(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<CredentialRefreshGuard>, BoxError> {
+        let lock = self
+            .refresh_locks
+            .lock()
+            .entry(server_id.to_string())
+            .or_default()
+            .clone();
+        Ok(Some(CredentialRefreshGuard::new(lock.lock_owned().await)))
     }
 }
 
@@ -183,5 +187,33 @@ mod tests {
                 .exists()
         );
         assert!(store.load("..").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn refresh_guard_serializes_writers_per_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileMcpCredentialStore::new(dir.path().join("creds"));
+
+        let guard = store.acquire_refresh_guard("alink").await.unwrap();
+        assert!(guard.is_some());
+        // Another server is not blocked by it.
+        let _other = store.acquire_refresh_guard("github").await.unwrap();
+        // The same server is, until the first guard is released.
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                store.acquire_refresh_guard("alink")
+            )
+            .await
+            .is_err()
+        );
+        drop(guard);
+        assert!(
+            store
+                .acquire_refresh_guard("alink")
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

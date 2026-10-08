@@ -3,7 +3,7 @@ use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
 use anda_engine::{
     context::BaseCtx,
     extension::mcp::{
-        McpAuthorizationRequired, McpOAuthConfig, McpOAuthMetadata, McpServerConfig,
+        McpAuthorizationRequired, McpLifecycle, McpOAuthConfig, McpOAuthMetadata, McpServerConfig,
         McpToolProvider, McpTransportConfig, OAuthAuthorizationCodeConfig,
     },
 };
@@ -26,8 +26,8 @@ use crate::{
 };
 
 use super::{
-    ActionDetail, approval_detail, backup_daemon_config, daemon_config_needs_backup,
-    mcp_oauth::McpOAuthFlows, require_mcp_approval, write_daemon_config_atomically,
+    ActionDetail, approval_detail, backup_daemon_config, mcp_oauth::McpOAuthFlows,
+    require_mcp_approval, write_daemon_config_atomically,
 };
 
 // The provider does not expose its configurations. Retain the admitted
@@ -94,12 +94,14 @@ fn redact_args_for_approval(args: &[String]) -> Vec<String> {
             continue;
         }
 
-        // Only treat network URLs as URLs. `Url::parse` also accepts any
-        // `scheme:rest` token, and `redact_url_for_approval` has nothing to
-        // strip from those — so `x-api-key:sk-live-...` would be echoed
-        // verbatim instead of falling through to the checks below.
+        // Only treat URLs with an authority as URLs: that covers connection
+        // strings like `postgresql://user:password@host/db` as well as http.
+        // `Url::parse` also accepts any `scheme:rest` token, and
+        // `redact_url_for_approval` has nothing to strip from those — so
+        // `x-api-key:sk-live-...` would be echoed verbatim instead of falling
+        // through to the checks below.
         if let Ok(parsed) = reqwest::Url::parse(arg)
-            && matches!(parsed.scheme(), "http" | "https" | "ws" | "wss")
+            && parsed.has_host()
         {
             redacted.push(redact_url_for_approval(arg));
             continue;
@@ -346,6 +348,11 @@ impl Tool<BaseCtx> for McpServerTool {
         if enabled && self.provider.contains_server(&server.id) {
             return Err(format!("MCP server {} already exists", server.id).into());
         }
+        // Refuse a duplicate before connecting, not after: mcp.json can hold
+        // an entry the runtime does not (a disabled one, say).
+        if persist && mcp_config_contains_server(&self.config_path, &server.id).await? {
+            return Err(format!("MCP server {} already exists in mcp.json", server.id).into());
+        }
 
         // Stdio servers spawn arbitrary local processes and HTTP servers open
         // connections to arbitrary endpoints, so this always needs approval
@@ -391,27 +398,13 @@ impl Tool<BaseCtx> for McpServerTool {
             persisted = true;
         }
 
-        let tools = self
-            .provider
-            .routes()
-            .into_iter()
-            .filter(|route| route.server_id == server_id)
-            .map(|route| {
-                json!({
-                    "name": route.name,
-                    "remote_name": route.remote_name,
-                    "server_id": route.server_id,
-                })
-            })
-            .collect::<Vec<_>>();
-
         Ok(ToolOutput::new(Response::Ok {
             result: json!({
                 "status": if enabled { "added" } else { "saved_disabled" },
                 "server_id": server_id,
                 "persisted": persisted,
                 "enabled": enabled,
-                "tools": tools,
+                "tools": server_tools(&self.provider, &server_id),
             }),
             next_cursor: None,
         }))
@@ -541,44 +534,86 @@ fn normalize_string_map(
     Ok(map)
 }
 
+/// Lists the tools a server currently exposes, by local and remote name.
+fn server_tools(provider: &McpToolProvider, server_id: &str) -> Vec<Value> {
+    provider
+        .routes()
+        .into_iter()
+        .filter(|route| route.server_id == server_id)
+        .map(|route| json!({"name": route.name, "remote_name": route.remote_name}))
+        .collect()
+}
+
+/// Reads mcp.json; `None` when it does not exist yet.
+async fn read_mcp_config(config_path: &Path) -> Result<Option<String>, BoxError> {
+    match read_text_file(config_path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Writes mcp.json atomically, backing up the previous file when it changes.
+async fn write_mcp_config(
+    config_path: &Path,
+    previous: Option<&str>,
+    next: &str,
+) -> Result<(), BoxError> {
+    if previous == Some(next) {
+        return Ok(());
+    }
+    if let Some(parent) = config_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    if previous.is_some() {
+        backup_daemon_config(config_path).await?;
+    }
+    write_daemon_config_atomically(config_path, next.as_bytes()).await
+}
+
+fn declares_server(settings: &McpSettings, id: &str) -> bool {
+    settings
+        .servers
+        .iter()
+        .any(|existing| existing.id.trim() == id)
+}
+
+/// Returns whether mcp.json already carries a server with this id. A missing
+/// or empty file simply means "no".
+async fn mcp_config_contains_server(config_path: &Path, id: &str) -> Result<bool, BoxError> {
+    let content = read_mcp_config(config_path).await?.unwrap_or_default();
+    Ok(declares_server(
+        &McpSettings::from_json_contents(&content)?,
+        id,
+    ))
+}
+
 async fn persist_mcp_server_config(
     config_path: &Path,
     server: McpServerSettings,
 ) -> Result<(), BoxError> {
-    let content = match read_text_file(config_path).await {
-        Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "{}".to_string(),
-        Err(err) => return Err(err.into()),
-    };
+    let previous = read_mcp_config(config_path).await?;
+    let content = previous.as_deref().unwrap_or_default();
+    let settings = McpSettings::from_json_contents(content)?;
+    let next = append_mcp_server(content, &settings, &server)?;
+    write_mcp_config(config_path, previous.as_deref(), &next).await
+}
 
-    let settings = McpSettings::from_json_contents(&content)?;
+/// Appends `server` to mcp.json `content` (already parsed as `settings`),
+/// keeping whichever server root the file uses and everything else in it.
+fn append_mcp_server(
+    content: &str,
+    settings: &McpSettings,
+    server: &McpServerSettings,
+) -> Result<String, BoxError> {
     let issues = settings.setup_issues();
     if !issues.is_empty() {
         return Err(format!("invalid mcp.json: {}", issues.join(", ")).into());
     }
-    if settings
-        .servers
-        .iter()
-        .any(|existing| existing.id.trim() == server.id)
-    {
+    if declares_server(settings, &server.id) {
         return Err(format!("MCP server {} already exists in mcp.json", server.id).into());
     }
 
-    let content = append_mcp_server_to_config_content(&content, &server)?;
-
-    if let Some(parent) = config_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    if daemon_config_needs_backup(config_path, content.as_bytes()).await? {
-        backup_daemon_config(config_path).await?;
-    }
-    write_daemon_config_atomically(config_path, content.as_bytes()).await
-}
-
-fn append_mcp_server_to_config_content(
-    content: &str,
-    server: &McpServerSettings,
-) -> Result<String, BoxError> {
     let mut root = if content.trim().is_empty() {
         json!({})
     } else {
@@ -601,9 +636,6 @@ fn append_mcp_server_to_config_content(
         .get_mut(root_key)
         .and_then(Value::as_object_mut)
         .ok_or_else(|| format!("mcp.json {root_key} must be an object to persist a server"))?;
-    if servers.contains_key(&server.id) {
-        return Err(format!("MCP server {} already exists in mcp.json", server.id).into());
-    }
     servers.insert(server.id.clone(), mcp_server_json(server));
 
     let mut content = serde_json::to_string_pretty(&root)?;
@@ -751,12 +783,14 @@ impl McpConnectTool {
         }
 
         let url = normalize_string(&args.url).ok_or("MCP server url cannot be empty")?;
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
+        let parsed =
+            reqwest::Url::parse(&url).map_err(|err| format!("invalid MCP server url: {err}"))?;
+        if !matches!(parsed.scheme(), "http" | "https") {
             return Err("MCP server url must start with http:// or https://".into());
         }
         let id = match args.id.as_deref().and_then(normalize_string) {
             Some(id) => id,
-            None => default_server_id_from_url(&url)?,
+            None => default_server_id_from_url(&parsed)?,
         };
         let config = self
             .configs
@@ -772,6 +806,13 @@ impl McpConnectTool {
                 )
                 .into());
             }
+        }
+        // The user may still be working through the URL handed out earlier,
+        // or about to paste its redirect: restarting would invalidate both.
+        if !args.reauthorize
+            && let Some(auth_url) = self.flows.pending_url(&id).await
+        {
+            return Ok(self.authorization_required(&id, &auth_url));
         }
         if self.provider.contains_server(&id) {
             if args.reauthorize {
@@ -829,9 +870,8 @@ impl McpConnectTool {
             meta.scopes_supported,
         )?;
         let id = config.id.clone();
-        self.provider.register_server(config.clone())?;
-        self.configs.write().insert(id.clone(), config.clone());
         let id = id.as_str();
+        self.provider.register_server(config.clone())?;
 
         let auth_url = match self.provider.begin_authorization(id).await {
             Ok(auth_url) => auth_url,
@@ -844,7 +884,6 @@ impl McpConnectTool {
         let waiter = match self.flows.begin(config, &auth_url).await {
             Ok(waiter) => waiter,
             Err(err) => {
-                self.provider.cancel_authorization(id);
                 self.provider.remove_server(id);
                 return Err(err);
             }
@@ -855,28 +894,15 @@ impl McpConnectTool {
             // can give it to the user, and let the gateway finish the flow
             // whenever they get to it.
             log::info!("MCP `{id}` requires authorization at {auth_url}");
-            return Ok(json!({
-                "status": "authorization_required",
-                "server_id": id,
-                "authorization_url": auth_url,
-                "redirect_uri": self.flows.redirect_uri(),
-                "instructions": format!(
-                    "Ask the user to open the authorization_url in a browser and approve access. \
-                     The browser is redirected to redirect_uri, which this daemon serves, so a \
-                     remote user needs that port reachable — over SSH that is the tunnel they \
-                     already use for the side panel. The connection completes on its own; call \
-                     {} again with the same url to confirm it. If the redirect cannot reach the \
-                     daemon at all, ask the user for the full URL from their browser address bar \
-                     after approving and pass it as redirect_url.",
-                    Self::NAME
-                ),
-            }));
+            return Ok(self.authorization_required(id, &auth_url));
         }
 
         match timeout(OAUTH_REDIRECT_TIMEOUT, waiter).await {
             // The gateway handled the redirect and completed the connection.
-            Ok(Ok(Ok(()))) => Ok(self.connected_summary(id, true)),
-            Ok(Ok(Err(err))) => Err(format!("MCP `{id}` authorization failed: {err}").into()),
+            Ok(Ok(Ok(persisted))) => Ok(self.connected_summary(id, persisted)),
+            Ok(Ok(Err(err))) => {
+                Err(format!("MCP `{id}` authorization did not complete: {err}").into())
+            }
             // Sender dropped: the flow was expired or abandoned underneath us.
             Ok(Err(_)) => Err(format!("MCP `{id}` authorization was cancelled").into()),
             Err(_) => {
@@ -892,22 +918,38 @@ impl McpConnectTool {
         }
     }
 
+    fn authorization_required(&self, id: &str, auth_url: &str) -> Value {
+        json!({
+            "status": "authorization_required",
+            "server_id": id,
+            "authorization_url": auth_url,
+            "redirect_uri": self.flows.redirect_uri(),
+            "instructions": format!(
+                "Ask the user to open the authorization_url in a browser and approve access. \
+                 The browser is redirected to redirect_uri, which this daemon serves, so a \
+                 remote user needs that port reachable — over SSH that is the tunnel they \
+                 already use for the side panel. The connection completes on its own; call \
+                 {} again with the same url to confirm it (until the user finishes, that \
+                 returns this same authorization_url). If the redirect cannot reach the \
+                 daemon at all, ask the user for the full URL from their browser address bar \
+                 after approving and pass it as redirect_url.",
+                Self::NAME
+            ),
+        })
+    }
+
     fn connected_summary(&self, id: &str, newly_persisted: bool) -> Value {
-        let tools = self
-            .provider
-            .routes()
-            .into_iter()
-            .filter(|route| route.server_id == id)
-            .map(|route| json!({"name": route.name, "remote_name": route.remote_name}))
-            .collect::<Vec<_>>();
         json!({
             "status": "connected",
             "server_id": id,
             "newly_persisted": newly_persisted,
-            "tools": tools,
+            "tools": server_tools(&self.provider, id),
         })
     }
 }
+
+/// Name an OAuth client registers under, shown on the consent page.
+const OAUTH_CLIENT_NAME: &str = "Anda Bot";
 
 /// Only authentication changes during re-consent; filters and transport tuning
 /// are the operator's configuration and must survive token replacement.
@@ -925,18 +967,22 @@ fn configure_authorization(
         _ => OAuthAuthorizationCodeConfig {
             redirect_uri: redirect_uri.into(),
             scopes: vec![],
-            client_name: Some("Anda Bot".into()),
+            client_name: None,
             client_id: None,
         },
     };
     auth.redirect_uri = redirect_uri.into();
+    // Servers reloaded from mcp.json carry no name; without one, a dynamic
+    // registration would show the engine's generic default on the consent page.
+    auth.client_name
+        .get_or_insert_with(|| OAUTH_CLIENT_NAME.into());
     if !scopes.is_empty() {
         auth.scopes = scopes;
     } else if auth.scopes.is_empty() {
         auth.scopes = advertised_scopes;
     }
     http.bearer_token = None;
-    http.auth = Some(McpOAuthConfig::AuthorizationCode(auth.clone()));
+    http.auth = Some(McpOAuthConfig::AuthorizationCode(auth));
     Ok(())
 }
 
@@ -949,7 +995,6 @@ pub(super) async fn persist_oauth_server(
     config_write_lock: &Mutex<()>,
     config: &McpServerConfig,
 ) -> Result<bool, BoxError> {
-    let _guard = config_write_lock.lock().await;
     let id = &config.id;
     let McpTransportConfig::StreamableHttp(http) = &config.transport else {
         return Err("OAuth requires HTTP transport".into());
@@ -961,38 +1006,32 @@ pub(super) async fn persist_oauth_server(
         client_id: auth.client_id.clone(),
         scopes: auth.scopes.clone(),
     };
-    if mcp_config_contains_server(config_path, id).await? {
-        let content = read_text_file(config_path).await?;
-        let updated = update_persisted_oauth(&content, id, &oauth)?;
-        if daemon_config_needs_backup(config_path, updated.as_bytes()).await? {
-            backup_daemon_config(config_path).await?;
-            write_daemon_config_atomically(config_path, updated.as_bytes()).await?;
-        }
-        return Ok(false);
-    }
-    let server = McpServerSettings {
-        id: id.to_string(),
-        disabled: false,
-        transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-            url: http.url.clone(),
-            bearer_token: None,
-            headers: http.headers.clone(),
-            oauth: Some(oauth),
-        }),
-        include: config.include.clone(),
-        exclude: config.exclude.clone(),
-        lifecycle: Some(config.lifecycle),
-        tasks: config.tasks.clone(),
+
+    let _guard = config_write_lock.lock().await;
+    let previous = read_mcp_config(config_path).await?;
+    let content = previous.as_deref().unwrap_or_default();
+    let settings = McpSettings::from_json_contents(content)?;
+    let (next, persisted) = if declares_server(&settings, id) {
+        (update_persisted_oauth(content, id, &oauth)?, false)
+    } else {
+        let server = McpServerSettings {
+            id: id.to_string(),
+            disabled: false,
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: http.url.clone(),
+                bearer_token: None,
+                headers: http.headers.clone(),
+                oauth: Some(oauth),
+            }),
+            include: config.include.clone(),
+            exclude: config.exclude.clone(),
+            lifecycle: (config.lifecycle != McpLifecycle::default()).then_some(config.lifecycle),
+            tasks: config.tasks.clone(),
+        };
+        (append_mcp_server(content, &settings, &server)?, true)
     };
-    persist_mcp_server_config(config_path, server)
-        .await
-        .map_err(|err| {
-            format!(
-                "MCP server {id} is connected, but failed to persist to {}: {err}",
-                config_path.display()
-            )
-        })?;
-    Ok(true)
+    write_mcp_config(config_path, previous.as_deref(), &next).await?;
+    Ok(persisted)
 }
 
 fn update_persisted_oauth(
@@ -1030,18 +1069,6 @@ fn update_persisted_oauth(
         }
     }
     Err(format!("MCP server {id} was not found in mcp.json").into())
-}
-
-/// Returns whether mcp.json already carries a server with this id. A missing
-/// or empty file simply means "no".
-async fn mcp_config_contains_server(config_path: &Path, id: &str) -> Result<bool, BoxError> {
-    let content = match read_text_file(config_path).await {
-        Ok(content) => content,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(err.into()),
-    };
-    let settings = McpSettings::from_json_contents(&content)?;
-    Ok(settings.servers.iter().any(|server| server.id.trim() == id))
 }
 
 impl Tool<BaseCtx> for McpConnectTool {
@@ -1156,18 +1183,14 @@ fn connect_mcp_server_parameters() -> serde_json::Value {
 }
 
 /// Derives a server id from a URL host, e.g. `https://api.al.ink/mcp` -> `api.al.ink`.
-fn default_server_id_from_url(url: &str) -> Result<String, BoxError> {
-    let after_scheme = url.split("://").nth(1).unwrap_or(url);
-    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
-    // `user:pass@host` must yield the host, not the userinfo.
-    let host_port = authority.rsplit('@').next().unwrap_or("");
-    let host = if let Some(rest) = host_port.strip_prefix('[') {
-        // Bracketed IPv6 literal: the colons inside are part of the host.
-        rest.split(']').next().unwrap_or("")
-    } else {
-        host_port.split(':').next().unwrap_or("")
-    }
-    .trim_end_matches('.');
+fn default_server_id_from_url(url: &reqwest::Url) -> Result<String, BoxError> {
+    let host = url.host_str().unwrap_or_default();
+    // A bracketed IPv6 literal: the colons inside are part of the host.
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
+        .trim_end_matches('.');
     normalize_string(host)
         .ok_or_else(|| "cannot derive an MCP server id from the url; pass an explicit id".into())
 }
@@ -1320,6 +1343,9 @@ mod tests {
                     // `Url::parse` accepts this as scheme `x-api-key`; it must
                     // still be redacted as a credential-bearing argument.
                     "x-api-key:header-secret-value".to_string(),
+                    // Connection strings carry credentials in their authority.
+                    "postgresql://pg-user:pg-secret-value@localhost/db".to_string(),
+                    "redis://:redis-secret-value@cache:6379".to_string(),
                     "https://alice:url-password-value@example.com/mcp?token=url-secret&mode=fast"
                         .to_string(),
                 ],
@@ -1333,6 +1359,9 @@ mod tests {
             "api-secret-value",
             "hunter2",
             "header-secret-value",
+            "pg-user",
+            "pg-secret-value",
+            "redis-secret-value",
             "alice",
             "url-password-value",
             "url-secret",
@@ -1704,15 +1733,122 @@ mod tests {
         assert!(err.to_string().contains("already exists"));
     }
 
+    #[tokio::test]
+    async fn call_rejects_a_server_already_in_mcp_json_before_connecting() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = McpSettings::file_path(dir.path());
+        tokio::fs::write(
+            &config_path,
+            r#"{"mcpServers":{"dupe":{"type":"stdio","command":"x","enabled":false}}}"#,
+        )
+        .await
+        .unwrap();
+        let tool = McpServerTool::new(
+            Arc::new(McpToolProvider::new(Vec::new()).unwrap()),
+            dir.path().to_path_buf(),
+            None,
+            config_path,
+            Arc::new(Mutex::new(())),
+            Default::default(),
+        );
+
+        // Refused ahead of the approval gate, so nothing was connected.
+        let err = Tool::call(
+            &tool,
+            anda_engine::engine::EngineBuilder::new().mock_ctx().base,
+            AddMcpServerArgs {
+                id: "dupe".to_string(),
+                r#type: Some(McpServerTransportType::Stdio),
+                command: Some("missing-command".to_string()),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+                cwd: None,
+                url: None,
+                bearer_token: None,
+                headers: BTreeMap::new(),
+                enabled: None,
+                include: Vec::new(),
+                exclude: Vec::new(),
+                persist: true,
+            },
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("already exists in mcp.json"),
+            "{err}"
+        );
+        assert!(!tool.provider.contains_server("dupe"));
+    }
+
+    #[tokio::test]
+    async fn connect_returns_the_pending_authorization_instead_of_restarting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = test_connect_tool(McpSettings::file_path(dir.path()));
+        let url = "https://mcp.example.test/mcp";
+        let auth_url = "https://as.example.test/authorize?client_id=x&state=s-pending";
+        let _waiter = tool
+            .flows
+            .begin(McpServerConfig::streamable_http("pending", url), auth_url)
+            .await
+            .unwrap();
+
+        let result = tool
+            .connect(ConnectMcpServerArgs {
+                url: url.to_string(),
+                id: Some("pending".to_string()),
+                scopes: Vec::new(),
+                reauthorize: false,
+                redirect_url: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "authorization_required");
+        assert_eq!(result["authorization_url"], auth_url);
+
+        // The flow the user is completing is still the one that matches.
+        let err = tool
+            .flows
+            .complete("http://127.0.0.1:8042/mcp/oauth/callback?code=c&state=s-pending")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("MCP server pending"), "{err}");
+    }
+
+    #[test]
+    fn authorization_names_the_client_for_servers_reloaded_from_mcp_json() {
+        let reloaded = McpOAuthSettings {
+            client_id: None,
+            scopes: vec!["read".to_string()],
+        };
+        let mut config = McpServerConfig::streamable_http("srv", "https://mcp.example.test/mcp");
+        if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
+            http.auth = Some(reloaded.to_auth_config());
+        }
+        configure_authorization(&mut config, "http://127.0.0.1:8042/cb", vec![], vec![]).unwrap();
+        let McpTransportConfig::StreamableHttp(http) = &config.transport else {
+            panic!("expected HTTP")
+        };
+        let Some(McpOAuthConfig::AuthorizationCode(auth)) = &http.auth else {
+            panic!("expected authorization code")
+        };
+        assert_eq!(auth.client_name.as_deref(), Some(OAUTH_CLIENT_NAME));
+        assert_eq!(auth.redirect_uri, "http://127.0.0.1:8042/cb");
+        assert_eq!(auth.scopes, vec!["read".to_string()]);
+    }
+
     fn test_connect_tool(config_path: PathBuf) -> McpConnectTool {
         let provider = Arc::new(McpToolProvider::new(Vec::new()).unwrap());
+        let configs = McpServerConfigs::default();
         let flows = McpOAuthFlows::new(
             provider.clone(),
+            configs.clone(),
             "127.0.0.1:8042".parse().unwrap(),
             config_path,
             Arc::new(Mutex::new(())),
         );
-        McpConnectTool::new(provider, flows, Default::default())
+        McpConnectTool::new(provider, flows, configs)
     }
 
     fn oauth_config(scopes: Vec<String>) -> McpServerConfig {
@@ -1750,6 +1886,8 @@ mod tests {
         }
         let content = tokio::fs::read_to_string(&config_path).await.unwrap();
         assert!(!content.contains("token"), "no tokens in mcp.json");
+        // A default lifecycle is left implicit.
+        assert!(!content.contains("lifecycle"), "{content}");
 
         // Re-authorization finds the entry already present and does not fail.
         let newly = persist_oauth_server(&config_path, &write_lock, &oauth_config(Vec::new()))
@@ -1771,23 +1909,16 @@ mod tests {
 
     #[test]
     fn default_server_id_from_url_uses_host() {
+        let id = |url: &str| default_server_id_from_url(&reqwest::Url::parse(url).unwrap());
+        assert_eq!(id("https://api.al.ink/mcp").unwrap(), "api.al.ink");
+        assert_eq!(id("http://127.0.0.1:8080/mcp?x=1").unwrap(), "127.0.0.1");
         assert_eq!(
-            default_server_id_from_url("https://api.al.ink/mcp").unwrap(),
+            id("https://user:pass@api.al.ink/mcp").unwrap(),
             "api.al.ink"
         );
-        assert_eq!(
-            default_server_id_from_url("http://127.0.0.1:8080/mcp?x=1").unwrap(),
-            "127.0.0.1"
-        );
-        assert_eq!(
-            default_server_id_from_url("https://user:pass@api.al.ink/mcp").unwrap(),
-            "api.al.ink"
-        );
-        assert_eq!(
-            default_server_id_from_url("http://[::1]:8080/mcp").unwrap(),
-            "::1"
-        );
-        assert!(default_server_id_from_url("https:///mcp").is_err());
+        assert_eq!(id("https://API.al.ink./mcp").unwrap(), "api.al.ink");
+        assert_eq!(id("http://[::1]:8080/mcp").unwrap(), "::1");
+        assert!(id("http://./mcp").is_err());
     }
 
     #[tokio::test]
@@ -1810,6 +1941,7 @@ mod tests {
             provider.clone(),
             McpOAuthFlows::new(
                 provider.clone(),
+                Default::default(),
                 "127.0.0.1:8042".parse().unwrap(),
                 McpSettings::file_path(dir.path()),
                 Arc::new(Mutex::new(())),
@@ -1892,6 +2024,7 @@ mod tests {
             .remove(0);
         assert_eq!(saved.include, config.include);
         assert_eq!(saved.exclude, config.exclude);
+        assert_eq!(saved.lifecycle, McpLifecycle::Initialize);
         assert_eq!(
             serde_json::to_value(&saved.tasks).unwrap(),
             serde_json::to_value(&config.tasks).unwrap()
