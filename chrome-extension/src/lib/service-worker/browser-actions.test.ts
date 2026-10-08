@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { executeBrowserAction, rememberActiveTab } from './browser-actions'
 import type { ChromeApi, ChromeTabInfo, ChromeWebNavigationDetails } from './types'
@@ -100,6 +100,15 @@ function attachWebNavigationApi(chromeApi: ChromeApi) {
 beforeEach(() => {
   rememberActiveTab(null)
 })
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** How `execute_javascript` wraps a bare expression. */
+function expressionShape(code: string): string {
+  return `(async () => (\n${code}\n))()`
+}
 
 describe('executeBrowserAction tab targeting', () => {
   it('uses the remembered active tab for get_current_tab and list_tabs', async () => {
@@ -584,6 +593,45 @@ describe('executeBrowserAction waited browser actions', () => {
     expect(result.page_ready).toMatchObject({ loaded: true })
   })
 
+  it('reports a committed page that never finishes loading instead of failing', async () => {
+    vi.useFakeTimers()
+    const startTab = {
+      id: 123,
+      windowId: 1,
+      active: true,
+      status: 'complete',
+      url: 'https://a.test'
+    }
+    const loadingTab = { ...startTab, status: 'loading', url: 'https://b.test/' }
+    let currentTab = startTab
+    const chromeApi = createChromeApi(undefined, startTab)
+    const navigationEvents = attachWebNavigationApi(chromeApi)
+    chromeApi.tabs.get = vi.fn(async () => currentTab)
+    chromeApi.tabs.update = vi.fn(async () => {
+      currentTab = loadingTab
+      queueMicrotask(() =>
+        navigationEvents.onCommitted.emit({ tabId: 123, frameId: 0, url: loadingTab.url })
+      )
+      return loadingTab
+    })
+
+    const pending = executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'navigate', url: 'https://b.test/', timeout_ms: 1000 }
+      },
+      { chromeApi }
+    )
+    await vi.advanceTimersByTimeAsync(1000)
+    const result = (await pending) as Record<string, unknown>
+
+    const pageReady = result.page_ready as Record<string, unknown>
+    expect(result.navigated).toBe(true)
+    expect(pageReady.loaded).toBe(false)
+    expect(pageReady.load).toMatchObject({ event: 'load_timed_out', timed_out: true })
+  })
+
   it('does not mask page action errors with pre-action loading timeouts', async () => {
     vi.useFakeTimers()
     const loadingTab = {
@@ -691,7 +739,7 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
     const sendCommand = vi.fn(
       async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
         if (method === 'Runtime.evaluate') {
-          expect(params?.expression).toBe('(document.title)')
+          expect(params?.expression).toBe(expressionShape('document.title'))
           return { result: { type: 'string', value: 'MDN Web Docs' } }
         }
         return {}
@@ -718,13 +766,15 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
   it('falls back to function-body evaluation for return statements', async () => {
     const sendCommand = vi.fn(
       async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
+        if (method === 'Runtime.compileScript') {
+          return params?.expression === expressionShape('return document.title')
+            ? { exceptionDetails: { text: 'SyntaxError: Unexpected token return' } }
+            : {}
+        }
         if (method !== 'Runtime.evaluate') {
           return {}
         }
-        if (params?.expression === '(return document.title)') {
-          return { exceptionDetails: { text: 'SyntaxError: Illegal return statement' } }
-        }
-        expect(params?.expression).toBe('(function () {\nreturn document.title\n})()')
+        expect(params?.expression).toBe('(async () => {\nreturn document.title\n})()')
         return { result: { type: 'string', value: 'MDN Web Docs' } }
       }
     )
@@ -747,16 +797,20 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
   })
 
   it('returns the final expression from multi-statement debugger scripts', async () => {
+    const compiled: string[] = []
     const expressions: string[] = []
     const sendCommand = vi.fn(
       async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
+        if (method === 'Runtime.compileScript') {
+          compiled.push(params?.expression || '')
+          return compiled.length === 1
+            ? { exceptionDetails: { text: 'SyntaxError: Unexpected token const' } }
+            : {}
+        }
         if (method !== 'Runtime.evaluate') {
           return {}
         }
         expressions.push(params?.expression || '')
-        if (expressions.length === 1) {
-          return { exceptionDetails: { text: 'SyntaxError: Unexpected token const' } }
-        }
         return { result: { type: 'object', value: { exists: true, value: 'opt2' } } }
       }
     )
@@ -779,10 +833,51 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
     )) as Record<string, unknown>
 
     expect(result.result).toEqual({ exists: true, value: 'opt2' })
-    expect(expressions[1]).toContain('return (sel ?')
+    expect(expressions).toHaveLength(1)
+    expect(expressions[0]).toContain('return (sel ?')
+  })
+
+  it('runs a script once when it throws a SyntaxError at run time', async () => {
+    const evaluated: string[] = []
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, params?: RuntimeEvaluateParams) => {
+        if (method !== 'Runtime.evaluate') {
+          return {}
+        }
+        evaluated.push(params?.expression || '')
+        return {
+          exceptionDetails: {
+            exception: {
+              description: 'SyntaxError: Unexpected token \'<\', "<html>" is not valid JSON'
+            }
+          }
+        }
+      }
+    )
+    const chromeApi = createChromeApi({
+      attach: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+      sendCommand: sendCommand as DebuggerSendCommand
+    })
+
+    await expect(
+      executeBrowserAction(
+        {
+          session: 'test',
+          request_id: 1,
+          args: {
+            action: 'execute_javascript',
+            code: "fetch('/api', { method: 'POST' }).then((response) => response.json())"
+          }
+        },
+        { chromeApi }
+      )
+    ).rejects.toThrow('is not valid JSON')
+    expect(evaluated).toHaveLength(1)
   })
 
   it('serializes debugger sessions for concurrent calls on the same tab', async () => {
+    vi.useFakeTimers()
     let attached = false
     let maxConcurrentAttached = 0
     let currentAttached = 0
@@ -834,14 +929,18 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
       )
     ])
 
-    expect((first as Record<string, unknown>).result).toBe('(document.title)')
-    expect((second as Record<string, unknown>).result).toBe('(location.href)')
+    expect((first as Record<string, unknown>).result).toBe(expressionShape('document.title'))
+    expect((second as Record<string, unknown>).result).toBe(expressionShape('location.href'))
     expect(maxConcurrentAttached).toBe(1)
     expect(attach).toHaveBeenCalledTimes(2)
-    expect(detach).toHaveBeenCalledTimes(2)
+    // The second call reuses the session; it detaches once the tab goes idle.
+    expect(detach).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(detach).toHaveBeenCalledTimes(1)
   })
 
   it('reattaches and retries debugger commands after transient detachment', async () => {
+    vi.useFakeTimers()
     let evaluateAttempts = 0
     const attach = vi.fn(async () => undefined)
     const detach = vi.fn(async () => undefined)
@@ -872,8 +971,9 @@ describe('executeBrowserAction execute_javascript debugger bridge', () => {
       { chromeApi }
     )) as Record<string, unknown>
 
-    expect(result.result).toBe('(document.title)')
+    expect(result.result).toBe(expressionShape('document.title'))
     expect(attach).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(5_000)
     expect(detach).toHaveBeenCalledTimes(1)
     expect(evaluateAttempts).toBe(2)
   })
@@ -932,6 +1032,95 @@ describe('executeBrowserAction screenshot debugger capture', () => {
 })
 
 describe('executeBrowserAction native input', () => {
+  /** A loaded tab and a debugger that records commands and answers `answer`. */
+  function nativeInputApi(answer: (method: string) => unknown = () => ({})) {
+    const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
+    const sendCommand = vi.fn(
+      async (_target: DebuggerTarget, method: string, _params?: Record<string, unknown>) =>
+        answer(method)
+    )
+    const chromeApi = createChromeApi(
+      {
+        attach: vi.fn(async () => undefined),
+        detach: vi.fn(async () => undefined),
+        sendCommand: sendCommand as DebuggerSendCommand
+      },
+      tab
+    )
+    chromeApi.tabs.get = vi.fn(async () => tab)
+    return { chromeApi, sendCommand }
+  }
+
+  it('sends Enter with the character that submits a form', async () => {
+    const { chromeApi, sendCommand } = nativeInputApi()
+
+    await executeBrowserAction(
+      { session: 'test', request_id: 1, args: { action: 'press_key', key: 'Enter' } },
+      { chromeApi }
+    )
+
+    expect(sendCommand).toHaveBeenCalledWith({ tabId: 123 }, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      text: '\r',
+      unmodifiedText: '\r',
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13
+    })
+  })
+
+  it('scrolls with a native wheel at the viewport center', async () => {
+    const { chromeApi, sendCommand } = nativeInputApi((method) =>
+      method === 'Runtime.evaluate'
+        ? { result: { type: 'object', value: { width: 1000, height: 800 } } }
+        : {}
+    )
+
+    const result = await executeBrowserAction(
+      { session: 'test', request_id: 1, args: { action: 'scroll', amount: 400 } },
+      { chromeApi }
+    )
+
+    expect(sendCommand).toHaveBeenCalledWith({ tabId: 123 }, 'Input.dispatchMouseEvent', {
+      type: 'mouseWheel',
+      x: 500,
+      y: 400,
+      deltaX: 0,
+      deltaY: 400
+    })
+    expect(result).toMatchObject({ scrolled: true, native: true, amount: 400 })
+    expect(chromeApi.scripting.executeScript).not.toHaveBeenCalled()
+  })
+
+  it('captures long full pages in CSS pixels up to a bounded height', async () => {
+    const { chromeApi, sendCommand } = nativeInputApi((method) =>
+      method === 'Page.getLayoutMetrics'
+        ? {
+            cssContentSize: { width: 1200, height: 20_000 },
+            contentSize: { width: 2400, height: 40_000 }
+          }
+        : method === 'Page.captureScreenshot'
+          ? { data: 'cG5n' }
+          : {}
+    )
+
+    const result = await executeBrowserAction(
+      {
+        session: 'test',
+        request_id: 1,
+        args: { action: 'screenshot', full_page: true, include_data_url: true }
+      },
+      { chromeApi }
+    )
+
+    const capture = sendCommand.mock.calls.find((call) => call[1] === 'Page.captureScreenshot')
+    expect(capture?.[2]).toMatchObject({
+      clip: { x: 0, y: 0, width: 1200, height: 8000, scale: 1 }
+    })
+    expect(result).toMatchObject({ captured: true, truncated: true, content_height: 20_000 })
+  })
+
   it('dispatches touch events for clicks on mobile-like pages', async () => {
     const tab = { id: 123, windowId: 1, active: true, status: 'complete' }
     const sendCommand = vi.fn(

@@ -33,6 +33,11 @@ use crate::util::{
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 60_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
+/// The browser bounds each of its own waits (page load, network idle) by the
+/// action timeout, so its reply, such as a page that never finished loading,
+/// can land just after the deadline. The grace keeps that report from being
+/// replaced by a bare timeout.
+const BROWSER_REPLY_GRACE: Duration = Duration::from_secs(10);
 const BROWSER_SCREENSHOT_TMP_DIR: &str = "browser-screenshots";
 const SCREENSHOT_FILE_PREFIX: &str = "chrome-screenshot-";
 /// Saved captures are references the model revisits within a task, not an
@@ -485,8 +490,11 @@ impl BrowserBridge {
         let session = normalize_session(session)?;
         let timeout_ms = normalized_action_timeout(args.timeout_ms);
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-        // Reconnection, queue capacity and the response share one deadline.
-        let action = async {
+        let timed_out = || -> BoxError {
+            format!("Chrome browser action timed out after {timeout_ms}ms").into()
+        };
+        // Reconnection and queue capacity share the action's deadline.
+        let (guard, receiver) = tokio::time::timeout_at(deadline, async {
             let (connection_id, sender) = self
                 .wait_for(deadline, |connections| {
                     select_connection(connections, caller, Some(&session))
@@ -527,17 +535,16 @@ impl BrowserBridge {
                     args,
                 });
             }
-            let result = receiver
-                .await
-                .map_err(|_| "Chrome browser action connection closed".into());
-            drop(guard);
-            result
-        };
-        tokio::time::timeout_at(deadline, action)
+            Ok::<_, BoxError>((guard, receiver))
+        })
+        .await
+        .map_err(|_| timed_out())??;
+        let result = tokio::time::timeout_at(deadline + BROWSER_REPLY_GRACE, receiver)
             .await
-            .map_err(|_| -> BoxError {
-                format!("Chrome browser action timed out after {timeout_ms}ms").into()
-            })?
+            .map_err(|_| timed_out())?
+            .map_err(|_| "Chrome browser action connection closed".into());
+        drop(guard);
+        result
     }
 
     /// Hands a browser's reply to the waiting action. Only the connection the
@@ -2778,6 +2785,43 @@ mod tests {
         .unwrap();
         assert!(result.unwrap_err().to_string().contains("timed out"));
         assert!(bridge.pending.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reply_just_past_the_action_timeout_still_arrives() {
+        let bridge = Arc::new(BrowserBridge::new());
+        let (id, tx, mut rx) = bridge.open_ws_connection();
+        bridge
+            .register_ws_session(
+                id,
+                CALLER,
+                tx,
+                BrowserRegisterArgs {
+                    session: "session".into(),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+        let worker = bridge.clone();
+        // snapshot_args times out after one second.
+        let task = tokio::spawn(async move {
+            worker
+                .run_action(CALLER, "session".into(), snapshot_args())
+                .await
+        });
+        let command = rx.recv().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1_300)).await;
+        bridge
+            .complete(
+                id,
+                "session",
+                command.request_id,
+                BrowserActionResult::ok(json!({ "page_ready": { "timed_out": true } })),
+            )
+            .unwrap();
+        let result = task.await.unwrap().unwrap();
+        assert_eq!(result.value["page_ready"]["timed_out"], true);
     }
 
     #[tokio::test]

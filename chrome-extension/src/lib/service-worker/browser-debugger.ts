@@ -8,7 +8,7 @@ import {
   positiveInteger,
   tabSummary
 } from './browser-tabs'
-import { resolveInputTarget } from './page-scripts'
+import { pageActionDispatcher } from './page-scripts'
 import type { BrowserActionArgs, BrowserActionResult, ChromeApi, ChromeTabInfo } from './types'
 
 /**
@@ -20,17 +20,29 @@ import type { BrowserActionArgs, BrowserActionResult, ChromeApi, ChromeTabInfo }
  * input events that pages accept as real user gestures.
  *
  * CDP sessions are not reentrant, so debugger work serializes through a per-tab
- * lock and the session detaches once the last action on that tab finishes.
+ * lock. A session stays attached for a few idle seconds after its last action:
+ * every attach shows the browser's debugging infobar, which resizes the
+ * viewport, so a run of actions keeps one stable layout instead of flickering.
  */
 
 const DEBUGGER_PROTOCOL_VERSION = '1.3'
 const DEBUGGER_COMMAND_MAX_RETRIES = 2
+const DEBUGGER_IDLE_DETACH_MS = 5_000
+/** Lets the infobar of a fresh attach finish resizing the viewport. */
+const DEBUGGER_INFOBAR_SETTLE_MS = 250
 const NETWORK_IDLE_QUIET_MS = 500
+/** Network idleness is a best-effort hint; busy pages never reach it. */
+const NETWORK_IDLE_MAX_WAIT_MS = 3_000
+/** Taller full-page captures exceed the GPU texture limit at 2x scale. */
+const FULL_PAGE_MAX_HEIGHT = 8_000
 
 const debuggerActionLocks = new Map<number, Promise<void>>()
+const idleDetachTimers = new Map<number, ReturnType<typeof setTimeout>>()
 
 type DebuggerTarget = { tabId: number }
 type AttachedDebuggerTarget = DebuggerTarget & {
+  /** True when this task attached the session instead of reusing one. */
+  freshlyAttached: boolean
   sendCommand<Result = unknown>(method: string, commandParams?: object): Promise<Result>
 }
 type RuntimeRemoteObject = {
@@ -55,12 +67,15 @@ type RuntimeEvaluateParams = {
   awaitPromise?: boolean
   returnByValue?: boolean
   userGesture?: boolean
-  replMode?: boolean
 }
+type RuntimeCompileScriptResult = { exceptionDetails?: RuntimeExceptionDetails }
 type PageCaptureScreenshotResult = { data?: string }
 type PagePrintToPdfResult = { data?: string }
 type PageLayoutMetricsResult = {
-  contentSize?: { x?: number; y?: number; width?: number; height?: number }
+  /** CSS pixels, which clips use. */
+  cssContentSize?: { width?: number; height?: number }
+  /** Device pixels; only for browsers without `cssContentSize`. */
+  contentSize?: { width?: number; height?: number }
 }
 type DomGetDocumentResult = { root?: { nodeId?: number } }
 type DomQuerySelectorResult = { nodeId?: number }
@@ -75,33 +90,54 @@ async function withAttachedDebugger<T>(
   }
 
   const target = { tabId }
-  let shouldDetach = false
-  const ensureAttached = async () => {
-    await attachDebuggerIfNeeded(chromeApi, target)
-    shouldDetach = true
-  }
+  const ensureAttached = () => attachDebuggerIfNeeded(chromeApi, target)
 
+  cancelIdleDetach(tabId)
   try {
-    await ensureAttached()
     const attachedTarget: AttachedDebuggerTarget = {
       ...target,
+      freshlyAttached: await ensureAttached(),
       sendCommand: (method, commandParams) =>
-        sendAttachedDebuggerCommand(chromeApi, target, method, commandParams, ensureAttached)
+        sendAttachedDebuggerCommand(chromeApi, target, method, commandParams, async () => {
+          await ensureAttached()
+        })
     }
     return await task(attachedTarget)
   } finally {
-    if (shouldDetach) {
-      await chromeApi.debugger.detach(target).catch(() => undefined)
-    }
+    scheduleIdleDetach(chromeApi, tabId)
   }
 }
 
-async function attachDebuggerIfNeeded(chromeApi: ChromeApi, target: DebuggerTarget): Promise<void> {
+function cancelIdleDetach(tabId: number): void {
+  const timer = idleDetachTimers.get(tabId)
+  if (timer) {
+    clearTimeout(timer)
+    idleDetachTimers.delete(tabId)
+  }
+}
+
+function scheduleIdleDetach(chromeApi: ChromeApi, tabId: number): void {
+  cancelIdleDetach(tabId)
+  idleDetachTimers.set(
+    tabId,
+    setTimeout(() => {
+      idleDetachTimers.delete(tabId)
+      void chromeApi.debugger?.detach({ tabId }).catch(() => undefined)
+    }, DEBUGGER_IDLE_DETACH_MS)
+  )
+}
+
+/** Attaches unless a session is already open; true when it attached now. */
+async function attachDebuggerIfNeeded(
+  chromeApi: ChromeApi,
+  target: DebuggerTarget
+): Promise<boolean> {
   try {
     await chromeApi.debugger!.attach(target, DEBUGGER_PROTOCOL_VERSION)
+    return true
   } catch (error) {
     if (isDebuggerAlreadyAttachedError(error)) {
-      return
+      return false
     }
     throw error
   }
@@ -195,29 +231,43 @@ async function executeJavaScriptWithAttachedDebugger(
   })
 }
 
+/**
+ * Runs `code` once, shaped like a console entry: a bare expression returns its
+ * value, statements return their final expression, and anything else runs as
+ * a function body. The shape is chosen by compiling, never by running, so a
+ * script that throws at run time (a failed `JSON.parse`, an invalid selector)
+ * is not run again in another shape. Async wrappers let any shape `await`.
+ */
 async function evaluateDebuggerJavaScript(
   target: AttachedDebuggerTarget,
   code: string
 ): Promise<unknown> {
   const expression = code.trim().replace(/;+$/, '')
-  const expressionResult = await sendDebuggerRuntimeEvaluate(target, `(${expression})`)
-  if (!isSyntaxException(expressionResult.exceptionDetails)) {
-    return debuggerEvaluationValue(expressionResult)
-  }
-
   const implicitReturn = scriptWithImplicitReturn(code)
-  if (implicitReturn) {
-    const implicitResult = await sendDebuggerRuntimeEvaluate(
-      target,
-      `(function () {\n${implicitReturn}\n})()`
-    )
-    if (!isSyntaxException(implicitResult.exceptionDetails)) {
-      return debuggerEvaluationValue(implicitResult)
+  const shapes = [
+    `(async () => (\n${expression}\n))()`,
+    ...(implicitReturn ? [`(async () => {\n${implicitReturn}\n})()`] : [])
+  ]
+  let source = `(async () => {\n${code}\n})()`
+  for (const shape of shapes) {
+    if (await debuggerScriptCompiles(target, shape)) {
+      source = shape
+      break
     }
   }
+  return debuggerEvaluationValue(await sendDebuggerRuntimeEvaluate(target, source))
+}
 
-  const bodyResult = await sendDebuggerRuntimeEvaluate(target, `(function () {\n${code}\n})()`)
-  return debuggerEvaluationValue(bodyResult)
+async function debuggerScriptCompiles(
+  target: AttachedDebuggerTarget,
+  expression: string
+): Promise<boolean> {
+  const compiled = await target.sendCommand<RuntimeCompileScriptResult>('Runtime.compileScript', {
+    expression,
+    sourceURL: '',
+    persistScript: false
+  })
+  return !compiled?.exceptionDetails
 }
 
 function sendDebuggerRuntimeEvaluate(
@@ -228,14 +278,9 @@ function sendDebuggerRuntimeEvaluate(
     expression,
     awaitPromise: true,
     returnByValue: true,
-    userGesture: true,
-    replMode: true
+    userGesture: true
   }
   return target.sendCommand<RuntimeEvaluateResult>('Runtime.evaluate', params)
-}
-
-function isSyntaxException(details?: RuntimeExceptionDetails): boolean {
-  return debuggerExceptionText(details).includes('SyntaxError')
 }
 
 function debuggerEvaluationValue(evaluation: RuntimeEvaluateResult): unknown {
@@ -278,11 +323,8 @@ export async function captureScreenshotWithDebugger(
         await target.sendCommand('Emulation.setDeviceMetricsOverride', viewport)
       }
       try {
-        const clip = args.selector
-          ? await elementScreenshotClip(target, args.selector)
-          : args.full_page
-            ? await fullPageScreenshotClip(target)
-            : undefined
+        const page = args.full_page && !args.selector ? await fullPageScreenshotClip(target) : null
+        const clip = args.selector ? await elementScreenshotClip(target, args.selector) : page?.clip
         const params: Record<string, unknown> = {
           format: 'png',
           fromSurface: true,
@@ -298,7 +340,7 @@ export async function captureScreenshotWithDebugger(
         if (!result.data) {
           throw new Error('Page.captureScreenshot returned no image data')
         }
-        return { data: result.data, clip, viewport }
+        return { data: result.data, clip, viewport, contentHeight: page?.contentHeight }
       } finally {
         if (viewport) {
           await target.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => undefined)
@@ -316,7 +358,10 @@ export async function captureScreenshotWithDebugger(
     full_page: Boolean(args.full_page),
     selector: args.selector || null,
     clip: capture.clip || null,
-    viewport: capture.viewport || null
+    viewport: capture.viewport || null,
+    ...(capture.clip && capture.contentHeight && capture.contentHeight > capture.clip.height
+      ? { truncated: true, content_height: capture.contentHeight }
+      : {})
   }
 }
 
@@ -368,7 +413,7 @@ async function elementScreenshotClip(
     }
     const element = deepQuery(document, selector);
     if (!element) return null;
-    element.scrollIntoView({ block: 'center', inline: 'center' });
+    element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
     const rect = element.getBoundingClientRect();
     return {
       x: Math.max(0, rect.left + window.scrollX),
@@ -378,24 +423,29 @@ async function elementScreenshotClip(
       scale: 1
     };
   })()`
-  const clip = await evaluateDebuggerJavaScript(target, script)
+  const clip = debuggerEvaluationValue(await sendDebuggerRuntimeEvaluate(target, script))
   if (!isScreenshotClip(clip)) {
     throw new Error(`selector not found or has no visible bounds: ${selector}`)
   }
   return clip
 }
 
+/** The whole page up to {@link FULL_PAGE_MAX_HEIGHT}, in CSS pixels. */
 async function fullPageScreenshotClip(
   target: AttachedDebuggerTarget
-): Promise<Record<string, number>> {
+): Promise<{ clip: Record<string, number>; contentHeight: number }> {
   const metrics = await target.sendCommand<PageLayoutMetricsResult>('Page.getLayoutMetrics')
-  const contentSize = metrics.contentSize || {}
+  const contentSize = metrics.cssContentSize || metrics.contentSize || {}
+  const contentHeight = Math.max(1, Math.ceil(contentSize.height || 1))
   return {
-    x: 0,
-    y: 0,
-    width: Math.max(1, Math.ceil(contentSize.width || 1)),
-    height: Math.max(1, Math.ceil(contentSize.height || 1)),
-    scale: 1
+    clip: {
+      x: 0,
+      y: 0,
+      width: Math.max(1, Math.ceil(contentSize.width || 1)),
+      height: Math.min(contentHeight, FULL_PAGE_MAX_HEIGHT),
+      scale: 1
+    },
+    contentHeight
   }
 }
 
@@ -502,9 +552,9 @@ export async function waitForNetworkIdle(
   chromeApi: ChromeApi,
   tabId: number,
   args: BrowserActionArgs,
-  timeoutMs?: number
+  timeoutMs = NETWORK_IDLE_MAX_WAIT_MS
 ): Promise<BrowserActionResult> {
-  const timeout = timeoutMs ?? actionTimeoutMs(args, 30000)
+  const timeout = Math.min(timeoutMs, actionTimeoutMs(args))
   return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, (target) =>
       waitForNetworkIdleWithAttachedDebugger(chromeApi, target, timeout)
@@ -528,10 +578,8 @@ async function waitForNetworkIdleWithAttachedDebugger(
   let cleanedUp = false
 
   let resolveWait: (value: BrowserActionResult) => void
-  let rejectWait: (reason: Error) => void
-  const wait = new Promise<BrowserActionResult>((resolve, reject) => {
+  const wait = new Promise<BrowserActionResult>((resolve) => {
     resolveWait = resolve
-    rejectWait = reject
   })
 
   const cleanup = () => {
@@ -551,11 +599,6 @@ async function waitForNetworkIdleWithAttachedDebugger(
   const settle = (value: BrowserActionResult) => {
     cleanup()
     resolveWait(value)
-  }
-
-  const fail = (error: Error) => {
-    cleanup()
-    rejectWait(error)
   }
 
   const scheduleQuietCheck = () => {
@@ -594,7 +637,7 @@ async function waitForNetworkIdleWithAttachedDebugger(
 
   event.addListener(listener)
   timeoutTimer = setTimeout(() => {
-    fail(new Error(`network did not become idle before timeout: ${timeout}ms`))
+    settle({ network_idle: false, waited_ms: timeout, in_flight: inFlight.size })
   }, timeout)
 
   try {
@@ -672,98 +715,136 @@ export async function dispatchNativePointerAction(
   tabId: number,
   args: BrowserActionArgs
 ): Promise<BrowserActionResult> {
-  const [execution] = await chromeApi.scripting.executeScript<
-    Record<string, unknown>,
-    BrowserActionArgs
-  >({
-    target: { tabId },
-    world: 'ISOLATED',
-    func: resolveInputTarget,
-    args: [args]
-  })
-  const target = execution?.result
-  const x = typeof target?.x === 'number' ? target.x : null
-  const y = typeof target?.y === 'number' ? target.y : null
-  if (x === null || y === null) {
-    throw new Error('could not resolve a native input coordinate')
-  }
-
-  await runExclusiveDebuggerAction(tabId, () =>
+  return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (debuggerTarget) => {
-      await dispatchNativeMouseMove(debuggerTarget, x, y)
+      const target = await resolveNativeInputTarget(chromeApi, debuggerTarget, args)
+      const point = targetPoint(target)
+      if (!point) {
+        throw new Error('could not resolve a native input coordinate')
+      }
+      await dispatchNativeMouseMove(debuggerTarget, point.x, point.y)
       if (args.action === 'click') {
-        await dispatchNativePrimaryClick(debuggerTarget, x, y, target.mobile_like === true)
+        await dispatchNativePrimaryClick(
+          debuggerTarget,
+          point.x,
+          point.y,
+          target.mobile_like === true
+        )
+      }
+      return {
+        [args.action === 'click' ? 'clicked' : 'hovered']: true,
+        native: true,
+        selector: args.selector || null,
+        label: target.label || '',
+        ...point,
+        bounding_box: target.bounding_box || null
       }
     })
   )
-
-  return {
-    [args.action === 'click' ? 'clicked' : 'hovered']: true,
-    native: true,
-    selector: args.selector || null,
-    label: target.label || '',
-    x,
-    y,
-    bounding_box: target.bounding_box || null
-  }
 }
 
+/** Null when the target is not a native text input or did not take the text. */
 export async function dispatchNativeTextInput(
   chromeApi: ChromeApi,
   tabId: number,
   args: BrowserActionArgs
 ): Promise<BrowserActionResult | null> {
-  const [execution] = await chromeApi.scripting.executeScript<
-    Record<string, unknown>,
-    BrowserActionArgs
-  >({
-    target: { tabId },
-    world: 'ISOLATED',
-    func: resolveInputTarget,
-    args: [args]
-  })
-  const inputTarget = execution?.result
-  if (inputTarget?.native_text_input === false) {
-    return null
-  }
-  const x = typeof inputTarget?.x === 'number' ? inputTarget.x : null
-  const y = typeof inputTarget?.y === 'number' ? inputTarget.y : null
-  if (x === null || y === null) {
-    throw new Error('could not resolve a native text input coordinate')
-  }
-
   const text = String(args.text || '')
-  let verified: boolean | null = null
-  await runExclusiveDebuggerAction(tabId, () =>
+  return runExclusiveDebuggerAction(tabId, () =>
     withAttachedDebugger(chromeApi, tabId, async (target) => {
-      await dispatchNativeMouseMove(target, x, y)
-      await dispatchNativePrimaryClick(target, x, y, inputTarget.mobile_like === true)
+      const inputTarget = await resolveNativeInputTarget(chromeApi, target, args)
+      if (inputTarget.native_text_input === false) {
+        return null
+      }
+      const point = targetPoint(inputTarget)
+      if (!point) {
+        throw new Error('could not resolve a native text input coordinate')
+      }
+      await dispatchNativeMouseMove(target, point.x, point.y)
+      await dispatchNativePrimaryClick(target, point.x, point.y, inputTarget.mobile_like === true)
       await delay(50)
       await dispatchSelectAll(target)
       await dispatchKeyDefinition(target, keyDefinition('Backspace'))
       if (text) {
         await target.sendCommand('Input.insertText', { text })
       }
-      verified = await verifyNativeTextInput(target, inputTarget.selector, text)
+      const verified = await verifyNativeTextInput(target, inputTarget.selector, text)
+      if (verified === false) {
+        return null
+      }
+      return {
+        typed: true,
+        native: true,
+        selector: inputTarget.selector || args.selector || null,
+        active_element: !args.selector,
+        verified,
+        label: inputTarget.label || '',
+        length: text.length,
+        ...point,
+        bounding_box: inputTarget.bounding_box || null
+      }
     })
   )
+}
 
-  if (verified === false) {
-    return null
+/**
+ * Locates the element to act on, with the debugger already attached: its
+ * infobar resizes the viewport, which would move a target found earlier.
+ */
+async function resolveNativeInputTarget(
+  chromeApi: ChromeApi,
+  target: AttachedDebuggerTarget,
+  args: BrowserActionArgs
+): Promise<Record<string, unknown>> {
+  if (target.freshlyAttached) {
+    await delay(DEBUGGER_INFOBAR_SETTLE_MS)
   }
+  const [execution] = await chromeApi.scripting.executeScript<
+    BrowserActionResult,
+    BrowserActionArgs
+  >({
+    target: { tabId: target.tabId },
+    world: 'ISOLATED',
+    func: pageActionDispatcher,
+    args: [{ ...args, resolve_input_target: true }]
+  })
+  const result = execution?.result
+  return result && typeof result === 'object' ? (result as Record<string, unknown>) : {}
+}
 
-  return {
-    typed: true,
-    native: true,
-    selector: inputTarget.selector || args.selector || null,
-    active_element: !args.selector,
-    verified,
-    label: inputTarget.label || '',
-    length: text.length,
-    x,
-    y,
-    bounding_box: inputTarget.bounding_box || null
-  }
+function targetPoint(target: Record<string, unknown>): { x: number; y: number } | null {
+  return typeof target.x === 'number' && typeof target.y === 'number'
+    ? { x: target.x, y: target.y }
+    : null
+}
+
+/**
+ * Wheels at the viewport center, which scrolls whatever is under it: the
+ * inner containers many single-page apps scroll instead of the window too.
+ */
+export async function dispatchNativeScroll(
+  chromeApi: ChromeApi,
+  tabId: number,
+  args: BrowserActionArgs
+): Promise<BrowserActionResult> {
+  const amount = typeof args.amount === 'number' && Number.isFinite(args.amount) ? args.amount : 700
+  return runExclusiveDebuggerAction(tabId, () =>
+    withAttachedDebugger(chromeApi, tabId, async (target) => {
+      const viewport = debuggerEvaluationValue(
+        await sendDebuggerRuntimeEvaluate(target, '({ width: innerWidth, height: innerHeight })')
+      ) as { width?: number; height?: number } | null
+      const x = Math.round((viewport?.width || 0) / 2)
+      const y = Math.round((viewport?.height || 0) / 2)
+      await target.sendCommand('Input.dispatchMouseEvent', {
+        type: 'mouseWheel',
+        x,
+        y,
+        deltaX: 0,
+        deltaY: amount
+      })
+      return { scrolled: true, native: true, amount, x, y }
+    })
+  )
 }
 
 async function verifyNativeTextInput(
@@ -888,11 +969,13 @@ export async function dispatchNativeKey(
 
 function keyDefinition(key: string): Record<string, unknown> {
   const normalizedKey = keyAliases[key] || key
-  const special: Record<string, { code: string; windowsVirtualKeyCode: number }> = {
-    Enter: { code: 'Enter', windowsVirtualKeyCode: 13 },
+  // Enter and Space carry text: the character event they produce is what
+  // submits a form or activates a focused button.
+  const special: Record<string, { code: string; windowsVirtualKeyCode: number; text?: string }> = {
+    Enter: { code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
     Escape: { code: 'Escape', windowsVirtualKeyCode: 27 },
     Tab: { code: 'Tab', windowsVirtualKeyCode: 9 },
-    Space: { code: 'Space', windowsVirtualKeyCode: 32 },
+    Space: { code: 'Space', windowsVirtualKeyCode: 32, text: ' ' },
     Backspace: { code: 'Backspace', windowsVirtualKeyCode: 8 },
     Delete: { code: 'Delete', windowsVirtualKeyCode: 46 },
     ArrowUp: { code: 'ArrowUp', windowsVirtualKeyCode: 38 },
@@ -909,6 +992,7 @@ function keyDefinition(key: string): Record<string, unknown> {
     return {
       key: normalizedKey === 'Space' ? ' ' : normalizedKey,
       code: mapped.code,
+      ...(mapped.text ? { text: mapped.text, unmodifiedText: mapped.text } : {}),
       windowsVirtualKeyCode: mapped.windowsVirtualKeyCode,
       nativeVirtualKeyCode: mapped.windowsVirtualKeyCode
     }

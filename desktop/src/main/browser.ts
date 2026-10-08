@@ -16,10 +16,7 @@ import type {
   BrowserActionArgs,
   BrowserCommand
 } from '../../../chrome-extension/src/lib/service-worker/types'
-import {
-  pageActionDispatcher,
-  resolveInputTarget
-} from '../../../chrome-extension/src/lib/service-worker/page-scripts'
+import { pageActionDispatcher } from '../../../chrome-extension/src/lib/service-worker/page-scripts'
 
 interface Tab {
   view: WebContentsView
@@ -656,7 +653,7 @@ export class BrowserService {
       case 'type_text': {
         const point = await this.evaluate(
           wc,
-          `(${resolveInputTarget.toString()})(${JSON.stringify(args)})`,
+          `(${pageActionDispatcher.toString()})(${JSON.stringify({ ...args, resolve_input_target: true })})`,
           args
         )
         if (Number.isFinite(point.x) && Number.isFinite(point.y)) {

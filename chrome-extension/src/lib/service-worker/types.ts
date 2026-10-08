@@ -110,6 +110,12 @@ export type BrowserActionArgs = {
   max_chars?: number
   timeout_ms?: number
   reason?: string
+  /**
+   * Set by the extension and Anda Desktop, never by the daemon: the page
+   * dispatcher locates the click, hover or type_text target and returns its
+   * coordinates instead of acting, for native input to dispatch.
+   */
+  resolve_input_target?: boolean
 }
 
 export type BrowserCommand = {

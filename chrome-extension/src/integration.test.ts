@@ -10,7 +10,7 @@ import { waitForNetworkIdle } from './lib/service-worker/browser-debugger'
 import { BookmarkBrowser, emptyBookmarkFolders } from './lib/anda/bookmarks/browser.svelte'
 import { Channel } from './lib/anda/client/channel.svelte'
 import { attachmentDownloadUrl } from './lib/anda/chat/attachment-view'
-import { resolveInputTarget } from './lib/service-worker/page-scripts'
+import { pageActionDispatcher } from './lib/service-worker/page-scripts'
 import { pageAudioCaptureDispatcher } from './lib/service-worker/page-audio'
 import { VoiceRecorder } from './lib/anda/composer/recorder.svelte'
 
@@ -402,11 +402,35 @@ it('translates an iframe input into top-level coordinates for native typing', ()
   child.querySelectorAll = () => [input]
   vi.stubGlobal('document', top)
   vi.stubGlobal('window', { getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) })
-  expect(resolveInputTarget({ action: 'type_text', selector: 'input' })).toMatchObject({
+  expect(
+    pageActionDispatcher({ action: 'type_text', selector: 'input', resolve_input_target: true })
+  ).toMatchObject({
     native_text_input: true,
     x: 142,
     y: 232
   })
+  // A smooth page scroll would leave the coordinates read above stale.
+  expect(input.scrollIntoView).toHaveBeenCalledWith({
+    block: 'center',
+    inline: 'center',
+    behavior: 'instant'
+  })
+})
+
+it('keeps the page still when native input targets an explicit point', () => {
+  const button: any = {
+    tagName: 'BUTTON',
+    ownerDocument: { defaultView: { frameElement: null } },
+    getAttribute: (name: string) => (name === 'aria-label' ? 'Save' : null),
+    scrollIntoView: vi.fn(),
+    getBoundingClientRect: () => ({ x: 0, y: 600, left: 0, top: 600, width: 80, height: 30 })
+  }
+  vi.stubGlobal('document', { elementFromPoint: () => button })
+  vi.stubGlobal('window', { getComputedStyle: () => ({ visibility: 'visible', display: 'block' }) })
+  expect(
+    pageActionDispatcher({ action: 'click', x: 40, y: 615, resolve_input_target: true })
+  ).toMatchObject({ x: 40, y: 615, label: 'Save' })
+  expect(button.scrollIntoView).not.toHaveBeenCalled()
 })
 
 it('stops page microphone tracks if permission arrives after cancel', async () => {

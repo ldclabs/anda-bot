@@ -12,203 +12,10 @@ import type { BrowserActionArgs, BrowserActionResult } from './types'
  * For the same reason these cannot import from `browser-actions.ts`; only the
  * `BrowserActionArgs` / `BrowserActionResult` types cross, and types are erased.
  * Anda Desktop evaluates the same functions in its own browser through CDP.
+ *
+ * With `resolve_input_target`, the dispatcher only locates the click, hover or
+ * type_text target and returns its coordinates, for native input to dispatch.
  */
-
-export function resolveInputTarget(args: BrowserActionArgs): Record<string, unknown> {
-  function visible(element: Element): boolean {
-    const style = window.getComputedStyle(element)
-    const rect = element.getBoundingClientRect()
-    return (
-      style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0
-    )
-  }
-
-  function interactable(element: Element): boolean {
-    if (!visible(element)) {
-      return false
-    }
-    const rect = element.getBoundingClientRect()
-    const hit = element.ownerDocument.elementFromPoint(
-      rect.left + Math.max(1, rect.width) / 2,
-      rect.top + Math.max(1, rect.height) / 2
-    )
-    if (!hit) {
-      return false
-    }
-    if (hit === element || element.contains(hit)) {
-      return true
-    }
-    const label = hit.closest('label')
-    return (
-      label instanceof HTMLLabelElement && (label.control === element || label.contains(element))
-    )
-  }
-
-  function editableTextInput(element: Element): boolean {
-    if (element.tagName === 'TEXTAREA') {
-      return !(element as HTMLInputElement).readOnly && !(element as HTMLInputElement).disabled
-    }
-    if (element.tagName === 'INPUT') {
-      const type = (element.getAttribute('type') || 'text').toLowerCase()
-      return (
-        !(element as HTMLInputElement).readOnly &&
-        !(element as HTMLInputElement).disabled &&
-        ['email', 'number', 'password', 'search', 'tel', 'text', 'url'].includes(type)
-      )
-    }
-    return (element as HTMLElement).isContentEditable === true
-  }
-
-  function preferredMatch(elements: Element[]): Element | null {
-    if (args.action === 'type_text') {
-      return (
-        elements.find((element) => editableTextInput(element) && visible(element)) ||
-        elements.find((element) => visible(element)) ||
-        elements[0] ||
-        null
-      )
-    }
-    return (
-      elements.find((element) => interactable(element)) ||
-      elements.find((element) => visible(element)) ||
-      elements[0] ||
-      null
-    )
-  }
-
-  function deepQuerySelector(
-    root: Document | ShadowRoot | Element,
-    selector: string
-  ): Element | null {
-    const direct = preferredMatch(Array.from(root.querySelectorAll(selector)))
-    if (direct) {
-      return direct
-    }
-    for (const element of Array.from(root.querySelectorAll('*'))) {
-      const shadowRoot = element.shadowRoot
-      if (shadowRoot) {
-        const found = deepQuerySelector(shadowRoot, selector)
-        if (found) {
-          return found
-        }
-      }
-      const frameDocument = childFrameDocument(element)
-      if (frameDocument) {
-        const frameFound = deepQuerySelector(frameDocument, selector)
-        if (frameFound) {
-          return frameFound
-        }
-      }
-    }
-    return null
-  }
-
-  function childFrameDocument(element: Element): Document | null {
-    if (element.tagName !== 'IFRAME') {
-      return null
-    }
-    try {
-      const frame = element as HTMLIFrameElement
-      return frame.contentDocument || frame.contentWindow?.document || null
-    } catch (_error) {
-      return null
-    }
-  }
-
-  function box(element: Element): Record<string, number> {
-    const rect = element.getBoundingClientRect()
-    let { x, y, width, height } = rect
-    let owner = element.ownerDocument
-    let frame = owner.defaultView?.frameElement as HTMLElement | null
-    while (frame) {
-      const bounds = frame.getBoundingClientRect()
-      const scaleX = frame.offsetWidth ? bounds.width / frame.offsetWidth : 1
-      const scaleY = frame.offsetHeight ? bounds.height / frame.offsetHeight : 1
-      x = bounds.left + (frame.clientLeft + x) * scaleX
-      y = bounds.top + (frame.clientTop + y) * scaleY
-      width *= scaleX
-      height *= scaleY
-      owner = frame.ownerDocument
-      frame = owner.defaultView?.frameElement as HTMLElement | null
-    }
-    return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height }
-  }
-
-  function label(element: Element): string {
-    return String(
-      element.getAttribute('aria-label') ||
-        element.getAttribute('title') ||
-        element.getAttribute('placeholder') ||
-        (element instanceof HTMLElement ? element.innerText : '') ||
-        element.textContent ||
-        element.tagName
-    ).slice(0, 240)
-  }
-
-  // Touch-first pages need touch events for a native tap.
-  const mobileLike =
-    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1
-
-  let element: Element | null = null
-  if (args.selector) {
-    element = deepQuerySelector(document, args.selector)
-    if (!element) {
-      throw new Error(`selector not found: ${args.selector}`)
-    }
-  } else if (
-    typeof args.x === 'number' &&
-    typeof args.y === 'number' &&
-    Number.isFinite(args.x) &&
-    Number.isFinite(args.y)
-  ) {
-    element = document.elementFromPoint(args.x, args.y)
-  } else if (args.action === 'type_text') {
-    const active = document.activeElement
-    const frameActive = active ? childFrameDocument(active)?.activeElement : null
-    element =
-      frameActive && frameActive !== frameActive.ownerDocument.body
-        ? frameActive
-        : active && active !== document.body && active !== document.documentElement
-          ? active
-          : null
-  }
-
-  if (!element) {
-    if (args.action === 'type_text') {
-      throw new Error('type_text requires selector or an active editable element')
-    }
-    throw new Error('selector or x/y coordinates are required')
-  }
-
-  element.scrollIntoView({ block: 'center', inline: 'center' })
-  const rect = box(element)
-  const useExplicitPoint = !args.selector
-  const x =
-    useExplicitPoint && typeof args.x === 'number' && Number.isFinite(args.x)
-      ? args.x
-      : rect.left + Math.max(1, rect.width) / 2
-  const y =
-    useExplicitPoint && typeof args.y === 'number' && Number.isFinite(args.y)
-      ? args.y
-      : rect.top + Math.max(1, rect.height) / 2
-
-  if (args.action === 'type_text') {
-    if (!editableTextInput(element)) {
-      return { native_text_input: false, reason: 'target is not a native text input' }
-    }
-    return {
-      native_text_input: true,
-      x,
-      y,
-      selector: args.selector || null,
-      label: label(element),
-      bounding_box: box(element),
-      mobile_like: mobileLike
-    }
-  }
-
-  return { x, y, label: label(element), bounding_box: box(element), mobile_like: mobileLike }
-}
 
 export function pageActionDispatcher(
   args: BrowserActionArgs
@@ -346,7 +153,30 @@ export function pageActionDispatcher(
     )
   }
 
+  function editableTextInput(element: Element): boolean {
+    if (element.tagName === 'TEXTAREA') {
+      return !(element as HTMLInputElement).readOnly && !(element as HTMLInputElement).disabled
+    }
+    if (element.tagName === 'INPUT') {
+      const type = (element.getAttribute('type') || 'text').toLowerCase()
+      return (
+        !(element as HTMLInputElement).readOnly &&
+        !(element as HTMLInputElement).disabled &&
+        ['email', 'number', 'password', 'search', 'tel', 'text', 'url'].includes(type)
+      )
+    }
+    return (element as HTMLElement).isContentEditable === true
+  }
+
   function preferredMatch(elements: Element[]): Element | null {
+    if (args.action === 'type_text') {
+      return (
+        elements.find((element) => editableTextInput(element) && visible(element)) ||
+        elements.find((element) => visible(element)) ||
+        elements[0] ||
+        null
+      )
+    }
     return (
       elements.find((element) => interactable(element)) ||
       elements.find((element) => visible(element)) ||
@@ -474,6 +304,72 @@ export function pageActionDispatcher(
       return nestedSelect as HTMLSelectElement
     }
     throw new Error(`selector is not a select element: ${selector}`)
+  }
+
+  /** Instant: positions read right after a smooth scroll would be stale. */
+  function scrollIntoCenter(element: Element): void {
+    element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  }
+
+  /** The element's box in top-level viewport coordinates, across frames. */
+  function frameBox(element: Element): Record<string, number> {
+    const rect = element.getBoundingClientRect()
+    let { x, y, width, height } = rect
+    let owner = element.ownerDocument
+    let frame = owner.defaultView?.frameElement as HTMLElement | null
+    while (frame) {
+      const bounds = frame.getBoundingClientRect()
+      const scaleX = frame.offsetWidth ? bounds.width / frame.offsetWidth : 1
+      const scaleY = frame.offsetHeight ? bounds.height / frame.offsetHeight : 1
+      x = bounds.left + (frame.clientLeft + x) * scaleX
+      y = bounds.top + (frame.clientTop + y) * scaleY
+      width *= scaleX
+      height *= scaleY
+      owner = frame.ownerDocument
+      frame = owner.defaultView?.frameElement as HTMLElement | null
+    }
+    return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height }
+  }
+
+  function resolveInputTarget(): Record<string, unknown> {
+    const point = args.selector ? null : pointFromArgs()
+    const element = args.selector
+      ? queryRequired(args.selector)
+      : point
+        ? document.elementFromPoint(point.x, point.y)
+        : args.action === 'type_text'
+          ? editableElement()
+          : null
+    if (!element) {
+      throw new Error(
+        args.action === 'type_text'
+          ? 'type_text requires selector or an active editable element'
+          : 'selector or x/y coordinates are required'
+      )
+    }
+    // An explicit point is where the input lands, so the page must not move.
+    if (!point) {
+      scrollIntoCenter(element)
+    }
+    const bounds = frameBox(element)
+    const target = {
+      ...(point || {
+        x: bounds.left + Math.max(1, bounds.width) / 2,
+        y: bounds.top + Math.max(1, bounds.height) / 2
+      }),
+      label: elementLabel(element),
+      bounding_box: bounds,
+      // Touch-first pages need touch events for a native tap.
+      mobile_like:
+        /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1
+    }
+    if (args.action !== 'type_text') {
+      return target
+    }
+    if (!editableTextInput(element)) {
+      return { native_text_input: false, reason: 'target is not a native text input' }
+    }
+    return { native_text_input: true, selector: args.selector || null, ...target }
   }
 
   function centerOf(element: Element): { x: number; y: number } {
@@ -815,6 +711,10 @@ export function pageActionDispatcher(
     throw new Error('copy command failed')
   }
 
+  if (args.resolve_input_target) {
+    return resolveInputTarget()
+  }
+
   switch (args.action) {
     case 'annotate_viewport': {
       document.getElementById('__anda_viewport_annotations')?.remove()
@@ -1009,7 +909,9 @@ export function pageActionDispatcher(
     }
     case 'click': {
       const element = elementFromSelectorOrPoint()
-      element.scrollIntoView({ block: 'center', inline: 'center' })
+      if (args.selector) {
+        scrollIntoCenter(element)
+      }
       const point = pointerPoint(element)
       dispatchMouse(element, 'mouseover', point)
       dispatchMouse(element, 'mousemove', point)
@@ -1020,7 +922,9 @@ export function pageActionDispatcher(
     }
     case 'hover': {
       const element = elementFromSelectorOrPoint()
-      element.scrollIntoView({ block: 'center', inline: 'center' })
+      if (args.selector) {
+        scrollIntoCenter(element)
+      }
       const point = pointerPoint(element)
       dispatchMouse(element, 'mouseover', point)
       dispatchMouse(element, 'mouseenter', point)
@@ -1029,7 +933,7 @@ export function pageActionDispatcher(
     }
     case 'type_text': {
       const element = editableElement()
-      element.scrollIntoView({ block: 'center', inline: 'center' })
+      scrollIntoCenter(element)
       if (element instanceof HTMLElement) {
         element.focus()
       }
@@ -1065,7 +969,7 @@ export function pageActionDispatcher(
     }
     case 'select_dropdown': {
       const element = selectElement()
-      element.scrollIntoView({ block: 'center', inline: 'center' })
+      scrollIntoCenter(element)
       const value = String(args.value || '')
       const option = Array.from(element.options).find(
         (option) => option.value === value || option.label === value || option.text === value
@@ -1088,7 +992,7 @@ export function pageActionDispatcher(
     case 'scroll': {
       const amount =
         typeof args.amount === 'number' && Number.isFinite(args.amount) ? args.amount : 700
-      window.scrollBy({ top: amount, behavior: 'smooth' })
+      window.scrollBy({ top: amount, behavior: 'instant' })
       return { scrolled: true, amount, scroll_y: window.scrollY }
     }
     case 'scroll_to': {
@@ -1125,7 +1029,7 @@ export function pageActionDispatcher(
             }
             return element
           })()
-      source.scrollIntoView({ block: 'center', inline: 'center' })
+      scrollIntoCenter(source)
       const sourcePoint = centerOf(source)
       const targetPoint = args.to_selector
         ? centerOf(target)

@@ -23,8 +23,9 @@ import type {
  * before the action's own promise resolves. `webNavigation` events are preferred
  * when the permission is granted — they distinguish a same-document history
  * change from a real load — with `tabs.onUpdated` as the fallback. Either way
- * the wait is bounded and best effort: a page that never goes idle yields a
- * `page_ready` block saying so rather than failing the action.
+ * the wait is bounded and best effort: a page that started loading but never
+ * completes (a hung subresource) or never goes idle yields a `page_ready` block
+ * saying so rather than failing the action, which has already navigated.
  */
 
 const ACTION_SETTLE_NO_LOAD_TIMEOUT_MS = 1_000
@@ -211,7 +212,7 @@ function createWebNavigationWaiter(
 
   const finish = (
     details: ChromeWebNavigationDetails | null,
-    event: NavigationEventName | 'already_complete' | 'no_load_detected',
+    event: NavigationEventName | 'already_complete' | 'no_load_detected' | 'load_timed_out',
     extra: Record<string, unknown> = {}
   ) => {
     if (done) {
@@ -315,7 +316,11 @@ function createWebNavigationWaiter(
   }
 
   const timer = setTimeout(() => {
-    fail(lastDetails, `navigation did not reach complete before timeout: ${timeout}ms`)
+    if (sawCommitted) {
+      finish(lastDetails, 'load_timed_out', { loaded: false, timed_out: true })
+    } else {
+      fail(lastDetails, `navigation did not reach complete before timeout: ${timeout}ms`)
+    }
   }, timeout)
 
   webNavigation.onBeforeNavigate?.addListener(onBeforeNavigate)
@@ -447,7 +452,11 @@ function createTabsLoadWatcher(
   }
 
   const timer = setTimeout(() => {
-    fail(`tab did not finish loading before timeout: ${timeout}ms`)
+    if (sawLoading) {
+      finish(lastTab, false, { loaded: false, timed_out: true })
+    } else {
+      fail(`tab did not finish loading before timeout: ${timeout}ms`)
+    }
   }, timeout)
 
   chromeApi.tabs.onUpdated.addListener(listener)
@@ -585,7 +594,10 @@ export async function waitForTabReady(
           args,
           waitOptions?.networkIdleTimeoutMs
         )
-      : { skipped: true, reason: 'no page load detected' }
+      : {
+          skipped: true,
+          reason: load.timed_out ? 'page load timed out' : 'no page load detected'
+        }
     const tab = await chromeApi.tabs.get(tabId).catch(() => null)
     return {
       loaded,

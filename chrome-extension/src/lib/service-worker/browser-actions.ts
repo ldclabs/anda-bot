@@ -23,6 +23,7 @@ import {
   captureScreenshotWithDebugger,
   dispatchNativeKey,
   dispatchNativePointerAction,
+  dispatchNativeScroll,
   dispatchNativeTextInput,
   executeJavaScriptWithDebugger,
   getAccessibilityTree,
@@ -347,6 +348,9 @@ async function executePageAction(
     }
     if (debuggerAvailable && args.action === 'press_key') {
       return settle(await dispatchNativeKey(chromeApi, tabId, args))
+    }
+    if (debuggerAvailable && args.action === 'scroll') {
+      return settle(await dispatchNativeScroll(chromeApi, tabId, args))
     }
     if (debuggerAvailable && args.action === 'type_text') {
       // A null result means the debugger could not focus the field; fall
