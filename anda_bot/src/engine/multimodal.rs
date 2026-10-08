@@ -4,7 +4,7 @@ mod source;
 
 use anda_core::{
     Agent, AgentOutput, BoxError, CompletionFeatures, CompletionRequest, ContentPart,
-    FunctionDefinition, RequestMeta, Resource, StateFeatures, ToolGroupInfo,
+    FunctionDefinition, Resource, StateFeatures, ToolGroupInfo,
 };
 use anda_engine::{context::AgentCtx, model::Model};
 use serde::Deserialize;
@@ -13,20 +13,12 @@ use std::{path::PathBuf, sync::Arc};
 
 use super::resources::ResourceStore;
 use crate::util::http_client::PublicUrlPolicy;
-use attachment::{AttachmentUnderstanding, OtherAttachment, other_understanding_tool_names};
+use attachment::{OtherAttachment, other_understanding_tool_names, understand_attachment};
 pub use catalog::{
     AUDIO_UNDERSTANDING_AGENT_NAME, IMAGE_UNDERSTANDING_AGENT_NAME, MediaKind,
     OTHER_UNDERSTANDING_AGENT_NAME, VIDEO_UNDERSTANDING_AGENT_NAME,
 };
-use source::{MediaSourceLoader, resource_label};
-
-pub const MEDIA_UNDERSTANDING_TOOL_GROUP_ID: &str = catalog::MEDIA_UNDERSTANDING_TOOL_GROUP_ID;
-
-pub fn media_understanding_tool_group_info() -> ToolGroupInfo {
-    let group = catalog::media_understanding_tool_group_info();
-    debug_assert_eq!(group.id, MEDIA_UNDERSTANDING_TOOL_GROUP_ID);
-    group
-}
+use source::{SourceLoader, content_from_resource, media_content, resource_label};
 
 #[derive(Debug, Default, Deserialize)]
 struct MediaUnderstandingArgs {
@@ -48,14 +40,18 @@ struct MediaUnderstandingArgs {
 }
 
 impl MediaUnderstandingArgs {
-    fn from_prompt(prompt: &str) -> Self {
+    /// Parses the tool arguments. A JSON object must match the schema, so a
+    /// mistyped field comes back as an error the model can correct instead of
+    /// turning the whole object into the question. Other text is the question.
+    fn from_prompt(prompt: &str) -> Result<Self, BoxError> {
         let trimmed = prompt.trim();
-        if trimmed.is_empty() {
-            return Self::default();
+        if trimmed.starts_with('{') {
+            return serde_json::from_str(trimmed)
+                .map_err(|err| format!("invalid arguments: {err}").into());
         }
 
-        serde_json::from_str::<Self>(trimmed).unwrap_or_else(|_| Self {
-            question: Some(trimmed.to_string()),
+        Ok(Self {
+            question: (!trimmed.is_empty()).then(|| trimmed.to_string()),
             ..Self::default()
         })
     }
@@ -64,13 +60,28 @@ impl MediaUnderstandingArgs {
         self.resource_id.filter(|id| *id > 0)
     }
 
-    fn question_or_default(&self, kind: MediaKind) -> String {
+    fn question(&self, kind: MediaKind) -> &str {
         self.question
             .as_deref()
             .map(str::trim)
             .filter(|question| !question.is_empty())
-            .map(ToString::to_string)
-            .unwrap_or_else(|| kind.default_question().to_string())
+            .unwrap_or(kind.default_question())
+    }
+
+    /// The `url` and `path` values, trimmed and without blanks. Models often
+    /// put one location in both, which must not load it twice.
+    fn locations(&self) -> Vec<&str> {
+        let mut locations = Vec::with_capacity(2);
+        for location in [&self.url, &self.path]
+            .into_iter()
+            .flatten()
+            .map(|location| location.trim())
+        {
+            if !location.is_empty() && !locations.contains(&location) {
+                locations.push(location);
+            }
+        }
+        locations
     }
 }
 
@@ -124,16 +135,8 @@ impl MediaUnderstandingAgent {
         self
     }
 
-    fn for_context(&self, ctx: &AgentCtx) -> Self {
-        let mut agent = self.clone();
-        if let Some(grants) = &agent.cli_workspaces {
-            agent.workspaces.extend(grants.paths_for(ctx.caller()));
-        }
-        agent
-    }
-
     #[cfg(test)]
-    pub fn with_http_client(mut self, _http: reqwest::Client) -> Self {
+    pub fn allow_private_urls_for_tests(mut self) -> Self {
         self.public_url_policy = PublicUrlPolicy::AllowPrivateForTests;
         self
     }
@@ -142,12 +145,13 @@ impl MediaUnderstandingAgent {
         self.kind.model_label()
     }
 
-    fn source_loader(&self) -> MediaSourceLoader {
-        MediaSourceLoader::new(self.kind, self.workspaces.clone(), self.public_url_policy)
-    }
-
-    fn attachment_understanding(&self) -> AttachmentUnderstanding {
-        AttachmentUnderstanding::new(self.workspaces.clone(), self.public_url_policy)
+    /// Reads from the configured workspaces plus those the caller registered.
+    fn sources(&self, ctx: &AgentCtx) -> SourceLoader {
+        let mut workspaces = self.workspaces.clone();
+        if let Some(grants) = &self.cli_workspaces {
+            workspaces.extend(grants.paths_for(ctx.caller()));
+        }
+        SourceLoader::new(workspaces, self.public_url_policy)
     }
 
     /// Loads a message attachment the caller owns, rejecting one that belongs
@@ -158,7 +162,7 @@ impl MediaUnderstandingAgent {
             .as_ref()
             .ok_or("resource_id is not supported here; pass a path or url")?;
         let resource = store.get_resource_for(id, ctx.caller()).await?;
-        let kind = MediaKind::from_resource(&resource).unwrap_or(MediaKind::Other);
+        let kind = MediaKind::from_resource(&resource);
         if kind != self.kind {
             return Err(format!(
                 "resource {id} ({}) is not {} media; use {} instead",
@@ -171,67 +175,62 @@ impl MediaUnderstandingAgent {
         Ok(resource)
     }
 
-    async fn run_other(
+    /// Sends image, audio or video inputs to the model with this kind's label.
+    async fn understand_media(
         &self,
-        ctx: AgentCtx,
-        prompt: String,
+        ctx: &AgentCtx,
+        sources: &SourceLoader,
+        question: &str,
         resources: Vec<Resource>,
+        locations: &[&str],
     ) -> Result<AgentOutput, BoxError> {
-        let args = MediaUnderstandingArgs::from_prompt(&prompt);
-        let question = args.question_or_default(self.kind);
-        let attachment_understanding = self.attachment_understanding();
-        let mut attachments = Vec::with_capacity(resources.len() + 2);
-
+        let prompt = self.completion_prompt(question, resources.len(), locations.len());
+        let mut content = Vec::with_capacity(resources.len() + locations.len());
         for resource in resources {
-            attachments.push(OtherAttachment::from_resource(resource));
+            content.push(content_from_resource(self.kind, resource)?);
+        }
+        for location in locations {
+            content.push(media_content(
+                self.kind,
+                sources.load(ctx.meta(), location).await?,
+            )?);
         }
 
-        if let Some(id) = args.resource_id() {
-            let resource = self.resource_by_id(&ctx, id).await?;
-            attachments.push(OtherAttachment::from_resource(resource));
-        }
+        ctx.completion(
+            CompletionRequest {
+                instructions: self.kind.instructions(),
+                prompt,
+                content,
+                ..Default::default()
+            },
+            Vec::new(),
+        )
+        .await
+    }
 
-        if let Some(url) = args
-            .url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-        {
-            attachments.push(
-                attachment_understanding
-                    .attachment_from_location(ctx.meta(), url)
-                    .await?,
-            );
-        }
-
-        if let Some(path) = args
-            .path
-            .as_deref()
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-        {
-            attachments.push(
-                attachment_understanding
-                    .attachment_from_location(ctx.meta(), path)
-                    .await?,
-            );
-        }
-
-        if attachments.is_empty() {
-            return Err(
-                format!("{OTHER_UNDERSTANDING_AGENT_NAME} requires a resource_id, attached resource, workspace file path, or URL")
-                    .into(),
-            );
+    /// Understands each attachment on its own, so one that fails leaves the
+    /// others' results intact.
+    async fn understand_attachments(
+        &self,
+        ctx: &AgentCtx,
+        sources: &SourceLoader,
+        question: &str,
+        resources: Vec<Resource>,
+        locations: &[&str],
+    ) -> Result<AgentOutput, BoxError> {
+        let mut attachments: Vec<OtherAttachment> = resources
+            .into_iter()
+            .map(OtherAttachment::from_resource)
+            .collect();
+        for location in locations {
+            attachments.push(sources.load(ctx.meta(), location).await?.into());
         }
 
         let mut output = AgentOutput::default();
         let mut sections = Vec::with_capacity(attachments.len());
         for attachment in attachments {
             let label = attachment.label.clone();
-            match self
-                .understand_other_attachment(&ctx, attachment, &question)
-                .await
-            {
+            match understand_attachment(ctx, sources, attachment, question).await {
                 Ok(section) => {
                     output.usage.accumulate(&section.usage);
                     let content = section.content.trim();
@@ -251,64 +250,25 @@ impl MediaUnderstandingAgent {
         Ok(output)
     }
 
-    async fn understand_other_attachment(
-        &self,
-        ctx: &AgentCtx,
-        attachment: OtherAttachment,
-        question: &str,
-    ) -> Result<AgentOutput, BoxError> {
-        self.attachment_understanding()
-            .understand(ctx, attachment, question)
-            .await
-    }
-
-    async fn content_from_location(
-        &self,
-        meta: &RequestMeta,
-        location: &str,
-    ) -> Result<ContentPart, BoxError> {
-        self.source_loader()
-            .content_from_location(meta, location)
-            .await
-    }
-
-    fn content_from_resource(&self, resource: Resource) -> Result<ContentPart, BoxError> {
-        self.source_loader().content_from_resource(resource)
-    }
-
-    fn completion_prompt(
-        &self,
-        args: &MediaUnderstandingArgs,
-        resources_len: usize,
-        locations_len: usize,
-    ) -> String {
-        let target = match (resources_len, locations_len) {
-            (0, 0) => "the supplied media".to_string(),
-            (0, 1) => "the media file at the supplied path or URL".to_string(),
-            (0, locations_len) => {
-                format!("the {locations_len} media files at the supplied paths or URLs")
-            }
-            (1, 0) => format!("the attached {} resource", self.kind.noun()),
-            (resources_len, 0) => {
-                format!(
-                    "the {resources_len} attached {} resources",
-                    self.kind.noun()
-                )
-            }
-            (1, 1) => format!(
-                "the attached {} resource and the media file at the supplied path or URL",
-                self.kind.noun()
-            ),
-            (resources_len, locations_len) => format!(
-                "the {resources_len} attached {} resources and the {locations_len} media files at the supplied paths or URLs",
-                self.kind.noun()
-            ),
+    fn completion_prompt(&self, question: &str, resources: usize, locations: usize) -> String {
+        let noun = self.kind.noun();
+        let attached = match resources {
+            0 => None,
+            1 => Some(format!("the attached {noun} resource")),
+            n => Some(format!("the {n} attached {noun} resources")),
         };
+        let located = match locations {
+            0 => None,
+            1 => Some("the media file at the supplied path or URL".to_string()),
+            n => Some(format!("the {n} media files at the supplied paths or URLs")),
+        };
+        let target = attached
+            .into_iter()
+            .chain(located)
+            .collect::<Vec<_>>()
+            .join(" and ");
 
-        format!(
-            "Understand {target}. Caller question or focus:\n{}",
-            args.question_or_default(self.kind)
-        )
+        format!("Understand {target}. Caller question or focus:\n{question}")
     }
 }
 
@@ -354,11 +314,11 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
     }
 
     fn group(&self) -> Option<ToolGroupInfo> {
-        Some(media_understanding_tool_group_info())
+        Some(catalog::media_understanding_tool_group_info())
     }
 
     fn supported_resource_tags(&self) -> Vec<String> {
-        self.kind.tags()
+        self.kind.tags().iter().map(|tag| tag.to_string()).collect()
     }
 
     fn tool_dependencies(&self) -> Vec<String> {
@@ -373,67 +333,30 @@ impl Agent<AgentCtx> for MediaUnderstandingAgent {
         &self,
         ctx: AgentCtx,
         prompt: String,
-        resources: Vec<Resource>,
+        mut resources: Vec<Resource>,
     ) -> Result<AgentOutput, BoxError> {
-        let agent = self.for_context(&ctx);
-        if self.kind == MediaKind::Other {
-            return agent.run_other(ctx, prompt, resources).await;
-        }
-
-        let args = MediaUnderstandingArgs::from_prompt(&prompt);
-        let mut resources_len = resources.len();
-        let mut locations_len = 0;
-        let mut content = Vec::with_capacity(resources.len() + 3);
-
-        for resource in resources {
-            content.push(self.content_from_resource(resource)?);
-        }
-
+        let args = MediaUnderstandingArgs::from_prompt(&prompt)?;
         if let Some(id) = args.resource_id() {
-            let resource = agent.resource_by_id(&ctx, id).await?;
-            content.push(agent.content_from_resource(resource)?);
-            resources_len += 1;
+            resources.push(self.resource_by_id(&ctx, id).await?);
         }
-
-        if let Some(url) = args
-            .url
-            .as_deref()
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-        {
-            content.push(agent.content_from_location(ctx.meta(), url).await?);
-            locations_len += 1;
-        }
-
-        if let Some(path) = args
-            .path
-            .as_deref()
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-        {
-            content.push(agent.content_from_location(ctx.meta(), path).await?);
-            locations_len += 1;
-        }
-
-        if content.is_empty() {
+        let locations = args.locations();
+        if resources.is_empty() && locations.is_empty() {
             return Err(format!(
-                "{} requires a resource_id, attached {} resource, workspace file path, or media URL",
-                self.kind.agent_name(),
-                self.kind.noun()
+                "{} requires a resource_id, an attached resource, a workspace file path, or a URL",
+                self.kind.agent_name()
             )
             .into());
         }
 
-        ctx.completion(
-            CompletionRequest {
-                instructions: self.kind.instructions(),
-                prompt: self.completion_prompt(&args, resources_len, locations_len),
-                content,
-                ..Default::default()
-            },
-            Vec::new(),
-        )
-        .await
+        let sources = self.sources(&ctx);
+        let question = args.question(self.kind);
+        if self.kind == MediaKind::Other {
+            self.understand_attachments(&ctx, &sources, question, resources, &locations)
+                .await
+        } else {
+            self.understand_media(&ctx, &sources, question, resources, &locations)
+                .await
+        }
     }
 }
 
@@ -450,20 +373,11 @@ pub fn media_agent_names() -> Vec<String> {
 }
 
 pub fn supported_media_resource_tags() -> Vec<String> {
-    let mut tags = Vec::new();
-    for kind in [
-        MediaKind::Image,
-        MediaKind::Audio,
-        MediaKind::Video,
-        MediaKind::Other,
-    ] {
-        for tag in kind.tags() {
-            if !tags.contains(&tag) {
-                tags.push(tag);
-            }
-        }
-    }
-    tags
+    MediaKind::ALL
+        .iter()
+        .flat_map(|kind| kind.tags())
+        .map(|tag| tag.to_string())
+        .collect()
 }
 
 /// Image formats every built-in provider accepts inline. Others stay references, because a
@@ -498,7 +412,6 @@ pub fn inline_images(model: Option<&Model>, attachments: &[Resource]) -> Vec<Opt
                 blob,
                 &resource.name,
                 resource.mime_type.as_deref(),
-                "application/octet-stream",
             );
             if !INLINE_IMAGE_MIME_TYPES.contains(&mime_type.as_str()) {
                 return None;
@@ -530,15 +443,16 @@ pub fn attachment_content(
 /// Understanding agents a session should load up front so the model can
 /// inspect these attachments without discovering the tools first.
 pub fn media_agent_names_for(resources: &[Resource]) -> Vec<String> {
-    let mut names = Vec::new();
-    for resource in resources {
-        let kind = MediaKind::from_resource(resource).unwrap_or(MediaKind::Other);
-        let name = kind.agent_name().to_string();
-        if !names.contains(&name) {
-            names.push(name);
+    let mut kinds = Vec::new();
+    for kind in resources.iter().map(MediaKind::from_resource) {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
         }
     }
-    names
+    kinds
+        .into_iter()
+        .map(|kind| kind.agent_name().to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -546,17 +460,26 @@ mod tests {
     use super::*;
     use crate::util::json_schema::assert_openai_strict_parameters;
     use anda_core::ByteBufB64;
+    use axum::{Router, http::StatusCode as AxumStatus, routing::get};
 
     const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
 
-    #[test]
-    fn media_understanding_schema_is_openai_strict() {
-        for agent in [
+    fn all_agents() -> [MediaUnderstandingAgent; 4] {
+        [
             MediaUnderstandingAgent::image(Vec::new()),
             MediaUnderstandingAgent::audio(Vec::new()),
             MediaUnderstandingAgent::video(Vec::new()),
             MediaUnderstandingAgent::other(Vec::new()),
-        ] {
+        ]
+    }
+
+    fn parse(prompt: &str) -> MediaUnderstandingArgs {
+        MediaUnderstandingArgs::from_prompt(prompt).expect("arguments should parse")
+    }
+
+    #[test]
+    fn media_understanding_schema_is_openai_strict() {
+        for agent in all_agents() {
             let definition = agent.definition();
             assert_eq!(definition.strict, Some(true));
             assert_openai_strict_parameters(&definition.parameters);
@@ -565,14 +488,9 @@ mod tests {
 
     #[test]
     fn media_understanding_agents_share_tool_group() {
-        for agent in [
-            MediaUnderstandingAgent::image(Vec::new()),
-            MediaUnderstandingAgent::audio(Vec::new()),
-            MediaUnderstandingAgent::video(Vec::new()),
-            MediaUnderstandingAgent::other(Vec::new()),
-        ] {
+        for agent in all_agents() {
             let group = agent.group().expect("media agent should report a group");
-            assert_eq!(group.id, MEDIA_UNDERSTANDING_TOOL_GROUP_ID);
+            assert_eq!(group.id, catalog::MEDIA_UNDERSTANDING_TOOL_GROUP_ID);
             assert_eq!(group.title, "Media understanding");
             assert!(
                 group
@@ -585,9 +503,7 @@ mod tests {
 
     #[test]
     fn parses_json_args_with_path_and_question() {
-        let args = MediaUnderstandingArgs::from_prompt(
-            r#"{"path":"images/cat.png","question":"What is unusual?"}"#,
-        );
+        let args = parse(r#"{"path":"images/cat.png","question":"What is unusual?"}"#);
 
         assert_eq!(args.path.as_deref(), Some("images/cat.png"));
         assert_eq!(args.url, None);
@@ -596,9 +512,7 @@ mod tests {
 
     #[test]
     fn parses_json_args_with_url_and_question() {
-        let args = MediaUnderstandingArgs::from_prompt(
-            r#"{"url":"https://example.com/cat.png","question":"What is unusual?"}"#,
-        );
+        let args = parse(r#"{"url":"https://example.com/cat.png","question":"What is unusual?"}"#);
 
         assert_eq!(args.path, None);
         assert_eq!(args.url.as_deref(), Some("https://example.com/cat.png"));
@@ -607,11 +521,19 @@ mod tests {
 
     #[test]
     fn plain_prompt_becomes_question() {
-        let args = MediaUnderstandingArgs::from_prompt("describe the scene");
+        let args = parse("describe the scene");
 
         assert_eq!(args.path, None);
         assert_eq!(args.url, None);
         assert_eq!(args.question.as_deref(), Some("describe the scene"));
+    }
+
+    #[test]
+    fn mistyped_json_args_are_an_error_not_a_question() {
+        let err = MediaUnderstandingArgs::from_prompt(r#"{"resource_id":"42","path":"a.png"}"#)
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("invalid arguments"));
     }
 
     #[test]
@@ -622,29 +544,40 @@ mod tests {
 
     #[test]
     fn blank_alias_question_uses_default_question() {
-        let args =
-            MediaUnderstandingArgs::from_prompt(r#"{"path":"audio/sample.mp3","query":"   "}"#);
+        let args = parse(r#"{"path":"audio/sample.mp3","query":"   "}"#);
 
         assert_eq!(args.path.as_deref(), Some("audio/sample.mp3"));
         assert_eq!(
-            args.question_or_default(MediaKind::Audio),
+            args.question(MediaKind::Audio),
             MediaKind::Audio.default_question()
         );
     }
 
     #[test]
-    fn parses_resource_id_and_its_alias() {
-        let args =
-            MediaUnderstandingArgs::from_prompt(r#"{"resource_id":42,"question":"What is red?"}"#);
-        assert_eq!(args.resource_id(), Some(42));
-        assert_eq!(args.question.as_deref(), Some("What is red?"));
+    fn locations_skip_blanks_and_repeats() {
+        let args = parse(r#"{"url":" a.png ","path":"a.png"}"#);
+        assert_eq!(args.locations(), vec!["a.png"]);
 
-        let args = MediaUnderstandingArgs::from_prompt(r#"{"_id":7}"#);
-        assert_eq!(args.resource_id(), Some(7));
+        let args = parse(r#"{"url":"https://example.com/a.png","path":"b.png"}"#);
+        assert_eq!(args.locations(), vec!["https://example.com/a.png", "b.png"]);
+
+        let args = parse(r#"{"url":"  ","path":null}"#);
+        assert!(args.locations().is_empty());
+    }
+
+    #[test]
+    fn parses_resource_id_and_its_alias() {
+        let parsed = parse(r#"{"resource_id":42,"question":"What is red?"}"#);
+        assert_eq!(parsed.resource_id(), Some(42));
+        assert_eq!(parsed.question.as_deref(), Some("What is red?"));
+
+        assert_eq!(parse(r#"{"_id":7}"#).resource_id(), Some(7));
 
         // A zero id is the strict-schema "absent" value some models send.
-        let args = MediaUnderstandingArgs::from_prompt(r#"{"resource_id":0,"path":"a.png"}"#);
-        assert_eq!(args.resource_id(), None);
+        assert_eq!(
+            parse(r#"{"resource_id":0,"path":"a.png"}"#).resource_id(),
+            None
+        );
     }
 
     fn image_model(labels: &[&str]) -> Model {
@@ -786,10 +719,14 @@ mod tests {
         );
     }
 
-    use axum::{Router, http::StatusCode as AxumStatus, routing::get};
-
     fn mock_ctx() -> AgentCtx {
         anda_engine::engine::EngineBuilder::new().mock_ctx()
+    }
+
+    fn mock_model_ctx() -> AgentCtx {
+        anda_engine::engine::EngineBuilder::new()
+            .with_model(anda_engine::model::Model::mock_implemented())
+            .mock_ctx()
     }
 
     fn text_resource(name: &str, body: &str) -> Resource {
@@ -802,60 +739,42 @@ mod tests {
         }
     }
 
+    fn image_resource() -> Resource {
+        Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn media_understanding_args_from_blank_prompt_is_default() {
-        let args = MediaUnderstandingArgs::from_prompt("   ");
+        let args = parse("   ");
         assert!(args.path.is_none() && args.url.is_none() && args.question.is_none());
     }
 
     #[test]
     fn completion_prompt_describes_inputs() {
         let agent = MediaUnderstandingAgent::image(Vec::new());
-        let args = MediaUnderstandingArgs::from_prompt("focus");
-        assert!(
-            agent
-                .completion_prompt(&args, 0, 0)
-                .contains("the supplied media")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 0, 1)
-                .contains("the media file at")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 0, 2)
-                .contains("2 media files")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 1, 0)
-                .contains("attached image resource")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 2, 0)
-                .contains("2 attached image resources")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 1, 1)
-                .contains("and the media file")
-        );
-        assert!(
-            agent
-                .completion_prompt(&args, 2, 2)
-                .contains("2 attached image")
-        );
+        let prompt = |resources, locations| agent.completion_prompt("focus", resources, locations);
+        assert!(prompt(0, 1).contains("Understand the media file at the supplied path or URL."));
+        assert!(prompt(0, 2).contains("the 2 media files at the supplied paths or URLs"));
+        assert!(prompt(1, 0).contains("Understand the attached image resource."));
+        assert!(prompt(2, 0).contains("the 2 attached image resources"));
+        assert!(prompt(1, 1).contains(
+            "the attached image resource and the media file at the supplied path or URL"
+        ));
+        assert!(prompt(2, 2).contains("2 attached image resources and the 2 media files"));
+        assert!(prompt(1, 0).ends_with("Caller question or focus:\nfocus"));
     }
 
     #[tokio::test]
     async fn run_other_inlines_small_text_attachment() {
-        let ctx = mock_ctx();
         let agent = MediaUnderstandingAgent::other(Vec::new());
         let output = agent
             .run(
-                ctx,
+                mock_ctx(),
                 "summarize".to_string(),
                 vec![text_resource("notes.txt", "hello world")],
             )
@@ -870,7 +789,6 @@ mod tests {
         // RTF decodes as plain text, so this also pins the routing order: the
         // content signature has to win over the text path, or the agent would
         // hand the model raw control words instead of Markdown.
-        let ctx = mock_ctx();
         let agent = MediaUnderstandingAgent::other(Vec::new());
         let resource = Resource {
             name: "memo.rtf".to_string(),
@@ -882,7 +800,7 @@ mod tests {
         };
 
         let output = agent
-            .run(ctx, "summarize".to_string(), vec![resource])
+            .run(mock_ctx(), "summarize".to_string(), vec![resource])
             .await
             .expect("document attachment should convert without a model");
 
@@ -892,23 +810,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_other_requires_attachments() {
-        let ctx = mock_ctx();
-        let agent = MediaUnderstandingAgent::other(Vec::new());
-        let err = agent
-            .run(ctx, "{}".to_string(), vec![])
+    async fn run_requires_an_input() {
+        for agent in all_agents() {
+            let err = agent
+                .run(mock_ctx(), "{}".to_string(), vec![])
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert!(err.to_string().contains("requires a resource_id"));
+        }
+    }
+
+    #[tokio::test]
+    async fn run_rejects_mistyped_arguments() {
+        let err = MediaUnderstandingAgent::image(Vec::new())
+            .run(
+                mock_ctx(),
+                r#"{"resource_id":"7","question":"what?"}"#.to_string(),
+                vec![],
+            )
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("requires a resource_id"));
+        assert!(err.to_string().contains("invalid arguments"));
     }
 
     #[tokio::test]
     async fn run_other_absorbs_fallback_failures_into_sections() {
-        // A binary, non-text, non-pdf attachment falls through to the model
-        // fallback, which fails on the mock ctx; the error is captured in the
-        // section text rather than failing the whole run.
-        let ctx = mock_ctx();
+        // A binary, non-text, non-document attachment falls through to the
+        // model fallback, which fails on the mock ctx; the error is captured in
+        // the section text rather than failing the whole run.
         let agent = MediaUnderstandingAgent::other(Vec::new());
         let resource = Resource {
             name: "blob.bin".to_string(),
@@ -917,25 +848,18 @@ mod tests {
             ..Default::default()
         };
         let output = agent
-            .run(ctx, "{}".to_string(), vec![resource])
+            .run(mock_ctx(), "{}".to_string(), vec![resource])
             .await
             .expect("run_other should not fail on fallback errors");
-        assert!(output.content.contains("Failed to understand") || !output.content.is_empty());
+        assert!(output.content.contains("Failed to understand blob.bin"));
     }
 
     #[tokio::test]
     async fn run_image_builds_content_then_fails_without_model() {
-        let ctx = mock_ctx();
         let agent = MediaUnderstandingAgent::image(Vec::new());
-        let resource = Resource {
-            name: "photo.png".to_string(),
-            mime_type: Some("image/png".to_string()),
-            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
-            ..Default::default()
-        };
-        // content_from_resource succeeds; the completion fails (no model).
+        // The content builds; the completion fails (no model).
         let err = agent
-            .run(ctx, "{}".to_string(), vec![resource])
+            .run(mock_ctx(), "{}".to_string(), vec![image_resource()])
             .await
             .map(|_| ())
             .unwrap_err();
@@ -943,49 +867,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_image_requires_some_content() {
-        let ctx = mock_ctx();
-        let agent = MediaUnderstandingAgent::image(Vec::new());
-        let err = agent
-            .run(ctx, "{}".to_string(), vec![])
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("requires a resource_id"));
-    }
-
-    #[tokio::test]
-    async fn other_attachment_from_http_url_fetches_and_reports_status() {
+    async fn url_inputs_are_fetched_and_checked() {
         let app = Router::new()
             .route("/doc.txt", get(|| async { "remote body" }))
-            .route("/missing", get(|| async { (AxumStatus::NOT_FOUND, "") }));
-        let base = crate::test_support::spawn_http_mock(app).await;
-        let agent = MediaUnderstandingAgent::other(Vec::new())
-            .with_http_client(crate::util::http_client::new_reqwest_client());
-
-        let url = reqwest::Url::parse(&format!("{base}/doc.txt")).unwrap();
-        let attachment = agent
-            .attachment_understanding()
-            .attachment_from_http_url(url)
-            .await
-            .unwrap();
-        assert_eq!(attachment.data.as_deref(), Some(b"remote body".as_ref()));
-        assert_eq!(attachment.name, "doc.txt");
-
-        let missing = reqwest::Url::parse(&format!("{base}/missing")).unwrap();
-        let err = agent
-            .attachment_understanding()
-            .attachment_from_http_url(missing)
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("failed to fetch attachment"));
-    }
-
-    #[tokio::test]
-    async fn content_from_http_url_validates_status_and_kind() {
-        let app = Router::new()
-            .route("/img", get(|| async { (AxumStatus::NOT_FOUND, "") }))
+            .route("/missing", get(|| async { (AxumStatus::NOT_FOUND, "") }))
             .route(
                 "/text",
                 get(|| async {
@@ -996,55 +881,88 @@ mod tests {
                 }),
             );
         let base = crate::test_support::spawn_http_mock(app).await;
-        let agent = MediaUnderstandingAgent::image(Vec::new())
-            .with_http_client(crate::util::http_client::new_reqwest_client());
+        let url_args = |path: &str| json!({ "url": format!("{base}{path}") }).to_string();
 
-        let missing = reqwest::Url::parse(&format!("{base}/img")).unwrap();
-        let err = agent
-            .source_loader()
-            .content_from_http_url(missing)
+        let other = MediaUnderstandingAgent::other(Vec::new()).allow_private_urls_for_tests();
+        let output = other
+            .run(mock_ctx(), url_args("/doc.txt"), vec![])
+            .await
+            .expect("a fetched text file should be inlined");
+        assert!(output.content.contains("remote body"));
+        let err = other
+            .run(mock_ctx(), url_args("/missing"), vec![])
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("failed to fetch media"));
+        assert!(err.to_string().contains("failed to fetch"));
 
-        let wrong_kind = reqwest::Url::parse(&format!("{base}/text")).unwrap();
-        let err = agent
-            .source_loader()
-            .content_from_http_url(wrong_kind)
+        let image = MediaUnderstandingAgent::image(Vec::new()).allow_private_urls_for_tests();
+        let err = image
+            .run(mock_ctx(), url_args("/missing"), vec![])
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to fetch"));
+        let err = image
+            .run(mock_ctx(), url_args("/text"), vec![])
             .await
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("does not look like image media"));
     }
 
-    fn mock_model_ctx() -> AgentCtx {
-        anda_engine::engine::EngineBuilder::new()
-            .with_model(anda_engine::model::Model::mock_implemented())
-            .mock_ctx()
+    #[tokio::test]
+    async fn one_location_in_url_and_path_is_loaded_once() {
+        let app = Router::new().route(
+            "/cat.png",
+            get(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "image/png")],
+                    PNG_SIGNATURE.to_vec(),
+                )
+            }),
+        );
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let location = format!("{base}/cat.png");
+        let agent = MediaUnderstandingAgent::image(Vec::new()).allow_private_urls_for_tests();
+
+        let output = agent
+            .run(
+                mock_model_ctx(),
+                json!({ "url": location, "path": location }).to_string(),
+                vec![],
+            )
+            .await
+            .expect("the image should be understood");
+
+        // The mock model echoes the prompt, which counts the inputs.
+        assert!(
+            output
+                .content
+                .contains("the media file at the supplied path or URL")
+        );
+        assert!(!output.content.contains("2 media files"));
     }
 
     #[tokio::test]
     async fn run_other_summarizes_large_text_via_model() {
-        // A text attachment larger than the inline limit is routed through the
-        // model summary path, which succeeds with the deterministic mock model.
-        let ctx = mock_model_ctx();
+        // Text beyond the inline limit is summarized, which succeeds with the
+        // deterministic mock model.
         let agent = MediaUnderstandingAgent::other(Vec::new());
-        let big = "lorem ipsum ".repeat(8000); // large enough to use the summary path
+        let big = "lorem ipsum ".repeat(8000);
         let output = agent
             .run(
-                ctx,
+                mock_model_ctx(),
                 "summarize".to_string(),
                 vec![text_resource("big.txt", &big)],
             )
             .await
             .expect("large text summary should succeed");
-        assert!(output.content.contains("too large to inline") || !output.content.is_empty());
+        assert!(output.content.contains("too large to inline"));
     }
 
     #[tokio::test]
     async fn run_other_falls_back_to_model_for_binary_attachment() {
-        let ctx = mock_model_ctx();
         let agent = MediaUnderstandingAgent::other(Vec::new());
         let resource = Resource {
             name: "blob.bin".to_string(),
@@ -1053,7 +971,7 @@ mod tests {
             ..Default::default()
         };
         let output = agent
-            .run(ctx, "{}".to_string(), vec![resource])
+            .run(mock_model_ctx(), "{}".to_string(), vec![resource])
             .await
             .expect("fallback understanding should succeed with the mock model");
         assert!(!output.content.is_empty());
@@ -1061,16 +979,9 @@ mod tests {
 
     #[tokio::test]
     async fn run_image_completes_with_mock_model() {
-        let ctx = mock_model_ctx();
         let agent = MediaUnderstandingAgent::image(Vec::new());
-        let resource = Resource {
-            name: "photo.png".to_string(),
-            mime_type: Some("image/png".to_string()),
-            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
-            ..Default::default()
-        };
         let output = agent
-            .run(ctx, "{}".to_string(), vec![resource])
+            .run(mock_model_ctx(), "{}".to_string(), vec![image_resource()])
             .await
             .expect("image understanding should complete with the mock model");
         assert!(output.content.contains("attached image resource"));
@@ -1085,12 +996,7 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let image = Resource {
-            name: "photo.png".to_string(),
-            mime_type: Some("image/png".to_string()),
-            blob: Some(ByteBufB64(PNG_SIGNATURE.to_vec())),
-            ..Default::default()
-        };
+        let image = image_resource();
         let saved = store
             .persist_resources(
                 ctx.caller(),
@@ -1154,7 +1060,7 @@ mod tests {
 
     #[tokio::test]
     async fn media_access_honors_owner_registered_workspaces_only() {
-        use anda_core::{Principal, StateFeatures};
+        use anda_core::Principal;
         let temp = tempfile::tempdir().unwrap();
         let configured = temp.path().join("configured");
         let registered = temp.path().join("registered");
@@ -1163,27 +1069,26 @@ mod tests {
         tokio::fs::write(registered.join("note.txt"), b"registered data")
             .await
             .unwrap();
+        let note = registered.join("note.txt");
+        let note = note.to_str().unwrap();
         let owner = Principal::from_slice(&[1]);
         let grants = crate::engine::shell_runtime::CliWorkspaceGrants::new(owner);
         grants.register(&registered).await.unwrap();
         let agent = MediaUnderstandingAgent::other(vec![configured]).with_cli_workspaces(grants);
-        let ctx = anda_engine::engine::EngineBuilder::new()
-            .mock_ctx()
-            .with_caller(owner);
-        let local = agent.for_context(&ctx);
+        let ctx = mock_ctx().with_caller(owner);
         assert!(
-            local
-                .attachment_understanding()
-                .attachment_from_path(ctx.meta(), registered.join("note.txt").to_str().unwrap())
+            agent
+                .sources(&ctx)
+                .load_path(ctx.meta(), note)
                 .await
                 .is_ok()
         );
+
         let other = ctx.with_caller(Principal::from_slice(&[2]));
         assert!(
             agent
-                .for_context(&other)
-                .attachment_understanding()
-                .attachment_from_path(other.meta(), registered.join("note.txt").to_str().unwrap())
+                .sources(&other)
+                .load_path(other.meta(), note)
                 .await
                 .is_err()
         );

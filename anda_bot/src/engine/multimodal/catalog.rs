@@ -39,6 +39,8 @@ pub enum MediaKind {
 }
 
 impl MediaKind {
+    pub const ALL: [Self; 4] = [Self::Image, Self::Audio, Self::Video, Self::Other];
+
     pub fn agent_name(self) -> &'static str {
         match self {
             Self::Image => IMAGE_UNDERSTANDING_AGENT_NAME,
@@ -83,19 +85,16 @@ impl MediaKind {
         }
     }
 
-    pub fn tags(self) -> Vec<String> {
+    pub fn tags(self) -> &'static [&'static str] {
         match self {
-            Self::Image => ["image"].into_iter().map(ToString::to_string).collect(),
-            Self::Audio => ["audio"].into_iter().map(ToString::to_string).collect(),
-            Self::Video => ["video"].into_iter().map(ToString::to_string).collect(),
-            Self::Other => [
+            Self::Image => &["image"],
+            Self::Audio => &["audio"],
+            Self::Video => &["video"],
+            Self::Other => &[
                 "text", "txt", "md", "markdown", "pdf", "json", "csv", "tsv", "doc", "docx", "xls",
                 "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "html", "xml", "yaml", "toml",
                 "log", "document", "file", "other",
-            ]
-            .into_iter()
-            .map(ToString::to_string)
-            .collect(),
+            ],
         }
     }
 
@@ -127,8 +126,10 @@ impl MediaKind {
         )
     }
 
-    pub fn from_resource(resource: &Resource) -> Option<Self> {
-        let media_kind = resource
+    /// The kind of an attachment. Anything that is not recognizably image,
+    /// audio or video is `Other`.
+    pub fn from_resource(resource: &Resource) -> Self {
+        resource
             .mime_type
             .as_deref()
             .and_then(Self::from_mime_type)
@@ -144,9 +145,8 @@ impl MediaKind {
                     .and_then(|kind| Self::from_mime_type(kind.mime_type()))
             })
             .or_else(|| Self::from_tags(&resource.tags))
-            .or_else(|| extension_from_name(&resource.name).and_then(Self::from_extension));
-
-        media_kind.or_else(|| is_other_resource_candidate(resource).then_some(Self::Other))
+            .or_else(|| extension_from_name(&resource.name).and_then(Self::from_extension))
+            .unwrap_or(Self::Other)
     }
 
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
@@ -200,22 +200,7 @@ impl MediaKind {
     }
 }
 
-fn is_other_resource_candidate(resource: &Resource) -> bool {
-    resource.blob.is_some()
-        || resource
-            .uri
-            .as_deref()
-            .is_some_and(|uri| !uri.trim().is_empty())
-        || !resource.name.trim().is_empty()
-        || resource
-            .mime_type
-            .as_deref()
-            .is_some_and(|mime_type| !mime_type.trim().is_empty())
-        || resource.size.unwrap_or_default() > 0
-        || resource.tags.iter().any(|tag| !tag.trim().is_empty())
-}
-
-fn extension_from_name(name: &str) -> Option<&str> {
+pub(super) fn extension_from_name(name: &str) -> Option<&str> {
     Path::new(name).extension().and_then(|ext| ext.to_str())
 }
 
@@ -226,12 +211,7 @@ mod tests {
 
     #[test]
     fn media_kind_metadata_covers_every_variant() {
-        for kind in [
-            MediaKind::Image,
-            MediaKind::Audio,
-            MediaKind::Video,
-            MediaKind::Other,
-        ] {
+        for kind in MediaKind::ALL {
             assert!(!kind.agent_name().is_empty());
             assert!(!kind.model_label().is_empty());
             assert!(!kind.noun().is_empty());
@@ -297,7 +277,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Audio));
+        assert_eq!(MediaKind::from_resource(&resource), MediaKind::Audio);
     }
 
     #[test]
@@ -308,7 +288,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_resource(&resource), MediaKind::Other);
     }
 
     #[test]
@@ -319,7 +299,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Other));
+        assert_eq!(MediaKind::from_resource(&resource), MediaKind::Other);
     }
 
     #[test]
@@ -330,16 +310,15 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(MediaKind::from_resource(&resource), Some(MediaKind::Video));
+        assert_eq!(MediaKind::from_resource(&resource), MediaKind::Video);
     }
 
     #[test]
-    fn other_resource_candidate_and_group_info_are_complete() {
-        assert!(!is_other_resource_candidate(&Resource::default()));
-        assert!(is_other_resource_candidate(&Resource {
-            name: "x".to_string(),
-            ..Default::default()
-        }));
+    fn empty_resource_is_other_and_group_info_is_complete() {
+        assert_eq!(
+            MediaKind::from_resource(&Resource::default()),
+            MediaKind::Other
+        );
 
         let group = media_understanding_tool_group_info();
         assert_eq!(group.id, MEDIA_UNDERSTANDING_TOOL_GROUP_ID);

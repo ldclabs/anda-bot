@@ -1,6 +1,6 @@
 use anda_core::{
     AgentContext, AgentOutput, BoxError, ByteBufB64, CompletionFeatures, CompletionRequest,
-    ContentPart, RequestMeta, Resource, StateFeatures, inline_data_from_data_url, text_from_bytes,
+    ContentPart, RequestMeta, Resource, StateFeatures, text_from_bytes,
     text_from_bytes_with_encoding,
 };
 use anda_engine::{
@@ -15,390 +15,236 @@ use anda_engine::{
 };
 use anydoc::Format;
 use ic_auth_types::Xid;
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
+use tempfile::TempPath;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    catalog::MediaKind,
+    catalog::{MediaKind, extension_from_name},
     source::{
-        MAX_MEDIA_FILE_SIZE_BYTES, extension_from_name, mime_type_for_data_or_name,
-        mime_type_for_data_or_path, normalize_mime_type, read_limited_response_bytes,
-        resolve_media_path, resource_label, response_content_type, strip_data_url_scheme,
+        DEFAULT_URL_FILE_NAME, LoadedSource, SourceLoader, is_data_url, normalize_mime_type,
+        resource_label,
     },
 };
 use crate::util::file_uri::{
     file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
 };
 use crate::util::fs::sanitize_path_component;
-use crate::util::http_client::PublicUrlPolicy;
 
-const MAX_OTHER_TEXT_INLINE_BYTES: usize = 256 * 1024;
-const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 1024 * 1024;
+/// Text up to this size goes back to the main agent verbatim, where it stays
+/// in the conversation; larger text is summarized.
+const MAX_OTHER_TEXT_INLINE_BYTES: usize = 64 * 1024;
+/// Largest excerpt a summary reads, so CJK text, at roughly a token per
+/// character, fits a 400K-token context window.
+const MAX_OTHER_TEXT_SUMMARY_BYTES: usize = 512 * 1024;
 
-#[derive(Clone)]
-pub(super) struct AttachmentUnderstanding {
-    workspaces: Vec<PathBuf>,
-    public_url_policy: PublicUrlPolicy,
+/// Understands one non-media attachment: documents and text locally, anything
+/// else through the active model with tools.
+pub(super) async fn understand_attachment(
+    ctx: &AgentCtx,
+    sources: &SourceLoader,
+    mut attachment: OtherAttachment,
+    question: &str,
+) -> Result<AgentOutput, BoxError> {
+    if attachment.data.is_none()
+        && let Some(uri) = attachment
+            .uri
+            .as_deref()
+            .map(str::trim)
+            .filter(|uri| !uri.is_empty())
+    {
+        // A denied location must not be handed to shell as a parser fallback,
+        // which would undo the workspace/URL boundary.
+        let mut loaded = OtherAttachment::from(sources.load(ctx.meta(), uri).await?);
+        if loaded.name == DEFAULT_URL_FILE_NAME {
+            loaded.name = std::mem::take(&mut attachment.name);
+        }
+        loaded.tags = std::mem::take(&mut attachment.tags);
+        attachment = loaded;
+    }
+
+    let Some(data) = attachment.data.as_deref() else {
+        // Without bytes or a location, a model with tools would have nothing
+        // to inspect either.
+        return Ok(AgentOutput {
+            content: format!(
+                "{} has no content to read.\n\nAttachment metadata:\n{}",
+                attachment.label,
+                attachment.metadata_markdown()
+            ),
+            ..Default::default()
+        });
+    };
+
+    // Content signatures name the container no matter how the attachment
+    // was labelled, so they get first refusal. Plain text then takes
+    // anything that decodes, which keeps CSV, JSON, and logs verbatim
+    // instead of reshaping them; only what is left over is matched against
+    // the MIME type and extension, which is what covers the formats anydoc
+    // cannot fingerprint.
+    if let Some(format) = Format::from_bytes(data) {
+        return understand_document(ctx, sources, data.to_vec(), attachment, format, question)
+            .await;
+    }
+
+    if let Some(text) = attachment_text_from_bytes(data, &attachment) {
+        return text_or_summary_output(
+            ctx,
+            &attachment.label,
+            text_language_for_name(&attachment.name),
+            "text attachment",
+            &text,
+            question,
+        )
+        .await;
+    }
+
+    if let Some(format) = document_format_from_label(&attachment) {
+        return understand_document(ctx, sources, data.to_vec(), attachment, format, question)
+            .await;
+    }
+
+    fallback(ctx, sources, attachment, question).await
 }
 
-impl AttachmentUnderstanding {
-    pub(super) fn new(workspaces: Vec<PathBuf>, public_url_policy: PublicUrlPolicy) -> Self {
-        Self {
-            workspaces,
-            public_url_policy,
-        }
-    }
-
-    pub(super) async fn attachment_from_location(
-        &self,
-        meta: &RequestMeta,
-        location: &str,
-    ) -> Result<OtherAttachment, BoxError> {
-        let location = location.trim();
-        if location.is_empty() {
-            return Err("attachment location cannot be empty".into());
-        }
-
-        if strip_data_url_scheme(location).is_some() {
-            let (data, mime_type) = inline_data_from_data_url(location)
-                .ok_or_else(|| "invalid attachment data URL".to_string())?;
-            if data.0.len() as u64 > MAX_MEDIA_FILE_SIZE_BYTES {
-                return Err(format!(
-                    "attachment data URL is too large: {} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}",
-                    data.0.len()
-                )
-                .into());
-            }
-
-            return Ok(OtherAttachment {
-                label: "data URL".to_string(),
-                name: "data-url".to_string(),
-                mime_type: Some(mime_type),
-                uri: Some(location.to_string()),
-                size: Some(data.0.len() as u64),
-                data: Some(data.0),
-                tags: Vec::new(),
-                read_error: None,
-            });
-        }
-
-        if let Ok(url) = reqwest::Url::parse(location) {
-            return match url.scheme() {
-                "http" | "https" => self.attachment_from_http_url(url).await,
-                "file" => self.attachment_from_path(meta, location).await,
-                scheme if location.contains("://") => {
-                    Err(format!("unsupported attachment URL scheme: {scheme}").into())
-                }
-                _ => self.attachment_from_path(meta, location).await,
-            };
-        }
-
-        self.attachment_from_path(meta, location).await
-    }
-
-    pub(super) async fn attachment_from_path(
-        &self,
-        meta: &RequestMeta,
-        path: &str,
-    ) -> Result<OtherAttachment, BoxError> {
-        let resolved = resolve_media_path(meta, &self.workspaces, path).await?;
-        let metadata = tokio::fs::metadata(&resolved).await?;
-        if !metadata.is_file() {
-            return Err(format!(
-                "attachment path is not a regular file: {}",
-                resolved.display()
+async fn understand_document(
+    ctx: &AgentCtx,
+    sources: &SourceLoader,
+    data: Vec<u8>,
+    mut attachment: OtherAttachment,
+    format: Format,
+    question: &str,
+) -> Result<AgentOutput, BoxError> {
+    match convert_document_to_markdown(data, format).await {
+        Ok(markdown) if !markdown.trim().is_empty() => {
+            let source = format!("{} converted by anydoc", format_label(format));
+            text_or_summary_output(
+                ctx,
+                &attachment.label,
+                "markdown",
+                &source,
+                &markdown,
+                question,
             )
-            .into());
+            .await
         }
-        if metadata.len() > MAX_MEDIA_FILE_SIZE_BYTES {
-            return Err(format!(
-                "attachment file is too large: {} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}",
-                metadata.len()
-            )
-            .into());
+        Ok(_) => Ok(AgentOutput {
+            content: format!(
+                "anydoc read {} as {} but found no extractable text. The document may be scanned, image-only, or otherwise empty.",
+                attachment.label,
+                format_label(format)
+            ),
+            ..Default::default()
+        }),
+        Err(err) => {
+            attachment.read_error = Some(format!("anydoc failed: {err}"));
+            fallback(ctx, sources, attachment, question).await
         }
+    }
+}
 
-        let data = tokio::fs::read(&resolved).await?;
-        let name = resolved.to_string_lossy().to_string();
-        let mime_type = mime_type_for_data_or_path(&data, &resolved, "application/octet-stream");
-
-        Ok(OtherAttachment {
-            label: name.clone(),
-            name,
-            mime_type: Some(mime_type),
-            uri: Some(file_uri_for_path(&resolved)?),
-            size: Some(metadata.len()),
-            data: Some(data),
-            tags: Vec::new(),
-            read_error: None,
-        })
+async fn text_or_summary_output(
+    ctx: &AgentCtx,
+    label: &str,
+    language: &str,
+    source: &str,
+    text: &str,
+    question: &str,
+) -> Result<AgentOutput, BoxError> {
+    if text.len() <= MAX_OTHER_TEXT_INLINE_BYTES {
+        return Ok(AgentOutput {
+            content: format!(
+                "Detected {source} from {label} ({} bytes). Full text:\n\n{}",
+                text.len(),
+                fenced_text(language, text)
+            ),
+            ..Default::default()
+        });
     }
 
-    pub(super) async fn attachment_from_http_url(
-        &self,
-        url: reqwest::Url,
-    ) -> Result<OtherAttachment, BoxError> {
-        let response =
-            crate::util::http_client::fetch_public_url(url.clone(), self.public_url_policy).await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(format!("failed to fetch attachment URL {url}: {status}").into());
-        }
-
-        if let Some(content_length) = response.content_length()
-            && content_length > MAX_MEDIA_FILE_SIZE_BYTES
-        {
-            return Err(format!(
-                "attachment URL is too large: {content_length} bytes, max {MAX_MEDIA_FILE_SIZE_BYTES}"
-            )
-            .into());
-        }
-
-        let content_type = response_content_type(&response);
-        let data = read_limited_response_bytes(response).await?;
-        let mime_type = mime_type_for_data_or_name(
-            &data,
-            url.path(),
-            content_type.as_deref(),
-            "application/octet-stream",
-        );
-        let name = url
-            .path_segments()
-            .and_then(|mut segments| segments.next_back())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("attachment")
-            .to_string();
-
-        Ok(OtherAttachment {
-            label: url.to_string(),
-            name,
-            mime_type: Some(mime_type),
-            uri: Some(url.to_string()),
-            size: Some(data.len() as u64),
-            data: Some(data),
-            tags: Vec::new(),
-            read_error: None,
-        })
-    }
-
-    pub(super) async fn understand(
-        &self,
-        ctx: &AgentCtx,
-        mut attachment: OtherAttachment,
-        question: &str,
-    ) -> Result<AgentOutput, BoxError> {
-        if attachment.data.is_none()
-            && let Some(uri) = attachment
-                .uri
-                .as_deref()
-                .filter(|uri| !uri.trim().is_empty())
-        {
-            match self.attachment_from_location(ctx.meta(), uri).await {
-                Ok(mut loaded) => {
-                    if loaded.name.trim().is_empty() || loaded.name == "attachment" {
-                        loaded.name = attachment.name.clone();
-                    }
-                    if loaded.label.trim().is_empty() {
-                        loaded.label = attachment.label.clone();
-                    }
-                    if loaded.tags.is_empty() {
-                        loaded.tags = attachment.tags.clone();
-                    }
-                    attachment = loaded;
+    let (summary_input, truncated) = bounded_text_for_summary(text);
+    let mut output = ctx.completion(
+        CompletionRequest {
+            instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
+            prompt: format!(
+                "Summarize {source} from {label}. Original text length: {} bytes.{}\n\nCaller question or focus:\n{question}",
+                text.len(),
+                if truncated {
+                    " The supplied text is a bounded head/tail excerpt because the attachment is very large; say when conclusions may be incomplete."
+                } else {
+                    ""
                 }
-                Err(err) => {
-                    // A denied location must not be handed to shell as a parser
-                    // fallback, which would undo the workspace/URL boundary.
-                    return Err(err);
-                }
-            }
+            ),
+            content: vec![ContentPart::Text {
+                text: summary_input,
+            }],
+            ..Default::default()
+        },
+        Vec::new(),
+    ).await?;
+
+    let summary = output.content.trim();
+    output.content = format!(
+        "Detected {source} from {label} ({} bytes). The text is too large to inline, so this is a summary{}:\n\n{}",
+        text.len(),
+        if truncated {
+            " based on a bounded excerpt"
+        } else {
+            ""
+        },
+        if summary.is_empty() {
+            "No summary was returned."
+        } else {
+            summary
         }
+    );
+    Ok(output)
+}
 
-        let Some(data) = attachment.data.as_deref() else {
-            return self.fallback(ctx, attachment, question).await;
-        };
-
-        // Content signatures name the container no matter how the attachment
-        // was labelled, so they get first refusal. Plain text then takes
-        // anything that decodes, which keeps CSV, JSON, and logs verbatim
-        // instead of reshaping them; only what is left over is matched against
-        // the MIME type and extension, which is what covers the formats anydoc
-        // cannot fingerprint.
-        if let Some(format) = Format::from_bytes(data) {
-            return self
-                .understand_document(ctx, attachment, format, question)
-                .await;
-        }
-
-        if let Some(text) = attachment_text_from_bytes(data, &attachment) {
-            return self
-                .text_or_summary_output(
-                    ctx,
-                    &attachment.label,
-                    text_language_for_name(&attachment.name),
-                    "text attachment",
-                    text.as_ref(),
-                    question,
-                )
-                .await;
-        }
-
-        if let Some(format) = document_format_from_label(&attachment) {
-            return self
-                .understand_document(ctx, attachment, format, question)
-                .await;
-        }
-
-        self.fallback(ctx, attachment, question).await
+/// Hands an attachment no built-in parser could read to the active model, with
+/// tools to find a skill or inspect a local copy.
+async fn fallback(
+    ctx: &AgentCtx,
+    sources: &SourceLoader,
+    mut attachment: OtherAttachment,
+    question: &str,
+) -> Result<AgentOutput, BoxError> {
+    // Dropping a temporary copy deletes it, also when the run is cancelled.
+    let local_file = local_attachment_file(ctx.meta(), sources, &mut attachment).await;
+    let metadata = attachment.metadata_markdown();
+    let prompt = fallback_prompt(question, &metadata, &local_file);
+    let mut resource = attachment.into_resource();
+    if let Some(path) = local_file.path()
+        && let Ok(uri) = file_uri_for_path(path)
+    {
+        resource.uri = Some(uri);
     }
-
-    async fn understand_document(
-        &self,
-        ctx: &AgentCtx,
-        mut attachment: OtherAttachment,
-        format: Format,
-        question: &str,
-    ) -> Result<AgentOutput, BoxError> {
-        let Some(data) = attachment.data.clone() else {
-            return self.fallback(ctx, attachment, question).await;
-        };
-
-        let source = format!("{} converted by anydoc", format_label(format));
-        match convert_document_to_markdown(data, format).await {
-            Ok(markdown) if !markdown.trim().is_empty() => {
-                self.text_or_summary_output(
-                    ctx,
-                    &attachment.label,
-                    "markdown",
-                    &source,
-                    &markdown,
-                    question,
-                )
-                .await
-            }
-            Ok(_) => Ok(AgentOutput {
-                content: format!(
-                    "anydoc read {} as {} but found no extractable text. The document may be scanned, image-only, or otherwise empty.",
-                    attachment.label,
-                    format_label(format)
-                ),
-                ..Default::default()
-            }),
-            Err(err) => {
-                attachment.read_error = Some(format!("anydoc failed: {err}"));
-                self.fallback(ctx, attachment, question).await
-            }
-        }
-    }
-
-    async fn text_or_summary_output(
-        &self,
-        ctx: &AgentCtx,
-        label: &str,
-        language: &str,
-        source: &str,
-        text: &str,
-        question: &str,
-    ) -> Result<AgentOutput, BoxError> {
-        if text.len() <= MAX_OTHER_TEXT_INLINE_BYTES {
-            return Ok(AgentOutput {
-                content: format!(
-                    "Detected {source} from {label} ({} bytes). Full text:\n\n{}",
-                    text.len(),
-                    fenced_text(language, text)
-                ),
-                ..Default::default()
-            });
-        }
-
-        let (summary_input, truncated) = bounded_text_for_summary(text);
-        let mut output = ctx.completion(
+    let tools = ctx
+        .definitions(Some(&other_understanding_tool_names()))
+        .await;
+    let mut output = ctx
+        .completion(
             CompletionRequest {
-                instructions: "Summarize extracted attachment text faithfully for a downstream text-only agent. Preserve important names, numbers, dates, sections, decisions, and uncertainty. Do not invent content that is not present in the supplied text.".to_string(),
-                prompt: format!(
-                    "Summarize {source} from {label}. Original text length: {} bytes.{}\n\nCaller question or focus:\n{question}",
-                    text.len(),
-                    if truncated {
-                        " The supplied text is a bounded head/tail excerpt because the attachment is very large; say when conclusions may be incomplete."
-                    } else {
-                        ""
-                    }
-                ),
-                content: vec![ContentPart::Text {
-                    text: summary_input,
-                }],
+                instructions: MediaKind::Other.instructions(),
+                prompt,
+                model: Some(crate::engine::ACTIVE_MODEL_LABEL.to_string()),
+                tools,
                 ..Default::default()
             },
-            Vec::new(),
-        ).await?;
+            vec![resource],
+        )
+        .await?;
 
-        let summary = output.content.trim();
+    if output.content.trim().is_empty() {
         output.content = format!(
-            "Detected {source} from {label} ({} bytes). The text is too large to inline, so this is a summary{}:\n\n{}",
-            text.len(),
-            if truncated {
-                " based on a bounded excerpt"
-            } else {
-                ""
-            },
-            if summary.is_empty() {
-                "No summary was returned."
-            } else {
-                summary
-            }
+            "No automatic parser produced output for this attachment.\n\nAttachment metadata:\n{metadata}"
         );
-        Ok(output)
     }
 
-    pub(super) async fn fallback(
-        &self,
-        ctx: &AgentCtx,
-        attachment: OtherAttachment,
-        question: &str,
-    ) -> Result<AgentOutput, BoxError> {
-        let mut attachment = attachment;
-        if let Some(uri) = attachment.uri.as_deref()
-            && (is_file_uri(uri) || reqwest::Url::parse(uri).is_err())
-            && resolve_media_path(ctx.meta(), &self.workspaces, uri)
-                .await
-                .is_err()
-        {
-            // An attached blob is usable, but an accompanying path is not a grant.
-            attachment.uri = None;
-        }
-        let fallback_file = fallback_other_attachment_file(&attachment).await;
-        let prompt = fallback_other_attachment_prompt(question, &attachment, &fallback_file);
-        let mut resource = attachment.to_resource();
-        if let Some(path) = fallback_file.path.as_deref()
-            && let Ok(uri) = file_uri_for_path(path)
-        {
-            resource.uri = Some(uri);
-        }
-        let tools = ctx
-            .definitions(Some(&other_understanding_tool_names()))
-            .await;
-        let mut output = ctx
-            .completion(
-                CompletionRequest {
-                    instructions: MediaKind::Other.instructions(),
-                    prompt,
-                    model: Some("".to_string()), // ACTIVE_MODEL_LABEL
-                    tools,
-                    ..Default::default()
-                },
-                vec![resource],
-            )
-            .await?;
-
-        if output.content.trim().is_empty() {
-            let metadata = attachment.metadata_markdown();
-            output.content = format!(
-                "No automatic parser produced output for this attachment.\n\nAttachment metadata:\n{metadata}"
-            );
-        }
-
-        Ok(output)
-    }
+    Ok(output)
 }
 
 pub(super) fn other_understanding_tool_names() -> Vec<String> {
@@ -416,111 +262,66 @@ pub(super) fn other_understanding_tool_names() -> Vec<String> {
     ]
 }
 
-#[derive(Clone, Debug, Default)]
-pub(super) struct FallbackAttachmentFile {
-    pub(super) path: Option<PathBuf>,
-    pub(super) temporary: bool,
-    pub(super) error: Option<String>,
+/// The local file the fallback's shell and file tools read.
+enum LocalFile {
+    /// The attachment's own file, inside the caller's workspaces.
+    Workspace(PathBuf),
+    /// A copy of the attachment bytes, deleted when this value drops.
+    Temporary(TempPath),
+    /// No local file, and why.
+    Unavailable(String),
 }
 
-pub(super) async fn fallback_other_attachment_file(
-    attachment: &OtherAttachment,
-) -> FallbackAttachmentFile {
-    let existing_file = fallback_existing_attachment_file(attachment).await;
-    match existing_file {
-        FallbackAttachmentFile { path: Some(_), .. } => existing_file,
-        FallbackAttachmentFile { error, .. } => {
-            if let Some(data) = attachment.data.as_deref() {
-                match write_fallback_attachment_file(attachment, data).await {
-                    Ok(path) => FallbackAttachmentFile {
-                        path: Some(path),
-                        temporary: true,
-                        error,
-                    },
-                    Err(err) => FallbackAttachmentFile {
-                        path: None,
-                        temporary: false,
-                        error: Some(match error {
-                            Some(previous) => {
-                                format!("{previous}; failed to write temp file: {err}")
-                            }
-                            None => format!("failed to write temp file: {err}"),
-                        }),
-                    },
-                }
-            } else {
-                FallbackAttachmentFile {
-                    path: None,
-                    temporary: false,
-                    error,
-                }
-            }
+impl LocalFile {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Workspace(path) => Some(path),
+            Self::Temporary(path) => Some(path),
+            Self::Unavailable(_) => None,
         }
     }
 }
 
-async fn fallback_existing_attachment_file(attachment: &OtherAttachment) -> FallbackAttachmentFile {
-    let Some(uri) = attachment
+/// Finds or writes the local file for the fallback. An attached blob is usable,
+/// but an accompanying path is not a grant: one outside the caller's
+/// workspaces is dropped from the attachment.
+async fn local_attachment_file(
+    meta: &RequestMeta,
+    sources: &SourceLoader,
+    attachment: &mut OtherAttachment,
+) -> LocalFile {
+    if let Some(uri) = attachment
         .uri
         .as_deref()
-        .map(str::trim)
-        .filter(|uri| !uri.is_empty())
-    else {
-        return FallbackAttachmentFile::default();
-    };
-
-    let path = if is_file_uri(uri) {
-        match path_from_file_uri(uri) {
-            Ok(path) => path,
-            Err(err) => {
-                return FallbackAttachmentFile {
-                    path: None,
-                    temporary: false,
-                    error: Some(format!(
-                        "file URI cannot be converted to a local path: {err}"
-                    )),
-                };
-            }
+        .filter(|uri| is_file_uri(uri) || reqwest::Url::parse(uri).is_err())
+    {
+        if let Ok(path) = sources.resolve_path(meta, uri).await
+            && tokio::fs::metadata(&path)
+                .await
+                .is_ok_and(|metadata| metadata.is_file())
+        {
+            return LocalFile::Workspace(path);
         }
-    } else if reqwest::Url::parse(uri).is_ok() || strip_data_url_scheme(uri).is_some() {
-        return FallbackAttachmentFile::default();
-    } else {
-        PathBuf::from(uri)
-    };
+        attachment.uri = None;
+    }
 
-    match tokio::fs::metadata(&path).await {
-        Ok(metadata) if metadata.is_file() => FallbackAttachmentFile {
-            path: Some(path),
-            temporary: false,
-            error: None,
-        },
-        Ok(_) => FallbackAttachmentFile {
-            path: None,
-            temporary: false,
-            error: Some(format!(
-                "attachment path is not a regular file: {}",
-                path.display()
-            )),
-        },
-        Err(err) => FallbackAttachmentFile {
-            path: None,
-            temporary: false,
-            error: Some(format!(
-                "attachment path is not readable: {}: {err}",
-                path.display()
-            )),
-        },
+    let Some(data) = attachment.data.as_deref() else {
+        return LocalFile::Unavailable("the attachment has no inline bytes".to_string());
+    };
+    match write_fallback_attachment_file(attachment, data).await {
+        Ok(path) => LocalFile::Temporary(path),
+        Err(err) => LocalFile::Unavailable(format!("writing a temporary copy failed: {err}")),
     }
 }
 
 async fn write_fallback_attachment_file(
     attachment: &OtherAttachment,
     data: &[u8],
-) -> Result<PathBuf, BoxError> {
+) -> Result<TempPath, BoxError> {
     let dir = std::env::temp_dir().join("anda-bot-attachments");
     tokio::fs::create_dir_all(&dir).await?;
     let file_name = fallback_attachment_file_name(attachment);
-    let path = dir.join(format!("{}-{file_name}", Xid::new()));
+    let path = TempPath::try_from_path(dir.join(format!("{}-{file_name}", Xid::new())))?;
     tokio::fs::write(&path, data).await?;
     Ok(path)
 }
@@ -545,69 +346,24 @@ fn fallback_attachment_file_name(attachment: &OtherAttachment) -> String {
     sanitize_path_component(candidate.as_ref(), "attachment.bin")
 }
 
-pub(super) fn fallback_other_attachment_prompt(
-    question: &str,
-    attachment: &OtherAttachment,
-    fallback_file: &FallbackAttachmentFile,
-) -> String {
-    let metadata = attachment.metadata_markdown();
-    let tool_access_note = fallback_tool_access_note(attachment, fallback_file);
-
-    format!(
-        "Understand this non-image/audio/video attachment for the main agent.\n\nInput boundary:\n- This fallback is used only after built-in text/PDF extraction and direct model-readable media handling were not sufficient.\n- Do not assume the model can directly read the attachment bytes from the prompt; inspect the file path or URL below with tools.\n{tool_access_note}\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. Use shell or read-only file inspection against the provided local path when available. Prefer safe commands that extract metadata/text over mutating the file.\n3. If there is no local path but metadata includes a URL, use network-capable tools or shell commands to refetch or research a practical extraction method, then report the best next action.\n4. If extraction is impossible, explain what was tried or what capability is missing.\n\nDo not invent attachment contents.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
-    )
-}
-
-fn fallback_tool_access_note(
-    attachment: &OtherAttachment,
-    fallback_file: &FallbackAttachmentFile,
-) -> String {
-    if let Some(path) = fallback_file.path.as_deref() {
-        let origin = if fallback_file.temporary {
-            "A temporary local copy has been written for shell/file tools"
-        } else {
-            "Metadata includes an existing local file path"
-        };
-        let mut note = format!("- {origin}: {}", user_path_string_for_path(path));
-        if let Some(err) = fallback_file.error.as_deref() {
-            note.push_str(&format!(
-                "\n- Earlier local-path preparation warning: {err}"
-            ));
-        }
-        return note;
-    }
-
-    if let Some(err) = fallback_file.error.as_deref() {
-        return format!(
-            "- No local file is available for shell/file tools. Local-path preparation failed: {err}"
-        );
-    }
-
-    let Some(uri) = attachment
-        .uri
-        .as_deref()
-        .map(str::trim)
-        .filter(|uri| !uri.is_empty())
-    else {
-        return "- No local file path or external URL is available in metadata; shell/file tools cannot reach the attachment bytes.".to_string();
+fn fallback_prompt(question: &str, metadata: &str, local_file: &LocalFile) -> String {
+    let local_access = match local_file {
+        LocalFile::Workspace(path) => format!(
+            "- Metadata includes an existing local file path in an authorized workspace: {}",
+            user_path_string_for_path(path)
+        ),
+        LocalFile::Temporary(path) => format!(
+            "- A temporary local copy has been written for shell/file tools: {}",
+            user_path_string_for_path(path)
+        ),
+        LocalFile::Unavailable(reason) => format!(
+            "- No local file is available for shell/file tools ({reason}). Network-capable tools may refetch an http(s) URL from the metadata."
+        ),
     };
 
-    if strip_data_url_scheme(uri).is_some() {
-        return "- Metadata contains a data URL/inline blob, but no local temp file could be prepared for shell/file tools.".to_string();
-    }
-
-    if let Ok(url) = reqwest::Url::parse(uri) {
-        return match url.scheme() {
-            "http" | "https" => format!(
-                "- Metadata includes an http(s) URL. Network-capable tools or shell may refetch it if network access is available: {uri}"
-            ),
-            scheme => format!(
-                "- Metadata includes URI scheme `{scheme}`, which is not a shell-readable attachment path."
-            ),
-        };
-    }
-
-    "- Metadata includes a path-like value. File tools may use it only if it resolves to an accessible local file.".to_string()
+    format!(
+        "Understand this non-image/audio/video attachment for the main agent.\n\nInput boundary:\n- This fallback is used only after built-in text/PDF extraction and direct model-readable media handling were not sufficient.\n- Do not assume the model can directly read the attachment bytes from the prompt; inspect the file path or URL below with tools.\n{local_access}\n\nWorkflow:\n1. Search available tools/skills for a parser that matches the MIME type, extension, or file family; use an installed skill/subagent if one is suitable.\n2. Use shell or read-only file inspection against the provided local path when available. Prefer safe commands that extract metadata/text over mutating the file.\n3. If there is no local path but metadata includes a URL, use network-capable tools or shell commands to refetch or research a practical extraction method, then report the best next action.\n4. If extraction is impossible, explain what was tried or what capability is missing.\n\nDo not invent attachment contents.\n\nCaller question or focus:\n{question}\n\nAttachment metadata:\n{metadata}"
+    )
 }
 
 #[derive(Clone, Debug)]
@@ -642,19 +398,19 @@ impl OtherAttachment {
         }
     }
 
-    pub(super) fn to_resource(&self) -> Resource {
+    fn into_resource(self) -> Resource {
         Resource {
-            name: self.name.clone(),
-            mime_type: self.mime_type.clone(),
-            uri: self.uri.clone(),
+            name: self.name,
+            mime_type: self.mime_type,
+            uri: self.uri,
             size: self.size,
-            blob: self.data.clone().map(ByteBufB64),
-            tags: self.tags.clone(),
+            blob: self.data.map(ByteBufB64),
+            tags: self.tags,
             ..Default::default()
         }
     }
 
-    pub(super) fn metadata_markdown(&self) -> String {
+    fn metadata_markdown(&self) -> String {
         let mut lines = vec![format!("- label: {}", self.label)];
         if !self.name.trim().is_empty() {
             lines.push(format!("- name: {}", self.name.trim()));
@@ -694,9 +450,24 @@ impl OtherAttachment {
     }
 }
 
+impl From<LoadedSource> for OtherAttachment {
+    fn from(source: LoadedSource) -> Self {
+        Self {
+            label: source.label,
+            name: source.name,
+            mime_type: Some(source.mime_type),
+            uri: source.uri,
+            size: Some(source.data.len() as u64),
+            data: Some(source.data),
+            tags: Vec::new(),
+            read_error: None,
+        }
+    }
+}
+
 fn display_attachment_uri(uri: &str) -> String {
     let trimmed = uri.trim();
-    if strip_data_url_scheme(trimmed).is_some() {
+    if is_data_url(trimmed) {
         let prefix = trimmed
             .split_once(',')
             .map(|(prefix, _)| prefix)
@@ -713,7 +484,7 @@ fn display_attachment_uri(uri: &str) -> String {
 /// declined the bytes, so this is what picks up signature-less CSV and anything
 /// whose container anydoc cannot fingerprint. A wrong label costs one failed
 /// conversion, after which the attachment lands in the model fallback anyway.
-pub(super) fn document_format_from_label(attachment: &OtherAttachment) -> Option<Format> {
+fn document_format_from_label(attachment: &OtherAttachment) -> Option<Format> {
     attachment
         .mime_type
         .as_deref()
@@ -760,7 +531,7 @@ fn format_from_mime_type(mime_type: &str) -> Option<Format> {
 }
 
 /// Human-readable name for a [`Format`], used in the text handed to the model.
-pub(super) fn format_label(format: Format) -> &'static str {
+fn format_label(format: Format) -> &'static str {
     match format {
         Format::Doc => "Word 97-2003 document",
         Format::Docx => "Word document",
@@ -777,92 +548,50 @@ pub(super) fn format_label(format: Format) -> &'static str {
     }
 }
 
-pub(super) fn attachment_text_from_bytes<'a>(
+fn attachment_text_from_bytes<'a>(
     data: &'a [u8],
     attachment: &OtherAttachment,
 ) -> Option<Cow<'a, str>> {
-    // No fallback encoding means UTF-8 only, which is what every attachment
-    // gets before the legacy check below opens up the platform code page.
-    if let Some(text) = text_from_bytes_with_encoding(data, None) {
-        return Some(text);
-    }
-
-    if !attachment_allows_legacy_text_fallback(attachment) {
-        return None;
-    }
-
-    text_from_bytes(data)
+    decode_attachment_text(data, attachment, text_from_bytes)
 }
 
-#[cfg(test)]
-fn attachment_text_from_bytes_with_windows_code_page<'a>(
+/// Decodes UTF-8, then tries `legacy` (the platform code page) only for an
+/// attachment labelled as text.
+fn decode_attachment_text<'a>(
     data: &'a [u8],
     attachment: &OtherAttachment,
-    code_page: u32,
+    legacy: impl FnOnce(&'a [u8]) -> Option<Cow<'a, str>>,
 ) -> Option<Cow<'a, str>> {
-    if let Some(text) = text_from_bytes_with_encoding(data, None) {
-        return Some(text);
-    }
-
-    if !attachment_allows_legacy_text_fallback(attachment) {
-        return None;
-    }
-
-    anda_core::text_from_bytes_with_encoding(data, anda_core::windows_code_page_encoding(code_page))
+    // No fallback encoding means UTF-8 only.
+    text_from_bytes_with_encoding(data, None).or_else(|| {
+        if attachment_allows_legacy_text_fallback(attachment) {
+            legacy(data)
+        } else {
+            None
+        }
+    })
 }
 
 fn attachment_allows_legacy_text_fallback(attachment: &OtherAttachment) -> bool {
-    if attachment
+    attachment
         .mime_type
         .as_deref()
         .and_then(normalize_mime_type)
         .is_some_and(|mime_type| mime_type_allows_legacy_text_fallback(&mime_type))
-    {
-        return true;
-    }
-
-    if extension_from_name(&attachment.name).is_some_and(is_text_extension) {
-        return true;
-    }
-
-    attachment.tags.iter().any(|tag| {
-        let tag = tag.trim().trim_start_matches('.').to_ascii_lowercase();
-        matches!(
-            tag.as_str(),
-            "text"
-                | "txt"
-                | "md"
-                | "markdown"
-                | "json"
-                | "jsonl"
-                | "ndjson"
-                | "csv"
-                | "tsv"
-                | "xml"
-                | "yaml"
-                | "yml"
-                | "toml"
-                | "html"
-                | "htm"
-                | "log"
-        )
-    })
+        || extension_from_name(&attachment.name).is_some_and(is_text_extension)
+        || attachment
+            .tags
+            .iter()
+            .any(|tag| is_text_extension(tag.trim().trim_start_matches('.')))
 }
 
-pub(super) fn mime_type_allows_legacy_text_fallback(mime_type: &str) -> bool {
-    let essence = mime_type
-        .split(';')
-        .next()
-        .unwrap_or(mime_type)
-        .trim()
-        .to_ascii_lowercase();
-
-    essence.is_empty()
-        || essence.starts_with("text/")
+/// Whether a normalized MIME essence names a text format.
+fn mime_type_allows_legacy_text_fallback(essence: &str) -> bool {
+    essence.starts_with("text/")
         || essence.ends_with("+json")
         || essence.ends_with("+xml")
         || matches!(
-            essence.as_str(),
+            essence,
             "application/json"
                 | "application/xml"
                 | "application/javascript"
@@ -875,7 +604,7 @@ pub(super) fn mime_type_allows_legacy_text_fallback(mime_type: &str) -> bool {
         )
 }
 
-pub(super) fn is_text_extension(ext: &str) -> bool {
+fn is_text_extension(ext: &str) -> bool {
     matches!(
         ext.trim().to_ascii_lowercase().as_str(),
         "txt"
@@ -928,18 +657,20 @@ pub(super) fn is_text_extension(ext: &str) -> bool {
 /// rather than stalling the runtime worker driving this agent. That also
 /// contains a panic on hostile input as a task failure instead of tearing down
 /// the process.
-pub(super) async fn convert_document_to_markdown(
-    data: Vec<u8>,
-    format: Format,
-) -> Result<String, BoxError> {
+async fn convert_document_to_markdown(data: Vec<u8>, format: Format) -> Result<String, BoxError> {
     tokio::task::spawn_blocking(move || anydoc::to_markdown_bytes(&data, format))
         .await
         .map_err(|err| -> BoxError { format!("document conversion task failed: {err}").into() })?
         .map_err(Into::into)
 }
 
-pub(super) fn fenced_text(language: &str, text: &str) -> String {
-    let fence = "`".repeat(longest_backtick_run(text).max(2) + 1);
+fn fenced_text(language: &str, text: &str) -> String {
+    let longest_backtick_run = text
+        .split(|ch| ch != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    let fence = "`".repeat(longest_backtick_run.max(2) + 1);
     if language.is_empty() {
         format!("{fence}\n{text}\n{fence}")
     } else {
@@ -947,21 +678,7 @@ pub(super) fn fenced_text(language: &str, text: &str) -> String {
     }
 }
 
-fn longest_backtick_run(text: &str) -> usize {
-    let mut longest = 0;
-    let mut current = 0;
-    for ch in text.chars() {
-        if ch == '`' {
-            current += 1;
-            longest = longest.max(current);
-        } else {
-            current = 0;
-        }
-    }
-    longest
-}
-
-pub(super) fn text_language_for_name(name: &str) -> &'static str {
+fn text_language_for_name(name: &str) -> &'static str {
     match extension_from_name(name)
         .map(str::to_ascii_lowercase)
         .as_deref()
@@ -988,7 +705,7 @@ pub(super) fn text_language_for_name(name: &str) -> &'static str {
     }
 }
 
-pub(super) fn bounded_text_for_summary(text: &str) -> (String, bool) {
+fn bounded_text_for_summary(text: &str) -> (String, bool) {
     if text.len() <= MAX_OTHER_TEXT_SUMMARY_BYTES {
         return (text.to_string(), false);
     }
@@ -1025,6 +742,7 @@ fn grapheme_safe_suffix_start(text: &str, max_bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::http_client::PublicUrlPolicy;
     use anda_core::ByteBufB64;
     use std::fs;
     use tempfile::tempdir;
@@ -1046,6 +764,16 @@ mod tests {
         }
     }
 
+    fn sources(workspaces: Vec<PathBuf>) -> SourceLoader {
+        SourceLoader::new(workspaces, PublicUrlPolicy::PublicOnly)
+    }
+
+    fn decode_with_gbk<'a>(data: &'a [u8], attachment: &OtherAttachment) -> Option<Cow<'a, str>> {
+        decode_attachment_text(data, attachment, |data| {
+            text_from_bytes_with_encoding(data, anda_core::windows_code_page_encoding(936))
+        })
+    }
+
     #[test]
     fn text_attachment_detection_rejects_control_heavy_binary() {
         let attachment = test_other_attachment("notes.txt", Some("text/plain"), vec![]);
@@ -1062,11 +790,13 @@ mod tests {
         let gbk = [0xD6, 0xD0, 0xCE, 0xC4];
         let attachment =
             test_other_attachment("notes.txt", Some("application/octet-stream"), vec![]);
+        assert_eq!(decode_with_gbk(&gbk, &attachment).as_deref(), Some("中文"));
 
-        assert_eq!(
-            attachment_text_from_bytes_with_windows_code_page(&gbk, &attachment, 936).as_deref(),
-            Some("中文")
-        );
+        // A text tag is enough, and code extensions count as text.
+        let tagged = test_other_attachment("blob", None, vec![" .MD"]);
+        assert_eq!(decode_with_gbk(&gbk, &tagged).as_deref(), Some("中文"));
+        let source = test_other_attachment("main.rs", None, vec![]);
+        assert_eq!(decode_with_gbk(&gbk, &source).as_deref(), Some("中文"));
     }
 
     #[test]
@@ -1074,9 +804,7 @@ mod tests {
         let gbk = [0xD6, 0xD0, 0xCE, 0xC4];
         let attachment = test_other_attachment("image.jpg", Some("image/jpeg"), vec![]);
 
-        assert!(
-            attachment_text_from_bytes_with_windows_code_page(&gbk, &attachment, 936).is_none()
-        );
+        assert!(decode_with_gbk(&gbk, &attachment).is_none());
     }
 
     #[test]
@@ -1134,9 +862,11 @@ mod tests {
     #[test]
     fn fenced_text_extends_backtick_fence() {
         let fenced = fenced_text("markdown", "```inner```");
-
         assert!(fenced.starts_with("````markdown"));
         assert!(fenced.ends_with("````"));
+
+        assert_eq!(fenced_text("", "plain"), "```\nplain\n```");
+        assert!(fenced_text("", "a `````b").starts_with("``````\n"));
     }
 
     #[test]
@@ -1237,9 +967,6 @@ mod tests {
         };
         let attachment = OtherAttachment::from_resource(resource);
         assert_eq!(attachment.size, Some(4));
-        let back = attachment.to_resource();
-        assert_eq!(back.name, "notes.txt");
-        assert_eq!(back.size, Some(4));
 
         let md = attachment.metadata_markdown();
         assert!(md.contains("- name: notes.txt"));
@@ -1250,13 +977,18 @@ mod tests {
         assert!(md.contains("- tags: text"));
         assert!(md.contains("- inline_blob_available: true"));
 
-        let mut with_error = attachment;
+        let mut with_error = attachment.clone();
         with_error.read_error = Some("boom".to_string());
         assert!(
             with_error
                 .metadata_markdown()
                 .contains("- read_error: boom")
         );
+
+        let back = attachment.into_resource();
+        assert_eq!(back.name, "notes.txt");
+        assert_eq!(back.size, Some(4));
+        assert_eq!(back.blob.map(|blob| blob.0), Some(b"data".to_vec()));
     }
 
     #[test]
@@ -1272,123 +1004,149 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_other_attachment_file_writes_blob_for_shell_tools() {
+    async fn local_file_is_a_temporary_copy_deleted_on_drop() {
         let mut attachment =
             test_other_attachment("blob.bin", Some("application/octet-stream"), vec![]);
         attachment.data = Some(vec![0u8, 1, 2, 3]);
 
-        let fallback_file = fallback_other_attachment_file(&attachment).await;
+        let local =
+            local_attachment_file(&RequestMeta::default(), &sources(vec![]), &mut attachment).await;
 
-        assert!(fallback_file.temporary);
-        let path = fallback_file
-            .path
-            .as_ref()
-            .expect("fallback should write a temp file");
+        let LocalFile::Temporary(path) = &local else {
+            panic!("expected a temporary copy");
+        };
+        let path = path.to_path_buf();
         assert!(
             path.file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.ends_with("blob.bin"))
         );
-        assert_eq!(
-            fs::read(path).expect("temp file should be readable"),
-            vec![0u8, 1, 2, 3]
+        assert_eq!(fs::read(&path).unwrap(), vec![0u8, 1, 2, 3]);
+        drop(local);
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn local_file_uses_workspace_paths_only() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        fs::create_dir_all(&workspace).unwrap();
+        let inside = workspace.join("deck.key");
+        fs::write(&inside, b"keynote").unwrap();
+        let outside = dir.path().join("secret.key");
+        fs::write(&outside, b"secret").unwrap();
+        let sources = sources(vec![workspace]);
+
+        let mut own = test_other_attachment("deck.key", None, vec![]);
+        own.uri = Some(file_uri_for_path(&inside).unwrap());
+        own.data = Some(b"keynote".to_vec());
+        let local = local_attachment_file(&RequestMeta::default(), &sources, &mut own).await;
+        assert!(
+            matches!(&local, LocalFile::Workspace(path) if path == &inside.canonicalize().unwrap())
         );
-        let _ = fs::remove_file(path);
+        assert!(own.uri.is_some());
+
+        // A path outside the workspaces is not a grant: it is dropped, and the
+        // attached bytes are copied instead.
+        let mut foreign = test_other_attachment("secret.key", None, vec![]);
+        foreign.uri = Some(outside.to_string_lossy().into_owned());
+        foreign.data = Some(b"secret".to_vec());
+        let local = local_attachment_file(&RequestMeta::default(), &sources, &mut foreign).await;
+        assert!(matches!(local, LocalFile::Temporary(_)));
+        assert_eq!(foreign.uri, None);
+
+        let mut empty = test_other_attachment("nothing.bin", None, vec![]);
+        let local = local_attachment_file(&RequestMeta::default(), &sources, &mut empty).await;
+        assert!(matches!(local, LocalFile::Unavailable(_)));
     }
 
     #[test]
     fn fallback_prompt_describes_attachment_access_boundary() {
-        let mut inline =
-            test_other_attachment("blob.bin", Some("application/octet-stream"), vec![]);
-        inline.data = Some(vec![0u8, 1, 2, 3]);
-        let inline_file = FallbackAttachmentFile {
-            path: Some(std::env::temp_dir().join("blob.bin")),
-            temporary: true,
-            error: None,
-        };
-        let inline_prompt = fallback_other_attachment_prompt("inspect", &inline, &inline_file);
+        // A name nothing else uses, since dropping the path deletes the file.
+        let temp =
+            TempPath::try_from_path(std::env::temp_dir().join(format!("{}-blob.bin", Xid::new())))
+                .unwrap();
+        let inline_prompt =
+            fallback_prompt("inspect", "- label: blob.bin", &LocalFile::Temporary(temp));
         assert!(inline_prompt.contains("Do not assume the model can directly read"));
         assert!(inline_prompt.contains("temporary local copy"));
         assert!(inline_prompt.contains("blob.bin"));
 
-        let mut file = test_other_attachment("docx.bin", Some("application/octet-stream"), vec![]);
-        file.uri = Some("file:///tmp/docx.bin".to_string());
-        let file_prompt = fallback_other_attachment_prompt(
+        let file_prompt = fallback_prompt(
             "inspect",
-            &file,
-            &FallbackAttachmentFile {
-                path: Some(PathBuf::from("/tmp/docx.bin")),
-                temporary: false,
-                error: None,
-            },
+            "- label: docx.bin",
+            &LocalFile::Workspace(PathBuf::from("/tmp/docx.bin")),
         );
         assert!(file_prompt.contains("existing local file path"));
 
-        let mut remote =
-            test_other_attachment("docx.bin", Some("application/octet-stream"), vec![]);
-        remote.uri = Some("https://example.com/docx.bin".to_string());
-        let remote_prompt = fallback_other_attachment_prompt(
+        let remote_prompt = fallback_prompt(
             "inspect",
-            &remote,
-            &FallbackAttachmentFile::default(),
+            "- uri: https://example.com/docx.bin",
+            &LocalFile::Unavailable("writing a temporary copy failed: disk full".to_string()),
         );
+        assert!(remote_prompt.contains("No local file is available"));
+        assert!(remote_prompt.contains("disk full"));
         assert!(remote_prompt.contains("http(s) URL"));
         assert!(remote_prompt.contains("https://example.com/docx.bin"));
     }
 
     #[tokio::test]
-    async fn attachment_from_location_handles_schemes() {
-        let understanding = AttachmentUnderstanding::new(Vec::new(), PublicUrlPolicy::PublicOnly);
+    async fn fallback_removes_its_temporary_copy() {
+        let copy_left = |name: &str| {
+            fs::read_dir(std::env::temp_dir().join("anda-bot-attachments"))
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .any(|entry| entry.file_name().to_string_lossy().ends_with(name))
+                })
+                .unwrap_or(false)
+        };
+        let attachment = |name: &str| {
+            let mut attachment =
+                test_other_attachment(name, Some("application/octet-stream"), vec![]);
+            attachment.data = Some(vec![0u8, 1, 2, 3]);
+            attachment
+        };
 
-        let err = understanding
-            .attachment_from_location(&RequestMeta::default(), "   ")
+        // A run that succeeds and one that fails (no model) both clean up.
+        let with_model = anda_engine::engine::EngineBuilder::new()
+            .with_model(anda_engine::model::Model::mock_implemented())
+            .mock_ctx();
+        let name = format!("cleanup-{}.bin", Xid::new());
+        fallback(&with_model, &sources(vec![]), attachment(&name), "inspect")
             .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("cannot be empty"));
+            .expect("the mock model should answer");
+        assert!(!copy_left(&name), "the copy should be deleted after a run");
 
-        let data_url = "data:text/plain;base64,aGVsbG8=";
-        let attachment = understanding
-            .attachment_from_location(&RequestMeta::default(), data_url)
-            .await
-            .expect("data url should decode");
-        assert_eq!(attachment.data.as_deref(), Some(b"hello".as_ref()));
-
-        let err = understanding
-            .attachment_from_location(&RequestMeta::default(), "ftp://example.com/x")
-            .await
-            .map(|_| ())
-            .unwrap_err();
+        let without_model = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let name = format!("cleanup-{}.bin", Xid::new());
+        fallback(
+            &without_model,
+            &sources(vec![]),
+            attachment(&name),
+            "inspect",
+        )
+        .await
+        .map(|_| ())
+        .unwrap_err();
         assert!(
-            err.to_string()
-                .contains("unsupported attachment URL scheme")
+            !copy_left(&name),
+            "the copy should be deleted after a failure"
         );
     }
 
     #[tokio::test]
-    async fn attachment_from_path_reads_and_validates() {
-        let dir = tempdir().unwrap();
-        let file = dir.path().join("doc.txt");
-        fs::write(&file, b"file body").unwrap();
-        let understanding = AttachmentUnderstanding::new(
-            vec![dir.path().to_path_buf()],
-            PublicUrlPolicy::PublicOnly,
-        );
+    async fn an_attachment_without_bytes_or_location_skips_the_model() {
+        // No model is configured, so reaching one would fail the call.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx();
+        let attachment = test_other_attachment("ghost.bin", Some("application/zip"), vec![]);
 
-        let attachment = understanding
-            .attachment_from_path(&RequestMeta::default(), "doc.txt")
+        let output = understand_attachment(&ctx, &sources(vec![]), attachment, "inspect")
             .await
-            .expect("workspace file should resolve");
-        assert_eq!(attachment.data.as_deref(), Some(b"file body".as_ref()));
-        assert_eq!(attachment.size, Some(9));
+            .expect("an empty attachment should be reported, not sent to a model");
 
-        fs::create_dir(dir.path().join("subdir")).unwrap();
-        let err = understanding
-            .attachment_from_path(&RequestMeta::default(), "subdir")
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("not a regular file"));
+        assert!(output.content.contains("ghost.bin has no content to read"));
+        assert!(output.content.contains("- mime_type: application/zip"));
     }
 
     #[tokio::test]
