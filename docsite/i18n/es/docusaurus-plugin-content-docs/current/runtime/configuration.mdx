@@ -110,8 +110,8 @@ El agente también puede agregar un servidor en runtime utilizando `add_mcp_serv
 | `bundled-skills/` | Habilidades integradas gestionadas en el lanzamiento e instaladas por las actualizaciones de Anda. |
 | `sandbox/` | Directorio de aislamiento de shell cuando el sandboxing está activado. |
 | `skills/` | Habilidades de runtime personales creadas, clonadas o editadas por el usuario. |
-| `skills-manifest.json` | Metadatos locales de habilitación/deshabilitación y recarga para la biblioteca de habilidades. |
-| `skill-backups/` | Copias de seguridad con marca de tiempo creadas antes de editar habilidades desde el panel de control. |
+| `skills-manifest.json` | Habilidades que deshabilitaste en el panel de control. Si el archivo no se puede analizar, se informa del error y se deja tal cual, sin restablecerlo. |
+| `skill-backups/` | Copias con marca de tiempo del `SKILL.md` de una habilidad personal, guardadas antes de cada actualización. |
 | `skill-trash/` | Habilidades personales eliminadas que se trasladan aquí antes de su eliminación definitiva. |
 | `workspace/` | Espacio de trabajo predeterminado para herramientas de shell y archivos. |
 

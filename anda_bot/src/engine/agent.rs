@@ -15,7 +15,7 @@ use anda_engine::{
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
         shell::{ShellCommandToolHook, ShellSessionScope, ShellTool, ShellToolHook},
-        skill::{SkillManager, SkillsListTool, SkillsReadTool},
+        skill::{SkillManager, SkillToolHook, SkillsListTool, SkillsReadHook, SkillsReadTool},
     },
     hook::DynAgentHook,
     memory::{Conversation, ConversationRef, ConversationStatus},
@@ -66,7 +66,7 @@ use super::{
     prompt::{PromptCommand, skill_command_directive},
     resources::ResourceStore,
     side,
-    skill_library::SkillLibrary,
+    skill_library::{SkillLibrary, SkillUsageHook},
     system::{SYSTEM_PERSON_NAME, system_extra_user_context, system_runtime_prompt},
 };
 use crate::{
@@ -431,6 +431,12 @@ impl AndaBot {
         ctx.base
             .set_state(ShellCommandToolHook::new(session.clone()));
         ctx.base.set_state(ShellToolHook::new(session.clone()));
+        // Inline skills are only read, never called; book those reads so the
+        // Dashboard can tell a used skill from an unused one.
+        ctx.base
+            .set_state(SkillToolHook::new(Arc::new(SkillUsageHook)));
+        ctx.base
+            .set_state(SkillsReadHook::new(Arc::new(SkillUsageHook)));
         self.insert_session(session.clone());
 
         (session, rx, action_rx)

@@ -110,8 +110,8 @@ L'agent peut également ajouter un serveur au runtime à l'aide de `add_mcp_serv
 | `bundled-skills/` | Compétences intégrées gérées par les versions et installées via les mises à jour d'Anda. |
 | `sandbox/` | Répertoire d'isolement du shell lorsque le bac à sable (sandboxing) est activé. |
 | `skills/` | Compétences de runtime personnelles créées, clonées ou modifiées par l'utilisateur. |
-| `skills-manifest.json` | Métadonnées locales d'activation/désactivation et de rechargement pour la bibliothèque de compétences. |
-| `skill-backups/` | Sauvegardes horodatées créées avant les modifications de compétences dans le tableau de bord. |
+| `skills-manifest.json` | Compétences désactivées dans le tableau de bord. Un fichier illisible est signalé et laissé tel quel, sans être réinitialisé. |
+| `skill-backups/` | Copies horodatées du `SKILL.md` d'une compétence personnelle, faites avant chaque mise à jour. |
 | `skill-trash/` | Compétences personnelles supprimées, déplacées ici avant retrait définitif. |
 | `workspace/` | Espace de travail par défaut pour les outils de shell et de fichiers. |
 

@@ -3,19 +3,22 @@ use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage}
 use anda_engine::{
     context::BaseCtx,
     extension::skill::{
-        Skill, SkillExecution, SkillManager, find_skill_files, format_skill_md,
-        normalise_skill_agent_name, parse_skill_md, validate_skill_name,
+        Skill, SkillArgs, SkillContentOutput, SkillExecution, SkillManager, SkillsReadArgs,
+        SkillsReadOutput, format_skill_md, normalise_skill_agent_name, parse_skill_md,
+        validate_skill_name,
     },
+    hook::ToolHook,
     subagent::SubAgentSet,
     unix_ms,
 };
+use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     ffi::OsStr,
     io::Read,
     path::{Path, PathBuf},
@@ -29,6 +32,9 @@ const MAX_SKILL_VIEW_FILE_BYTES: u64 = 1024 * 1024;
 const MANIFEST_FILE_NAME: &str = "skills-manifest.json";
 const BACKUPS_DIR_NAME: &str = "skill-backups";
 const TRASH_DIR_NAME: &str = "skill-trash";
+/// Before v0.10.5 a Personal skill that shadowed a bundled one was recorded
+/// in the manifest as `legacy:<name>`.
+const LEGACY_ID_PREFIX: &str = "legacy:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,7 +42,6 @@ pub enum SkillSourceKind {
     Personal,
     Bundled,
     Shared,
-    Legacy,
 }
 
 impl SkillSourceKind {
@@ -45,7 +50,6 @@ impl SkillSourceKind {
             SkillSourceKind::Personal => "personal",
             SkillSourceKind::Bundled => "bundled",
             SkillSourceKind::Shared => "shared",
-            SkillSourceKind::Legacy => "legacy",
         }
     }
 
@@ -54,7 +58,6 @@ impl SkillSourceKind {
             SkillSourceKind::Personal => "Personal",
             SkillSourceKind::Bundled => "Bundled",
             SkillSourceKind::Shared => "Shared",
-            SkillSourceKind::Legacy => "Legacy local copy",
         }
     }
 }
@@ -67,25 +70,36 @@ pub struct SkillSourceInfo {
     pub path: String,
     pub editable: bool,
     pub exists: bool,
+    /// What the last scan could not read in this directory, such as an
+    /// unreadable folder or a traversal limit. The skills it did reach are
+    /// still listed.
+    #[serde(default)]
+    pub diagnostics: Vec<SkillDiagnostic>,
 }
 
 #[derive(Debug, Clone)]
 struct SkillSource {
     kind: SkillSourceKind,
+    /// Position in the registry's directory list, which is also its rank when
+    /// two directories hold a skill of the same name.
     priority: u32,
     path: PathBuf,
-    editable: bool,
 }
 
 impl SkillSource {
-    fn info(&self) -> SkillSourceInfo {
+    fn editable(&self) -> bool {
+        self.kind == SkillSourceKind::Personal
+    }
+
+    fn info(&self, diagnostics: Vec<SkillDiagnostic>) -> SkillSourceInfo {
         SkillSourceInfo {
             source: self.kind,
             source_label: self.kind.label().to_string(),
             priority: self.priority,
             path: self.path.display().to_string(),
-            editable: self.editable,
+            editable: self.editable(),
             exists: self.path.is_dir(),
+            diagnostics,
         }
     }
 }
@@ -134,10 +148,6 @@ pub struct SkillManifest {
     pub version: u32,
     #[serde(default)]
     pub disabled: BTreeMap<String, DisabledSkill>,
-    #[serde(default)]
-    pub pinned: Vec<String>,
-    #[serde(default)]
-    pub last_reload_ms: u64,
 }
 
 impl Default for SkillManifest {
@@ -145,8 +155,25 @@ impl Default for SkillManifest {
         Self {
             version: 1,
             disabled: BTreeMap::new(),
-            pinned: Vec::new(),
-            last_reload_ms: 0,
+        }
+    }
+}
+
+impl SkillManifest {
+    /// Renames `legacy:<name>` entries to the Personal id they now belong to.
+    fn migrate_legacy_ids(&mut self) {
+        let legacy: Vec<String> = self
+            .disabled
+            .keys()
+            .filter(|id| id.starts_with(LEGACY_ID_PREFIX))
+            .cloned()
+            .collect();
+        for id in legacy {
+            if let Some(entry) = self.disabled.remove(&id) {
+                self.disabled
+                    .entry(personal_skill_id(&id[LEGACY_ID_PREFIX.len()..]))
+                    .or_insert(entry);
+            }
         }
     }
 }
@@ -181,7 +208,6 @@ pub struct ManagedSkill {
     pub updated_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-    pub file_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<SkillUsageSummary>,
     pub version: String,
@@ -192,13 +218,6 @@ impl ManagedSkill {
         self.diagnostics
             .iter()
             .any(|d| d.severity == SkillDiagnosticSeverity::Error)
-    }
-
-    fn is_user_owned(&self) -> bool {
-        matches!(
-            self.source,
-            SkillSourceKind::Personal | SkillSourceKind::Legacy
-        )
     }
 }
 
@@ -271,8 +290,10 @@ pub struct PromptSkill {
 pub enum SkillsApiArgs {
     ListSkillSources {},
     ListSkills {
+        /// Strict tool calls send `null` for an unused field, which a plain
+        /// `bool` would reject.
         #[serde(default)]
-        include_inactive: bool,
+        include_inactive: Option<bool>,
     },
     GetSkill {
         id: String,
@@ -314,21 +335,28 @@ pub enum SkillsApiArgs {
 struct SkillRecord {
     managed: ManagedSkill,
     content: String,
-    parsed: Option<Skill>,
     base_dir: PathBuf,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct SkillLibraryState {
     records: Vec<SkillRecord>,
+    /// Scan problems per source, indexed like `SkillLibrary::sources`.
+    source_diagnostics: Vec<Vec<SkillDiagnostic>>,
+}
+
+/// One `SKILL.md` the registry found, with the reason it refused to load it.
+struct DiscoveredSkill {
+    source: usize,
+    path: PathBuf,
+    rejection: Option<String>,
 }
 
 #[derive(Clone)]
 pub struct SkillLibrary {
-    home_dir: PathBuf,
     personal_dir: PathBuf,
-    bundled_dir: PathBuf,
-    shared_dirs: Vec<PathBuf>,
+    /// Personal, Bundled, then each Shared directory: the registry's order.
+    sources: Vec<SkillSource>,
     manifest_path: PathBuf,
     backups_dir: PathBuf,
     trash_dir: PathBuf,
@@ -350,14 +378,29 @@ impl SkillLibrary {
         skill_manager: Arc<SkillManager>,
         known_tools: BTreeSet<String>,
     ) -> Self {
+        let sources = [
+            (SkillSourceKind::Personal, personal_dir.clone()),
+            (SkillSourceKind::Bundled, bundled_dir),
+        ]
+        .into_iter()
+        .chain(
+            shared_dirs
+                .into_iter()
+                .map(|dir| (SkillSourceKind::Shared, dir)),
+        )
+        .enumerate()
+        .map(|(priority, (kind, path))| SkillSource {
+            kind,
+            priority: priority as u32,
+            path,
+        })
+        .collect();
         Self {
             manifest_path: home_dir.join(MANIFEST_FILE_NAME),
             backups_dir: home_dir.join(BACKUPS_DIR_NAME),
             trash_dir: home_dir.join(TRASH_DIR_NAME),
-            home_dir,
             personal_dir,
-            bundled_dir,
-            shared_dirs,
+            sources,
             skill_manager,
             known_tools: Arc::new(known_tools),
             tools_usage_reader: Arc::new(HashMap::new),
@@ -405,9 +448,19 @@ impl SkillLibrary {
     }
 
     pub fn skill_sources(&self) -> Vec<SkillSourceInfo> {
-        self.sources()
-            .into_iter()
-            .map(|source| source.info())
+        let state = self.state.read();
+        self.sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| {
+                source.info(
+                    state
+                        .source_diagnostics
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            })
             .collect()
     }
 
@@ -446,14 +499,13 @@ impl SkillLibrary {
         let record = self
             .record_by_id(id)
             .ok_or_else(|| format!("skill not found: {id}"))?;
-        tokio::task::spawn_blocking(move || {
-            Ok(ManagedSkillDetail {
-                files: list_skill_files(&record.base_dir)?,
-                content: record.content,
-                skill: attach_usage(record.managed, &tools_usage),
-            })
+        let base_dir = record.base_dir.clone();
+        let files = tokio::task::spawn_blocking(move || list_skill_files(&base_dir)).await?;
+        Ok(ManagedSkillDetail {
+            files,
+            content: record.content,
+            skill: attach_usage(record.managed, &tools_usage),
         })
-        .await?
     }
 
     pub async fn get_skill_file(&self, id: &str, path: &str) -> Result<SkillFileContent, BoxError> {
@@ -468,7 +520,7 @@ impl SkillLibrary {
     pub async fn reload(&self) -> Result<Vec<ManagedSkill>, BoxError> {
         let _guard = self.operation_lock.lock().await;
         let manifest = self.load_manifest().await?;
-        self.reload_locked(manifest).await
+        self.reload_locked(&manifest).await
     }
 
     pub async fn create_skill(
@@ -495,7 +547,7 @@ impl SkillLibrary {
         tokio::fs::create_dir_all(&target_dir).await?;
         atomic_write_text(&target_dir.join("SKILL.md"), &content).await?;
         let manifest = self.load_manifest().await?;
-        self.reload_locked(manifest).await?;
+        self.reload_locked(&manifest).await?;
         self.get_skill_detail(&personal_skill_id(&name)).await
     }
 
@@ -509,12 +561,12 @@ impl SkillLibrary {
         let record = self
             .record_by_id(&id)
             .ok_or_else(|| format!("skill not found: {id}"))?;
-        if !record.managed.is_user_owned() {
+        if !record.managed.editable {
             return Err("only Personal skills can be updated from the Dashboard".into());
         }
+        let skill_md = record.base_dir.join("SKILL.md");
         if let Some(expected_version) = expected_version
-            && expected_version
-                != content_version_bytes(&tokio::fs::read(record.base_dir.join("SKILL.md")).await?)
+            && expected_version != content_version(&tokio::fs::read(&skill_md).await?)
         {
             return Err("skill changed on disk; reload before saving again".into());
         }
@@ -528,13 +580,13 @@ impl SkillLibrary {
             .into());
         }
 
-        self.ensure_existing_user_skill_dir(&record.base_dir)
+        self.ensure_existing_personal_skill_dir(&record.base_dir)
             .await?;
-        self.backup_skill_dir(&record.managed.name, &record.base_dir)
+        self.backup_skill_md(&record.managed.name, &skill_md)
             .await?;
-        atomic_write_text(&record.base_dir.join("SKILL.md"), &content).await?;
+        atomic_write_text(&skill_md, &content).await?;
         let manifest = self.load_manifest().await?;
-        self.reload_locked(manifest).await?;
+        self.reload_locked(&manifest).await?;
         self.get_skill_detail(&id).await
     }
 
@@ -547,16 +599,11 @@ impl SkillLibrary {
         let record = self
             .record_by_id(&id)
             .ok_or_else(|| format!("skill not found: {id}"))?;
-        let Some(mut parsed) = record.parsed.clone() else {
-            return Err("only valid skills can be cloned".into());
-        };
+        let mut parsed = parse_skill_md(record.base_dir.clone(), &record.content)
+            .map_err(|_| "only valid skills can be cloned")?;
         let new_name = match new_name {
             Some(name) => normalize_skill_name(name)?,
-            None => {
-                let this = self.clone();
-                let name = record.managed.name.clone();
-                tokio::task::spawn_blocking(move || this.available_clone_name(&name)).await?
-            }
+            None => self.available_clone_name(&record.managed.name)?,
         };
         let target_dir = self.personal_dir.join(&new_name);
         self.ensure_new_personal_skill_dir(&target_dir).await?;
@@ -578,7 +625,7 @@ impl SkillLibrary {
         atomic_write_text(&target_dir.join("SKILL.md"), &content).await?;
 
         let manifest = self.load_manifest().await?;
-        self.reload_locked(manifest).await?;
+        self.reload_locked(&manifest).await?;
         self.get_skill_detail(&personal_skill_id(&new_name)).await
     }
 
@@ -588,25 +635,12 @@ impl SkillLibrary {
         enabled: bool,
     ) -> Result<Vec<ManagedSkill>, BoxError> {
         let _guard = self.operation_lock.lock().await;
-        let record = self
-            .record_by_id(&id)
-            .ok_or_else(|| format!("skill not found: {id}"))?;
+        if self.record_by_id(&id).is_none() {
+            return Err(format!("skill not found: {id}").into());
+        }
         let mut manifest = self.load_manifest().await?;
         if enabled {
             manifest.disabled.remove(&id);
-            match record.managed.source {
-                SkillSourceKind::Personal => {
-                    manifest
-                        .disabled
-                        .remove(&skill_id(SkillSourceKind::Legacy, &record.managed.name));
-                }
-                SkillSourceKind::Legacy => {
-                    manifest
-                        .disabled
-                        .remove(&personal_skill_id(&record.managed.name));
-                }
-                SkillSourceKind::Bundled | SkillSourceKind::Shared => {}
-            }
         } else {
             manifest.disabled.insert(
                 id,
@@ -616,7 +650,8 @@ impl SkillLibrary {
                 },
             );
         }
-        self.reload_locked(manifest).await
+        self.write_manifest(&manifest).await?;
+        self.reload_locked(&manifest).await
     }
 
     pub async fn delete_personal_skill(&self, id: String) -> Result<Value, BoxError> {
@@ -624,17 +659,20 @@ impl SkillLibrary {
         let record = self
             .record_by_id(&id)
             .ok_or_else(|| format!("skill not found: {id}"))?;
-        if !record.managed.is_user_owned() {
+        if !record.managed.editable {
             return Err("only Personal skills can be deleted from the Dashboard".into());
         }
-        self.ensure_existing_user_skill_dir(&record.base_dir)
+        self.ensure_existing_personal_skill_dir(&record.base_dir)
             .await?;
+        // Read the manifest before moving anything, so a broken one stops the
+        // delete instead of leaving a stale disabled entry behind.
+        let mut manifest = self.load_manifest().await?;
 
-        let trash_parent = self
-            .trash_dir
-            .join(&record.managed.name)
-            .join(timestamp_for_path());
-        let trash_dir = unique_path(trash_parent);
+        let trash_dir = unique_path(
+            self.trash_dir
+                .join(&record.managed.name)
+                .join(timestamp_for_path()),
+        );
         if let Some(parent) = trash_dir.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -642,9 +680,10 @@ impl SkillLibrary {
             .await
             .map_err(|err| format!("failed to move skill to trash: {err}"))?;
 
-        let mut manifest = self.load_manifest().await?;
-        manifest.disabled.remove(&id);
-        self.reload_locked(manifest).await?;
+        if manifest.disabled.remove(&id).is_some() {
+            self.write_manifest(&manifest).await?;
+        }
+        self.reload_locked(&manifest).await?;
         Ok(json!({
             "deleted": true,
             "id": id,
@@ -656,15 +695,9 @@ impl SkillLibrary {
         validate_skill_content(None, &content)
     }
 
-    async fn reload_locked(
-        &self,
-        mut manifest: SkillManifest,
-    ) -> Result<Vec<ManagedSkill>, BoxError> {
-        manifest.version = 1;
-        manifest.last_reload_ms = unix_ms();
-        let mut records = self.scan_records(&manifest).await;
-        apply_effective_state(&mut records, &manifest);
-        self.write_manifest(&manifest).await?;
+    async fn reload_locked(&self, manifest: &SkillManifest) -> Result<Vec<ManagedSkill>, BoxError> {
+        let (mut records, source_diagnostics) = self.scan_records().await?;
+        apply_effective_state(&mut records, manifest);
 
         // Hand the registry the one decision it cannot make for itself, then let it
         // reload. `SkillManager` already resolves duplicate names by directory
@@ -681,199 +714,159 @@ impl SkillLibrary {
                 !rejected_dirs.contains(&skill.base_dir)
             })));
 
-        *self.state.write() = SkillLibraryState { records };
+        *self.state.write() = SkillLibraryState {
+            records,
+            source_diagnostics,
+        };
         if let Err(err) = self.skill_manager.load().await {
             log::warn!("failed to reload raw skills_manager after library scan: {err}");
         }
         Ok(self.list_managed_skills(true))
     }
 
-    fn sources(&self) -> Vec<SkillSource> {
-        let mut sources = vec![
-            SkillSource {
-                kind: SkillSourceKind::Personal,
-                priority: 0,
-                path: self.personal_dir.clone(),
-                editable: true,
-            },
-            SkillSource {
-                kind: SkillSourceKind::Bundled,
-                priority: 1,
-                path: self.bundled_dir.clone(),
-                editable: false,
-            },
-        ];
-        for dir in &self.shared_dirs {
-            sources.push(SkillSource {
-                kind: SkillSourceKind::Shared,
-                priority: 2,
-                path: dir.clone(),
-                editable: false,
-            });
+    /// Every `SKILL.md` the registry would consider, plus each source's scan
+    /// problems.
+    ///
+    /// Discovery runs through a throwaway `SkillManager` over the same
+    /// directories, so the Dashboard sees exactly the files the registry does,
+    /// including a partial scan. `find_skill_files` instead fails a whole
+    /// directory over one unreadable folder or a deep `node_modules`, which hid
+    /// skills that were still live and left them impossible to disable.
+    async fn discover(
+        &self,
+    ) -> Result<(Vec<DiscoveredSkill>, Vec<Vec<SkillDiagnostic>>), BoxError> {
+        let scanner = SkillManager::new_with_dirs(
+            self.personal_dir.clone(),
+            self.sources[1..]
+                .iter()
+                .map(|source| source.path.clone())
+                .collect(),
+        );
+        scanner.reload().await?;
+        let catalog = scanner.catalog();
+        let source_of = |path: &Path| {
+            self.sources
+                .iter()
+                .position(|source| path.starts_with(&source.path))
+        };
+
+        let mut found: Vec<DiscoveredSkill> = catalog
+            .skills
+            .iter()
+            .filter_map(|skill| {
+                Some(DiscoveredSkill {
+                    source: source_of(&skill.base_dir)?,
+                    path: skill.base_dir.join("SKILL.md"),
+                    rejection: None,
+                })
+            })
+            .collect();
+        let mut source_diagnostics = vec![Vec::new(); self.sources.len()];
+        for diagnostic in &catalog.report.diagnostics {
+            let Some(source) = source_of(&diagnostic.path) else {
+                continue;
+            };
+            if diagnostic.kind == "invalid"
+                && diagnostic.path.file_name() == Some(OsStr::new("SKILL.md"))
+            {
+                found.push(DiscoveredSkill {
+                    source,
+                    path: diagnostic.path.clone(),
+                    rejection: Some(diagnostic.message.clone()),
+                });
+            } else if diagnostic.kind != "conflict" {
+                // Same-name conflicts are reported on the skills themselves.
+                source_diagnostics[source].push(SkillDiagnostic::warning(
+                    &diagnostic.kind,
+                    format!("{}: {}", diagnostic.path.display(), diagnostic.message),
+                ));
+            }
         }
-        sources
+        Ok((found, source_diagnostics))
     }
 
-    async fn scan_records(&self, manifest: &SkillManifest) -> Vec<SkillRecord> {
-        let mut records = Vec::new();
-        for source in self.sources() {
-            if !source.path.is_dir() {
-                continue;
-            }
-            let files = match find_skill_files(&source.path).await {
-                Ok(files) => files,
-                Err(err) => {
-                    log::warn!("failed to scan skills at {}: {err}", source.path.display());
-                    continue;
-                }
-            };
-            for path in files {
-                records.push(self.scan_skill_file(&source, &path).await);
-            }
-        }
-        for record in &mut records {
-            record.managed.disabled = is_disabled(manifest, &record.managed);
-        }
+    async fn scan_records(
+        &self,
+    ) -> Result<(Vec<SkillRecord>, Vec<Vec<SkillDiagnostic>>), BoxError> {
+        let (found, source_diagnostics) = self.discover().await?;
+        let sources = self.sources.clone();
+        let known_tools = self.known_tools.clone();
+        let mut records = tokio::task::spawn_blocking(move || {
+            found
+                .into_iter()
+                .map(|skill| {
+                    let mut record =
+                        scan_skill_file(&sources[skill.source], &skill.path, &known_tools);
+                    // Our own reading of a file the registry refused can come out
+                    // clean (a bad `agents/openai.yaml`, say); it is still not loaded.
+                    if let Some(message) = skill.rejection
+                        && !record.managed.has_error()
+                    {
+                        record
+                            .managed
+                            .diagnostics
+                            .push(SkillDiagnostic::error("rejected", message));
+                    }
+                    record
+                })
+                .collect::<Vec<_>>()
+        })
+        .await?;
+
+        // Same-name copies are ordered like the registry orders them, by
+        // directory rank and then by path, so both pick the same winner.
         records.sort_by(|left, right| {
             left.managed
                 .priority
                 .cmp(&right.managed.priority)
                 .then_with(|| left.managed.name.cmp(&right.managed.name))
-                .then_with(|| left.managed.path.cmp(&right.managed.path))
+                .then_with(|| left.base_dir.cmp(&right.base_dir))
         });
-        records
-    }
-
-    async fn scan_skill_file(&self, source: &SkillSource, path: &Path) -> SkillRecord {
-        let base_dir = path.parent().unwrap_or(source.path.as_path()).to_path_buf();
-        let fallback_name = fallback_skill_name(&base_dir);
-        let mut diagnostics = Vec::new();
-        let mut content = String::new();
-        let mut parsed = None;
-        let mut size = None;
-        let mut updated_at = None;
-
-        match tokio::fs::symlink_metadata(path).await {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() || !meta.is_file() {
-                    diagnostics.push(SkillDiagnostic::error(
-                        "not_regular_file",
-                        "SKILL.md must be a regular file",
-                    ));
-                }
-                size = Some(meta.len());
-                if meta.len() > MAX_SKILL_FILE_BYTES {
-                    diagnostics.push(SkillDiagnostic::error(
-                        "file_too_large",
-                        format!("SKILL.md must be at most {MAX_SKILL_FILE_BYTES} bytes"),
-                    ));
-                }
-                updated_at = meta
-                    .modified()
-                    .ok()
-                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                    .map(|duration| duration.as_millis() as u64);
-            }
-            Err(err) => diagnostics.push(SkillDiagnostic::error(
-                "metadata_failed",
-                format!("failed to inspect SKILL.md: {err}"),
-            )),
-        }
-
-        if diagnostics
-            .iter()
-            .all(|d| d.severity != SkillDiagnosticSeverity::Error)
-        {
-            match tokio::fs::read(path).await {
-                Ok(bytes) => {
-                    let version = content_version_bytes(&bytes);
-                    match anda_core::text_from_bytes(&bytes) {
-                        Some(text) => {
-                            content = text.into_owned();
-                            match parse_skill_md(base_dir.clone(), &content) {
-                                Ok(skill) => {
-                                    if source.kind == SkillSourceKind::Personal
-                                        && base_dir.file_name()
-                                            != Some(OsStr::new(&skill.frontmatter.name))
-                                    {
-                                        diagnostics.push(SkillDiagnostic::error(
-                                            "name_directory_mismatch",
-                                            "personal skill frontmatter name must match its directory",
-                                        ));
-                                    }
-                                    diagnostics.extend(unknown_tool_diagnostics(
-                                        &skill.tools,
-                                        self.known_tools.as_ref(),
-                                    ));
-                                    diagnostics.extend(execution_mode_diagnostics(&skill));
-                                    parsed = Some(skill);
-                                }
-                                Err(err) => diagnostics.push(SkillDiagnostic::error(
-                                    "parse_failed",
-                                    format!("invalid SKILL.md: {err}"),
-                                )),
-                            }
-                        }
-                        None => diagnostics.push(SkillDiagnostic::error(
-                            "decode_failed",
-                            "SKILL.md must be readable as UTF-8 or the platform text encoding",
-                        )),
-                    }
-                    let input = RecordBuildInput {
-                        source,
-                        path,
-                        base_dir,
-                        fallback_name,
-                        diagnostics,
-                        content,
-                        parsed,
-                        size,
-                        updated_at,
-                        version,
-                    };
-                    return build_record_async(input).await;
-                }
-                Err(err) => diagnostics.push(SkillDiagnostic::error(
-                    "read_failed",
-                    format!("failed to read SKILL.md: {err}"),
-                )),
+        // Discovery is recursive, so one source can hold two skills of one name.
+        // The first keeps the plain id the manifest already knows; later copies
+        // get a suffix that stays stable while they stay where they are.
+        let mut ids = HashSet::new();
+        for record in &mut records {
+            if !ids.insert(record.managed.id.clone()) {
+                record.managed.id =
+                    format!("{}@{}", record.managed.id, short_hash(&record.base_dir));
+                ids.insert(record.managed.id.clone());
             }
         }
-
-        build_record_async(RecordBuildInput {
-            source,
-            path,
-            base_dir,
-            fallback_name,
-            diagnostics,
-            content: content.clone(),
-            parsed,
-            size,
-            updated_at,
-            version: content_version(&content),
-        })
-        .await
+        Ok((records, source_diagnostics))
     }
 
     async fn load_manifest(&self) -> Result<SkillManifest, BoxError> {
-        match tokio::fs::read(&self.manifest_path).await {
-            Ok(bytes) => {
-                let Some(text) = anda_core::text_from_bytes(&bytes) else {
-                    return Ok(SkillManifest::default());
-                };
-                Ok(serde_json::from_str(&text).unwrap_or_default())
+        let bytes = match tokio::fs::read(&self.manifest_path).await {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(SkillManifest::default());
             }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(SkillManifest::default()),
-            Err(err) => Err(format!(
-                "failed to read skill manifest {}: {err}",
-                self.manifest_path.display()
-            )
-            .into()),
-        }
+            Err(err) => {
+                return Err(format!(
+                    "failed to read skill manifest {}: {err}",
+                    self.manifest_path.display()
+                )
+                .into());
+            }
+        };
+        // A broken manifest is reported rather than treated as empty: falling
+        // back would re-enable every disabled skill, and the next write would
+        // erase the user's file.
+        let mut manifest: SkillManifest = anda_core::text_from_bytes(&bytes)
+            .ok_or_else(|| "not readable as text".to_string())
+            .and_then(|text| serde_json::from_str(&text).map_err(|err| err.to_string()))
+            .map_err(|err| {
+                format!(
+                    "skill manifest {} is invalid, fix or remove it: {err}",
+                    self.manifest_path.display()
+                )
+            })?;
+        manifest.migrate_legacy_ids();
+        Ok(manifest)
     }
 
     async fn write_manifest(&self, manifest: &SkillManifest) -> Result<(), BoxError> {
-        tokio::fs::create_dir_all(&self.home_dir).await?;
         let content = serde_json::to_string_pretty(manifest)?;
         atomic_write_text(&self.manifest_path, &(content + "\n")).await
     }
@@ -895,7 +888,7 @@ impl SkillLibrary {
         Ok(())
     }
 
-    async fn ensure_existing_user_skill_dir(&self, dir: &Path) -> Result<(), BoxError> {
+    async fn ensure_existing_personal_skill_dir(&self, dir: &Path) -> Result<(), BoxError> {
         ensure_path_is_direct_child(&self.personal_dir, dir).await?;
         let meta = tokio::fs::symlink_metadata(dir).await.map_err(|err| {
             format!(
@@ -909,26 +902,24 @@ impl SkillLibrary {
         Ok(())
     }
 
-    async fn backup_skill_dir(&self, skill_name: &str, dir: &Path) -> Result<PathBuf, BoxError> {
-        let backup = unique_path(self.backups_dir.join(skill_name).join(timestamp_for_path()));
-        if let Some(parent) = backup.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let source = dir.to_path_buf();
-        let destination = backup.clone();
-        tokio::task::spawn_blocking(move || copy_dir_regular_files(&source, &destination))
-            .await??;
-        Ok(backup)
+    /// Keeps the `SKILL.md` an update is about to replace. An update writes
+    /// nothing else, so nothing else is copied.
+    async fn backup_skill_md(&self, skill_name: &str, skill_md: &Path) -> Result<(), BoxError> {
+        let backup_dir = unique_path(self.backups_dir.join(skill_name).join(timestamp_for_path()));
+        tokio::fs::create_dir_all(&backup_dir).await?;
+        tokio::fs::copy(skill_md, backup_dir.join("SKILL.md")).await?;
+        Ok(())
     }
 
-    fn available_clone_name(&self, base_name: &str) -> String {
+    fn available_clone_name(&self, base_name: &str) -> Result<String, BoxError> {
         let mut candidate = format!("{base_name}-copy");
         let mut suffix = 2usize;
         while self.personal_dir.join(&candidate).exists() {
             candidate = format!("{base_name}-copy-{suffix}");
             suffix += 1;
         }
-        candidate
+        // A long name plus the suffix can pass the 64-character limit.
+        normalize_skill_name(candidate)
     }
 
     /// The registry these skills are dispatched through.
@@ -973,7 +964,7 @@ impl Tool<BaseCtx> for SkillLibrary {
         let result = match args {
             SkillsApiArgs::ListSkillSources {} => json!(self.skill_sources()),
             SkillsApiArgs::ListSkills { include_inactive } => {
-                json!(self.list_managed_skills(include_inactive))
+                json!(self.list_managed_skills(include_inactive.unwrap_or(false)))
             }
             SkillsApiArgs::GetSkill { id } => json!(self.get_skill_detail(&id).await?),
             SkillsApiArgs::GetSkillFile { id, path } => {
@@ -1005,6 +996,57 @@ impl Tool<BaseCtx> for SkillLibrary {
             next_cursor: None,
         }))
     }
+}
+
+/// Books each read of an inline skill as one use of that skill.
+///
+/// A delegated skill is a callable, so the runner already books its calls under
+/// `sa_skill_<name>`. An inline skill is only ever read — through
+/// `skills_manager`, or page by page through `skills_read` when it is too large
+/// for one response — and those reads land on the reader tools' own names, so
+/// every inline skill used to look unused. The use is booked under
+/// `skill_<name>`, the second key [`managed_skill_usage`] sums.
+pub struct SkillUsageHook;
+
+#[async_trait]
+impl ToolHook<SkillArgs, SkillContentOutput> for SkillUsageHook {
+    async fn after_tool_call(
+        &self,
+        _ctx: &BaseCtx,
+        mut output: ToolOutput<SkillContentOutput>,
+    ) -> Result<ToolOutput<SkillContentOutput>, BoxError> {
+        if output.output.execution == SkillExecution::Inline {
+            book_skill_use(&mut output.tools_usage, &output.output.name);
+        }
+        Ok(output)
+    }
+}
+
+#[async_trait]
+impl ToolHook<SkillsReadArgs, SkillsReadOutput> for SkillUsageHook {
+    async fn after_tool_call(
+        &self,
+        _ctx: &BaseCtx,
+        mut output: ToolOutput<SkillsReadOutput>,
+    ) -> Result<ToolOutput<SkillsReadOutput>, BoxError> {
+        // A paged SKILL.md counts once, on its last page.
+        let read = &output.output;
+        if read.execution == SkillExecution::Inline
+            && read.resource == "SKILL.md"
+            && read.next_cursor.is_none()
+        {
+            let name = read.name.clone();
+            book_skill_use(&mut output.tools_usage, &name);
+        }
+        Ok(output)
+    }
+}
+
+fn book_skill_use(tools_usage: &mut HashMap<String, Usage>, name: &str) {
+    tools_usage
+        .entry(normalise_skill_agent_name(name))
+        .or_default()
+        .requests += 1;
 }
 
 fn skills_api_parameters() -> Value {
@@ -1081,58 +1123,95 @@ fn skills_api_parameters() -> Value {
     })
 }
 
-struct RecordBuildInput<'a> {
-    source: &'a SkillSource,
-    path: &'a Path,
-    base_dir: PathBuf,
-    fallback_name: String,
-    diagnostics: Vec<SkillDiagnostic>,
-    content: String,
-    parsed: Option<Skill>,
-    size: Option<u64>,
-    updated_at: Option<u64>,
-    version: String,
-}
+/// Reads one `SKILL.md` into a record. Never fails: whatever goes wrong becomes
+/// a diagnostic, so a broken skill still shows up and can be fixed.
+fn scan_skill_file(
+    source: &SkillSource,
+    path: &Path,
+    known_tools: &BTreeSet<String>,
+) -> SkillRecord {
+    let base_dir = path.parent().unwrap_or(&source.path).to_path_buf();
+    let mut diagnostics = Vec::new();
 
-async fn build_record_async(input: RecordBuildInput<'_>) -> SkillRecord {
-    let base_dir = input.base_dir.clone();
-    let file_count = tokio::task::spawn_blocking(move || count_skill_files(&base_dir))
-        .await
-        .unwrap_or_default();
-    build_record(input, file_count)
-}
+    let meta = std::fs::symlink_metadata(path);
+    let (size, updated_at) = match &meta {
+        Ok(meta) => (Some(meta.len()), modified_at_ms(meta)),
+        Err(_) => (None, None),
+    };
+    let bytes = match &meta {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => Err(
+            SkillDiagnostic::error("not_regular_file", "SKILL.md must be a regular file"),
+        ),
+        Ok(meta) if meta.len() > MAX_SKILL_FILE_BYTES => Err(SkillDiagnostic::error(
+            "file_too_large",
+            format!("SKILL.md must be at most {MAX_SKILL_FILE_BYTES} bytes"),
+        )),
+        Ok(_) => std::fs::read(path).map_err(|err| {
+            SkillDiagnostic::error("read_failed", format!("failed to read SKILL.md: {err}"))
+        }),
+        Err(err) => Err(SkillDiagnostic::error(
+            "metadata_failed",
+            format!("failed to inspect SKILL.md: {err}"),
+        )),
+    };
+    let version = content_version(bytes.as_deref().unwrap_or_default());
+    let content = match bytes.as_deref().map(anda_core::text_from_bytes) {
+        Ok(Some(text)) => text.into_owned(),
+        Ok(None) => {
+            diagnostics.push(SkillDiagnostic::error(
+                "decode_failed",
+                "SKILL.md must be readable as UTF-8 or the platform text encoding",
+            ));
+            String::new()
+        }
+        Err(diagnostic) => {
+            diagnostics.push(diagnostic.clone());
+            String::new()
+        }
+    };
 
-fn build_record(input: RecordBuildInput<'_>, file_count: usize) -> SkillRecord {
-    let RecordBuildInput {
-        source,
-        path,
-        base_dir,
-        fallback_name,
-        diagnostics,
-        content,
-        parsed,
-        size,
-        updated_at,
-        version,
-    } = input;
+    let parsed = if diagnostics.is_empty() {
+        parse_skill_md(base_dir.clone(), &content)
+            .inspect_err(|err| {
+                diagnostics.push(SkillDiagnostic::error(
+                    "parse_failed",
+                    format!("invalid SKILL.md: {err}"),
+                ))
+            })
+            .ok()
+    } else {
+        None
+    };
+    if let Some(skill) = &parsed {
+        if source.kind == SkillSourceKind::Personal
+            && base_dir.file_name() != Some(OsStr::new(&skill.frontmatter.name))
+        {
+            diagnostics.push(SkillDiagnostic::error(
+                "name_directory_mismatch",
+                "personal skill frontmatter name must match its directory",
+            ));
+        }
+        diagnostics.extend(frontmatter_diagnostics(skill, known_tools));
+    }
 
     let (name, agent_name, description, compatibility, execution, allowed_tools, metadata) =
-        match parsed.as_ref() {
+        match parsed {
             Some(skill) => (
-                skill.frontmatter.name.clone(),
-                skill.agent_name.clone(),
-                skill.frontmatter.description.clone(),
-                skill.frontmatter.compatibility.clone(),
+                skill.frontmatter.name,
+                skill.agent_name,
+                skill.frontmatter.description,
+                skill.frontmatter.compatibility,
                 skill.execution,
-                skill.tools.clone(),
+                skill.tools,
                 json!(skill.frontmatter.metadata),
             ),
             None => {
-                let agent_name = validate_skill_name(&fallback_name)
-                    .map(|_| normalise_skill_agent_name(&fallback_name))
+                let name = fallback_skill_name(&base_dir);
+                let agent_name = validate_skill_name(&name)
+                    .map(|_| normalise_skill_agent_name(&name))
                     .unwrap_or_else(|_| format!("skill_invalid_{}", short_hash(path)));
                 (
-                    fallback_name,
+                    name,
                     agent_name,
                     String::new(),
                     None,
@@ -1142,10 +1221,9 @@ fn build_record(input: RecordBuildInput<'_>, file_count: usize) -> SkillRecord {
                 )
             }
         };
-    let id = skill_id(source.kind, &name);
     SkillRecord {
         managed: ManagedSkill {
-            id,
+            id: skill_id(source.kind, &name),
             source: source.kind,
             source_label: source.kind.label().to_string(),
             priority: source.priority,
@@ -1158,19 +1236,17 @@ fn build_record(input: RecordBuildInput<'_>, file_count: usize) -> SkillRecord {
             metadata,
             path: path.display().to_string(),
             directory: base_dir.display().to_string(),
-            editable: source.editable,
+            editable: source.editable(),
             active: false,
             disabled: false,
             shadowed_by: None,
             diagnostics,
             updated_at,
             size,
-            file_count,
             usage: None,
             version,
         },
         content,
-        parsed,
         base_dir,
     }
 }
@@ -1185,7 +1261,7 @@ fn managed_skill_usage(
     tools_usage: &HashMap<String, Usage>,
 ) -> Option<SkillUsageSummary> {
     let agent_name = managed.agent_name.to_ascii_lowercase();
-    let callable = skill_usage_key(&agent_name);
+    let callable = format!("sa_{agent_name}");
     let mut usage = Usage::default();
     let mut found = false;
 
@@ -1215,43 +1291,55 @@ fn managed_skill_usage(
     })
 }
 
-fn skill_usage_key(agent_name: &str) -> String {
-    format!("sa_{}", agent_name.to_ascii_lowercase())
-}
-
+/// Decides which copy of each name is active. `records` must be sorted by
+/// priority and path, as `scan_records` leaves them.
 fn apply_effective_state(records: &mut [SkillRecord], manifest: &SkillManifest) {
-    let mut winners: BTreeMap<String, String> = BTreeMap::new();
-    for record in records.iter_mut() {
-        record.managed.active = false;
-        record.managed.shadowed_by = None;
-        record.managed.disabled = is_disabled(manifest, &record.managed);
-        if record.managed.has_error() || record.managed.disabled {
+    let mut winners: BTreeMap<String, usize> = BTreeMap::new();
+    for index in 0..records.len() {
+        let managed = &mut records[index].managed;
+        managed.disabled = manifest.disabled.contains_key(&managed.id);
+        if managed.disabled || managed.has_error() {
             continue;
         }
-        if let Some(winner) = winners.get(&record.managed.agent_name) {
-            record.managed.shadowed_by = Some(winner.clone());
-            record.managed.diagnostics.push(SkillDiagnostic::warning(
+        let Some(&winner) = winners.get(&managed.agent_name) else {
+            managed.active = true;
+            winners.insert(managed.agent_name.clone(), index);
+            continue;
+        };
+
+        let winner_id = records[winner].managed.id.clone();
+        if records[winner].managed.priority != records[index].managed.priority {
+            let managed = &mut records[index].managed;
+            managed.diagnostics.push(SkillDiagnostic::warning(
                 "shadowed",
-                format!("Shadowed by higher-priority skill {winner}."),
+                format!("Shadowed by higher-priority skill {winner_id}."),
             ));
+            managed.shadowed_by = Some(winner_id);
             continue;
         }
-        record.managed.active = true;
-        winners.insert(record.managed.agent_name.clone(), record.managed.id.clone());
+
+        // The registry will not choose between two copies in one source: the
+        // name resolves to neither until one is disabled or removed.
+        let index_id = records[index].managed.id.clone();
+        records[index]
+            .managed
+            .diagnostics
+            .push(conflict(&winner_id));
+        let winner = &mut records[winner].managed;
+        if winner.active {
+            winner.active = false;
+            winner.diagnostics.push(conflict(&index_id));
+        }
     }
 }
 
-fn is_disabled(manifest: &SkillManifest, skill: &ManagedSkill) -> bool {
-    manifest.disabled.contains_key(&skill.id)
-        || match skill.source {
-            SkillSourceKind::Personal => manifest
-                .disabled
-                .contains_key(&skill_id(SkillSourceKind::Legacy, &skill.name)),
-            SkillSourceKind::Legacy => manifest
-                .disabled
-                .contains_key(&personal_skill_id(&skill.name)),
-            SkillSourceKind::Bundled | SkillSourceKind::Shared => false,
-        }
+fn conflict(other_id: &str) -> SkillDiagnostic {
+    SkillDiagnostic::warning(
+        "conflict",
+        format!(
+            "{other_id} in the same source has the same name; neither is used until one is disabled or removed."
+        ),
+    )
 }
 
 fn skill_id(source: SkillSourceKind, name: &str) -> String {
@@ -1341,11 +1429,26 @@ fn validate_skill_content(expected_name: Option<&str>, content: &str) -> SkillVa
     }
 }
 
-fn unknown_tool_diagnostics(
-    allowed_tools: &[String],
-    known_tools: &BTreeSet<String>,
-) -> Vec<SkillDiagnostic> {
-    allowed_tools
+/// Flags frontmatter that does nothing for how the skill runs.
+///
+/// An inline skill is read into the calling agent's own context and keeps that
+/// agent's tools: its `allowed-tools` grant nothing, so they are not checked
+/// (they are common frontmatter in skills written for other agents), and its
+/// `resource-tags` select nothing, which looks like a restriction that is
+/// silently not applied. A delegated skill runs with exactly its declared
+/// tools, so each must be one this host provides.
+fn frontmatter_diagnostics(skill: &Skill, known_tools: &BTreeSet<String>) -> Vec<SkillDiagnostic> {
+    if !skill.is_subagent() {
+        if !skill.declares_resource_tags() {
+            return Vec::new();
+        }
+        return vec![SkillDiagnostic::warning(
+            "resource_tags_ignored",
+            "resource-tags only applies to skills that declare execution: subagent.",
+        )];
+    }
+    skill
+        .tools
         .iter()
         .filter(|tool| {
             !known_tools.contains(tool.as_str())
@@ -1359,21 +1462,6 @@ fn unknown_tool_diagnostics(
             )
         })
         .collect()
-}
-
-/// Flags frontmatter that only takes effect under `execution: subagent`.
-///
-/// An inline skill is read into the calling agent's own context, so it neither
-/// receives a tool grant nor a resource selection of its own — declaring either
-/// looks like a restriction that is silently not applied.
-fn execution_mode_diagnostics(skill: &Skill) -> Vec<SkillDiagnostic> {
-    if skill.is_subagent() || !skill.declares_resource_tags() {
-        return Vec::new();
-    }
-    vec![SkillDiagnostic::warning(
-        "resource_tags_ignored",
-        "resource-tags only applies to skills that declare execution: subagent.",
-    )]
 }
 
 fn diagnostic_summary(diagnostics: &[SkillDiagnostic]) -> String {
@@ -1413,12 +1501,17 @@ async fn atomic_write_text(path: &Path, content: &str) -> Result<(), BoxError> {
     }
     let tmp = path.with_extension(format!("tmp-{}-{}", std::process::id(), unix_ms()));
     tokio::fs::write(&tmp, content).await?;
-    if cfg!(windows) && path.exists() {
-        tokio::fs::remove_file(path).await?;
-    }
+    // `rename` replaces an existing file on Windows too, so the target is never
+    // briefly missing.
     tokio::fs::rename(&tmp, path)
         .await
         .map_err(|err| format!("failed to replace {}: {err}", path.display()).into())
+}
+
+/// Hidden directories (`.git`, `.venv`) are skipped everywhere a skill
+/// directory is walked, as skill discovery skips them.
+fn is_hidden(entry: &std::fs::DirEntry) -> bool {
+    entry.file_name().to_string_lossy().starts_with('.')
 }
 
 fn copy_dir_regular_files(src: &Path, dst: &Path) -> Result<(), BoxError> {
@@ -1431,10 +1524,7 @@ fn copy_dir_regular_files(src: &Path, dst: &Path) -> Result<(), BoxError> {
         let file_type = entry.file_type()?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
+        if file_type.is_dir() && !is_hidden(&entry) {
             copy_dir_regular_files(&from, &to)?;
         } else if file_type.is_file() {
             std::fs::copy(&from, &to)?;
@@ -1443,49 +1533,33 @@ fn copy_dir_regular_files(src: &Path, dst: &Path) -> Result<(), BoxError> {
     Ok(())
 }
 
-fn count_skill_files(base_dir: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(base_dir) else {
-        return 0;
-    };
-    entries
-        .filter_map(Result::ok)
-        .map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_file() => 1,
-            Ok(kind) if kind.is_dir() => count_skill_files(&entry.path()),
-            _ => 0,
-        })
-        .sum()
-}
-
-fn list_skill_files(base_dir: &Path) -> Result<Vec<SkillFileEntry>, BoxError> {
+/// Lists a skill directory for browsing. Entries that cannot be read are left
+/// out rather than failing the whole listing.
+fn list_skill_files(base_dir: &Path) -> Vec<SkillFileEntry> {
     let mut files = Vec::new();
-    collect_skill_files(base_dir, base_dir, &mut files)?;
+    collect_skill_files(base_dir, base_dir, &mut files);
     files.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
             .then_with(|| left.kind.cmp(&right.kind))
     });
-    Ok(files)
+    files
 }
 
-fn collect_skill_files(
-    base_dir: &Path,
-    dir: &Path,
-    files: &mut Vec<SkillFileEntry>,
-) -> Result<(), BoxError> {
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
+fn collect_skill_files(base_dir: &Path, dir: &Path, files: &mut Vec<SkillFileEntry>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let (Ok(file_type), Ok(meta)) = (entry.file_type(), entry.metadata()) else {
             continue;
-        }
-        let meta = entry.metadata()?;
+        };
         let path = entry.path();
         let Some(relative_path) = skill_relative_display_path(base_dir, &path) else {
             continue;
         };
         let name = entry.file_name().to_string_lossy().to_string();
-        if file_type.is_dir() {
+        if file_type.is_dir() && !is_hidden(&entry) {
             files.push(SkillFileEntry {
                 path: relative_path,
                 name,
@@ -1493,7 +1567,7 @@ fn collect_skill_files(
                 size: None,
                 updated_at: modified_at_ms(&meta),
             });
-            collect_skill_files(base_dir, &path, files)?;
+            collect_skill_files(base_dir, &path, files);
         } else if file_type.is_file() {
             files.push(SkillFileEntry {
                 path: relative_path,
@@ -1504,7 +1578,6 @@ fn collect_skill_files(
             });
         }
     }
-    Ok(())
 }
 
 fn read_skill_file(id: &str, base_dir: &Path, path: &str) -> Result<SkillFileContent, BoxError> {
@@ -1527,6 +1600,13 @@ fn read_skill_file(id: &str, base_dir: &Path, path: &str) -> Result<SkillFileCon
         let file = std::fs::File::open(&file_path)?;
         let mut limited = file.take(MAX_SKILL_VIEW_FILE_BYTES);
         limited.read_to_end(&mut bytes)?;
+        // The cut can land inside a multi-byte character; drop the partial
+        // tail so the rest still decodes.
+        if let Err(err) = std::str::from_utf8(&bytes)
+            && err.error_len().is_none()
+        {
+            bytes.truncate(err.valid_up_to());
+        }
     } else {
         bytes = std::fs::read(&file_path)?;
     }
@@ -1602,11 +1682,7 @@ fn unique_path(path: PathBuf) -> PathBuf {
     PathBuf::from(format!("{}-{}", path.display(), unix_ms()))
 }
 
-fn content_version(content: &str) -> String {
-    content_version_bytes(content.as_bytes())
-}
-
-fn content_version_bytes(bytes: &[u8]) -> String {
+fn content_version(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex_lower(&hasher.finalize())
@@ -1633,7 +1709,10 @@ fn hex_lower(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use anda_core::{Tool, Usage};
-    use anda_engine::engine::EngineBuilder;
+    use anda_engine::{
+        engine::EngineBuilder,
+        extension::skill::{SkillToolHook, SkillsReadHook, SkillsReadTool, find_skill_files},
+    };
     use std::{collections::HashMap, fs};
     use tempfile::tempdir;
 
@@ -1662,6 +1741,32 @@ mod tests {
         SkillLibrary::for_test(home.to_path_buf()).as_ref().clone()
     }
 
+    fn find<'a>(skills: &'a [ManagedSkill], id: &str) -> &'a ManagedSkill {
+        skills
+            .iter()
+            .find(|skill| skill.id == id)
+            .unwrap_or_else(|| panic!("{id} is not listed"))
+    }
+
+    fn has_code(skill: &ManagedSkill, code: &str) -> bool {
+        skill.diagnostics.iter().any(|d| d.code == code)
+    }
+
+    /// Reads a skill through the registry's own reader tool, as the model does.
+    async fn read_through_registry(lib: &SkillLibrary, name: &str) -> Result<String, BoxError> {
+        let output = Tool::call_raw(
+            lib.skill_manager().as_ref(),
+            EngineBuilder::new().mock_ctx().base,
+            json!({ "name": name }),
+            vec![],
+        )
+        .await?;
+        Ok(output.output["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string())
+    }
+
     #[tokio::test]
     async fn scan_marks_shadowed_duplicates_and_active_winner() {
         let temp = tempdir().unwrap();
@@ -1672,30 +1777,13 @@ mod tests {
 
         lib.reload().await.unwrap();
         let skills = lib.list_managed_skills(true);
-        assert!(!skills.iter().any(|skill| skill.id == "legacy:learn"));
-        let personal = skills
-            .iter()
-            .find(|skill| skill.id == "personal:learn")
-            .unwrap();
+        let personal = find(&skills, "personal:learn");
         assert!(personal.active);
         assert_eq!(personal.source, SkillSourceKind::Personal);
-        assert!(
-            !personal
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "legacy_local_copy")
-        );
-        let bundled = skills
-            .iter()
-            .find(|skill| skill.id == "bundled:learn")
-            .unwrap();
+        let bundled = find(&skills, "bundled:learn");
         assert!(!bundled.active);
         assert_eq!(bundled.shadowed_by.as_deref(), Some("personal:learn"));
-        assert!(
-            skills
-                .iter()
-                .any(|skill| skill.id == "shared:docx" && skill.active)
-        );
+        assert!(find(&skills, "shared:docx").active);
     }
 
     #[tokio::test]
@@ -1740,13 +1828,49 @@ mod tests {
 
         let detail = lib.get_skill_detail("personal:learn").await.unwrap();
         assert_eq!(detail.skill.usage.unwrap().requests, 3);
-        assert_eq!(detail.skill.file_count, 1);
-        assert!(
-            detail
-                .files
-                .iter()
-                .any(|file| file.path == "SKILL.md" && file.kind == SkillFileKind::File)
-        );
+        assert_eq!(detail.files.len(), 1);
+        assert_eq!(detail.files[0].path, "SKILL.md");
+    }
+
+    #[tokio::test]
+    async fn inline_skill_reads_are_booked_as_skill_usage() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        write_skill(&personal, "learn", "inline");
+        write_skill_with_frontmatter(&personal, "worker", "execution: subagent\n");
+        lib.reload().await.unwrap();
+
+        let ctx = EngineBuilder::new().mock_ctx().base;
+        ctx.set_state(SkillToolHook::new(Arc::new(SkillUsageHook)));
+        ctx.set_state(SkillsReadHook::new(Arc::new(SkillUsageHook)));
+        let mgr = lib.skill_manager();
+
+        let read = Tool::call_raw(
+            mgr.as_ref(),
+            ctx.clone(),
+            json!({ "name": "learn" }),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(read.tools_usage["skill_learn"].requests, 1);
+
+        let paged = Tool::call_raw(
+            &SkillsReadTool::new(mgr.clone()),
+            ctx.clone(),
+            json!({ "skill": "learn", "resource": null, "cursor": null }),
+            vec![],
+        )
+        .await
+        .unwrap();
+        assert_eq!(paged.tools_usage["skill_learn"].requests, 1);
+
+        // A delegated skill is booked by its callable, not by being read.
+        let delegated = Tool::call_raw(mgr.as_ref(), ctx, json!({ "name": "worker" }), vec![])
+            .await
+            .unwrap();
+        assert!(delegated.tools_usage.is_empty());
     }
 
     #[tokio::test]
@@ -1762,20 +1886,8 @@ mod tests {
             .unwrap();
 
         let skills = lib.list_managed_skills(true);
-        assert!(
-            !skills
-                .iter()
-                .find(|skill| skill.id == "personal:learn")
-                .unwrap()
-                .active
-        );
-        assert!(
-            skills
-                .iter()
-                .find(|skill| skill.id == "bundled:learn")
-                .unwrap()
-                .active
-        );
+        assert!(!find(&skills, "personal:learn").active);
+        assert!(find(&skills, "bundled:learn").active);
         assert!(
             lib.prompt_skills()
                 .iter()
@@ -1864,7 +1976,6 @@ mod tests {
         );
         lib.reload().await.unwrap();
 
-        let mgr = lib.skill_manager();
         assert!(
             lib.subagent_set()
                 .get_lowercase("skill_worker")
@@ -1886,17 +1997,9 @@ mod tests {
                 .instructions
                 .contains("Bundled body.")
         );
-        let content = Tool::call_raw(
-            mgr.as_ref(),
-            EngineBuilder::new().mock_ctx().base,
-            json!({ "name": "worker" }),
-            vec![],
-        )
-        .await
-        .unwrap();
         assert!(
-            serde_json::to_value(content.output).unwrap()["content"]
-                .as_str()
+            read_through_registry(&lib, "worker")
+                .await
                 .unwrap()
                 .contains("Bundled body.")
         );
@@ -1908,14 +2011,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!lib.subagent_set().contains_lowercase("skill_worker"));
-        let err = Tool::call_raw(
-            mgr.as_ref(),
-            EngineBuilder::new().mock_ctx().base,
-            json!({ "name": "worker" }),
-            vec![],
-        )
-        .await
-        .unwrap_err();
+        let err = read_through_registry(&lib, "worker").await.unwrap_err();
         assert!(err.to_string().contains("not found"), "{err}");
     }
 
@@ -1955,14 +2051,106 @@ mod tests {
 
         let skills = lib.list_managed_skills(true);
         let tagged = skills.iter().find(|s| s.name == "tagged").unwrap();
-        assert!(
-            tagged
-                .diagnostics
-                .iter()
-                .any(|d| d.code == "resource_tags_ignored")
-        );
+        assert!(has_code(tagged, "resource_tags_ignored"));
         let delegated = skills.iter().find(|s| s.name == "delegated").unwrap();
         assert!(delegated.diagnostics.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_are_only_checked_for_delegated_skills() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        // Written for another agent: the inline skill grants nothing, so its
+        // tool names do not matter here.
+        write_skill_with_frontmatter(&personal, "borrowed", "allowed-tools: Bash Read\n");
+        write_skill_with_frontmatter(
+            &personal,
+            "delegated",
+            "execution: subagent\nallowed-tools: Bash shell\n",
+        );
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        assert!(find(&skills, "personal:borrowed").diagnostics.is_empty());
+        let delegated = find(&skills, "personal:delegated");
+        let unknown: Vec<&str> = delegated
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "unknown_tool")
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(unknown, ["allowed-tools includes unknown tool Bash."]);
+    }
+
+    #[tokio::test]
+    async fn a_partial_scan_keeps_the_skills_it_reached() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let shared = temp.path().join("shared-skills");
+        write_skill(&shared, "docx", "shared");
+        // Deeper than discovery walks, like a skill shipping `node_modules`.
+        fs::create_dir_all(shared.join("tool/node_modules/@scope/pkg/dist/esm/internal")).unwrap();
+        assert!(find_skill_files(&shared).await.is_err());
+
+        lib.reload().await.unwrap();
+
+        assert!(find(&lib.list_managed_skills(true), "shared:docx").active);
+        let sources = lib.skill_sources();
+        let shared_source = sources
+            .iter()
+            .find(|source| source.source == SkillSourceKind::Shared)
+            .unwrap();
+        assert!(
+            shared_source.diagnostics.iter().any(|d| d.code == "limit"),
+            "{:?}",
+            shared_source.diagnostics
+        );
+
+        // Listed means it can be switched off, everywhere.
+        lib.set_skill_enabled("shared:docx".to_string(), false)
+            .await
+            .unwrap();
+        assert!(read_through_registry(&lib, "docx").await.is_err());
+        assert!(lib.prompt_skills().is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_name_skills_in_one_source_get_their_own_ids_and_conflict() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let shared = temp.path().join("shared-skills");
+        write_skill(&shared, "pdf", "top level");
+        write_skill(&shared.join("vendor"), "pdf", "vendored copy");
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let ids: Vec<&str> = skills
+            .iter()
+            .filter(|skill| skill.name == "pdf")
+            .map(|skill| skill.id.as_str())
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], "shared:pdf");
+        assert!(ids[1].starts_with("shared:pdf@"), "{ids:?}");
+        // The registry refuses to pick one, so neither is reported as in use.
+        for id in &ids {
+            let skill = find(&skills, id);
+            assert!(!skill.active && has_code(skill, "conflict"), "{skill:?}");
+        }
+        assert!(lib.prompt_skills().is_empty());
+        assert!(read_through_registry(&lib, "pdf").await.is_err());
+
+        let vendored = ids[1].to_string();
+        lib.set_skill_enabled(vendored.clone(), false)
+            .await
+            .unwrap();
+        let skills = lib.list_managed_skills(true);
+        assert!(find(&skills, "shared:pdf").active);
+        assert!(find(&skills, &vendored).disabled);
+        assert!(read_through_registry(&lib, "pdf").await.is_ok());
     }
 
     #[tokio::test]
@@ -1989,17 +2177,10 @@ mod tests {
         lib.reload().await.unwrap();
 
         let skills = lib.list_managed_skills(true);
-        let personal = skills
-            .iter()
-            .find(|skill| skill.id == "personal:learn")
-            .unwrap();
+        let personal = find(&skills, "personal:learn");
         assert!(personal.disabled);
         assert!(!personal.active);
-        assert!(
-            skills
-                .iter()
-                .any(|skill| skill.id == "bundled:learn" && skill.active)
-        );
+        assert!(find(&skills, "bundled:learn").active);
 
         lib.set_skill_enabled("personal:learn".to_string(), true)
             .await
@@ -2009,14 +2190,34 @@ mod tests {
             &fs::read_to_string(temp.path().join(MANIFEST_FILE_NAME)).unwrap(),
         )
         .unwrap();
-        assert!(!manifest.disabled.contains_key("legacy:learn"));
-        let personal = lib
-            .list_managed_skills(true)
-            .into_iter()
-            .find(|skill| skill.id == "personal:learn")
-            .unwrap();
+        assert!(manifest.disabled.is_empty());
+        let skills = lib.list_managed_skills(true);
+        let personal = find(&skills, "personal:learn");
         assert!(personal.active);
         assert!(!personal.disabled);
+    }
+
+    #[tokio::test]
+    async fn a_broken_manifest_is_reported_and_left_untouched() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_skill(&temp.path().join("skills"), "learn", "personal");
+        let manifest_path = temp.path().join(MANIFEST_FILE_NAME);
+
+        // A plain reload has nothing to record.
+        lib.reload().await.unwrap();
+        assert!(!manifest_path.exists());
+
+        let broken = "{ \"version\": 1, \"disabled\": { \"personal:learn\": {}, } }";
+        fs::write(&manifest_path, broken).unwrap();
+        let err = lib.reload().await.unwrap_err();
+        assert!(err.to_string().contains("is invalid"), "{err}");
+        let err = lib
+            .set_skill_enabled("personal:learn".to_string(), false)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("is invalid"), "{err}");
+        assert_eq!(fs::read_to_string(&manifest_path).unwrap(), broken);
     }
 
     #[tokio::test]
@@ -2038,6 +2239,9 @@ mod tests {
             created.skill.description,
             "My workflow: \"daily\"\nSecond line"
         );
+        let skill_dir = temp.path().join("skills/my-skill");
+        fs::create_dir_all(skill_dir.join("references")).unwrap();
+        fs::write(skill_dir.join("references/guide.md"), "# Guide\n").unwrap();
 
         let updated_content = skill_md("my-skill", "Updated");
         let updated = lib
@@ -2049,14 +2253,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.skill.description, "Updated");
-        assert!(temp.path().join("skill-backups/my-skill").is_dir());
+        // Only the file the update replaced is kept.
+        let backups: Vec<PathBuf> = fs::read_dir(temp.path().join("skill-backups/my-skill"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let backed_up: Vec<String> = fs::read_dir(&backups[0])
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(backed_up, ["SKILL.md"]);
+        assert!(
+            fs::read_to_string(backups[0].join("SKILL.md"))
+                .unwrap()
+                .contains("Second line")
+        );
 
         let deleted = lib
             .delete_personal_skill("personal:my-skill".to_string())
             .await
             .unwrap();
         assert_eq!(deleted["deleted"], json!(true));
-        assert!(!temp.path().join("skills/my-skill").exists());
+        assert!(!skill_dir.exists());
         assert!(temp.path().join("skill-trash/my-skill").is_dir());
     }
 
@@ -2064,7 +2283,12 @@ mod tests {
     async fn clone_read_only_skill_into_personal_root() {
         let temp = tempdir().unwrap();
         let lib = library(temp.path());
-        write_skill(&temp.path().join("bundled-skills"), "pdf", "PDF work");
+        let bundled = temp.path().join("bundled-skills");
+        write_skill(&bundled, "pdf", "PDF work");
+        fs::create_dir_all(bundled.join("pdf/.git")).unwrap();
+        fs::write(bundled.join("pdf/.git/config"), "[core]\n").unwrap();
+        let long_name = "a".repeat(64);
+        write_skill(&bundled, &long_name, "Long name");
         lib.reload().await.unwrap();
 
         let cloned = lib
@@ -2074,6 +2298,25 @@ mod tests {
         assert_eq!(cloned.skill.id, "personal:pdf-custom");
         assert!(cloned.content.contains("origin"));
         assert!(temp.path().join("skills/pdf-custom/SKILL.md").is_file());
+        assert!(!temp.path().join("skills/pdf-custom/.git").exists());
+
+        let auto = lib
+            .clone_skill("bundled:pdf".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(auto.skill.id, "personal:pdf-copy");
+        // `<64 chars>-copy` is not a valid name, so nothing is written.
+        assert!(
+            lib.clone_skill(format!("bundled:{long_name}"), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            !temp
+                .path()
+                .join(format!("skills/{long_name}-copy"))
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -2085,23 +2328,15 @@ mod tests {
         let references = skill_dir.join("references");
         fs::create_dir_all(&references).unwrap();
         fs::write(references.join("guide.md"), "# Guide\n").unwrap();
+        fs::create_dir_all(skill_dir.join(".venv/lib")).unwrap();
+        fs::write(skill_dir.join(".venv/lib/site.py"), "").unwrap();
         lib.reload().await.unwrap();
 
         let detail = lib.get_skill_detail("personal:learn").await.unwrap();
         assert_eq!(detail.skill.directory, skill_dir.display().to_string());
-        assert_eq!(detail.skill.file_count, 2);
-        assert!(
-            detail
-                .files
-                .iter()
-                .any(|file| file.path == "references" && file.kind == SkillFileKind::Directory)
-        );
-        assert!(
-            detail
-                .files
-                .iter()
-                .any(|file| file.path == "references/guide.md" && file.kind == SkillFileKind::File)
-        );
+        let paths: Vec<&str> = detail.files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(paths, ["SKILL.md", "references", "references/guide.md"]);
+        assert_eq!(detail.files[1].kind, SkillFileKind::Directory);
 
         let file = lib
             .get_skill_file("personal:learn", "references/guide.md")
@@ -2114,6 +2349,26 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_file_keeps_whole_characters() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        write_skill(&temp.path().join("skills"), "learn", "Learning workflow");
+        // The 1 MiB cut lands in the middle of the two-byte `é`.
+        let limit = MAX_SKILL_VIEW_FILE_BYTES as usize;
+        let content = format!("{}é tail", "a".repeat(limit - 1));
+        fs::write(temp.path().join("skills/learn/big.md"), &content).unwrap();
+        lib.reload().await.unwrap();
+
+        let file = lib
+            .get_skill_file("personal:learn", "big.md")
+            .await
+            .unwrap();
+        assert!(file.truncated);
+        assert_eq!(file.content.len(), limit - 1);
+        assert_eq!(file.size, content.len() as u64);
     }
 
     #[test]
@@ -2170,12 +2425,13 @@ mod tests {
         write_skill(&temp.path().join("bundled-skills"), "pdf", "PDF work");
         lib.reload().await.unwrap();
 
+        // Strict tool calls send every field, with `null` for the unused ones.
         let output = Tool::call_raw(
             &lib,
             EngineBuilder::new().mock_ctx().base,
             json!({
                 "type": "ListSkills",
-                "include_inactive": true,
+                "include_inactive": null,
                 "id": null,
                 "path": null,
                 "name": null,
@@ -2220,6 +2476,7 @@ mod tests {
             "stale dashboard version overwrote an external edit"
         );
     }
+
     #[tokio::test]
     async fn invalid_skill_not_callable() {
         let temp = tempdir().unwrap();
@@ -2242,5 +2499,22 @@ mod tests {
             !lib.subagent_set().contains_lowercase("skill_actual_name"),
             "dashboard-invalid skill is still executable"
         );
+    }
+
+    #[tokio::test]
+    async fn a_skill_the_registry_rejects_is_listed_as_an_error() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let dir = temp.path().join("skills/broken");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "no frontmatter at all\n").unwrap();
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let broken = find(&skills, "personal:broken");
+        assert!(!broken.active && broken.has_error(), "{broken:?}");
+        // The broken file is still there to read and fix.
+        let detail = lib.get_skill_detail("personal:broken").await.unwrap();
+        assert!(detail.content.contains("no frontmatter"));
     }
 }

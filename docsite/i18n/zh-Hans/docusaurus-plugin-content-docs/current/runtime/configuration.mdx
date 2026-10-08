@@ -126,8 +126,8 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
 | `bundled-skills/` | Anda 更新安装的内置 Skills。 |
 | `sandbox/` | 开启 sandbox 时的 shell 隔离目录。 |
 | `skills/` | 用户创建、克隆或编辑的个人运行时 Skills。 |
-| `skills-manifest.json` | Skills 库的本地启停和重载元数据。 |
-| `skill-backups/` | Dashboard 编辑 Skill 前创建的时间戳备份。 |
+| `skills-manifest.json` | 在 Dashboard 中停用的 Skills。文件无法解析时会报错并保持原样，不会被重置。 |
+| `skill-backups/` | 每次更新个人 Skill 前保存的 `SKILL.md` 时间戳副本。 |
 | `skill-trash/` | 删除个人 Skill 时先移动到这里。 |
 | `workspace/` | 文件和 shell 工具默认工作区。 |
 
