@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::Duration,
 };
 
 /// Default page size for `ListBookmarks`.
@@ -27,6 +28,12 @@ const DEFAULT_LIST_LIMIT: usize = 20;
 const MAX_LIST_LIMIT: usize = 100;
 const BOOKMARK_FOLDERS_EXTENSION_KEY: &str = "bookmark_folders";
 const BOOKMARK_PREVIEW_MAX_BYTES: usize = 280;
+/// Source text sent to the preview model; the head of a long message carries
+/// its gist, and code or log dumps would otherwise be sent whole.
+const BOOKMARK_PREVIEW_INPUT_MAX_BYTES: usize = 32 * 1024;
+/// The preview is a nicety, so a slow model falls back instead of holding the
+/// bookmark write.
+const BOOKMARK_PREVIEW_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A bookmarked conversation and the messages marked inside it.
 ///
@@ -114,11 +121,11 @@ type BookmarkFoldersByUser = BTreeMap<String, BookmarkFolders>;
 #[derive(Clone)]
 pub struct BookmarkStore {
     bookmarks: Arc<Collection>,
-    extension_save_lock: Arc<tokio::sync::Mutex<()>>,
-    // Serializes the find→modify→update sequences on bookmark rows: the
-    // engine runs tool calls of one turn concurrently, and two interleaved
-    // read-modify-writes of the same `(user, conversation)` row would let the
-    // later writer silently overwrite the earlier one's messages/folders.
+    // Serializes every read-modify-write of bookmark rows and of the folder
+    // extension: the engine runs tool calls of one turn concurrently, and two
+    // interleaved writes would let the later one silently drop the earlier
+    // one's messages or folders. Writes are rare, so one lock also keeps a
+    // folder deletion and its membership cleanup atomic.
     write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -142,7 +149,6 @@ impl BookmarkStore {
 
         Ok(Self {
             bookmarks,
-            extension_save_lock: Arc::new(tokio::sync::Mutex::new(())),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
@@ -153,17 +159,17 @@ impl BookmarkStore {
             .bookmarks
             .search_as(Query {
                 search: None,
-                filter: Some(Filter::Field((
-                    "conversation".to_string(),
-                    RangeQuery::Eq(Fv::U64(conversation)),
-                ))),
+                filter: Some(Filter::And(vec![
+                    Box::new(user_filter(user)),
+                    Box::new(Filter::Field((
+                        "conversation".to_string(),
+                        RangeQuery::Eq(Fv::U64(conversation)),
+                    ))),
+                ])),
                 limit: Some(1),
             })
             .await?;
-        match rt.into_iter().next() {
-            Some(bookmark) if bookmark.user == user => Ok(Some(bookmark)),
-            _ => Ok(None),
-        }
+        Ok(rt.into_iter().next())
     }
 
     /// Adds a marked message, idempotent on `(user, conversation, message index)`.
@@ -176,6 +182,7 @@ impl BookmarkStore {
         folder_ids: Vec<u64>,
     ) -> Result<Bookmark, BoxError> {
         let _guard = self.write_lock.lock().await;
+        validate_folder_ids(&self.folders(&user)?, &folder_ids)?;
         if let Some(mut existing) = self.find(&user, conversation).await? {
             let mut changed = false;
             if !existing
@@ -219,7 +226,6 @@ impl BookmarkStore {
             messages: vec![message],
             created_at: now,
         };
-        normalize_messages(&mut bookmark.messages);
         let id = self.bookmarks.add_from(&bookmark).await?;
         bookmark._id = id;
         self.bookmarks.flush(now).await?;
@@ -246,7 +252,7 @@ impl BookmarkStore {
         };
         found.messages.remove(pos);
         if found.messages.is_empty() {
-            let removed = matches!(self.bookmarks.remove(found._id).await, Ok(Some(_)));
+            let removed = self.bookmarks.remove(found._id).await?.is_some();
             if removed {
                 self.bookmarks.flush(unix_ms()).await?;
             }
@@ -263,7 +269,7 @@ impl BookmarkStore {
         cursor: Option<String>,
         limit: Option<usize>,
     ) -> Result<(Vec<Bookmark>, Option<String>), BoxError> {
-        self.list_filtered(user, cursor, limit, |_| true).await
+        self.list_filtered(user, cursor, limit, None).await
     }
 
     /// Lists bookmarks in a folder. `folder_id = 0` means unfiled bookmarks.
@@ -275,86 +281,95 @@ impl BookmarkStore {
         limit: Option<usize>,
     ) -> Result<(Vec<Bookmark>, Option<String>), BoxError> {
         if folder_id != 0 {
-            let folders = self.folders(user)?;
-            if !folders.folders.contains_key(&folder_id) {
-                return Err(format!("bookmark folder {folder_id} does not exist").into());
-            }
+            existing_folder(&self.folders(user)?, folder_id)?;
         }
-        self.list_filtered(user, cursor, limit, |bookmark| {
+        let keep = |bookmark: &Bookmark| {
             if folder_id == 0 {
                 bookmark.folder_ids.is_empty()
             } else {
                 bookmark.folder_ids.contains(&folder_id)
             }
-        })
-        .await
+        };
+        self.list_filtered(user, cursor, limit, Some(&keep)).await
     }
 
+    /// Pages newest-first through the rows `keep` accepts. The cursor is only
+    /// returned when another match exists, so a full last page ends the list.
     async fn list_filtered(
         &self,
         user: &str,
         cursor: Option<String>,
         limit: Option<usize>,
-        mut keep: impl FnMut(&Bookmark) -> bool,
+        keep: Option<&(dyn Fn(&Bookmark) -> bool + Sync)>,
     ) -> Result<(Vec<Bookmark>, Option<String>), BoxError> {
         let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
-        let mut cursor = match BTree::from_cursor::<u64>(&cursor)? {
-            Some(cursor) => cursor,
-            None => self.bookmarks.max_document_id() + 1,
+        // Unfiltered pages need one extra row to know whether more follow;
+        // filtered pages read wider blocks since most rows may be skipped.
+        let batch = if keep.is_some() {
+            MAX_LIST_LIMIT
+        } else {
+            limit + 1
         };
-        let mut items = Vec::with_capacity(limit);
-        let batch_limit = MAX_LIST_LIMIT;
+        let mut cursor = BTree::from_cursor::<u64>(&cursor)?;
+        let mut items: Vec<Bookmark> = Vec::with_capacity(limit);
 
         loop {
-            // `_id < cursor` keeps the largest-id block below the cursor,
-            // returned ascending; reverse each block so callers see
-            // newest-first. Filtered folder pages may need multiple blocks.
-            let mut rt: Vec<Bookmark> = self
-                .bookmarks
-                .search_as(Query {
-                    search: None,
-                    filter: Some(Filter::And(vec![
-                        Box::new(Filter::Field((
-                            "user".to_string(),
-                            RangeQuery::Eq(Fv::Text(user.to_string())),
-                        ))),
-                        Box::new(Filter::Field((
-                            "_id".to_string(),
-                            RangeQuery::Lt(Fv::U64(cursor)),
-                        ))),
-                    ])),
-                    limit: Some(batch_limit),
-                })
-                .await?;
-            let has_more = rt.len() >= batch_limit;
-            if let Some(first) = rt.first() {
-                cursor = first._id;
-            }
-            rt.reverse();
-
-            for bookmark in rt {
-                if keep(&bookmark) {
-                    let next_cursor = if items.len() + 1 >= limit {
-                        BTree::to_cursor(&bookmark._id)
-                    } else {
-                        None
-                    };
-                    items.push(bookmark);
-                    if items.len() >= limit {
-                        return Ok((items, next_cursor));
-                    }
+            let (rows, next) = self.rows_below(user, cursor, batch).await?;
+            for bookmark in rows {
+                if !keep.is_none_or(|keep| keep(&bookmark)) {
+                    continue;
                 }
+                if items.len() == limit {
+                    let next_cursor = items.last().and_then(|last| BTree::to_cursor(&last._id));
+                    return Ok((items, next_cursor));
+                }
+                items.push(bookmark);
             }
-
-            if !has_more {
-                return Ok((items, None));
+            match next {
+                Some(next) => cursor = Some(next),
+                None => return Ok((items, None)),
             }
         }
     }
 
+    /// One block of the caller's rows with `_id < cursor` (all rows when
+    /// `None`), newest first, plus the cursor of the next block when this one
+    /// was full.
+    async fn rows_below(
+        &self,
+        user: &str,
+        cursor: Option<u64>,
+        batch: usize,
+    ) -> Result<(Vec<Bookmark>, Option<u64>), BoxError> {
+        let cursor = cursor.unwrap_or_else(|| self.bookmarks.max_document_id() + 1);
+        // `_id < cursor` keeps the largest-id block below the cursor, returned
+        // ascending.
+        let mut rows: Vec<Bookmark> = self
+            .bookmarks
+            .search_as(Query {
+                search: None,
+                filter: Some(Filter::And(vec![
+                    Box::new(user_filter(user)),
+                    Box::new(Filter::Field((
+                        "_id".to_string(),
+                        RangeQuery::Lt(Fv::U64(cursor)),
+                    ))),
+                ])),
+                limit: Some(batch),
+            })
+            .await?;
+        let next = if rows.len() >= batch {
+            rows.first().map(|first| first._id)
+        } else {
+            None
+        };
+        rows.reverse();
+        Ok((rows, next))
+    }
+
     pub fn folders(&self, user: &str) -> Result<BookmarkFolders, BoxError> {
-        let all = self.load_all_folders();
-        Ok(all.get(user).cloned().unwrap_or_default().normalized())
+        let mut all = self.load_all_folders()?;
+        Ok(all.remove(user).unwrap_or_default().normalized())
     }
 
     pub async fn create_folder(
@@ -363,32 +378,30 @@ impl BookmarkStore {
         name: String,
         parent_id: Option<u64>,
     ) -> Result<BookmarkFolders, BoxError> {
-        let _guard = self.extension_save_lock.lock().await;
-        let mut all = self.load_all_folders();
-        let folders = all.entry(user.to_string()).or_default();
-        folders.normalize_in_place();
         let name = normalize_folder_name(name)?;
-        validate_parent_exists(folders, parent_id)?;
-        ensure_unique_folder_name(folders, None, parent_id, &name)?;
-
-        let now = unix_ms();
-        let id = folders.next_folder_id.max(1);
-        folders.next_folder_id = id + 1;
-        folders.folders.insert(
-            id,
-            BookmarkFolder {
-                _id: id,
-                name,
-                parent_id,
-                order: next_folder_order(folders, parent_id),
-                created_at: now,
-                updated_at: now,
-            },
-        );
-        folders.updated_at = now;
-        let updated = folders.clone();
-        self.save_all_folders(&all).await?;
-        Ok(updated)
+        let _guard = self.write_lock.lock().await;
+        let (folders, ()) = self
+            .edit_folders(user, |folders, now| {
+                validate_parent_exists(folders, parent_id)?;
+                ensure_unique_folder_name(folders, None, parent_id, &name)?;
+                let id = folders.next_folder_id;
+                folders.next_folder_id = id + 1;
+                let order = next_folder_order(folders, parent_id);
+                folders.folders.insert(
+                    id,
+                    BookmarkFolder {
+                        _id: id,
+                        name,
+                        parent_id,
+                        order,
+                        created_at: now,
+                        updated_at: now,
+                    },
+                );
+                Ok(())
+            })
+            .await?;
+        Ok(folders)
     }
 
     pub async fn rename_folder(
@@ -397,29 +410,22 @@ impl BookmarkStore {
         folder_id: u64,
         name: String,
     ) -> Result<BookmarkFolders, BoxError> {
-        let _guard = self.extension_save_lock.lock().await;
-        let mut all = self.load_all_folders();
-        let folders = all.entry(user.to_string()).or_default();
-        folders.normalize_in_place();
         let name = normalize_folder_name(name)?;
-        let parent_id = folders
-            .folders
-            .get(&folder_id)
-            .ok_or_else(|| format!("bookmark folder {folder_id} does not exist"))?
-            .parent_id;
-        ensure_unique_folder_name(folders, Some(folder_id), parent_id, &name)?;
-
-        let now = unix_ms();
-        let folder = folders
-            .folders
-            .get_mut(&folder_id)
-            .expect("folder existence checked above");
-        folder.name = name;
-        folder.updated_at = now;
-        folders.updated_at = now;
-        let updated = folders.clone();
-        self.save_all_folders(&all).await?;
-        Ok(updated)
+        let _guard = self.write_lock.lock().await;
+        let (folders, ()) = self
+            .edit_folders(user, |folders, now| {
+                let parent_id = existing_folder(folders, folder_id)?.parent_id;
+                ensure_unique_folder_name(folders, Some(folder_id), parent_id, &name)?;
+                let folder = folders
+                    .folders
+                    .get_mut(&folder_id)
+                    .expect("folder existence checked above");
+                folder.name = name;
+                folder.updated_at = now;
+                Ok(())
+            })
+            .await?;
+        Ok(folders)
     }
 
     pub async fn move_folder(
@@ -429,93 +435,60 @@ impl BookmarkStore {
         parent_id: Option<u64>,
         order: Option<i64>,
     ) -> Result<BookmarkFolders, BoxError> {
-        let _guard = self.extension_save_lock.lock().await;
-        let mut all = self.load_all_folders();
-        let folders = all.entry(user.to_string()).or_default();
-        folders.normalize_in_place();
-        if !folders.folders.contains_key(&folder_id) {
-            return Err(format!("bookmark folder {folder_id} does not exist").into());
-        }
-        validate_parent_exists(folders, parent_id)?;
-        if parent_id == Some(folder_id) || is_descendant_folder(folders, parent_id, folder_id) {
-            return Err("cannot move a folder under itself or its descendant".into());
-        }
-        let name = folders
-            .folders
-            .get(&folder_id)
-            .map(|folder| folder.name.clone())
-            .unwrap_or_default();
-        ensure_unique_folder_name(folders, Some(folder_id), parent_id, &name)?;
-
-        let now = unix_ms();
-        let next_order = order.unwrap_or_else(|| next_folder_order(folders, parent_id));
-        let folder = folders
-            .folders
-            .get_mut(&folder_id)
-            .expect("folder existence checked above");
-        folder.parent_id = parent_id;
-        folder.order = next_order;
-        folder.updated_at = now;
-        folders.updated_at = now;
-        let updated = folders.clone();
-        self.save_all_folders(&all).await?;
-        Ok(updated)
+        let _guard = self.write_lock.lock().await;
+        let (folders, ()) = self
+            .edit_folders(user, |folders, now| {
+                let name = existing_folder(folders, folder_id)?.name.clone();
+                validate_parent_exists(folders, parent_id)?;
+                if is_descendant_folder(folders, parent_id, folder_id) {
+                    return Err("cannot move a folder under itself or its descendant".into());
+                }
+                ensure_unique_folder_name(folders, Some(folder_id), parent_id, &name)?;
+                let order = order.unwrap_or_else(|| next_folder_order(folders, parent_id));
+                let folder = folders
+                    .folders
+                    .get_mut(&folder_id)
+                    .expect("folder existence checked above");
+                folder.parent_id = parent_id;
+                folder.order = order;
+                folder.updated_at = now;
+                Ok(())
+            })
+            .await?;
+        Ok(folders)
     }
 
+    /// Deletes a folder and its subfolders, then drops them from every
+    /// bookmark. Bookmarks themselves stay.
     pub async fn delete_folder(
         &self,
         user: &str,
         folder_id: u64,
     ) -> Result<BookmarkFolders, BoxError> {
-        let deleted_ids = {
-            let _guard = self.extension_save_lock.lock().await;
-            let mut all = self.load_all_folders();
-            let folders = all.entry(user.to_string()).or_default();
-            folders.normalize_in_place();
-            if !folders.folders.contains_key(&folder_id) {
-                return Err(format!("bookmark folder {folder_id} does not exist").into());
-            }
-
-            let now = unix_ms();
-            let deleted_ids = folder_subtree_ids(folders, folder_id);
-            for id in &deleted_ids {
-                folders.folders.remove(id);
-            }
-            folders.updated_at = now;
-            self.save_all_folders(&all).await?;
-            deleted_ids
-        };
-
+        let _guard = self.write_lock.lock().await;
+        let (folders, deleted_ids) = self
+            .edit_folders(user, |folders, _| {
+                existing_folder(folders, folder_id)?;
+                let deleted_ids = folder_subtree_ids(folders, folder_id);
+                folders.folders.retain(|id, _| !deleted_ids.contains(id));
+                Ok(deleted_ids)
+            })
+            .await?;
         self.remove_folder_ids_from_bookmarks(user, &deleted_ids)
             .await?;
-        self.folders(user)
+        Ok(folders)
     }
 
+    /// Replaces all folders assigned to one bookmark.
     pub async fn set_bookmark_folders(
         &self,
         user: &str,
         message_ref: MessageRef,
         folder_ids: Vec<u64>,
     ) -> Result<Bookmark, BoxError> {
-        let _guard = self.write_lock.lock().await;
-        let folders = self.folders(user)?;
-        let folder_ids = validate_folder_ids(&folders, folder_ids)?;
-        let mut bookmark = self
-            .find(user, message_ref.conversation)
-            .await?
-            .ok_or_else(|| format!("bookmark {} does not exist", message_ref.message_id()))?;
-        if !bookmark
-            .messages
-            .iter()
-            .any(|message| message.index == message_ref.index)
-        {
-            return Err(format!("bookmark {} does not exist", message_ref.message_id()).into());
-        }
-        if bookmark.folder_ids == folder_ids {
-            return Ok(bookmark);
-        }
-        bookmark.folder_ids = folder_ids;
-        self.update_bookmark(bookmark).await
+        let required = folder_ids.clone();
+        self.edit_bookmark_folders(user, message_ref, &required, |_| folder_ids)
+            .await
     }
 
     pub async fn add_bookmark_to_folder(
@@ -524,26 +497,11 @@ impl BookmarkStore {
         message_ref: MessageRef,
         folder_id: u64,
     ) -> Result<Bookmark, BoxError> {
-        let _guard = self.write_lock.lock().await;
-        let folders = self.folders(user)?;
-        validate_folder_ids(&folders, vec![folder_id])?;
-        let mut bookmark = self
-            .find(user, message_ref.conversation)
-            .await?
-            .ok_or_else(|| format!("bookmark {} does not exist", message_ref.message_id()))?;
-        if !bookmark
-            .messages
-            .iter()
-            .any(|message| message.index == message_ref.index)
-        {
-            return Err(format!("bookmark {} does not exist", message_ref.message_id()).into());
-        }
-        if !bookmark.folder_ids.contains(&folder_id) {
-            bookmark.folder_ids.push(folder_id);
-            bookmark.folder_ids = normalize_folder_ids(bookmark.folder_ids);
-            bookmark = self.update_bookmark(bookmark).await?;
-        }
-        Ok(bookmark)
+        self.edit_bookmark_folders(user, message_ref, &[folder_id], |mut ids| {
+            ids.push(folder_id);
+            ids
+        })
+        .await
     }
 
     pub async fn remove_bookmark_from_folder(
@@ -552,31 +510,51 @@ impl BookmarkStore {
         message_ref: MessageRef,
         folder_id: u64,
     ) -> Result<Bookmark, BoxError> {
+        self.edit_bookmark_folders(user, message_ref, &[folder_id], |mut ids| {
+            ids.retain(|id| *id != folder_id);
+            ids
+        })
+        .await
+    }
+
+    /// Rewrites one marked message's folder ids with `edit`, after checking
+    /// that every id in `required` names an existing folder.
+    async fn edit_bookmark_folders(
+        &self,
+        user: &str,
+        message_ref: MessageRef,
+        required: &[u64],
+        edit: impl FnOnce(Vec<u64>) -> Vec<u64>,
+    ) -> Result<Bookmark, BoxError> {
         let _guard = self.write_lock.lock().await;
-        let folders = self.folders(user)?;
-        validate_folder_ids(&folders, vec![folder_id])?;
+        validate_folder_ids(&self.folders(user)?, required)?;
         let mut bookmark = self
             .find(user, message_ref.conversation)
             .await?
+            .filter(|bookmark| {
+                bookmark
+                    .messages
+                    .iter()
+                    .any(|message| message.index == message_ref.index)
+            })
             .ok_or_else(|| format!("bookmark {} does not exist", message_ref.message_id()))?;
-        if !bookmark
-            .messages
-            .iter()
-            .any(|message| message.index == message_ref.index)
-        {
-            return Err(format!("bookmark {} does not exist", message_ref.message_id()).into());
+        let folder_ids = normalize_folder_ids(edit(bookmark.folder_ids.clone()));
+        if bookmark.folder_ids == folder_ids {
+            return Ok(bookmark);
         }
-        let before = bookmark.folder_ids.len();
-        bookmark.folder_ids.retain(|id| *id != folder_id);
-        if bookmark.folder_ids.len() != before {
-            bookmark = self.update_bookmark(bookmark).await?;
-        }
-        Ok(bookmark)
+        bookmark.folder_ids = folder_ids;
+        self.update_bookmark(bookmark).await
     }
 
     async fn update_bookmark(&self, bookmark: Bookmark) -> Result<Bookmark, BoxError> {
-        let doc = self
-            .bookmarks
+        self.write_bookmark(&bookmark).await?;
+        self.bookmarks.flush(unix_ms()).await?;
+        Ok(bookmark)
+    }
+
+    /// Writes a row's mutable fields without flushing.
+    async fn write_bookmark(&self, bookmark: &Bookmark) -> Result<(), BoxError> {
+        self.bookmarks
             .update(
                 bookmark._id,
                 BTreeMap::from([
@@ -592,56 +570,67 @@ impl BookmarkStore {
                 ]),
             )
             .await?;
-        self.bookmarks.flush(unix_ms()).await?;
-        Ok(doc.try_into()?)
+        Ok(())
     }
 
+    /// Drops deleted folder ids from the caller's bookmarks and flushes once.
+    /// Callers hold `write_lock`.
     async fn remove_folder_ids_from_bookmarks(
         &self,
         user: &str,
         folder_ids: &BTreeSet<u64>,
     ) -> Result<(), BoxError> {
-        let _guard = self.write_lock.lock().await;
-        let mut cursor = self.bookmarks.max_document_id() + 1;
+        let mut cursor = None;
+        let mut changed = false;
         loop {
-            let rt: Vec<Bookmark> = self
-                .bookmarks
-                .search_as(Query {
-                    search: None,
-                    filter: Some(Filter::And(vec![
-                        Box::new(Filter::Field((
-                            "user".to_string(),
-                            RangeQuery::Eq(Fv::Text(user.to_string())),
-                        ))),
-                        Box::new(Filter::Field((
-                            "_id".to_string(),
-                            RangeQuery::Lt(Fv::U64(cursor)),
-                        ))),
-                    ])),
-                    limit: Some(MAX_LIST_LIMIT),
-                })
-                .await?;
-            let has_more = rt.len() >= MAX_LIST_LIMIT;
-            if let Some(first) = rt.first() {
-                cursor = first._id;
-            }
-            for mut bookmark in rt {
+            let (rows, next) = self.rows_below(user, cursor, MAX_LIST_LIMIT).await?;
+            for mut bookmark in rows {
                 let before = bookmark.folder_ids.len();
                 bookmark.folder_ids.retain(|id| !folder_ids.contains(id));
                 if bookmark.folder_ids.len() != before {
-                    self.update_bookmark(bookmark).await?;
+                    self.write_bookmark(&bookmark).await?;
+                    changed = true;
                 }
             }
-            if !has_more {
-                return Ok(());
+            match next {
+                Some(next) => cursor = Some(next),
+                None => break,
             }
         }
+        if changed {
+            self.bookmarks.flush(unix_ms()).await?;
+        }
+        Ok(())
     }
 
-    fn load_all_folders(&self) -> BookmarkFoldersByUser {
-        self.bookmarks
-            .get_extension_as::<BookmarkFoldersByUser>(BOOKMARK_FOLDERS_EXTENSION_KEY)
-            .unwrap_or_default()
+    /// Applies `edit` to the caller's folders, stamps and saves them, and
+    /// returns the saved folders. Callers hold `write_lock`.
+    async fn edit_folders<R>(
+        &self,
+        user: &str,
+        edit: impl FnOnce(&mut BookmarkFolders, u64) -> Result<R, BoxError>,
+    ) -> Result<(BookmarkFolders, R), BoxError> {
+        let mut all = self.load_all_folders()?;
+        let folders = all.entry(user.to_string()).or_default();
+        folders.normalize_in_place();
+        let now = unix_ms();
+        let output = edit(folders, now)?;
+        folders.updated_at = now;
+        let updated = folders.clone();
+        self.save_all_folders(&all).await?;
+        Ok((updated, output))
+    }
+
+    fn load_all_folders(&self) -> Result<BookmarkFoldersByUser, BoxError> {
+        // Every user's folders share this one value, so one that fails to
+        // decode must surface rather than read as empty: the next save would
+        // erase them all.
+        Ok(self
+            .bookmarks
+            .get_extension(BOOKMARK_FOLDERS_EXTENSION_KEY)
+            .map(|value| value.deserialized())
+            .transpose()?
+            .unwrap_or_default())
     }
 
     async fn save_all_folders(&self, all: &BookmarkFoldersByUser) -> Result<(), BoxError> {
@@ -660,10 +649,27 @@ impl BookmarkFolders {
 
     fn normalize_in_place(&mut self) {
         self.version = 1;
-        self.next_folder_id = self.next_folder_id.max(1);
-        let max_id = self.folders.keys().copied().max().unwrap_or(0);
-        self.next_folder_id = self.next_folder_id.max(max_id.saturating_add(1));
+        let after_max = self
+            .folders
+            .keys()
+            .next_back()
+            .map_or(1, |id| id.saturating_add(1));
+        self.next_folder_id = self.next_folder_id.max(after_max);
     }
+}
+
+fn user_filter(user: &str) -> Filter {
+    Filter::Field((
+        "user".to_string(),
+        RangeQuery::Eq(Fv::Text(user.to_string())),
+    ))
+}
+
+fn existing_folder(folders: &BookmarkFolders, folder_id: u64) -> Result<&BookmarkFolder, BoxError> {
+    folders
+        .folders
+        .get(&folder_id)
+        .ok_or_else(|| format!("bookmark folder {folder_id} does not exist").into())
 }
 
 fn normalize_folder_name(name: String) -> Result<String, BoxError> {
@@ -677,6 +683,7 @@ fn normalize_folder_name(name: String) -> Result<String, BoxError> {
     Ok(name)
 }
 
+/// Drops `0` (the unfiled pseudo-folder) and duplicates, keeping first-seen order.
 fn normalize_folder_ids(folder_ids: Vec<u64>) -> Vec<u64> {
     let mut seen = BTreeSet::new();
     folder_ids
@@ -685,17 +692,11 @@ fn normalize_folder_ids(folder_ids: Vec<u64>) -> Vec<u64> {
         .collect()
 }
 
-fn validate_folder_ids(
-    folders: &BookmarkFolders,
-    folder_ids: Vec<u64>,
-) -> Result<Vec<u64>, BoxError> {
-    let folder_ids = normalize_folder_ids(folder_ids);
-    for id in &folder_ids {
-        if !folders.folders.contains_key(id) {
-            return Err(format!("bookmark folder {id} does not exist").into());
-        }
+fn validate_folder_ids(folders: &BookmarkFolders, folder_ids: &[u64]) -> Result<(), BoxError> {
+    for id in folder_ids.iter().filter(|id| **id != 0) {
+        existing_folder(folders, *id)?;
     }
-    Ok(folder_ids)
+    Ok(())
 }
 
 fn normalize_messages(messages: &mut Vec<MessageInfo>) {
@@ -745,6 +746,7 @@ fn next_folder_order(folders: &BookmarkFolders, parent_id: Option<u64>) -> i64 {
         .saturating_add(1)
 }
 
+/// Whether `ancestor` is `maybe_descendant` or one of its ancestors.
 fn is_descendant_folder(
     folders: &BookmarkFolders,
     maybe_descendant: Option<u64>,
@@ -888,11 +890,11 @@ fn bookmarks_tool_parameters() -> Value {
             },
             "message_id": {
                 "type": ["string", "null"],
-                "description": "Stable client message id `m-<conversation>-<index>`. Required for AddBookmark and RemoveBookmark."
+                "description": "Stable client message id `m-<conversation>-<index>`. Required for AddBookmark, RemoveBookmark, SetBookmarkFolders, AddBookmarkToFolder, and RemoveBookmarkFromFolder."
             },
             "conversation": {
                 "type": ["integer", "null"],
-                "description": "Conversation the message belongs to. Only for AddBookmark."
+                "description": "Conversation the message belongs to. Required for AddBookmark and GetConversationBookmark."
             },
             "source": {
                 "type": ["string", "null"],
@@ -913,27 +915,27 @@ fn bookmarks_tool_parameters() -> Value {
             },
             "folder_id": {
                 "type": ["integer", "null"],
-                "description": "Bookmark folder id. Use 0 for unfiled in ListBookmarksInFolder."
+                "description": "Bookmark folder id. Required for RenameBookmarkFolder, DeleteBookmarkFolder, MoveBookmarkFolder, AddBookmarkToFolder, RemoveBookmarkFromFolder, and ListBookmarksInFolder (0 means unfiled there)."
             },
             "name": {
                 "type": ["string", "null"],
-                "description": "Bookmark folder name."
+                "description": "Bookmark folder name. Required for CreateBookmarkFolder and RenameBookmarkFolder."
             },
             "parent_id": {
                 "type": ["integer", "null"],
-                "description": "Optional parent bookmark folder id."
+                "description": "Parent folder id for CreateBookmarkFolder and MoveBookmarkFolder; null means top level."
             },
             "order": {
                 "type": ["integer", "null"],
-                "description": "Optional manual ordering value for folders."
+                "description": "Manual folder order for MoveBookmarkFolder; null places it after its siblings."
             },
             "cursor": {
                 "type": ["string", "null"],
-                "description": "Pagination cursor from a previous ListBookmarks response. Omit for the first page."
+                "description": "Pagination cursor from a previous ListBookmarks or ListBookmarksInFolder response. Omit for the first page."
             },
             "limit": {
                 "type": ["integer", "null"],
-                "description": "Optional page size for ListBookmarks. Defaults to 20, max 100."
+                "description": "Optional page size for ListBookmarks and ListBookmarksInFolder. Defaults to 20, max 100."
             }
         },
         "required": [
@@ -981,9 +983,8 @@ impl BookmarksTool {
     }
 
     async fn bookmark_text(&self, source_text: &str) -> String {
-        let fallback = fallback_bookmark_text(source_text);
         if source_text.len() <= BOOKMARK_PREVIEW_MAX_BYTES {
-            return fallback;
+            return fallback_bookmark_text(source_text);
         }
         let Some(model) = self.models.as_ref().and_then(|models| {
             models
@@ -991,43 +992,42 @@ impl BookmarksTool {
                 .or_else(|| models.get("flash"))
                 .or_else(|| models.get_model())
         }) else {
-            return fallback;
+            return fallback_bookmark_text(source_text);
         };
 
-        match model
-            .completion(CompletionRequest {
-                instructions: concat!(
-                    "Generate a concise bookmark preview for one assistant chat message. ",
-                    "Return only the preview text, no markdown list, no quotes, no preamble. ",
-                    "Preserve concrete names, commands, files, decisions, and outcomes. ",
-                    "Keep it roughly under 80 CJK characters, 120 Latin-script words, ",
-                    "or a comparable short length for other languages. ",
-                    "Detect the source message's natural language and write the preview in that same language, ",
-                    "including languages other than Chinese or English. ",
-                    "Do not translate it to another language. ",
-                    "For mixed-language messages, follow the dominant natural language. ",
-                    "If the message is mostly code, commands, logs, or file paths, keep the original technical tokens."
-                )
-                .to_string(),
-                content: vec![ContentPart::Text {
-                    text: source_text.to_string(),
-                }],
-                effort: Some(ModelEffort::Low),
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(output) => {
-                let text = output.content.trim();
-                if text.is_empty() {
-                    fallback
-                } else {
-                    truncate_bookmark_preview(text, BOOKMARK_PREVIEW_MAX_BYTES)
-                }
+        let mut text = source_text.to_string();
+        truncate_utf8_to_max_bytes(&mut text, BOOKMARK_PREVIEW_INPUT_MAX_BYTES);
+        let completion = model.completion(CompletionRequest {
+            instructions: concat!(
+                "Generate a concise bookmark preview for one assistant chat message. ",
+                "Return only the preview text, no markdown list, no quotes, no preamble. ",
+                "Preserve concrete names, commands, files, decisions, and outcomes. ",
+                "Keep it under about 80 CJK characters or 40 Latin-script words, ",
+                "or a comparable short length for other languages; longer previews are cut off. ",
+                "Detect the source message's natural language and write the preview in that same language, ",
+                "including languages other than Chinese or English. ",
+                "Do not translate it to another language. ",
+                "For mixed-language messages, follow the dominant natural language. ",
+                "If the message is mostly code, commands, logs, or file paths, keep the original technical tokens."
+            )
+            .to_string(),
+            content: vec![ContentPart::Text { text }],
+            effort: Some(ModelEffort::Low),
+            ..Default::default()
+        });
+
+        match tokio::time::timeout(BOOKMARK_PREVIEW_TIMEOUT, completion).await {
+            Ok(Ok(output)) if !output.content.trim().is_empty() => {
+                truncate_bookmark_preview(output.content.trim(), BOOKMARK_PREVIEW_MAX_BYTES)
             }
-            Err(err) => {
+            Ok(Ok(_)) => fallback_bookmark_text(source_text),
+            Ok(Err(err)) => {
                 log::warn!("failed to generate bookmark preview; using fallback text: {err}");
-                fallback
+                fallback_bookmark_text(source_text)
+            }
+            Err(_) => {
+                log::warn!("bookmark preview timed out; using fallback text");
+                fallback_bookmark_text(source_text)
             }
         }
     }
@@ -1059,39 +1059,37 @@ impl MessageRef {
 }
 
 fn parse_message_id(message_id: &str) -> Result<MessageRef, BoxError> {
-    let mut parts = message_id.split('-');
-    if !matches!(parts.next(), Some("m")) {
-        return Err("message_id must be a stable chat message id".into());
-    }
-    let Some(conversation) = parts.next().and_then(|part| {
+    // `parse` alone would also accept a leading `+`.
+    fn digits<T: std::str::FromStr>(part: &str) -> Option<T> {
         (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| part.parse::<u64>().ok())
+            .then(|| part.parse().ok())
             .flatten()
-    }) else {
-        return Err("message_id must be a stable chat message id".into());
-    };
-    let Some(index) = parts.next().and_then(|part| {
-        (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
-            .then(|| part.parse::<usize>().ok())
-            .flatten()
-    }) else {
-        return Err("message_id must be a stable chat message id".into());
-    };
-    if parts.next().is_some() {
-        return Err("message_id must be a stable chat message id".into());
     }
-    Ok(MessageRef {
-        conversation,
-        index,
-    })
+    message_id
+        .strip_prefix("m-")
+        .and_then(|rest| rest.split_once('-'))
+        .and_then(|(conversation, index)| {
+            Some(MessageRef {
+                conversation: digits(conversation)?,
+                index: digits(index)?,
+            })
+        })
+        .ok_or_else(|| "message_id must be a stable chat message id".into())
 }
 
-fn normalize_message_id(message_id: String) -> Result<MessageRef, BoxError> {
-    let message_id = message_id.trim().to_string();
+fn normalize_message_id(message_id: &str) -> Result<MessageRef, BoxError> {
+    let message_id = message_id.trim();
     if message_id.is_empty() {
         return Err("message_id is required".into());
     }
-    parse_message_id(&message_id)
+    parse_message_id(message_id)
+}
+
+fn ok(result: impl Serialize, next_cursor: Option<String>) -> ToolOutput<Response> {
+    ToolOutput::new(Response::Ok {
+        result: json!(result),
+        next_cursor,
+    })
 }
 
 impl Tool<BaseCtx> for BookmarksTool {
@@ -1132,7 +1130,7 @@ impl Tool<BaseCtx> for BookmarksTool {
         _resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let user = ctx.caller().to_text();
-        match args {
+        let output = match args {
             BookmarksToolArgs::AddBookmark {
                 message_id,
                 conversation,
@@ -1141,7 +1139,7 @@ impl Tool<BaseCtx> for BookmarksTool {
                 text,
                 folder_ids,
             } => {
-                let message_ref = normalize_message_id(message_id)?;
+                let message_ref = normalize_message_id(&message_id)?;
                 let source = source.trim().to_string();
                 if source.is_empty() {
                     return Err("source is required".into());
@@ -1159,10 +1157,6 @@ impl Tool<BaseCtx> for BookmarksTool {
                 if text.trim().is_empty() {
                     return Err("text is required".into());
                 }
-                let folder_ids = validate_folder_ids(
-                    &self.store.folders(&user)?,
-                    folder_ids.unwrap_or_default(),
-                )?;
                 // Reuse a saved preview on retries; add() still merges folder membership
                 // and serializes the final write, without holding a lock during model work.
                 let existing = self.store.find(&user, conversation).await?;
@@ -1187,130 +1181,91 @@ impl Tool<BaseCtx> for BookmarksTool {
                             role,
                             text: preview_text,
                         },
-                        folder_ids,
+                        folder_ids.unwrap_or_default(),
                     )
                     .await?;
-
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(bookmark),
-                    next_cursor: None,
-                }))
+                ok(bookmark, None)
             }
             BookmarksToolArgs::RemoveBookmark { message_id } => {
-                let message_ref = normalize_message_id(message_id)?;
-                let message_id = message_ref.message_id();
-
+                let message_ref = normalize_message_id(&message_id)?;
                 let (removed, bookmark) = self.store.remove(&user, message_ref).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!({
-                        "message_id": message_id,
+                ok(
+                    json!({
+                        "message_id": message_ref.message_id(),
                         "conversation": message_ref.conversation,
                         "removed": removed,
                         "bookmark": bookmark
                     }),
-                    next_cursor: None,
-                }))
+                    None,
+                )
             }
             BookmarksToolArgs::ListBookmarks { cursor, limit } => {
                 let (items, next_cursor) = self.store.list(&user, cursor, limit).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(items),
-                    next_cursor,
-                }))
+                ok(items, next_cursor)
             }
             BookmarksToolArgs::GetConversationBookmark { conversation } => {
                 if conversation == 0 {
                     return Err("conversation is required".into());
                 }
-                let bookmark = self.store.find(&user, conversation).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(bookmark),
-                    next_cursor: None,
-                }))
+                ok(self.store.find(&user, conversation).await?, None)
             }
-            BookmarksToolArgs::ListBookmarkFolders {} => {
-                let folders = self.store.folders(&user)?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(folders),
-                    next_cursor: None,
-                }))
-            }
-            BookmarksToolArgs::CreateBookmarkFolder { name, parent_id } => {
-                let folders = self.store.create_folder(&user, name, parent_id).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(folders),
-                    next_cursor: None,
-                }))
-            }
-            BookmarksToolArgs::RenameBookmarkFolder { folder_id, name } => {
-                let folders = self.store.rename_folder(&user, folder_id, name).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(folders),
-                    next_cursor: None,
-                }))
-            }
+            BookmarksToolArgs::ListBookmarkFolders {} => ok(self.store.folders(&user)?, None),
+            BookmarksToolArgs::CreateBookmarkFolder { name, parent_id } => ok(
+                self.store.create_folder(&user, name, parent_id).await?,
+                None,
+            ),
+            BookmarksToolArgs::RenameBookmarkFolder { folder_id, name } => ok(
+                self.store.rename_folder(&user, folder_id, name).await?,
+                None,
+            ),
             BookmarksToolArgs::DeleteBookmarkFolder { folder_id } => {
-                let folders = self.store.delete_folder(&user, folder_id).await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(folders),
-                    next_cursor: None,
-                }))
+                ok(self.store.delete_folder(&user, folder_id).await?, None)
             }
             BookmarksToolArgs::MoveBookmarkFolder {
                 folder_id,
                 parent_id,
                 order,
-            } => {
-                let folders = self
-                    .store
+            } => ok(
+                self.store
                     .move_folder(&user, folder_id, parent_id, order)
-                    .await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(folders),
-                    next_cursor: None,
-                }))
-            }
+                    .await?,
+                None,
+            ),
             BookmarksToolArgs::SetBookmarkFolders {
                 message_id,
                 folder_ids,
             } => {
-                let message_ref = normalize_message_id(message_id)?;
-                let bookmark = self
-                    .store
-                    .set_bookmark_folders(&user, message_ref, folder_ids)
-                    .await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(bookmark),
-                    next_cursor: None,
-                }))
+                let message_ref = normalize_message_id(&message_id)?;
+                ok(
+                    self.store
+                        .set_bookmark_folders(&user, message_ref, folder_ids)
+                        .await?,
+                    None,
+                )
             }
             BookmarksToolArgs::AddBookmarkToFolder {
                 message_id,
                 folder_id,
             } => {
-                let message_ref = normalize_message_id(message_id)?;
-                let bookmark = self
-                    .store
-                    .add_bookmark_to_folder(&user, message_ref, folder_id)
-                    .await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(bookmark),
-                    next_cursor: None,
-                }))
+                let message_ref = normalize_message_id(&message_id)?;
+                ok(
+                    self.store
+                        .add_bookmark_to_folder(&user, message_ref, folder_id)
+                        .await?,
+                    None,
+                )
             }
             BookmarksToolArgs::RemoveBookmarkFromFolder {
                 message_id,
                 folder_id,
             } => {
-                let message_ref = normalize_message_id(message_id)?;
-                let bookmark = self
-                    .store
-                    .remove_bookmark_from_folder(&user, message_ref, folder_id)
-                    .await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(bookmark),
-                    next_cursor: None,
-                }))
+                let message_ref = normalize_message_id(&message_id)?;
+                ok(
+                    self.store
+                        .remove_bookmark_from_folder(&user, message_ref, folder_id)
+                        .await?,
+                    None,
+                )
             }
             BookmarksToolArgs::ListBookmarksInFolder {
                 folder_id,
@@ -1321,12 +1276,10 @@ impl Tool<BaseCtx> for BookmarksTool {
                     .store
                     .list_in_folder(&user, folder_id, cursor, limit)
                     .await?;
-                Ok(ToolOutput::new(Response::Ok {
-                    result: json!(items),
-                    next_cursor,
-                }))
+                ok(items, next_cursor)
             }
-        }
+        };
+        Ok(output)
     }
 }
 
@@ -1439,6 +1392,9 @@ mod tests {
                 .contains("languages other than Chinese or English")
         );
         assert!(request.instructions.contains("comparable short length"));
+        // The length guidance must fit the stored preview, or English
+        // previews get cut mid-sentence.
+        assert!(request.instructions.contains("40 Latin-script words"));
         assert!(request.instructions.contains("Do not translate"));
         assert!(request.prompt.is_empty());
         assert!(source.len() > BOOKMARK_PREVIEW_MAX_BYTES);
@@ -1447,6 +1403,51 @@ mod tests {
             vec![ContentPart::Text {
                 text: source.clone()
             }]
+        );
+    }
+
+    #[tokio::test]
+    async fn bookmark_text_caps_model_input() {
+        let store = test_store().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let models = Arc::new(Models::default());
+        models.set(
+            "lite".to_string(),
+            Model::with_completer(Arc::new(RecordingCompleter {
+                requests: requests.clone(),
+                response: "preview".to_string(),
+            })),
+        );
+        let tool = BookmarksTool::with_models(store, models);
+        let source = "log line ".repeat(BOOKMARK_PREVIEW_INPUT_MAX_BYTES);
+
+        assert_eq!(tool.bookmark_text(&source).await, "preview");
+
+        let requests = requests.lock().unwrap();
+        match requests[0].content.as_slice() {
+            [ContentPart::Text { text }] => {
+                assert!(text.len() <= BOOKMARK_PREVIEW_INPUT_MAX_BYTES);
+                assert!(source.starts_with(text.as_str()));
+            }
+            other => panic!("expected one text part, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn message_ids_must_be_stable_chat_ids() {
+        assert_eq!(
+            parse_message_id("m-12-3").unwrap(),
+            MessageRef {
+                conversation: 12,
+                index: 3
+            }
+        );
+        for invalid in ["m-1-2-3", "m-+1-2", "m--1", "m-1-", "x-1-2", "m-1"] {
+            assert!(parse_message_id(invalid).is_err(), "{invalid} should fail");
+        }
+        assert!(
+            normalize_message_id(" m-1-0 ").is_ok(),
+            "surrounding spaces are trimmed"
         );
     }
 
@@ -1564,6 +1565,59 @@ mod tests {
         seen.extend(page2.iter().map(|b| b.conversation));
         seen.sort();
         assert_eq!(seen, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn full_last_page_has_no_cursor() {
+        let store = test_store().await;
+        store
+            .create_folder("alice", "Work".to_string(), None)
+            .await
+            .unwrap();
+        for message_id in ["m-1-0", "m-2-0"] {
+            add_sample(&store, "alice", message_id).await;
+            store
+                .add_bookmark_to_folder("alice", parse_message_id(message_id).unwrap(), 1)
+                .await
+                .unwrap();
+        }
+        add_sample(&store, "alice", "m-3-0").await;
+
+        let (all, cursor) = store.list("alice", None, Some(3)).await.unwrap();
+        assert_eq!(all.len(), 3);
+        assert!(cursor.is_none(), "no empty page after an exactly full one");
+
+        let (work, cursor) = store
+            .list_in_folder("alice", 1, None, Some(2))
+            .await
+            .unwrap();
+        assert_eq!(
+            work.iter().map(|b| b.conversation).collect::<Vec<_>>(),
+            vec![2, 1]
+        );
+        assert!(cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn bookmarks_are_keyed_by_user_and_conversation() {
+        let store = test_store().await;
+        // Another caller's row for the same conversation id comes first.
+        add_sample(&store, "bob", "m-1-0").await;
+
+        let first = add_sample(&store, "alice", "m-1-0").await;
+        let second = add_sample(&store, "alice", "m-1-1").await;
+        assert_eq!(second._id, first._id, "alice keeps a single row");
+        assert_eq!(message_indexes(&second), vec![0, 1]);
+
+        let (removed, remaining) = store
+            .remove("alice", parse_message_id("m-1-0").unwrap())
+            .await
+            .unwrap();
+        assert!(removed);
+        assert_eq!(message_indexes(&remaining.unwrap()), vec![1]);
+
+        let bob = store.find("bob", 1).await.unwrap().unwrap();
+        assert_eq!(message_indexes(&bob), vec![0]);
     }
 
     #[tokio::test]
@@ -1705,6 +1759,65 @@ mod tests {
         assert_eq!(items[0].conversation, 1);
         assert_eq!(message_indexes(&items[0]), vec![0]);
         assert!(items[0].folder_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_parent_folder_clears_subfolder_membership() {
+        let store = test_store().await;
+        store
+            .create_folder("alice", "Work".to_string(), None)
+            .await
+            .unwrap();
+        store
+            .create_folder("alice", "Child".to_string(), Some(1))
+            .await
+            .unwrap();
+        store
+            .create_folder("alice", "Keep".to_string(), None)
+            .await
+            .unwrap();
+        add_sample(&store, "alice", "m-1-0").await;
+        add_sample(&store, "alice", "m-2-0").await;
+        store
+            .set_bookmark_folders("alice", parse_message_id("m-1-0").unwrap(), vec![1, 3])
+            .await
+            .unwrap();
+        store
+            .set_bookmark_folders("alice", parse_message_id("m-2-0").unwrap(), vec![2])
+            .await
+            .unwrap();
+
+        let folders = store.delete_folder("alice", 1).await.unwrap();
+        assert_eq!(folders.folders.keys().copied().collect::<Vec<_>>(), vec![3]);
+        assert_eq!(store.folders("alice").unwrap(), folders);
+
+        let first = store.find("alice", 1).await.unwrap().unwrap();
+        assert_eq!(first.folder_ids, vec![3]);
+        let second = store.find("alice", 2).await.unwrap().unwrap();
+        assert!(second.folder_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn undecodable_folders_are_not_overwritten() {
+        let store = test_store().await;
+        store
+            .bookmarks
+            .save_extension_from(BOOKMARK_FOLDERS_EXTENSION_KEY.to_string(), &"not folders")
+            .await
+            .unwrap();
+
+        assert!(store.folders("alice").is_err());
+        assert!(
+            store
+                .create_folder("alice", "Work".to_string(), None)
+                .await
+                .is_err()
+        );
+        let raw: String = store
+            .bookmarks
+            .get_extension_as(BOOKMARK_FOLDERS_EXTENSION_KEY)
+            .unwrap();
+        assert_eq!(raw, "not folders");
     }
 
     #[test]
