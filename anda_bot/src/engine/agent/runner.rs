@@ -28,7 +28,7 @@ use crate::engine::{
     apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
     conversation::SourceState,
     goal::{self},
-    is_action_message_value, multimodal,
+    is_action_message_value,
     prompt::{PromptCommand, skill_command_directive},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -76,25 +76,20 @@ impl AndaBot {
         tokio::spawn(async move {
             let mut cron_receipts = crate::cron::AgentReceipts::default();
             cron_receipts.push(cron_receipt);
-            let preparation = async {
-                let (resources, usage) =
-                    multimodal::understand_media_resources(&ctx, resources).await;
-                let resources = assistant
-                    .persist_resources_for_message(ctx.caller(), resources)
-                    .await?;
-                Ok::<_, BoxError>((resources, usage))
-            };
+            // Attachments enter the conversation as stored references only: the
+            // model inspects one on demand by its `_id`, so nothing slow runs
+            // before the session starts and no blob reaches the history.
             let prepared = drive_session_operation(
                 &assistant,
                 &mut conversation,
                 &mut action_rx,
                 &session.control,
-                preparation,
+                assistant.persist_resources_for_message(ctx.caller(), resources),
             )
             .await;
-            let (resources, media_usage, initial_events) = match prepared {
-                Ok((Some(Ok((resources, usage))), events)) => (resources, usage, events),
-                Ok((None, events)) => (Vec::new(), Usage::default(), events),
+            let (resources, initial_events) = match prepared {
+                Ok((Some(Ok(resources)), events)) => (resources, events),
+                Ok((None, events)) => (Vec::new(), events),
                 Ok((Some(Err(err)), _)) | Err(err) => {
                     session.stop_background_tasks();
                     for event in session.actions.cancel_pending().await {
@@ -119,7 +114,6 @@ impl AndaBot {
             );
             let mut runner = ctx.clone().completion_iter(req, vec![]).unbound();
             assistant.inner.apply_merge_discovered_tools(&mut runner);
-            runner.accumulate(&media_usage);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
             }
@@ -847,21 +841,13 @@ impl SessionRunner {
             // 累计来自于后台任务的工具使用情况
             self.runner.accumulate(&usage);
 
-            let prepare = async {
-                let (resources, usage) =
-                    multimodal::understand_media_resources(&self.ctx, resources).await;
-                let resources = self
-                    .assistant
-                    .persist_resources_for_message(self.ctx.caller(), resources)
-                    .await?;
-                Ok::<_, BoxError>((resources, usage))
-            };
             let (prepared, events) = drive_session_operation(
                 &self.assistant,
                 &mut self.conversation,
                 &mut self.action_rx,
                 &self.session.control,
-                prepare,
+                self.assistant
+                    .persist_resources_for_message(self.ctx.caller(), resources),
             )
             .await?;
             for event in events {
@@ -870,9 +856,7 @@ impl SessionRunner {
             let Some(prepared) = prepared else {
                 return Ok(true);
             };
-            let (resources_without_blob, media_usage) = prepared?;
-            self.runner.accumulate(&media_usage);
-            let mut content = resources_without_blob
+            let mut content = prepared?
                 .into_iter()
                 .map(|res| ContentPart::any_from("Resource", res))
                 .collect::<Vec<_>>();

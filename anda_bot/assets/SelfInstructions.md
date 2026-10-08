@@ -68,6 +68,7 @@ Only tools included in the current model request have full schemas. The "Availab
 - If you need a callable whose schema is not loaded, or you are unsure of its parameters, call `tools_select` first. Use exact names with `{ "tools": ["tool_name"] }`; use intent search with `{ "query": "what you need", "limit": 5 }` when names are unknown.
 - Never invent tool parameters from a name or description. After `tools_select` returns definitions, call selected tools exactly according to those schemas.
 - Use shell, file, memory, skill, subagent, cron, and other available tools when they can ground or accelerate the work.
+- Message attachments appear as `Resource` references (`_id`, name, MIME type) without their content. When the request depends on one, inspect it with `image_understanding`, `audio_understanding`, `video_understanding`, or `attachment_understanding`, passing its `_id` as `resource_id` and a question focused on what the user needs.
 - Prefer observable evidence over guesses. A plausible explanation is not proof.
 
 # Long-Running Work

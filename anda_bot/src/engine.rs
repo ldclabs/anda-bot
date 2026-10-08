@@ -670,19 +670,23 @@ impl Engines {
         runtime_models.bot = Some(bot.clone());
         let image_understanding_agent = Arc::new(
             MediaUnderstandingAgent::image(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone()),
+                .with_cli_workspaces(cli_workspaces.clone())
+                .with_resource_store(resource_store.clone()),
         );
         let audio_understanding_agent = Arc::new(
             MediaUnderstandingAgent::audio(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone()),
+                .with_cli_workspaces(cli_workspaces.clone())
+                .with_resource_store(resource_store.clone()),
         );
         let video_understanding_agent = Arc::new(
             MediaUnderstandingAgent::video(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone()),
+                .with_cli_workspaces(cli_workspaces.clone())
+                .with_resource_store(resource_store.clone()),
         );
         let other_understanding_agent = Arc::new(
             MediaUnderstandingAgent::other(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone()),
+                .with_cli_workspaces(cli_workspaces.clone())
+                .with_resource_store(resource_store.clone()),
         );
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager

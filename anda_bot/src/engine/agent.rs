@@ -610,7 +610,8 @@ impl AndaBot {
         conversation: Option<u64>,
     ) -> Result<AgentOutput, BoxError> {
         let subagent = side::side_agent(instructions);
-        let (resources, media_usage) = multimodal::understand_media_resources(ctx, resources).await;
+        // A side request is one-shot and never joins the conversation history,
+        // so its attachments go to the model as they are.
         let mut output = subagent
             .run(
                 ctx.child(&subagent.name, super::ACTIVE_MODEL_LABEL)?,
@@ -619,7 +620,6 @@ impl AndaBot {
             )
             .await?;
 
-        output.usage.accumulate(&media_usage);
         output.conversation = conversation;
         self.dispatch_direct_output(ctx, &output).await;
         Ok(output)
@@ -1249,6 +1249,9 @@ impl Agent<AgentCtx> for AndaBot {
                     .map(str::to_string),
             );
         }
+        // Attachments reach the model as references, so load the tools that
+        // can inspect them instead of making the model discover them first.
+        tools.extend(multimodal::media_agent_names_for(&resources));
 
         tools.extend(
             assistant.inner.conversations.tool_usage_with(|usage| {
@@ -2602,5 +2605,80 @@ mod tests {
             )
             .await;
         }
+    }
+
+    #[derive(Clone)]
+    struct RecordingCompleter(Arc<parking_lot::Mutex<Vec<CompletionRequest>>>);
+
+    impl anda_engine::model::CompletionFeaturesDyn for RecordingCompleter {
+        fn model_name(&self) -> String {
+            "recording".into()
+        }
+        fn completion(
+            &self,
+            req: CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<AgentOutput, BoxError>> {
+            self.0.lock().push(req);
+            Box::pin(async {
+                Ok(AgentOutput {
+                    content: "done".into(),
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn new_session_sends_attachment_references_and_loads_their_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (engine, _bot) = build_bot_engine_with_model(
+            dir.path().into(),
+            spawn_brain_mock().await,
+            Model::new(Arc::new(RecordingCompleter(requests.clone()))),
+        )
+        .await;
+
+        let png = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+        let mut input = input_for_source("what is in this picture?", "cli:attachment");
+        input.resources = vec![Resource {
+            name: "photo.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            blob: Some(ic_auth_types::ByteBufB64(png)),
+            ..Default::default()
+        }];
+        engine.agent_run(test_caller(), input).await.unwrap();
+
+        let req = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if let Some(req) = requests.lock().first().cloned() {
+                    break req;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session never sent its first request");
+
+        assert!(
+            req.tools
+                .iter()
+                .any(|tool| tool.name == multimodal::IMAGE_UNDERSTANDING_AGENT_NAME)
+        );
+        let references = req
+            .content
+            .iter()
+            .cloned()
+            .filter_map(|part| part.any_into::<Resource>("Resource").ok())
+            .collect::<Vec<_>>();
+        assert_eq!(references.len(), 1);
+        assert!(references[0]._id > 0);
+        assert_eq!(references[0].name, "photo.png");
+        assert!(references[0].blob.is_none());
+        assert!(
+            !req.content
+                .iter()
+                .any(|part| matches!(part, ContentPart::InlineData { .. }))
+        );
     }
 }

@@ -25,7 +25,7 @@ pub fn media_understanding_tool_group_info() -> ToolGroupInfo {
         title: "Media understanding".to_string(),
         description: "Understand image, audio, video, and document/file attachments or workspace/URL media for downstream text-only reasoning.".to_string(),
         instructions: Some(
-            "These agents share one media-understanding workflow. Pick `image_understanding`, `audio_understanding`, or `video_understanding` for matching visual/audio/video inputs, and `attachment_understanding` for PDFs, text files, documents, spreadsheets, slides, logs, or other non-media attachments. Provide `path` or `url` for workspace files and URLs, or pass attached resources directly; use `question` for the caller's focus.".to_string(),
+            "These agents share one media-understanding workflow. Pick `image_understanding`, `audio_understanding`, or `video_understanding` for matching visual/audio/video inputs, and `attachment_understanding` for PDFs, text files, documents, spreadsheets, slides, logs, or other non-media attachments. Pass a message attachment's `_id` as `resource_id`, or provide `path` or `url` for workspace files and URLs; use `question` for the caller's focus.".to_string(),
         ),
     }
 }

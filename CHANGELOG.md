@@ -4,6 +4,14 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Messages with attachments start right away**: images, audio, video and files sent with a message no longer go through a separate understanding model before the conversation starts, which could leave it in `submitted` for many seconds with nothing to show. The conversation now starts as soon as the attachments are stored, and the agent sees each one as a reference (`_id`, name, MIME type). When the request depends on an attachment, the agent inspects it with `image_understanding`, `audio_understanding`, `video_understanding` or `attachment_understanding` using the new `resource_id` argument and a question about what you asked, instead of reading a generic description written before it knew your question; it can look again later in the conversation, after compaction too. A new conversation loads the matching tool with its first message. Attachment contents still never enter the conversation history. `/side` requests pass attachments to the model directly, as before, without the extra understanding step whose result they discarded.
+
+### Fixed
+
+- **Resending an attachment keeps a working reference**: sending a file whose content was already stored, for example the same screenshot twice, gave the message an `_id` that was never saved, so loading or downloading it failed with "not found". It now points at the stored copy.
+
 ## [0.13.3] — 2026-10-01
 
 ### Changed

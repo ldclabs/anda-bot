@@ -7,8 +7,11 @@ use anda_db::{
     collection::{Collection, CollectionConfig},
     database::AndaDB,
     error::DBError,
+    query::{Filter, Query, RangeQuery},
+    schema::Fv,
 };
 use anda_db_tfs::jieba_tokenizer;
+use ic_auth_types::ByteArrayB64;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -221,6 +224,21 @@ impl ResourceStore {
         Ok(self.resources.get_as(id).await?)
     }
 
+    /// Loads a persisted resource, including its blob, after verifying that
+    /// `caller` owns it.
+    pub async fn get_resource_for(
+        &self,
+        id: u64,
+        caller: &Principal,
+    ) -> Result<Resource, BoxError> {
+        if id == 0 {
+            return Err("_id is required".into());
+        }
+        let resource = self.get_resource(id).await?;
+        ensure_resource_access(&resource, caller)?;
+        Ok(resource)
+    }
+
     /// Downloads the blob of a persisted resource into `dir` (the system temp
     /// directory when `None`), returning the resource and the saved file path.
     /// `dir` must stay inside a download root or the temp directory: this call
@@ -267,7 +285,11 @@ impl ResourceStore {
                         inserted += 1;
                         id
                     }
-                    Err(DBError::AlreadyExists { _id, .. }) => _id,
+                    // The same content is already stored. The conflict reports
+                    // the rejected new id, so find the stored one by its hash.
+                    Err(err) if err.unique_index_conflict().is_some() => {
+                        self.id_by_hash(resource.hash.as_ref()).await?
+                    }
                     Err(err) => return Err(err.into()),
                 }
             };
@@ -284,6 +306,23 @@ impl ResourceStore {
         }
 
         Ok(refs)
+    }
+
+    async fn id_by_hash(&self, hash: Option<&ByteArrayB64<32>>) -> Result<u64, BoxError> {
+        let hash = hash.ok_or("resource conflicts with a stored one but has no content hash")?;
+        self.resources
+            .search_ids(Query {
+                search: None,
+                filter: Some(Filter::Field((
+                    "hash".to_string(),
+                    RangeQuery::Eq(Fv::Bytes(hash.to_vec())),
+                ))),
+                limit: Some(1),
+            })
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "stored resource with the same content hash not found".into())
     }
 }
 
@@ -439,12 +478,7 @@ impl Tool<BaseCtx> for ResourceStore {
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         match args {
             ResourcesToolArgs::GetResource { _id } => {
-                if _id == 0 {
-                    return Err("_id is required".into());
-                }
-
-                let resource = self.get_resource(_id).await?;
-                ensure_resource_access(&resource, ctx.caller())?;
+                let resource = self.get_resource_for(_id, ctx.caller()).await?;
                 Ok(ToolOutput::new(Response::Ok {
                     result: json!(resource),
                     next_cursor: None,
@@ -617,6 +651,43 @@ mod tests {
         // Re-persisting an already-persisted ref keeps its id without inserting.
         let again = store.persist_resources(&user, refs).await.unwrap();
         assert_eq!(again[0]._id, id);
+    }
+
+    #[tokio::test]
+    async fn persist_resources_reuses_the_stored_id_for_repeated_content() {
+        let store = test_resource_store().await;
+        let user = Principal::anonymous();
+
+        let first = store
+            .persist_resources(&user, vec![sample_resource("a.txt")])
+            .await
+            .unwrap()[0]
+            ._id;
+
+        // Sending the same content again, alone or twice in one message, must
+        // point at the stored resource rather than an id that was never saved.
+        let again = store
+            .persist_resources(
+                &user,
+                vec![sample_resource("a.txt"), sample_resource("a.txt")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(again[0]._id, first);
+        assert_eq!(again[1]._id, first);
+        let stored = store.get_resource_for(first, &user).await.unwrap();
+        assert_eq!(stored.name, "a.txt");
+
+        let fresh = store
+            .persist_resources(
+                &user,
+                vec![sample_resource("b.txt"), sample_resource("b.txt")],
+            )
+            .await
+            .unwrap();
+        assert_ne!(fresh[0]._id, first);
+        assert_eq!(fresh[1]._id, fresh[0]._id);
+        assert!(store.get_resource_for(fresh[1]._id, &user).await.is_ok());
     }
 
     #[tokio::test]
