@@ -1,4 +1,4 @@
-use anda_core::{AgentOutput, BoxError, Principal, Tool};
+use anda_core::{AgentOutput, BoxError, Principal};
 use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
@@ -6,7 +6,7 @@ use anda_engine::{
     extension::{fs, mcp, shell, skill},
     management::{BaseManagement, Visibility},
     memory::Conversations,
-    model::{Model, Models, reqwest},
+    model::{Models, reqwest},
     store::Store,
     subagent::SubAgentManager,
     unix_ms,
@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 mod action;
@@ -150,12 +150,7 @@ pub(crate) async fn plan_access(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    if state
-        .models
-        .model_names()
-        .iter()
-        .any(|name| name.starts_with("chatgpt:"))
-    {
+    if uses_chatgpt_plan(&state.models) {
         let caller = verify_trusted_user(&state.auth, request.headers(), unix_ms());
         if !matches!(caller, Ok(caller) if caller == state.owner || caller == state.auth.default_engine)
         {
@@ -182,7 +177,6 @@ pub(crate) struct RuntimeModels {
     brain_models: Arc<Models>,
     config_path: PathBuf,
     http_client: reqwest::Client,
-    view: Arc<RwLock<DaemonModelsResponse>>,
     reload_lock: Arc<Mutex<()>>,
     chatgpt: Option<Arc<crate::chatgpt::ChatGptService>>,
     bot: Option<Arc<AndaBot>>,
@@ -237,13 +231,11 @@ impl RuntimeModels {
         config_path: PathBuf,
         http_client: reqwest::Client,
     ) -> Self {
-        let view = daemon_models_response(models.as_ref());
         Self {
             models,
             brain_models,
             config_path,
             http_client,
-            view: Arc::new(RwLock::new(view)),
             reload_lock: Arc::new(Mutex::new(())),
             chatgpt: None,
             bot: None,
@@ -260,24 +252,12 @@ impl RuntimeModels {
     }
 
     pub(crate) fn uses_chatgpt(&self) -> bool {
-        self.models
-            .model_names()
-            .iter()
-            .any(|name| name.starts_with("chatgpt:"))
+        uses_chatgpt_plan(&self.models)
     }
 
-    pub(crate) async fn current(&self) -> DaemonModelsResponse {
-        self.view.read().await.clone()
-    }
-
-    pub(crate) async fn set_active_model(&self, active_model: String) -> DaemonModelsResponse {
-        let mut view = self.view.write().await;
-        if !view.model_names.iter().any(|name| name == &active_model) {
-            view.model_names.push(active_model.clone());
-            view.model_names.sort();
-        }
-        view.active_model = Some(active_model);
-        view.clone()
+    /// Read from the live registry, so it reports what the engine resolves.
+    pub(crate) fn current(&self) -> DaemonModelsResponse {
+        daemon_models_response(&self.models)
     }
 
     pub(crate) async fn reload_from_config(&self) -> Result<DaemonModelsResponse, BoxError> {
@@ -301,18 +281,21 @@ impl RuntimeModels {
         )?;
         let next_models =
             config.models_with_chatgpt(self.http_client.clone(), self.chatgpt.clone());
-        if next_models.get_model().is_none() {
-            return Err("No model found in config.yaml".into());
-        }
-        let brain_model = brain_model_from_models(&next_models)
-            .ok_or("No model found for brain in config.yaml")?;
+        let next_brain_models =
+            brain_models_from(&next_models).ok_or("No model found in config.yaml")?;
 
-        self.models.as_ref().replace(&next_models);
-        self.brain_models.as_ref().replace(&next_models);
-        self.brain_models.set_model(brain_model);
-        let response = daemon_models_response(&next_models);
-        *self.view.write().await = response.clone();
-        Ok(response)
+        let primary = |models: &Models| models.get_model().map(|model| model.model_name());
+        let (brain_was, brain_is) = (primary(&self.brain_models), primary(&next_brain_models));
+        if brain_was != brain_is {
+            // The Brain snapshots this registry when it loads a Space, and the
+            // Bot's Space stays loaded for the daemon's lifetime.
+            log::warn!(
+                "Brain model changed from {brain_was:?} to {brain_is:?}; the loaded Brain keeps the old one until anda restarts"
+            );
+        }
+        self.models.replace(&next_models);
+        self.brain_models.replace(&next_brain_models);
+        Ok(self.current())
     }
 }
 
@@ -379,12 +362,15 @@ fn build_skill_registry(
             McpConnectTool::NAME,
             ResourceStore::NAME,
             ConversationsTool::NAME,
-            AskUserChoiceTool::NAME,
+            ActionsTool::NAME,
             BookmarksTool::NAME,
             SubAgentManager::NAME,
             AndaBot::NAME,
+            AndaBot::TOOL_NAME,
             TtsManager::NAME,
             TranscriptionManager::NAME,
+            channel::SendImMessageTool::NAME,
+            channel::ListImChannelsTool::NAME,
         ]
         .into_iter()
         .map(str::to_string),
@@ -481,11 +467,25 @@ fn model_setup_issues(config: &config::Config) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn brain_model_from_models(models: &Models) -> Option<Model> {
-    models
+/// The Brain's registry: only its model (a `brain` or `memory` label, else the
+/// active model), as the primary. `None` only when there is no model at all.
+pub(crate) fn brain_models_from(models: &Models) -> Option<Models> {
+    let model = models
         .get("brain")
         .or_else(|| models.get("memory"))
-        .or_else(|| models.get_model())
+        .or_else(|| models.get_model())?;
+    let brain_models = Models::default();
+    brain_models.set_model(model);
+    Some(brain_models)
+}
+
+/// ChatGPT plan models are owner-only, so any of them in the registry gates
+/// shared and external callers.
+pub(crate) fn uses_chatgpt_plan(models: &Models) -> bool {
+    models
+        .model_names()
+        .iter()
+        .any(|name| name.starts_with("chatgpt:"))
 }
 
 pub(crate) fn daemon_models_response(models: &Models) -> DaemonModelsResponse {
@@ -607,22 +607,22 @@ impl Engines {
                 config_write_lock.clone(),
             ));
         let browser_bridge = Arc::new(BrowserBridge::new());
-        let browser_tabs_tool = Arc::new(
-            ChromeBrowserTool::tabs(browser_bridge.clone())
-                .with_screenshot_workspace(default_workspace.clone()),
-        );
-        let browser_page_tool = Arc::new(
-            ChromeBrowserTool::page(browser_bridge.clone())
-                .with_screenshot_workspace(default_workspace.clone()),
-        );
-        let browser_input_tool = Arc::new(
-            ChromeBrowserTool::input(browser_bridge.clone())
-                .with_screenshot_workspace(default_workspace.clone()),
-        );
-        let browser_script_tool = Arc::new(
-            ChromeBrowserTool::script(browser_bridge.clone())
-                .with_screenshot_workspace(default_workspace.clone()),
-        );
+        let [
+            browser_tabs_tool,
+            browser_page_tool,
+            browser_input_tool,
+            browser_script_tool,
+        ] = [
+            ChromeBrowserTool::tabs,
+            ChromeBrowserTool::page,
+            ChromeBrowserTool::input,
+            ChromeBrowserTool::script,
+        ]
+        .map(|tool| {
+            Arc::new(
+                tool(browser_bridge.clone()).with_screenshot_workspace(default_workspace.clone()),
+            )
+        });
         let tts_manager = {
             let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
             manager.is_enabled().then_some(manager)
@@ -667,26 +667,17 @@ impl Engines {
             .with_memory_access(memory_access.clone()),
         );
         runtime_models.bot = Some(bot.clone());
-        let image_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::image(cfg.workspaces.clone())
+        let media_agents = [
+            MediaUnderstandingAgent::image,
+            MediaUnderstandingAgent::audio,
+            MediaUnderstandingAgent::video,
+            MediaUnderstandingAgent::other,
+        ]
+        .map(|agent| {
+            agent(cfg.workspaces.clone())
                 .with_cli_workspaces(cli_workspaces.clone())
-                .with_resource_store(resource_store.clone()),
-        );
-        let audio_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::audio(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone())
-                .with_resource_store(resource_store.clone()),
-        );
-        let video_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::video(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone())
-                .with_resource_store(resource_store.clone()),
-        );
-        let other_understanding_agent = Arc::new(
-            MediaUnderstandingAgent::other(cfg.workspaces.clone())
-                .with_cli_workspaces(cli_workspaces.clone())
-                .with_resource_store(resource_store.clone()),
-        );
+                .with_resource_store(resource_store.clone())
+        });
         let voice_capabilities = BrowserVoiceCapabilities {
             transcription: transcription_manager
                 .as_ref()
@@ -839,24 +830,15 @@ impl Engines {
         }
         engine_builder = engine_builder
             .register_tool_provider(Arc::new(resources::ArtifactProvider(mcp_provider)))?;
+        for agent in media_agents {
+            let label = agent.model_label().to_string();
+            engine_builder = engine_builder.register_agent(
+                Arc::new(MemoryPolicyAgent::new(Arc::new(agent))),
+                Some(label),
+            )?;
+        }
 
         let engine = engine_builder
-            .register_agent(
-                Arc::new(MemoryPolicyAgent::new(image_understanding_agent.clone())),
-                Some(image_understanding_agent.model_label().to_string()),
-            )?
-            .register_agent(
-                Arc::new(MemoryPolicyAgent::new(audio_understanding_agent.clone())),
-                Some(audio_understanding_agent.model_label().to_string()),
-            )?
-            .register_agent(
-                Arc::new(MemoryPolicyAgent::new(video_understanding_agent.clone())),
-                Some(video_understanding_agent.model_label().to_string()),
-            )?
-            .register_agent(
-                Arc::new(MemoryPolicyAgent::new(other_understanding_agent.clone())),
-                Some(other_understanding_agent.model_label().to_string()),
-            )?
             .register_agent(
                 Arc::new(MemoryPolicyAgent::new(bot.clone())),
                 Some(ACTIVE_MODEL_LABEL.to_string()),
@@ -867,10 +849,9 @@ impl Engines {
                 ResourceStore::NAME.to_string(),
                 BookmarksTool::NAME.to_string(),
                 SkillLibrary::NAME.to_string(),
-                Tool::name(bot.as_ref()),
+                AndaBot::TOOL_NAME.to_string(),
             ]);
 
-        // Initialize and start the server
         let engine = engine.build(AndaBot::NAME.to_string()).await?;
         let engine = Arc::new(engine);
         engine_ref.bind(Arc::downgrade(&engine));
@@ -1145,8 +1126,8 @@ async fn auto_update_status(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    if let Err(response) = verify_trusted_user(&state.app, &headers, unix_ms()) {
+        return response.into_response();
     }
     AxumJson(state.auto_updater.state()).into_response()
 }
@@ -1155,8 +1136,8 @@ async fn auto_update_check(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    if let Err(response) = verify_authenticated_request(&state.app, &headers) {
-        return *response;
+    if let Err(response) = verify_trusted_user(&state.app, &headers, unix_ms()) {
+        return response.into_response();
     }
     AxumJson(state.auto_updater.check_if_due().await).into_response()
 }
@@ -1211,8 +1192,8 @@ async fn daemon_maintenance(
         return response.into_response();
     }
     let gate = state.bot.admission();
-    let mut token = request.token.clone();
-    let result = match request.action.as_str() {
+    let MaintenanceRequest { action, mut token } = request;
+    let result = match action.as_str() {
         "begin" => gate.begin().map(|value| {
             token = Some(value);
         }),
@@ -1224,7 +1205,7 @@ async fn daemon_maintenance(
         return (StatusCode::CONFLICT, error).into_response();
     }
     let ready = state.bot.update_ready().await;
-    if request.action == "shutdown" {
+    if action == "shutdown" {
         if !ready {
             return (StatusCode::CONFLICT, "Runtime still has active work").into_response();
         }
@@ -1238,18 +1219,13 @@ async fn register_cli_workspace(
     headers: HeaderMap,
     AxumJson(request): AxumJson<RegisterCliWorkspaceRequest>,
 ) -> impl IntoResponse {
-    let caller = match state.app.verify_user(&headers, unix_ms(), None, None) {
-        Ok(caller) if caller != Principal::anonymous() => caller,
-        _ => {
-            return (StatusCode::UNAUTHORIZED, "invalid or missing bearer token").into_response();
-        }
-    };
-    if caller != state.cli_workspaces.owner() {
-        return (
-            StatusCode::FORBIDDEN,
-            "only the local owner can register a CLI workspace",
-        )
-            .into_response();
+    if let Err(response) = verify_owner(
+        &state.app,
+        &headers,
+        state.cli_workspaces.owner(),
+        "only the local owner can register a CLI workspace",
+    ) {
+        return response.into_response();
     }
     match state.cli_workspaces.register(&request.workspace).await {
         Ok(workspace) => AxumJson(json!({ "workspace": workspace })).into_response(),
@@ -1294,7 +1270,7 @@ async fn get_daemon_config(
 
     match daemon_config_response(&state.runtime_models.config_path, content) {
         Ok(mut response) => {
-            response.models = Some(state.runtime_models.current().await);
+            response.models = Some(state.runtime_models.current());
             AxumJson(response).into_response()
         }
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
@@ -1315,9 +1291,10 @@ async fn update_daemon_config(
         return response.into_response();
     }
 
-    let content = normalize_config_file_content(request.content);
-    let response = match daemon_config_response(&state.runtime_models.config_path, content.clone())
-    {
+    let mut response = match daemon_config_response(
+        &state.runtime_models.config_path,
+        normalize_config_file_content(request.content),
+    ) {
         Ok(response) => response,
         Err(err) => return (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     };
@@ -1350,24 +1327,28 @@ async fn update_daemon_config(
         )
             .into_response();
     }
-    if current.as_deref().is_some_and(|current| current != content)
+    if current
+        .as_deref()
+        .is_some_and(|current| current != response.content)
         && let Err(err) = backup_daemon_config(&state.runtime_models.config_path).await
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
-    if let Err(err) =
-        write_daemon_config_atomically(&state.runtime_models.config_path, content.as_bytes()).await
+    if let Err(err) = write_daemon_config_atomically(
+        &state.runtime_models.config_path,
+        response.content.as_bytes(),
+    )
+    .await
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
-    let mut response = response;
     match state.runtime_models.reload_from_config().await {
         Ok(models) => response.models = Some(models),
         Err(err) => {
             log::warn!("failed to reload daemon models after config update: {err}");
-            response.models = Some(state.runtime_models.current().await);
+            response.models = Some(state.runtime_models.current());
             response.models_error = Some(err.to_string());
         }
     }
@@ -1412,15 +1393,14 @@ pub(crate) async fn write_daemon_config_atomically(
     let result = async {
         let mut options = tokio::fs::OpenOptions::new();
         options.create_new(true).write(true);
+        // The config carries API keys and bot tokens: create the temp file
+        // owner-only so the renamed file is never readable by others.
         #[cfg(unix)]
         options.mode(0o600);
         let mut file = options.open(&temp_path).await?;
         file.write_all(content).await?;
         file.sync_all().await?;
         drop(file);
-        // The config carries API keys and bot tokens: tighten the temp file
-        // before the rename so the final file is never readable by others.
-        crate::util::fs::restrict_secret_file_permissions(&temp_path)?;
         tokio::fs::rename(&temp_path, path).await
     }
     .await;
@@ -1542,15 +1522,6 @@ async fn unique_daemon_config_backup_path(path: &Path) -> Result<PathBuf, BoxErr
     Err(format!("could not allocate backup path for {}", path.display()).into())
 }
 
-fn verify_authenticated_request(
-    app: &AppState,
-    headers: &HeaderMap,
-) -> Result<(), Box<axum::response::Response>> {
-    verify_trusted_user(app, headers, unix_ms())
-        .map(|_| ())
-        .map_err(|error| Box::new(error.into_response()))
-}
-
 const DAEMON_OWNER_ONLY: &str = "Only the local owner may control the daemon";
 const CONFIG_OWNER_ONLY: &str = "Only the local owner may manage daemon configuration";
 
@@ -1595,7 +1566,6 @@ pub async fn get_version() -> impl IntoResponse {
     let info = json!({
         "name": config::APP_NAME,
         "version": config::APP_VERSION,
-
     });
     axum::Json(info)
 }
@@ -1648,7 +1618,7 @@ mod tests {
     }
 
     #[test]
-    fn brain_model_from_models_prefers_brain_or_memory_labels() {
+    fn brain_models_from_holds_only_the_brain_or_memory_model() {
         let http_client = crate::util::http_client::new_reqwest_client();
         let models = Models::from_configs(
             &[
@@ -1660,10 +1630,13 @@ mod tests {
         let active = models.get("active-model").unwrap();
         models.set_model(active);
 
+        let brain_models = brain_models_from(&models).unwrap();
         assert_eq!(
-            brain_model_from_models(&models).unwrap().model_name(),
+            brain_models.get_model().unwrap().model_name(),
             "memory-model"
         );
+        assert!(brain_models.get("active-model").is_none());
+        assert!(brain_models_from(&Models::default()).is_none());
     }
 
     #[tokio::test]
@@ -1735,17 +1708,30 @@ model:
         RuntimeModels::new(models, brain_models, config_path, http_client)
     }
 
-    #[tokio::test]
-    async fn runtime_models_tracks_active_model() {
-        let home = tempfile::tempdir().unwrap();
-        let runtime = runtime_models_at(home.path().join(config::CONFIG_FILE_NAME));
+    #[test]
+    fn runtime_models_reports_the_live_registry() {
+        let http_client = crate::util::http_client::new_reqwest_client();
+        let models = Arc::new(Models::from_configs(
+            &[
+                test_model_config("gpt-test", &["memory"]),
+                test_model_config("gpt-fast", &["fast"]),
+            ],
+            http_client.clone(),
+        ));
+        models.set_model(models.get("gpt-test").unwrap());
+        let runtime = RuntimeModels::new(
+            models.clone(),
+            Arc::new(Models::default()),
+            PathBuf::from(config::CONFIG_FILE_NAME),
+            http_client,
+        );
+        assert_eq!(runtime.current().active_model.as_deref(), Some("gpt-test"));
 
-        let current = runtime.current().await;
-        assert_eq!(current.active_model.as_deref(), Some("gpt-test"));
-
-        let updated = runtime.set_active_model("brand-new".to_string()).await;
-        assert_eq!(updated.active_model.as_deref(), Some("brand-new"));
-        assert!(updated.model_names.iter().any(|name| name == "brand-new"));
+        // Selecting by label reports the model it resolved to, not the label.
+        models.set_model(models.get("fast").unwrap());
+        let current = runtime.current();
+        assert_eq!(current.active_model.as_deref(), Some("gpt-fast"));
+        assert_eq!(current.model_names, ["gpt-fast", "gpt-test"]);
     }
 
     #[tokio::test]
@@ -1759,6 +1745,34 @@ model:
         let runtime = runtime_models_at(config_path.clone());
         let reloaded = runtime.reload_from_config().await.unwrap();
         assert_eq!(reloaded.active_model.as_deref(), Some("gpt-test"));
+
+        // The Brain's registry is rebuilt as at startup: only its own model.
+        tokio::fs::write(
+            &config_path,
+            r#"
+model:
+  active: gpt-chat
+  providers:
+    - family: openai
+      model: gpt-chat
+      api_base: http://127.0.0.1:1/v1
+      api_key: test-key
+    - family: openai
+      model: gpt-brain
+      api_base: http://127.0.0.1:1/v1
+      api_key: test-key
+      labels: ["brain"]
+"#,
+        )
+        .await
+        .unwrap();
+        let reloaded = runtime.reload_from_config().await.unwrap();
+        assert_eq!(reloaded.active_model.as_deref(), Some("gpt-chat"));
+        assert_eq!(
+            runtime.brain_models.get_model().unwrap().model_name(),
+            "gpt-brain"
+        );
+        assert!(runtime.brain_models.get("gpt-chat").is_none());
 
         // An empty model section yields setup issues, surfacing an error.
         tokio::fs::write(&config_path, "addr: 127.0.0.1:8042\n")
@@ -1949,10 +1963,10 @@ model:
     }
 
     #[test]
-    fn verify_authenticated_request_rejects_anonymous() {
+    fn verify_trusted_user_rejects_anonymous() {
         let app = minimal_app(vec![]);
-        let err = verify_authenticated_request(&app, &HeaderMap::new());
-        assert!(err.is_err());
+        let err = verify_trusted_user(&app, &HeaderMap::new(), unix_ms());
+        assert_eq!(err.unwrap_err().0, StatusCode::UNAUTHORIZED);
     }
 
     #[test]
@@ -1985,11 +1999,11 @@ model:
                 key.id()
             );
             assert_eq!(
-                verify_authenticated_request(&app, &headers).is_ok(),
+                verify_trusted_user(&app, &headers, unix_ms()).is_ok(),
                 key.id() == owner.id()
             );
             assert_eq!(
-                verify_authenticated_request(&app, &authed_headers(key)).is_ok(),
+                verify_trusted_user(&app, &authed_headers(key), unix_ms()).is_ok(),
                 key.id() == owner.id()
             );
         }

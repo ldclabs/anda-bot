@@ -551,7 +551,7 @@ async fn dispatch_browser_ws_request(
             Ok(json!({ "workspace": workspace }))
         }
         "capabilities" => Ok(capabilities(connection)),
-        "model_names" => to_json(state.runtime_models.current().await),
+        "model_names" => to_json(state.runtime_models.current()),
         "reload_models" => to_json(
             state
                 .runtime_models
@@ -559,7 +559,7 @@ async fn dispatch_browser_ws_request(
                 .await
                 .map_err(|err| err.to_string())?,
         ),
-        "set_model" => handle_set_model(params, connection).await,
+        "set_model" => handle_set_model(params, connection),
         "auto_update_status" => to_json(state.auto_updater.state()),
         "auto_update_check" => to_json(state.auto_updater.check_if_due().await),
         "auto_update_install_and_restart" => to_json(
@@ -734,7 +734,7 @@ fn capabilities(connection: &WsConnection) -> Value {
     })
 }
 
-async fn handle_set_model(params: Value, connection: &WsConnection) -> Result<Value, String> {
+fn handle_set_model(params: Value, connection: &WsConnection) -> Result<Value, String> {
     let (model_name,): (String,) = params_from_value(params)?;
     let model_name = model_name.trim();
     if model_name.is_empty() {
@@ -750,11 +750,7 @@ async fn handle_set_model(params: Value, connection: &WsConnection) -> Result<Va
         .check_plan_switch(model.model_name().starts_with("chatgpt:"))
         .map_err(|e| e.to_string())?;
     models.set_model(model);
-    to_json(
-        runtime_models
-            .set_active_model(model_name.to_string())
-            .await,
-    )
+    to_json(runtime_models.current())
 }
 
 fn handle_browser_ws_response(connection: &WsConnection, incoming: BrowserWsIncoming) {

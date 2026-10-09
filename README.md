@@ -181,7 +181,7 @@ When the terminal UI is running:
 - Press Up or Down to move through multi-line input.
 - Press Ctrl+U to clear the input.
 - Press Ctrl+A or Ctrl+E to jump to the start or end of the input.
-- Use `anda models reload`, or the refresh models button in Anda Desktop or the browser side panel, after editing model providers in `config.yaml`.
+- Use `anda models reload`, or the refresh models button in Anda Desktop or the browser side panel, after editing model providers in `config.yaml`. The Brain keeps the model it started with until the daemon restarts.
 - Use `/reload` after changing daemon settings that still require a restart.
 - Use `/stop` to interrupt the current task, cancel its background work and pending approvals, clear the active goal, and leave the conversation idle for your next message.
 - Use `/cancel` to stop the same work and close the active conversation session.

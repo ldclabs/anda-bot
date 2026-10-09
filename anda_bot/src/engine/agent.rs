@@ -211,6 +211,8 @@ struct SessionSpec<'a> {
 
 impl AndaBot {
     pub const NAME: &'static str = "anda_bot";
+    /// The bot's session API, registered as a tool beside the `NAME` agent.
+    pub const TOOL_NAME: &'static str = "anda_bot_api";
 
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -266,12 +268,7 @@ impl AndaBot {
     }
 
     fn ensure_plan_owner(&self, caller: &Principal, meta: &RequestMeta) -> Result<(), BoxError> {
-        if self
-            .inner
-            .models
-            .model_names()
-            .iter()
-            .any(|name| name.starts_with("chatgpt:"))
+        if super::uses_chatgpt_plan(&self.inner.models)
             && (request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
                 || self.inner.plan_owner.is_some_and(|owner| &owner != caller))
         {
@@ -869,7 +866,7 @@ impl Tool<BaseCtx> for AndaBot {
     type Output = Response;
 
     fn name(&self) -> String {
-        "anda_bot_api".to_string()
+        Self::TOOL_NAME.to_string()
     }
 
     fn description(&self) -> String {

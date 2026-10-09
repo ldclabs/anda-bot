@@ -179,7 +179,7 @@ anda --home /path/to/.anda
 - 上/下方向键在多行输入中移动光标。
 - Ctrl+U 清空输入。
 - Ctrl+A / Ctrl+E 跳到输入开头或结尾。
-- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 Anda 桌面端 / 浏览器侧边栏点击刷新模型。
+- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 Anda 桌面端 / 浏览器侧边栏点击刷新模型。Brain 会继续使用启动时的模型，直到 daemon 重启。
 - 修改仍需要重启的 daemon 设置后，再输入 `/reload`。
 - 输入 `/stop` 打断当前任务，取消其后台任务和待审批动作，清除活动目标，并让会话回到 idle 状态以接收下一条消息。
 - 输入 `/cancel` 停止上述工作，并关闭当前活动会话。

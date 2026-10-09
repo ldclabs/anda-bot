@@ -380,10 +380,8 @@ impl Daemon {
         let mut brain_managers = Vec::with_capacity(user_pubkeys.len() + 1);
         brain_managers.push(id_key.pubkey());
         brain_managers.extend(user_pubkeys.clone());
-        let brain_model =
-            engine::brain_model_from_models(models.as_ref()).ok_or("No model found for brain")?;
-        let brain_models = Arc::new(anda_engine::model::Models::default());
-        brain_models.set_model(brain_model);
+        let brain_models =
+            Arc::new(engine::brain_models_from(models.as_ref()).ok_or("No model found for brain")?);
         let brain_cfg = brain::BrainConfig {
             runtime_config: self.cfg.brain.load_runtime_config(&self.home).await?,
             managers: brain_managers,
