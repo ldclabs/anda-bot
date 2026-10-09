@@ -78,47 +78,21 @@ pub(super) fn host(mode: Mode) -> (Arc<Host>, Arc<Fixture>) {
     let fixture = Arc::new(Fixture::default());
     let models = Arc::new(Models::default());
     models.set_model(Model::with_completer(fixture.clone()));
-    let http = crate::util::http_client::new_reqwest_client();
-    let app = AppState::new(
-        Arc::new(InMemory::new()),
-        Arc::new(DBConfig {
-            name: "mib-test".into(),
-            description: "test".into(),
-            storage: StorageConfig::default(),
-            lock: None,
-        }),
-        Arc::new(BaseManagement {
-            controller: SELF_USER_ID,
-            managers: Default::default(),
-            visibility: Visibility::Protected,
-        }),
-        http,
-        models.clone(),
-        Arc::new(vec![]),
-        "anda_bot".into(),
-        "test".into(),
-        0,
-    );
+    let identity = ExperimentIdentity {
+        model_digest: digest(&"fixture"),
+        tools_digest: digest(&"fixture-tools"),
+        budget_digest: digest(&"fixture-budget"),
+    };
     (
-        Arc::new(Host {
-            app,
+        Arc::new(Host::new(
             models,
-            identity: ExperimentIdentity {
-                model_digest: digest(&"fixture"),
-                tools_digest: digest(&"fixture-tools"),
-                budget_digest: digest(&"fixture-budget"),
-            },
+            identity,
             mode,
-            timeout: Duration::from_secs(10),
-            idle: Duration::from_secs(30),
-            max_output: 4096,
-            recall_budget: None,
-            runs: Mutex::new(HashMap::new()),
-            requests: Mutex::new(HashMap::new()),
-            tasks: TaskTracker::new(),
-            shutdown: CancellationToken::new(),
-            epoch: format!("fixture-{}-{}", std::process::id(), unix_ms()),
-        }),
+            Duration::from_secs(10),
+            Duration::from_secs(30),
+            4096,
+            None,
+        )),
         fixture,
     )
 }
@@ -423,6 +397,113 @@ async fn rejected_request_cannot_gain_effect_when_replayed_after_reset() {
     ok(&call(&h, req("reset", "reset", json!({}))).await);
     assert_eq!(call(&h, r).await, rejected);
     assert_eq!(m.calls.load(Ordering::SeqCst), 0);
+    h.close_all().await;
+}
+
+#[tokio::test]
+async fn cached_responses_omit_costs_and_replays_carry_the_latest_snapshot() {
+    let (h, _) = host(Mode::Persistent);
+    ok(&call(&h, req("reset", "reset", json!({}))).await);
+    let observe = |i: usize| {
+        req(
+            "observe",
+            &format!("o{i}"),
+            json!({"observation":{"observation_id":format!("o{i}"),"type":"message","content":"x"}}),
+        )
+    };
+    let first = call(&h, observe(0)).await;
+    ok(&first);
+    for i in 1..3 {
+        ok(&call(&h, observe(i)).await);
+    }
+    let receipts = |v: &Value| v["body"]["costs"]["receipts"].as_array().unwrap().len();
+    let replay = call(&h, observe(0)).await;
+    assert_eq!(replay["body"]["accepted"], true);
+    assert!(receipts(&replay) > receipts(&first), "{replay}");
+    assert_eq!(
+        replay["body"]["costs"],
+        replay["body"]["extensions"]["anda_brain.costs.v1"]["summary"]
+    );
+    let entry = h
+        .requests
+        .lock()
+        .unwrap()
+        .get(&(AGENT.into(), "run".into(), "o0".into()))
+        .cloned()
+        .unwrap();
+    let cached = &entry.result.get().unwrap().response;
+    assert!(cached["body"]["costs"].is_null(), "{cached}");
+    h.close_all().await;
+}
+
+#[tokio::test]
+async fn exhausted_run_still_closes() {
+    let (h, _) = host(Mode::NoMemory);
+    ok(&call(&h, req("reset", "reset", json!({}))).await);
+    {
+        let runs = h.runs.lock().await;
+        runs.values().next().unwrap().state.lock().await.requests = MAX_REQUESTS;
+    }
+    let exhausted = call(&h, req("session_boundary", "full", json!({}))).await;
+    assert_eq!(exhausted["error"]["code"], "capacity");
+    let closed = call(&h, req("close", "close", json!({}))).await;
+    ok(&closed);
+    assert_eq!(closed["body"]["closed"], true);
+    h.close_all().await;
+}
+
+#[tokio::test]
+async fn invalid_respond_fails_before_any_model_call() {
+    let (h, m) = host(Mode::Persistent);
+    ok(&call(&h, req("reset", "reset", json!({}))).await);
+    let out = call(
+        &h,
+        req("respond", "r", json!({"input":{"content":"hello"}})),
+    )
+    .await;
+    assert_eq!(out["status"], "error");
+    assert_eq!(m.calls.load(Ordering::SeqCst), 0);
+    h.close_all().await;
+}
+
+#[tokio::test]
+async fn no_memory_maintenance_makes_no_model_call() {
+    let (h, m) = host(Mode::NoMemory);
+    ok(&call(&h, req("reset", "reset", json!({}))).await);
+    let out = call(&h, req("maintain", "m", json!({}))).await;
+    ok(&out);
+    assert!(out["body"]["processing"].is_null());
+    assert_eq!(m.calls.load(Ordering::SeqCst), 0);
+    h.close_all().await;
+}
+
+#[tokio::test]
+async fn act_continuation_reuses_the_task_recall() {
+    let (h, m) = host(Mode::Persistent);
+    let recalls = || {
+        m.prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.instructions.contains("reference Recall policy"))
+            .count()
+    };
+    ok(&call(&h, req("reset", "reset", json!({}))).await);
+    let task = json!({"task_id":"t","goal":"perform task","tools":[{"name":"lookup","input_schema":{"type":"object"}}]});
+    let first = call(&h, req("act", "a1", task)).await;
+    ok(&first);
+    let after_first = recalls();
+    assert!(after_first > 0);
+    let id = first["body"]["result"]["tool_call_id"].clone();
+    ok(&call(&h,req("observe","feedback",json!({"observation":{"observation_id":"f","type":"tool_result","tool":"lookup","tool_call_id":id,"payload":{}}}))).await);
+    let next = call(
+        &h,
+        req("act", "a2", json!({"task_id":"t","continuation":true})),
+    )
+    .await;
+    ok(&next);
+    assert_eq!(next["body"]["result"]["type"], "final");
+    assert_eq!(recalls(), after_first);
     h.close_all().await;
 }
 

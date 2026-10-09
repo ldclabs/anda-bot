@@ -443,10 +443,7 @@ async fn evaluate(
                 .get(&(protocol.into(), entry.run_id.clone()))
                 .cloned();
             entry.cleanup = Some(if let Some(run) = run {
-                let state = run.state.lock().await;
-                if !state.costs.is_null() {
-                    entry.last_costs = state.costs.clone();
-                }
+                entry.last_costs = run.costs();
                 json!({"status":if run.closed.load(Ordering::SeqCst){"confirmed"}else{"unknown"},"closed":run.closed.load(Ordering::SeqCst),"provider_completion":"unmeasured"})
             } else {
                 json!({"status":"not_created"})

@@ -25,14 +25,14 @@ anda memory evaluate report ./memory-run
 通过 `anda mib --model-config /absolute/path/model.json --api-key-env MIB_MODEL_API_KEY --listen 127.0.0.1:8043 --memory-mode persistent` 启动。
 `model.json` 是 Anda Engine 的 `ModelConfig` 对象；使用指定环境变量提供凭证时，将 `api_key` 留空。不要把真实凭证提交到仓库。入口拒绝 `--home`，不会初始化生产 home、身份、IM、cron、浏览器、自动更新和桌面会话恢复。
 
-- Track B：`/mib-agent/v0.1/{operation}`，协议为 `mib-agent/0.1`，实现 describe/reset/observe/respond/act/maintain/session_boundary/close。Bot 复用现有系统指令渲染器，执行有界的业务模型步骤；MIB 执行提供的原生任务工具调用。该运行模式不宣称覆盖完整的桌面 daemon。
+- Track B：`/mib-agent/v0.1/{operation}`，协议为 `mib-agent/0.1`，实现 describe/reset/observe/respond/act/maintain/session_boundary/close。Bot 复用现有系统指令渲染器，执行有界的业务模型步骤；MIB 执行提供的原生任务工具调用。同一任务的后续步骤复用该任务的 Recall，直到任务中形成新的记忆。该运行模式不宣称覆盖完整的桌面 daemon。
 - Track A：`/mib-memory/v0.1/{operation}`，协议为 `mib-memory-backend/0.1`，实现 describe/reset/observe/retrieve/maintain/session_boundary/close。MIB 保留自己的业务 Agent、模型、提示词、工具和采样设置。Retrieve 返回 Brain Recall 上下文，不是最终任务答案或源图谱引用。
-- Agent 与 memory backend 使用不同 run 命名空间。Observe 等待真实 Formation 完成，Maintenance 失败或超时使运行无效；Completed 只说明模型流程结束。重复请求返回原结果，内容冲突拒绝，已有 `run_id` 不允许通过 reset 重用。HTTP 断连后已接受工作仍由宿主管理，close 中断等待并清理，空闲期限会回收运行。
-- `--memory-mode no-memory` 跳过长期观察和召回，但保留当前任务的工具回复，直到任务结束。Persistent 模式保留图谱和 Notes，并在会话边界清除临时上下文。目前尚未声明支持无门槛学习条件。
-- 所有成功响应的 `body.costs` 都是累计 run 快照，`cost_scope` 为 `cumulative_run`；每 run 取最后一份，不能逐响应求和。未知 token 数和耗时保留 null，provider 内部重试和 observer 用量仍可能缺测，因此 `accounting_complete=false`。业务输出上限不等于全部模型工作的总预算。
-- 幂等性仅在进程内有效。descriptor 暴露宿主 epoch；进程重启后必须开始新的评测，不能恢复旧的内存运行。容量限制：8 个活跃 run、1024 条 run 记录，每个 run 最多 10,000 条请求收据及 32 MiB。容量耗尽时会明确报错。默认操作超时为 180 秒，空闲期限为 900 秒。
+- Agent 与 memory backend 使用不同 run 命名空间。Observe 等待真实 Formation 完成，Maintenance 失败或超时使运行无效；Completed 只说明模型流程结束。重复请求返回原结果并附带该 run 最新的成本快照，内容冲突拒绝，已有 `run_id` 不允许通过 reset 重用。HTTP 断连后已接受工作仍由宿主管理，close 中断等待并清理，空闲期限会回收运行。
+- `--memory-mode no-memory` 跳过长期观察、召回和 Brain 维护，但保留当前任务的工具回复，直到任务结束。Persistent 模式保留图谱和 Notes，并在会话边界清除临时上下文。目前尚未声明支持无门槛学习条件。
+- 所有成功响应的 `body.costs` 都是累计 run 快照，`cost_scope` 为 `cumulative_run`；执行失败时快照位于 `extensions.costs`。重放请求携带重放时的最新快照。每 run 取最后一份，不能逐响应求和。未知 token 数和耗时保留 null，provider 内部重试和 observer 用量仍可能缺测，因此 `accounting_complete=false`。业务输出上限不等于全部模型工作的总预算。
+- 幂等性仅在进程内有效。descriptor 暴露宿主 epoch；进程重启后必须开始新的评测，不能恢复旧的内存运行。容量限制：8 个活跃 run、1024 条 run 记录（含已关闭的），每个 run 最多 10,000 个请求及 32 MiB 缓存响应；成本快照不计入缓存。run 达到上限后仍可 close。容量耗尽时会明确报错。默认操作超时为 180 秒，空闲期限为 900 秒。
 
-详细实现、迁移说明和证据见 [Brain MIB 集成](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration)。当前开发分支使用已授权的同级 Brain 临时 patch；发布原生合同后切回 registry，详见 Brain 集成文档。其他核心依赖仍使用锁定的 registry 版本。
+详细实现、迁移说明和证据见 [Brain MIB 集成](https://github.com/ldclabs/anda-brain/blob/main/anda_brain/README.md#mib-integration)。Brain 及共享依赖栈均来自 crates.io；根目录 `Cargo.toml` 中注释掉的 `[patch.crates-io]` 仅用于同级检出开发。
 
 验证：`env -u LIBRARY_PATH RUST_MIN_STACK=16777216 cargo test -p anda_bot --features mib mib::`。被忽略的 `serve_local_transport_fixture` 测试是用于 HTTP 流水线验证、需显式运行的本地模型测试夹具，不是实测基准或改进声明。
 
