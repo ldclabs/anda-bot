@@ -126,11 +126,6 @@ impl Daemon {
         Ok(Arc::new(db))
     }
 
-    pub async fn open_bot_db(&self) -> Result<Arc<AndaDB>, BoxError> {
-        let db = AndaDB::open(self.bot_object_store()?, Self::bot_db_config()).await?;
-        Ok(Arc::new(db))
-    }
-
     pub fn skills_dir_path(&self) -> PathBuf {
         self.home.join("skills")
     }
@@ -390,7 +385,6 @@ impl Daemon {
         };
         let bot_db = self.connect_bot_db().await?;
         let auto_updater = Arc::new(auto_update::AutoUpdater::new(
-            bot_db.clone(),
             self.home.clone(),
             outer_http_client.clone(),
         ));

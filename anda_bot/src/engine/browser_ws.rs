@@ -32,7 +32,7 @@ use super::{
 };
 use crate::brain;
 use crate::util::locale;
-use crate::{auto_update::AutoUpdater, transcription::TranscriptionManager, tts::TtsManager};
+use crate::{transcription::TranscriptionManager, tts::TtsManager};
 
 const SEC_WEBSOCKET_ACCEPT: &str = "sec-websocket-accept";
 const SEC_WEBSOCKET_KEY: &str = "sec-websocket-key";
@@ -55,7 +55,6 @@ pub struct BrowserWebSocketState {
     pub brain: brain::Client,
     pub bridge: Arc<BrowserBridge>,
     pub voice_capabilities: BrowserVoiceCapabilities,
-    pub auto_updater: Arc<AutoUpdater>,
     pub home_dir: PathBuf,
     pub(crate) runtime_models: RuntimeModels,
     pub(super) cli_workspaces: CliWorkspaceGrants,
@@ -470,24 +469,15 @@ async fn dispatch_browser_ws_request(
     // Daemon lifecycle and machine-wide settings belong to the local owner.
     if matches!(
         method,
-        "pick_workspace"
-            | "register_workspace"
-            | "reload_models"
-            | "set_model"
-            | "auto_update_install_and_restart"
+        "pick_workspace" | "register_workspace" | "reload_models" | "set_model"
     ) && !connection.is_owner()
     {
         return Err("Only the local owner may control the daemon".into());
     }
     let _permit = if method.starts_with("memory_")
         || method.starts_with("brain_")
-        || matches!(
-            method,
-            "set_model"
-                | "reload_models"
-                | "register_workspace"
-                | "auto_update_install_and_restart"
-        ) {
+        || matches!(method, "set_model" | "reload_models" | "register_workspace")
+    {
         Some(state.admission.enter().map_err(str::to_string)?)
     } else {
         None
@@ -560,15 +550,6 @@ async fn dispatch_browser_ws_request(
                 .map_err(|err| err.to_string())?,
         ),
         "set_model" => handle_set_model(params, connection),
-        "auto_update_status" => to_json(state.auto_updater.state()),
-        "auto_update_check" => to_json(state.auto_updater.check_if_due().await),
-        "auto_update_install_and_restart" => to_json(
-            state
-                .auto_updater
-                .install_and_restart()
-                .await
-                .map_err(|err| err.to_string())?,
-        ),
         method => Err(format!("{method} on WebSocket engine RPC not implemented")),
     }
 }
@@ -974,7 +955,6 @@ mod tests {
         crate::identity::Ed25519Key,
     ) {
         let auth_key = crate::identity::Ed25519Key::new([9u8; 32]);
-        let db = crate::test_support::memory_db("ws").await;
 
         let engine = Arc::new(
             Engine::builder()
@@ -1030,7 +1010,6 @@ mod tests {
             http.clone(),
         ));
         let runtime_models = RuntimeModels::new(models.clone(), models, config_path, http.clone());
-        let auto_updater = Arc::new(AutoUpdater::new(db, home.clone(), http));
 
         let token = auth_key
             .sign_cwt(crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap())
@@ -1055,7 +1034,6 @@ mod tests {
             brain,
             bridge: Arc::new(BrowserBridge::new()),
             voice_capabilities: BrowserVoiceCapabilities::default(),
-            auto_updater,
             home_dir: home,
             runtime_models,
             cli_workspaces: CliWorkspaceGrants::new(auth_key.id()),
@@ -1113,9 +1091,6 @@ mod tests {
             ("information", json!({})),
             ("capabilities", json!({})),
             ("model_names", json!({})),
-            ("auto_update_status", json!({})),
-            ("auto_update_check", json!({})),
-            ("auto_update_install_and_restart", json!({})),
             ("brain_status", json!({})),
             (
                 "brain_kip_readonly",
@@ -1178,12 +1153,7 @@ mod tests {
         );
 
         // Other daemon controls are owner-only as well.
-        for method in [
-            "pick_workspace",
-            "reload_models",
-            "set_model",
-            "auto_update_install_and_restart",
-        ] {
+        for method in ["pick_workspace", "reload_models", "set_model"] {
             let request =
                 serde_json::from_value(json!({"id":1,"method":method,"params":["m"]})).unwrap();
             handle_browser_ws_request(request, &stranger).await;
@@ -1512,7 +1482,6 @@ mod tests {
             "agent_run",
             "tool_call",
             "reload_models",
-            "auto_update_install_and_restart",
         ] {
             let request = serde_json::from_value(
                 json!({"id":1,"method":method,"params":[{"session":"expired"}]}),

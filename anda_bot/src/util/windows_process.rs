@@ -65,4 +65,14 @@ mod tests {
         assert_eq!(command.get_program(), "echo");
         assert_eq!(command.get_args().count(), 1);
     }
+
+    #[test]
+    fn quotes_windows_args_with_spaces_and_quotes() {
+        assert_eq!(
+            quote_windows_arg("C:\\Anda Bot\\anda.exe"),
+            "\"C:\\Anda Bot\\anda.exe\""
+        );
+        assert_eq!(quote_windows_arg("plain"), "plain");
+        assert_eq!(quote_windows_arg("a\"b"), "\"a\\\"b\"");
+    }
 }

@@ -83,7 +83,7 @@ const SYSTEM: Host<'static> = Host {
     probe_version: &installed_version,
     add_to_path: &ensure_on_path,
     retire_launcher: &launcher_retirement::retire,
-    register_autostart: &autostart::install_for,
+    register_autostart: &autostart::install,
 };
 
 pub async fn run(home: &Path, cmd: &InstallCommand) -> Result<(), BoxError> {

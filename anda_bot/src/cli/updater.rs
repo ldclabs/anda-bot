@@ -10,7 +10,7 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
-use crate::{auto_update, daemon::Daemon};
+use crate::auto_update;
 
 pub(crate) const REPO: &str = "ldclabs/anda-bot";
 pub(crate) const BINARY_NAME: &str = "anda";
@@ -186,16 +186,15 @@ impl ReleaseTarget {
 
 pub async fn run(
     client: &reqwest::Client,
-    daemon: &Daemon,
+    home_dir: &Path,
     cmd: &UpdateCommand,
 ) -> Result<(), BoxError> {
-    let home_dir = &daemon.home;
     let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
 
     validate_update_command(cmd)?;
 
     if cmd.check || cmd.check_if_due {
-        run_update_check(client, daemon, cmd).await?;
+        run_update_check(client, home_dir, cmd).await?;
         return Ok(());
     }
 
@@ -252,7 +251,7 @@ pub async fn run(
     let staged = StagedFile::new(staged_path);
 
     let downloaded_path = if let Some(path) =
-        auto_update::downloaded_update_path(daemon, &latest_tag, &asset_name).await
+        auto_update::downloaded_update_path(home_dir, &latest_tag, &asset_name).await
     {
         println!("Using previously downloaded {asset_name}...");
         path
@@ -283,7 +282,7 @@ pub async fn run(
         latest_tag.as_str(),
     )
     .await;
-    auto_update::mark_installed(daemon, &latest_tag).await;
+    auto_update::mark_installed(home_dir, &latest_tag).await;
 
     print_update_finish(current_tag.as_str(), latest_tag.as_str(), finish);
 
@@ -333,16 +332,11 @@ fn validate_update_command(cmd: &UpdateCommand) -> Result<(), BoxError> {
 
 async fn run_update_check(
     client: &reqwest::Client,
-    daemon: &Daemon,
+    home_dir: &Path,
     cmd: &UpdateCommand,
 ) -> Result<(), BoxError> {
-    let db = daemon.open_bot_db().await?;
-    let updater = auto_update::AutoUpdater::new(db, daemon.home.clone(), client.clone());
-    let state = if cmd.check {
-        updater.check_now().await
-    } else {
-        updater.check_if_due().await
-    };
+    let updater = auto_update::AutoUpdater::new(home_dir.to_path_buf(), client.clone());
+    let state = updater.check(cmd.check).await;
 
     if cmd.json {
         println!("{}", serde_json::to_string(&state)?);
@@ -353,17 +347,15 @@ async fn run_update_check(
 }
 
 fn print_update_check_state(state: &auto_update::AutoUpdateState) {
-    match state.status {
-        auto_update::AutoUpdateStatus::Downloaded if state.downloaded_update_available() => {
-            // A failed check keeps a verified download; report both.
-            if let Some(detail) = state.error.as_deref() {
-                println!("Update check failed: {detail}");
-            }
-            let latest = state.latest_tag.as_deref().unwrap_or("the latest release");
-            println!(
-                "Anda {latest} has been downloaded. Run `anda update`, then `anda restart` to use it."
-            );
+    if let Some(notice) = state.cli_notice() {
+        // A failed check keeps a verified download; report both.
+        if let Some(detail) = state.error.as_deref() {
+            println!("Update check failed: {detail}");
         }
+        println!("{notice}");
+        return;
+    }
+    match state.status {
         auto_update::AutoUpdateStatus::Failed => {
             let detail = state.error.as_deref().unwrap_or("unknown error");
             println!("Update check failed: {detail}");
@@ -1087,7 +1079,6 @@ mod tests {
         );
     }
 
-    use crate::config::Config;
     use crate::util::http_client::new_reqwest_client;
     use axum::{Router, http::StatusCode as AxumStatus, routing::get};
     use std::io::{Cursor, Write};
@@ -1517,14 +1508,6 @@ mod tests {
         print_update_finish("v0.1.0", "v0.2.0", UpdateFinish::Installed);
     }
 
-    async fn temp_daemon_with_db() -> (tempfile::TempDir, Daemon) {
-        let dir = tempfile::tempdir().unwrap();
-        let daemon = Daemon::new(dir.path().to_path_buf(), Config::default());
-        // Create the bot db so `open_bot_db` succeeds inside the updater.
-        daemon.connect_bot_db().await.unwrap();
-        (dir, daemon)
-    }
-
     #[tokio::test]
     async fn install_release_launcher_skips_without_supported_sidecar() {
         let client = dead_proxy_client();
@@ -1632,7 +1615,7 @@ mod tests {
     #[tokio::test]
     async fn run_update_check_records_failure_and_emits_json() {
         print_states_for_coverage();
-        let (_dir, daemon) = temp_daemon_with_db().await;
+        let home = tempfile::tempdir().unwrap();
         let client = dead_proxy_client();
 
         let cmd = UpdateCommand {
@@ -1642,7 +1625,7 @@ mod tests {
             check_if_due: false,
             json: true,
         };
-        run_update_check(&client, &daemon, &cmd).await.unwrap();
+        run_update_check(&client, home.path(), &cmd).await.unwrap();
 
         let cmd_human = UpdateCommand {
             force: false,
@@ -1651,14 +1634,14 @@ mod tests {
             check_if_due: true,
             json: false,
         };
-        run_update_check(&client, &daemon, &cmd_human)
+        run_update_check(&client, home.path(), &cmd_human)
             .await
             .unwrap();
     }
 
     #[tokio::test]
     async fn run_dispatches_check_and_propagates_network_errors() {
-        let (_dir, daemon) = temp_daemon_with_db().await;
+        let home = tempfile::tempdir().unwrap();
         let client = dead_proxy_client();
 
         // `--check` routes through run_update_check, which swallows the failure.
@@ -1669,7 +1652,7 @@ mod tests {
             check_if_due: false,
             json: false,
         };
-        run(&client, &daemon, &check_cmd).await.unwrap();
+        run(&client, home.path(), &check_cmd).await.unwrap();
 
         // `--skills` (without check) reaches the network fetch and surfaces the error.
         let skills_cmd = UpdateCommand {
@@ -1679,7 +1662,7 @@ mod tests {
             check_if_due: false,
             json: false,
         };
-        let err = run(&client, &daemon, &skills_cmd)
+        let err = run(&client, home.path(), &skills_cmd)
             .await
             .map(|_| ())
             .unwrap_err();
@@ -1693,6 +1676,6 @@ mod tests {
             check_if_due: true,
             json: false,
         };
-        assert!(run(&client, &daemon, &bad_cmd).await.is_err());
+        assert!(run(&client, home.path(), &bad_cmd).await.is_err());
     }
 }

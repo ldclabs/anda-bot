@@ -17,32 +17,22 @@ const MACOS_LAUNCH_AGENT_LABEL: &str = "ai.anda.anda-bot";
 const LINUX_SYSTEMD_SERVICE: &str = "anda-bot.service";
 #[cfg(target_os = "linux")]
 const LINUX_DESKTOP_FILE: &str = "anda-bot.desktop";
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+const UNSUPPORTED: &str = "anda autostart is not supported on this platform";
 
 #[derive(Subcommand)]
 pub enum AutostartCommand {
     /// Register Anda to start when the current user logs in.
     Install,
-    /// Remove the current user's Anda startup registration.
+    /// Remove the current user's Anda startup registration. A running daemon
+    /// keeps running.
     Uninstall,
     /// Show whether the current user's Anda startup registration exists.
     Status,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum AutostartStatus {
-    Installed,
-    NotInstalled,
-    Unsupported,
-}
-
-pub fn install(home: &Path) -> Result<(), BoxError> {
-    install_for(&current_exe()?, home)
-}
-
 /// Registers `exe` (an installed `anda`) to start the daemon at login.
-pub fn install_for(exe: &Path, home: &Path) -> Result<(), BoxError> {
-    // Login services have a different working directory than this CLI.
+pub fn install(exe: &Path, home: &Path) -> Result<(), BoxError> {
     let home = absolute_home(home)?;
     let home = home.as_path();
     #[cfg(windows)]
@@ -63,15 +53,20 @@ pub fn install_for(exe: &Path, home: &Path) -> Result<(), BoxError> {
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (exe, home);
-        Err("anda autostart is not supported on this platform".into())
+        Err(UNSUPPORTED.into())
     }
 }
 
+/// Login services have a different working directory than this CLI.
+/// `canonicalize` would give Windows paths the `\\?\` prefix, which cmd.exe
+/// cannot use as a working directory.
 fn absolute_home(home: &Path) -> Result<PathBuf, BoxError> {
-    Ok(std::fs::canonicalize(home)?)
+    Ok(std::path::absolute(home)?)
 }
 
-pub fn uninstall() -> Result<AutostartStatus, BoxError> {
+/// Removes the login registration only; it does not stop a daemon that the
+/// registration already started.
+pub fn uninstall() -> Result<(), BoxError> {
     #[cfg(windows)]
     {
         uninstall_windows()
@@ -89,39 +84,44 @@ pub fn uninstall() -> Result<AutostartStatus, BoxError> {
 
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        Ok(AutostartStatus::Unsupported)
+        Err(UNSUPPORTED.into())
     }
 }
 
-pub fn status() -> Result<AutostartStatus, BoxError> {
+/// Whether the current user's login registration exists.
+pub fn status() -> Result<bool, BoxError> {
     #[cfg(windows)]
     {
-        status_windows()
+        Ok(crate::util::windows_run_key::get(RUN_VALUE).is_some())
     }
 
     #[cfg(target_os = "macos")]
     {
-        status_macos()
+        Ok(macos_launch_agent_path()?.exists())
     }
 
     #[cfg(target_os = "linux")]
     {
-        status_linux()
+        Ok(linux_systemd_is_enabled() || linux_xdg_desktop_path()?.exists())
     }
 
     #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
-        Ok(AutostartStatus::Unsupported)
+        Err(UNSUPPORTED.into())
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn home_dir() -> Result<PathBuf, BoxError> {
     std::env::home_dir().ok_or_else(|| "could not detect current user's home directory".into())
 }
 
-fn current_exe() -> Result<PathBuf, BoxError> {
-    std::env::current_exe()
-        .map_err(|err| format!("could not detect current executable path: {err}").into())
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn remove_file_if_exists(path: &Path) -> Result<(), BoxError> {
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.into()),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(windows)]
@@ -134,19 +134,10 @@ fn install_windows(exe: &Path, home: &Path) -> Result<(), BoxError> {
 }
 
 #[cfg(windows)]
-fn uninstall_windows() -> Result<AutostartStatus, BoxError> {
+fn uninstall_windows() -> Result<(), BoxError> {
     crate::util::windows_run_key::delete(RUN_VALUE)?;
     delete_legacy_task();
-    Ok(AutostartStatus::NotInstalled)
-}
-
-#[cfg(windows)]
-fn status_windows() -> Result<AutostartStatus, BoxError> {
-    Ok(if crate::util::windows_run_key::get(RUN_VALUE).is_some() {
-        AutostartStatus::Installed
-    } else {
-        AutostartStatus::NotInstalled
-    })
+    Ok(())
 }
 
 /// Removes the logon scheduled task that older releases registered.
@@ -160,20 +151,8 @@ fn delete_legacy_task() {
 
 #[cfg(any(windows, test))]
 fn run_command_line(exe: &Path, home: &Path) -> String {
-    windows_command_line([
-        exe.to_path_buf(),
-        PathBuf::from("--home"),
-        home.to_path_buf(),
-        PathBuf::from("start"),
-    ])
-}
-
-#[cfg(any(windows, test))]
-fn windows_command_line<I>(args: I) -> String
-where
-    I: IntoIterator<Item = PathBuf>,
-{
-    args.into_iter()
+    [exe, Path::new("--home"), home, Path::new("start")]
+        .iter()
         .map(|arg| quote_windows_arg(&arg.to_string_lossy()))
         .collect::<Vec<_>>()
         .join(" ")
@@ -187,28 +166,15 @@ fn install_macos(exe: &Path, home: &Path) -> Result<(), BoxError> {
         .ok_or("could not resolve LaunchAgents directory")?;
     std::fs::create_dir_all(plist_dir)?;
     std::fs::write(&plist_path, macos_launch_agent_plist(exe, home))?;
-    let _ = macos_launchctl_bootout(&plist_path);
-    macos_launchctl_bootstrap(&plist_path)
+    let _ = macos_launchctl("bootout", &plist_path);
+    macos_launchctl("bootstrap", &plist_path)
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall_macos() -> Result<AutostartStatus, BoxError> {
-    let plist_path = macos_launch_agent_path()?;
-    let _ = macos_launchctl_bootout(&plist_path);
-    match std::fs::remove_file(&plist_path) {
-        Ok(()) => Ok(AutostartStatus::NotInstalled),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(AutostartStatus::NotInstalled),
-        Err(err) => Err(err.into()),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn status_macos() -> Result<AutostartStatus, BoxError> {
-    if macos_launch_agent_path()?.exists() {
-        Ok(AutostartStatus::Installed)
-    } else {
-        Ok(AutostartStatus::NotInstalled)
-    }
+fn uninstall_macos() -> Result<(), BoxError> {
+    // No `launchctl bootout`: it would also stop a daemon launchd started at
+    // login. Without the plist, the job is not loaded at the next login.
+    remove_file_if_exists(&macos_launch_agent_path()?)
 }
 
 #[cfg(target_os = "macos")]
@@ -220,28 +186,14 @@ fn macos_launch_agent_path() -> Result<PathBuf, BoxError> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_launchctl_bootstrap(plist_path: &Path) -> Result<(), BoxError> {
+fn macos_launchctl(action: &str, plist_path: &Path) -> Result<(), BoxError> {
+    let uid = unsafe { libc::geteuid() };
     run_command_status(
         Command::new("launchctl")
-            .arg("bootstrap")
-            .arg(format!("gui/{}", current_uid()))
+            .arg(action)
+            .arg(format!("gui/{uid}"))
             .arg(plist_path),
     )
-}
-
-#[cfg(target_os = "macos")]
-fn macos_launchctl_bootout(plist_path: &Path) -> Result<(), BoxError> {
-    run_command_status(
-        Command::new("launchctl")
-            .arg("bootout")
-            .arg(format!("gui/{}", current_uid()))
-            .arg(plist_path),
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn current_uid() -> u32 {
-    unsafe { libc::geteuid() }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -272,6 +224,8 @@ fn macos_launch_agent_plist(exe: &Path, home: &Path) -> String {
 
 #[cfg(target_os = "linux")]
 fn install_linux(exe: &Path, home: &Path) -> Result<(), BoxError> {
+    // Without a user systemd (containers, some SSH sessions), fall back to
+    // the desktop session's XDG autostart.
     if install_linux_systemd(exe, home).is_ok() {
         return Ok(());
     }
@@ -279,58 +233,31 @@ fn install_linux(exe: &Path, home: &Path) -> Result<(), BoxError> {
 }
 
 #[cfg(target_os = "linux")]
-fn uninstall_linux() -> Result<AutostartStatus, BoxError> {
-    if linux_systemd_service_path()?.exists() {
-        let _ = run_command_status(
-            Command::new("systemctl")
-                .arg("--user")
-                .arg("disable")
-                .arg("--now")
-                .arg(LINUX_SYSTEMD_SERVICE),
-        );
-        match std::fs::remove_file(linux_systemd_service_path()?) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
-        }
-        let _ = run_command_status(Command::new("systemctl").arg("--user").arg("daemon-reload"));
+fn uninstall_linux() -> Result<(), BoxError> {
+    let service_path = linux_systemd_service_path()?;
+    if service_path.exists() {
+        // No `--now`: a running daemon keeps running.
+        let _ = run_command_status(Command::new("systemctl").args([
+            "--user",
+            "disable",
+            LINUX_SYSTEMD_SERVICE,
+        ]));
+        std::fs::remove_file(&service_path)?;
+        let _ = run_command_status(Command::new("systemctl").args(["--user", "daemon-reload"]));
     }
-
-    if linux_xdg_desktop_path()?.exists() {
-        match std::fs::remove_file(linux_xdg_desktop_path()?) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err.into()),
-        }
-    }
-
-    Ok(AutostartStatus::NotInstalled)
-}
-
-#[cfg(target_os = "linux")]
-fn status_linux() -> Result<AutostartStatus, BoxError> {
-    if linux_systemd_is_enabled() || linux_xdg_desktop_path()?.exists() {
-        Ok(AutostartStatus::Installed)
-    } else {
-        Ok(AutostartStatus::NotInstalled)
-    }
+    remove_file_if_exists(&linux_xdg_desktop_path()?)
 }
 
 #[cfg(target_os = "linux")]
 fn install_linux_systemd(exe: &Path, home: &Path) -> Result<(), BoxError> {
-    let service_path = linux_systemd_service_path()?;
-    let service_dir = service_path
-        .parent()
-        .ok_or("could not resolve systemd user service directory")?;
-    std::fs::create_dir_all(service_dir)?;
-    std::fs::write(&service_path, linux_systemd_service(exe, home))?;
-    run_command_status(Command::new("systemctl").arg("--user").arg("daemon-reload"))?;
-    run_command_status(
-        Command::new("systemctl")
-            .arg("--user")
-            .arg("enable")
-            .arg(LINUX_SYSTEMD_SERVICE),
-    )
+    let service_dir = linux_systemd_user_dir()?;
+    std::fs::create_dir_all(&service_dir)?;
+    std::fs::write(
+        service_dir.join(LINUX_SYSTEMD_SERVICE),
+        linux_systemd_service(exe, home),
+    )?;
+    run_command_status(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
+    run_command_status(Command::new("systemctl").args(["--user", "enable", LINUX_SYSTEMD_SERVICE]))
 }
 
 #[cfg(target_os = "linux")]
@@ -347,58 +274,55 @@ fn install_linux_xdg(exe: &Path, home: &Path) -> Result<(), BoxError> {
 #[cfg(target_os = "linux")]
 fn linux_systemd_is_enabled() -> bool {
     Command::new("systemctl")
-        .arg("--user")
-        .arg("is-enabled")
-        .arg("--quiet")
-        .arg(LINUX_SYSTEMD_SERVICE)
+        .args(["--user", "is-enabled", "--quiet", LINUX_SYSTEMD_SERVICE])
         .status()
         .is_ok_and(|status| status.success())
-        || linux_systemd_wants_path().is_ok_and(|path| path.exists())
+        || linux_systemd_user_dir().is_ok_and(|dir| {
+            dir.join("default.target.wants")
+                .join(LINUX_SYSTEMD_SERVICE)
+                .exists()
+        })
+}
+
+/// `$XDG_CONFIG_HOME`, which both systemd user units and XDG autostart use.
+#[cfg(target_os = "linux")]
+fn linux_config_dir() -> Result<PathBuf, BoxError> {
+    match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
+        _ => Ok(home_dir()?.join(".config")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_systemd_user_dir() -> Result<PathBuf, BoxError> {
+    Ok(linux_config_dir()?.join("systemd").join("user"))
 }
 
 #[cfg(target_os = "linux")]
 fn linux_systemd_service_path() -> Result<PathBuf, BoxError> {
-    Ok(home_dir()?
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join(LINUX_SYSTEMD_SERVICE))
-}
-
-#[cfg(target_os = "linux")]
-fn linux_systemd_wants_path() -> Result<PathBuf, BoxError> {
-    Ok(home_dir()?
-        .join(".config")
-        .join("systemd")
-        .join("user")
-        .join("default.target.wants")
-        .join(LINUX_SYSTEMD_SERVICE))
+    Ok(linux_systemd_user_dir()?.join(LINUX_SYSTEMD_SERVICE))
 }
 
 #[cfg(target_os = "linux")]
 fn linux_xdg_desktop_path() -> Result<PathBuf, BoxError> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or(home_dir()?.join(".config"));
-    Ok(base.join("autostart").join(LINUX_DESKTOP_FILE))
+    Ok(linux_config_dir()?
+        .join("autostart")
+        .join(LINUX_DESKTOP_FILE))
 }
 
+/// `--home` is all the daemon needs: it exports `ANDA_HOME` to the commands
+/// it runs itself.
 #[cfg(any(target_os = "linux", test))]
 fn linux_systemd_service(exe: &Path, home: &Path) -> String {
     let exe = systemd_quote_arg(&exe.to_string_lossy());
-    let home_arg = systemd_quote_arg(&home.to_string_lossy());
-    let home_env = systemd_quote_arg(&format!("ANDA_HOME={}", home.to_string_lossy()));
-    let working_dir = systemd_quote_arg(&home.to_string_lossy());
+    let home = systemd_quote_arg(&home.to_string_lossy());
     format!(
         "[Unit]\n\
-Description=Anda Bot daemon\n\
-After=network-online.target\n\
-Wants=network-online.target\n\n\
+Description=Anda Bot daemon\n\n\
 [Service]\n\
 Type=simple\n\
-ExecStart={exe} --home {home_arg} daemon\n\
-WorkingDirectory={working_dir}\n\
-Environment={home_env}\n\
+ExecStart={exe} --home {home} daemon\n\
+WorkingDirectory={home}\n\
 Restart=no\n\n\
 [Install]\n\
 WantedBy=default.target\n"
@@ -407,12 +331,11 @@ WantedBy=default.target\n"
 
 #[cfg(any(target_os = "linux", test))]
 fn linux_xdg_desktop_file(exe: &Path, home: &Path) -> String {
-    let exec = desktop_exec_line(&[
-        exe.to_path_buf(),
-        "--home".into(),
-        home.into(),
-        "daemon".into(),
-    ]);
+    let exec = [exe, Path::new("--home"), home, Path::new("daemon")]
+        .iter()
+        .map(|arg| desktop_quote_arg(&arg.to_string_lossy()))
+        .collect::<Vec<_>>()
+        .join(" ");
     format!(
         "[Desktop Entry]\n\
 Type=Application\n\
@@ -457,14 +380,6 @@ fn systemd_quote_arg(value: &str) -> String {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn desktop_exec_line(args: &[PathBuf]) -> String {
-    args.iter()
-        .map(|arg| desktop_quote_arg(&arg.to_string_lossy()))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-#[cfg(any(target_os = "linux", test))]
 fn desktop_quote_arg(value: &str) -> String {
     if !value
         .chars()
@@ -478,18 +393,8 @@ fn desktop_quote_arg(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod windows_tests {
+mod tests {
     use super::*;
-
-    #[test]
-    fn quotes_windows_args_with_spaces_and_quotes() {
-        assert_eq!(
-            quote_windows_arg("C:\\Anda Bot\\anda.exe"),
-            "\"C:\\Anda Bot\\anda.exe\""
-        );
-        assert_eq!(quote_windows_arg("plain"), "plain");
-        assert_eq!(quote_windows_arg("a\"b"), "\"a\\\"b\"");
-    }
 
     #[test]
     fn run_command_starts_daemon_with_home() {
@@ -503,33 +408,13 @@ mod windows_tests {
             "\"C:\\Program Files\\Anda Bot\\anda.exe\" --home C:\\Users\\me\\.anda start"
         );
     }
-}
-
-#[cfg(test)]
-mod status_tests {
-    use super::*;
 
     #[test]
     fn status_reports_registration_without_side_effects() {
         // status() only inspects the user's autostart registration; it must
         // never error on a normal developer machine.
-        let status = status().unwrap();
-        assert!(matches!(
-            status,
-            AutostartStatus::Installed | AutostartStatus::NotInstalled
-        ));
+        status().unwrap();
     }
-
-    #[test]
-    fn helper_paths_resolve() {
-        assert!(home_dir().is_ok());
-        assert!(current_exe().is_ok());
-    }
-}
-
-#[cfg(test)]
-mod macos_tests {
-    use super::*;
 
     #[test]
     fn macos_plist_escapes_paths() {
@@ -542,11 +427,6 @@ mod macos_tests {
         assert!(plist.contains("/Users/me/.anda&quot;prod&quot;"));
         assert!(plist.contains("<string>daemon</string>"));
     }
-}
-
-#[cfg(test)]
-mod linux_tests {
-    use super::*;
 
     #[test]
     fn linux_systemd_service_quotes_paths() {
@@ -561,7 +441,8 @@ mod linux_tests {
             )
         );
         assert!(service.contains("WorkingDirectory=\"/home/me/.anda prod\""));
-        assert!(service.contains("Environment=\"ANDA_HOME=/home/me/.anda prod\""));
+        // A user manager has no network-online.target to order against.
+        assert!(!service.contains("network-online.target"));
     }
 
     #[test]
@@ -576,24 +457,13 @@ mod linux_tests {
                 .contains("Exec=\"/home/me/bin/anda bot\" --home \"/home/me/.anda prod\" daemon")
         );
     }
+
     #[test]
-    fn relative_autostart_home_is_resolved_before_rendering() {
+    fn relative_autostart_home_is_resolved_without_verbatim_prefix() {
         let cwd = std::env::current_dir().unwrap();
-        let dir = tempfile::Builder::new()
-            .prefix(".anda-autostart-test-")
-            .tempdir_in(&cwd)
-            .unwrap();
-        let relative = dir.path().strip_prefix(&cwd).unwrap();
-        let home = absolute_home(relative).unwrap();
-        assert_eq!(home, dir.path().canonicalize().unwrap());
-        assert!(home.is_absolute());
-        // The unit escapes the path (Windows paths contain backslashes).
-        assert!(
-            linux_systemd_service(Path::new("/bin/anda"), &home).contains(&format!(
-                "--home {} daemon",
-                systemd_quote_arg(&home.to_string_lossy())
-            ))
-        );
+        let home = absolute_home(Path::new("anda-autostart-home")).unwrap();
+        assert_eq!(home, cwd.join("anda-autostart-home"));
+        assert!(!home.to_string_lossy().starts_with(r"\\?\"));
     }
 
     #[cfg(unix)]

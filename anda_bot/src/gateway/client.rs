@@ -217,12 +217,6 @@ impl Client {
         self.agent_run(input).await
     }
 
-    #[allow(unused)]
-    pub async fn auto_update_install_and_restart(&self) -> Result<AutoUpdateState, BoxError> {
-        self.post_json("/auto_update/install_and_restart", &())
-            .await
-    }
-
     pub async fn chatgpt(&self, request: &crate::chatgpt::api::Request) -> Result<Json, BoxError> {
         self.post_json("/daemon/chatgpt", request).await
     }
@@ -1016,23 +1010,13 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     }
 
     #[tokio::test]
-    async fn auto_update_install_and_execute_kip_round_trip() {
-        let app = Router::new()
-            .route(
-                "/auto_update/install_and_restart",
-                routing::post(|| async {
-                    axum::Json(serde_json::to_value(AutoUpdateState::default()).unwrap())
-                }),
-            )
-            .route(
-                "/v1/anda_bot/execute_kip_readonly",
-                routing::post(|| async { axum::Json(anda_kip::Response::ok(json!({"ok": true}))) }),
-            );
+    async fn execute_kip_readonly_round_trip() {
+        let app = Router::new().route(
+            "/v1/anda_bot/execute_kip_readonly",
+            routing::post(|| async { axum::Json(anda_kip::Response::ok(json!({"ok": true}))) }),
+        );
         let base_url = crate::test_support::spawn_http_mock(app).await;
         let client = Client::new(base_url, "token-1".to_string());
-
-        let state = client.auto_update_install_and_restart().await.unwrap();
-        assert!(state.latest_tag.is_none());
 
         let kip = client
             .execute_kip_readonly(&anda_kip::Request::single("DESCRIBE PRIMER"))

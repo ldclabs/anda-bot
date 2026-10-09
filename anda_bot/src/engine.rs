@@ -167,7 +167,6 @@ pub(crate) async fn plan_access(
 #[derive(Clone)]
 struct AutoUpdateRouteState {
     app: AppState,
-    owner: Principal,
     auto_updater: Arc<AutoUpdater>,
 }
 
@@ -924,8 +923,7 @@ impl Engines {
         };
         let auto_update_route_state = AutoUpdateRouteState {
             app: self.state.clone(),
-            owner: self.cli_workspaces.owner(),
-            auto_updater: self.auto_updater.clone(),
+            auto_updater: self.auto_updater,
         };
         let daemon_control_route_state = DaemonControlRouteState {
             app: self.state.clone(),
@@ -947,7 +945,6 @@ impl Engines {
             brain: self.brain,
             bridge: self.browser_bridge,
             voice_capabilities: self.voice_capabilities,
-            auto_updater: self.auto_updater,
             home_dir: self.home_dir.clone(),
             runtime_models: self.runtime_models.clone(),
             cli_workspaces: self.cli_workspaces.clone(),
@@ -956,13 +953,9 @@ impl Engines {
             .route("/ws/app/v1", routing::get(browser_ws::app_websocket))
             .route("/ws/engine/{*id}", routing::get(browser_websocket))
             .with_state(browser_ws_state);
+        // The TUI's update notice; Anda Desktop runs `anda update` itself.
         let auto_update_router = Router::new()
-            .route("/auto_update", routing::get(auto_update_status))
             .route("/auto_update/check", routing::post(auto_update_check))
-            .route(
-                "/auto_update/install_and_restart",
-                routing::post(auto_update_install_and_restart),
-            )
             .with_state(auto_update_route_state);
         let daemon_control_router = Router::new()
             .route("/daemon/status", routing::get(get_status))
@@ -1122,16 +1115,6 @@ pub(crate) async fn brain_admission(
     next.run(request).await
 }
 
-async fn auto_update_status(
-    State(state): State<AutoUpdateRouteState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if let Err(response) = verify_trusted_user(&state.app, &headers, unix_ms()) {
-        return response.into_response();
-    }
-    AxumJson(state.auto_updater.state()).into_response()
-}
-
 async fn auto_update_check(
     State(state): State<AutoUpdateRouteState>,
     headers: HeaderMap,
@@ -1139,20 +1122,7 @@ async fn auto_update_check(
     if let Err(response) = verify_trusted_user(&state.app, &headers, unix_ms()) {
         return response.into_response();
     }
-    AxumJson(state.auto_updater.check_if_due().await).into_response()
-}
-
-async fn auto_update_install_and_restart(
-    State(state): State<AutoUpdateRouteState>,
-    headers: HeaderMap,
-) -> impl IntoResponse {
-    if let Err(response) = verify_owner(&state.app, &headers, state.owner, DAEMON_OWNER_ONLY) {
-        return response.into_response();
-    }
-    match state.auto_updater.install_and_restart().await {
-        Ok(state) => AxumJson(state).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
-    }
+    AxumJson(state.auto_updater.check(false).await).into_response()
 }
 
 async fn daemon_shutdown(
@@ -2012,52 +1982,29 @@ model:
     }
 
     #[tokio::test]
-    async fn auto_update_routes_require_auth_and_return_state() {
-        let db = route_test_db().await;
+    async fn auto_update_check_requires_a_trusted_user() {
+        let home = tempfile::tempdir().unwrap();
         let key = Ed25519Key::new([5u8; 32]);
-        let other_key = Ed25519Key::new([4u8; 32]);
-        let app = minimal_app(vec![key.pubkey().into(), other_key.pubkey().into()]);
-        let auto_updater = Arc::new(AutoUpdater::new(
-            db,
-            std::env::temp_dir(),
-            dead_proxy_http(),
-        ));
+        let app = minimal_app(vec![key.pubkey().into()]);
         let state = AutoUpdateRouteState {
             app,
-            owner: key.id(),
-            auto_updater,
+            auto_updater: Arc::new(AutoUpdater::new(
+                home.path().to_path_buf(),
+                dead_proxy_http(),
+            )),
         };
 
-        // Without a token, the status route is unauthorized.
-        let resp = auto_update_status(State(state.clone()), HeaderMap::new())
+        // Without a token, the check route is unauthorized.
+        let resp = auto_update_check(State(state.clone()), HeaderMap::new())
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-        // With a valid bearer token, the status route returns the persisted state.
-        let resp = auto_update_status(State(state.clone()), authed_headers(&key))
-            .await
-            .into_response();
-        assert_eq!(resp.status(), StatusCode::OK);
-
         // The check route runs a (failing, dead-proxy) check and still responds 200.
-        let resp = auto_update_check(State(state.clone()), authed_headers(&key))
+        let resp = auto_update_check(State(state), authed_headers(&key))
             .await
             .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
-
-        // Installing restarts the daemon, which only the owner may do.
-        let resp =
-            auto_update_install_and_restart(State(state.clone()), authed_headers(&other_key))
-                .await
-                .into_response();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-
-        // Install with no downloaded update is a bad request.
-        let resp = auto_update_install_and_restart(State(state), authed_headers(&key))
-            .await
-            .into_response();
-        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     async fn build_route_bot(db: Arc<AndaDB>, home: PathBuf) -> Arc<AndaBot> {

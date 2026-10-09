@@ -32,7 +32,6 @@ mod transcription;
 mod tts;
 mod tui;
 #[cfg(any(windows, test))]
-#[allow(dead_code)]
 mod update_protocol;
 mod util;
 
@@ -273,7 +272,7 @@ async fn run() -> Result<(), BoxError> {
     if let Some(Commands::Update(cmd)) = command.as_ref() {
         let http_client =
             util::http_client::build_http_client(daemon.cfg.https_proxy.clone(), |client| client)?;
-        cli::updater::run(&http_client, &daemon, cmd).await?;
+        cli::updater::run(&http_client, &daemon.home, cmd).await?;
         return Ok(());
     }
 
@@ -738,29 +737,20 @@ async fn run_autostart_command(
         autostart::AutostartCommand::Install => {
             daemon.ensure_directories().await?;
             daemon.ensure_config_file_exists().await?;
-            autostart::install(&daemon.home)?;
+            autostart::install(&std::env::current_exe()?, &daemon.home)?;
             println!("Registered Anda to start when the current user logs in.");
         }
-        autostart::AutostartCommand::Uninstall => match autostart::uninstall()? {
-            autostart::AutostartStatus::NotInstalled => {
-                println!("Anda autostart is not registered.")
+        autostart::AutostartCommand::Uninstall => {
+            autostart::uninstall()?;
+            println!("Anda autostart is not registered.");
+        }
+        autostart::AutostartCommand::Status => {
+            if autostart::status()? {
+                println!("Anda autostart is registered.");
+            } else {
+                println!("Anda autostart is not registered.");
             }
-            autostart::AutostartStatus::Installed => unreachable!(),
-            autostart::AutostartStatus::Unsupported => {
-                println!("anda autostart is not supported on this platform.")
-            }
-        },
-        autostart::AutostartCommand::Status => match autostart::status()? {
-            autostart::AutostartStatus::Installed => {
-                println!("Anda autostart is registered.")
-            }
-            autostart::AutostartStatus::NotInstalled => {
-                println!("Anda autostart is not registered.")
-            }
-            autostart::AutostartStatus::Unsupported => {
-                println!("anda autostart is not supported on this platform.")
-            }
-        },
+        }
     }
     Ok(())
 }

@@ -6,8 +6,8 @@
 //! rather than renaming or retyping them, and give every enum on the wire an
 //! `#[serde(other)] Unknown` arm so new variants degrade instead of failing
 //! the whole parse on old parsers.
-//! [`AutoUpdateState`] is also persisted in AndaDB (`anda_auto_update`), so
-//! the same rules protect stored state across versions.
+//! [`AutoUpdateState`] is also persisted in `auto_update.json` in the Anda
+//! home, so the same rules protect stored state across versions.
 
 use serde::{Deserialize, Serialize};
 
