@@ -44,6 +44,15 @@ The repository also contains:
   transcription, TTS, cron, and the TUI.
 - When refactoring, remove obsolete branches and abstractions in the affected
   code, and update the corresponding callers, comments, and tests.
+- Never use `oneOf`, `anyOf` or `allOf` in a model-facing schema: tool
+  parameters and structured-output schemas. Anthropic rejects them at the top
+  level of a tool's `input_schema` and fails the whole request with a 400 (KIP's
+  top-level `oneOf` once left Brain formations stuck "waiting to be organized"
+  on Claude); strict modes reject them anywhere. Write nullable fields as
+  `"type": ["string", "null"]`, tagged variants as one object with an `enum`
+  discriminator, and check new tool schemas with
+  `util::json_schema::assert_openai_strict_parameters`. Schemas we receive from
+  Brain or Engine follow the same rule in their own repositories.
 - Do not commit secrets, tokens, generated local state, or user data. Runtime
   state normally belongs under `~/.anda`; repository examples must use
   placeholders.
