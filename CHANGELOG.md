@@ -4,13 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.13.6] — 2026-10-10
+
 ### Changed
 
 - **Anda Desktop's composer shows the context in use**: its token count added up every request of the conversation, Brain recall runs included, so a figure like 882k read as a full context window when the latest request held 47k. The composer now shows how much of the model's context window the latest request filled (`47k / 400k`, with a ring that turns amber from 80%, where Anda compacts), and its tooltip adds the conversation's totals: input with the share read from the prompt cache, output and requests. The daemon records this as `context_usage` in the conversation and returns it with `GetConversation` and `GetConversationDelta`; a conversation that has made no request since this change shows no count.
+- **Anda stack updates**: Engine 0.16.9 on Core 0.16.3 from crates.io, plus `tokio-util` 0.7.20 and `zstd` 0.14.1. The fixes the Engine brings are listed below.
+- **Version 0.13.6**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.13.6.
 
 ### Fixed
 
-- **ChatGPT plan conversations reuse the prompt cache**: ChatGPT keys prompt-cache affinity on the `session-id` header, which the Codex CLI sends along with `prompt_cache_key`; Anda sent neither, so the rounds of one conversation landed on unrelated caches and most of an unchanged prefix was billed again (conversation #941 on `gpt-6.1-sol` read 27% of its input from the cache). Requests through a ChatGPT account connected with `anda auth login chatgpt` now carry a key derived from the instructions and the first input item, which stay fixed for a conversation, as both the header and `prompt_cache_key`. A model on the Codex endpoint that borrows the Codex CLI's sign-in, as #941's did, is served by Anda Engine's Responses adapter, which derives the key the same way from Engine 0.16.9; until Anda Bot moves to that release, `anda auth login chatgpt` connects the account directly.
+- **Claude conversations use the prompt cache**: Anthropic caches a prompt only up to a `cache_control` breakpoint, and Anda never sent one, so every round of a task billed its whole prefix at the full input price and reported `cached_tokens: 0` (conversation #949 on `claude-haiku-5-5` read none of its 814K input tokens from the cache). Engine 0.16.9 turns on Anthropic's automatic caching, which moves the breakpoint forward as the conversation grows, and marks the end of the system prompt, which caches the tools and system for conversations that share them. Anthropic-compatible endpoints that honor only block markers, such as MiniMax, cache just the tools and system.
+- **ChatGPT plan and OpenAI conversations reuse the prompt cache**: ChatGPT keys prompt-cache affinity on the `session-id` header, which the Codex CLI sends along with `prompt_cache_key`, and the OpenAI API routes a request to a prompt cache by `prompt_cache_key`; Anda sent neither, so the rounds of one conversation landed on unrelated caches and most of an unchanged prefix was billed again (conversation #941 on `gpt-6.1-sol` read 27% of its input from the cache). Requests now carry a hex digest of the instructions and the first input item, which stay fixed for a conversation, as both the header and `prompt_cache_key`: Anda's own ChatGPT client (`anda auth login chatgpt`) derives it, and Engine 0.16.9's Responses adapter derives it the same way for the other Responses models, including a model on the Codex endpoint that borrows the Codex CLI's sign-in, as #941's did.
 
 ## [0.13.5] — 2026-10-09
 
