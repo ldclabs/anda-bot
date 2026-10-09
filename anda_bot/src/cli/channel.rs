@@ -1,10 +1,8 @@
 use anda_core::BoxError;
 use clap::Subcommand;
-use reqwest::Client;
-use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    channel::{self as channel_runtime, Channel, ChannelInitOptions},
+    channel::{self as channel_runtime, ChannelInitOptions},
     config::Config,
     daemon::Daemon,
     util::http_client::build_http_client,
@@ -36,19 +34,12 @@ struct ChannelRow {
 }
 
 pub async fn run(daemon: &Daemon, cmd: ChannelCommand) -> Result<(), BoxError> {
-    let cfg = load_cli_config(daemon).await?;
     match cmd {
-        ChannelCommand::List => list_channels(daemon, &cfg),
+        ChannelCommand::List => list_channels(daemon, &daemon.cfg),
         ChannelCommand::Init { target, all, force } => {
-            init_channels(daemon, &cfg, target.as_deref(), all, force).await
+            init_channels(daemon, &daemon.cfg, target.as_deref(), all, force).await
         }
     }
-}
-
-async fn load_cli_config(daemon: &Daemon) -> Result<Config, BoxError> {
-    daemon.ensure_directories().await?;
-    daemon.ensure_config_file_exists().await?;
-    daemon.load_config_from_disk().await
 }
 
 fn list_channels(daemon: &Daemon, cfg: &Config) -> Result<(), BoxError> {
@@ -77,11 +68,17 @@ async fn init_channels(
 ) -> Result<(), BoxError> {
     let rows = configured_channel_rows(cfg);
     let target_ids = resolve_channel_targets(&rows, target, all)?;
+    daemon.ensure_directories().await?;
     let http_client = build_http_client(cfg.https_proxy.clone(), |client| client)?;
+    // The daemon's own builder: `init` accepts exactly the channels the daemon
+    // would start, and fails on the same invalid settings.
+    let mut channels = channel_runtime::build_channels(&cfg.channels, http_client)?;
     let options = ChannelInitOptions { force };
 
-    for target_id in target_ids {
-        let (channel_id, channel) = build_configured_channel(cfg, &target_id, http_client.clone())?;
+    for channel_id in target_ids {
+        let channel = channels
+            .remove(&channel_id)
+            .ok_or_else(|| format!("channel '{channel_id}' is not configured"))?;
         channel.set_workspace(
             daemon
                 .channels_dir_path()
@@ -192,104 +189,17 @@ fn selected_channel_ids(rows: Vec<&ChannelRow>, target: &str) -> Result<Vec<Stri
         [] => Err(format!("channel '{target}' is not configured").into()),
         _ => Err(format!(
             "channel target '{target}' is ambiguous; specify one of: {}",
-            rows.iter()
-                .map(|row| row.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
+            available_channel_ids(rows.iter().copied())
         )
         .into()),
     }
 }
 
-fn available_channel_ids(rows: &[ChannelRow]) -> String {
-    rows.iter()
+fn available_channel_ids<'a>(rows: impl IntoIterator<Item = &'a ChannelRow>) -> String {
+    rows.into_iter()
         .map(|row| row.id.as_str())
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn build_configured_channel(
-    cfg: &Config,
-    id: &str,
-    http_client: Client,
-) -> Result<(String, Arc<dyn Channel>), BoxError> {
-    let Some((kind, local_id)) = id.split_once(':') else {
-        return Err(format!("channel id '{id}' must be in '<type>:<id>' form").into());
-    };
-
-    match kind {
-        "telegram" => {
-            let settings = cfg
-                .channels
-                .telegram
-                .iter()
-                .filter(|item| !item.is_empty() && item.channel_id() == local_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            single_built_channel(
-                channel_runtime::telegram::build_telegram_channels(&settings, http_client)?,
-                id,
-            )
-        }
-        "wechat" => {
-            let settings = cfg
-                .channels
-                .wechat
-                .iter()
-                .filter(|item| !item.is_empty() && item.channel_id() == local_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            single_built_channel(
-                channel_runtime::wechat::build_wechat_channels(&settings)?,
-                id,
-            )
-        }
-        "discord" => {
-            let settings = cfg
-                .channels
-                .discord
-                .iter()
-                .filter(|item| !item.is_empty() && item.channel_id() == local_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            single_built_channel(
-                channel_runtime::discord::build_discord_channels(&settings, http_client)?,
-                id,
-            )
-        }
-        "lark" | "feishu" => {
-            let settings = cfg
-                .channels
-                .lark
-                .iter()
-                .filter(|item| {
-                    !item.is_empty()
-                        && item.platform.channel_name() == kind
-                        && item.channel_id() == local_id
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            single_built_channel(
-                channel_runtime::lark::build_lark_channels(&settings, http_client)?,
-                id,
-            )
-        }
-        _ => Err(format!("unsupported channel type '{kind}'").into()),
-    }
-}
-
-fn single_built_channel(
-    channels: HashMap<String, Arc<dyn Channel>>,
-    id: &str,
-) -> Result<(String, Arc<dyn Channel>), BoxError> {
-    let mut channels = channels.into_iter();
-    let Some(channel) = channels.next() else {
-        return Err(format!("channel '{id}' is not configured").into());
-    };
-    if channels.next().is_some() {
-        return Err(format!("channel '{id}' is configured more than once").into());
-    }
-    Ok(channel)
 }
 
 #[cfg(test)]
@@ -406,19 +316,19 @@ mod tests {
     }
 
     #[test]
-    fn build_configured_channel_resolves_each_kind() {
+    fn configured_rows_match_the_daemon_channel_ids() {
         let cfg = full_config();
-        let client = Client::new();
-
-        for id in ["telegram:tg", "wechat:wc", "discord:dc", "lark:lk"] {
-            let (channel_id, channel) = build_configured_channel(&cfg, id, client.clone()).unwrap();
-            assert_eq!(channel_id, id);
-            assert_eq!(channel.id(), id);
+        let channels =
+            channel_runtime::build_channels(&cfg.channels, reqwest::Client::new()).unwrap();
+        let mut built: Vec<&str> = channels.keys().map(String::as_str).collect();
+        built.sort_unstable();
+        let rows = configured_channel_rows(&cfg);
+        let mut listed: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        listed.sort_unstable();
+        assert_eq!(built, listed);
+        for (id, channel) in &channels {
+            assert_eq!(&channel.id(), id);
         }
-
-        assert!(build_configured_channel(&cfg, "telegram:missing", client.clone()).is_err());
-        assert!(build_configured_channel(&cfg, "matrix:x", client.clone()).is_err());
-        assert!(build_configured_channel(&cfg, "no-colon", client).is_err());
     }
 
     #[tokio::test]
@@ -429,7 +339,7 @@ mod tests {
         list_channels(&daemon, &full_config()).unwrap();
         list_channels(&daemon, &Config::default()).unwrap();
 
-        // The full CLI entrypoint loads config from disk and lists channels.
+        // The CLI entrypoint lists the config the daemon handle already holds.
         run(&daemon, ChannelCommand::List).await.unwrap();
     }
 }

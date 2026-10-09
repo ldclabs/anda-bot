@@ -82,7 +82,7 @@ Las tareas cron y el modo de objetivo autónomo (`/goal ...`) siempre se ejecuta
 | `anda agent run --prompt "..."` | Envía una solicitud y espera el resultado completo sin abrir la interfaz de usuario. |
 | `anda voice --record-secs 8` | Inicia la entrada de voz; requiere la configuración de transcripción. |
 
-La reproducción de voz también requiere que `tts.enabled: true` esté configurado. Si solo desea entrada por voz y salida de texto, añada `--no-playback`.
+La reproducción de voz también requiere que `tts.enabled: true` esté configurado y un reproductor de audio en el PATH (`ffplay`, `afplay` en macOS o `play` de SoX), que se comprueba antes de la primera grabación. Si solo desea entrada por voz y salida de texto, añada `--no-playback`. Si un turno falla, se informa del error y comienza la siguiente grabación.
 
 Indica exactamente una opción: `--prompt` o `--prompt-file`. `--wait-timeout-secs 120` limita el tiempo total de envío y espera del resultado; `0` (predeterminado) desactiva ese límite. Al agotarse, la CLI deja de esperar, pero la tarea del daemon puede continuar.
 

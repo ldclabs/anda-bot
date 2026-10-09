@@ -1,7 +1,7 @@
 use crate::util::tool_response::ToolResponse;
 use anda_core::{BoxError, ToolInput};
 use clap::{Args, Subcommand};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 
 use crate::{
     engine::{AndaBot, AndaBotToolArgs, SessionState, SessionSummary},
@@ -23,7 +23,7 @@ enum SessionsSubcommand {
     List,
     /// Inspect one active session by session id.
     Get {
-        /// Session id returned by `anda sessions`.
+        /// Session id returned by `anda session list`.
         session_id: String,
     },
 }
@@ -38,7 +38,7 @@ pub async fn run(client: &gateway::Client, cmd: SessionCommand) -> Result<(), Bo
 
 async fn list_sessions(client: &gateway::Client, json_output: bool) -> Result<(), BoxError> {
     let response = call_sessions_tool(client, AndaBotToolArgs::ListSessions {}).await?;
-    let sessions: Vec<SessionSummary> = decode_ok(response)?;
+    let sessions: Vec<SessionSummary> = gateway::tool_result(response)?;
 
     if json_output {
         print_json(&sessions)?;
@@ -54,7 +54,7 @@ async fn get_session(
     json_output: bool,
 ) -> Result<(), BoxError> {
     let response = call_sessions_tool(client, AndaBotToolArgs::GetSession { session_id }).await?;
-    let session: SessionState = decode_ok(response)?;
+    let session: SessionState = gateway::tool_result(response)?;
 
     if json_output {
         print_json(&session)?;
@@ -75,16 +75,6 @@ async fn call_sessions_tool(
         ))
         .await?;
     Ok(output.output)
-}
-
-fn decode_ok<T>(response: ToolResponse) -> Result<T, BoxError>
-where
-    T: DeserializeOwned,
-{
-    match response {
-        ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
-        other => Err(format!("anda_bot sessions API returned an error: {other:?}").into()),
-    }
 }
 
 fn print_json<T>(value: &T) -> Result<(), BoxError>
@@ -402,6 +392,9 @@ mod tests {
         .await
         .map(|_| ())
         .unwrap_err();
-        assert!(err.to_string().contains("sessions API returned an error"));
+        assert!(
+            err.to_string().contains("KIP_2001: sessions unavailable"),
+            "{err}"
+        );
     }
 }

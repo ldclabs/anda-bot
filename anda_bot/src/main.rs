@@ -301,8 +301,7 @@ async fn run() -> Result<(), BoxError> {
         None => {
             log::info!("Starting CLI at {}", daemon.base_url());
             let client = build_control_client(&daemon).await?;
-            let cli = cli::Cli::new(client, daemon, full_access);
-            cli.run().await?
+            tui::run(daemon, client, full_access).await?
         }
         Some(Commands::Daemon) => {
             log::info!("Starting daemon at {}", daemon.base_url());
@@ -542,7 +541,7 @@ async fn run() -> Result<(), BoxError> {
         }
         Some(Commands::Session(cmd)) => {
             log::info!(
-                "Starting CLI with command 'sessions' at {}",
+                "Starting CLI with command 'session' at {}",
                 daemon.base_url()
             );
 
@@ -855,6 +854,26 @@ async fn build_browser_extension_token_with_store(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn command_constraints_accept_supported_combinations() {
+        Cli::command().debug_assert();
+        for args in [
+            vec!["anda", "agent", "run", "--prompt", "hello"],
+            vec!["anda", "agent", "run", "--prompt-file", "prompt.txt"],
+            vec!["anda", "voice", "--record-secs", "1"],
+            vec!["anda", "channel", "init", "--all"],
+            vec!["anda", "channel", "init", "wechat"],
+            vec!["anda", "update", "--check", "--json"],
+            vec!["anda", "update", "--check-if-due", "--json"],
+            vec!["anda", "update", "--force", "--skills"],
+            vec!["anda", "memory", "inbox", "--cursor", "page-two", "--json"],
+            vec!["anda", "memory", "inbox", "setup", "--json"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_ok(), "{args:?}");
+        }
+    }
 
     #[test]
     fn status_command_accepts_json_flag() {

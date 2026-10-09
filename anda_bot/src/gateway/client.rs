@@ -503,13 +503,16 @@ pub fn is_terminal_conversation_status(status: &ConversationStatus) -> bool {
     )
 }
 
-fn tool_result<T>(response: ToolResponse) -> Result<T, BoxError>
+/// Unwraps an application tool response into its typed result.
+pub(crate) fn tool_result<T>(response: ToolResponse) -> Result<T, BoxError>
 where
     T: serde::de::DeserializeOwned,
 {
     match response {
         ToolResponse::Ok { result, .. } => Ok(serde_json::from_value::<T>(result)?),
-        other => Err(format!("conversation API returned an error: {other:?}").into()),
+        ToolResponse::Err { error, .. } => {
+            Err(format!("tool returned an error: {}: {}", error.code, error.message).into())
+        }
     }
 }
 
@@ -1093,9 +1096,6 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
             result: None,
         })
         .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("conversation API returned an error")
-        );
+        assert_eq!(err.to_string(), "tool returned an error: KIP_404: nope");
     }
 }

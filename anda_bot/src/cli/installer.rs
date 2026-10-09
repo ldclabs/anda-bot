@@ -214,13 +214,15 @@ fn install_from(
     source_tag: &str,
     host: &Host,
 ) -> Result<InstallReport, BoxError> {
+    // Homebrew comes first: running `anda install` from Homebrew's own anda is
+    // also "the same file", and brew already manages that PATH.
     let (action, version) = if !target.exists() {
         place_binary(source, target)?;
         (InstallAction::Installed, Some(source_tag.to_string()))
-    } else if same_file(source, target) {
-        (InstallAction::Current, Some(source_tag.to_string()))
     } else if updater::is_homebrew_managed(target) {
         (InstallAction::Homebrew, (host.probe_version)(target))
+    } else if same_file(source, target) {
+        (InstallAction::Current, Some(source_tag.to_string()))
     } else {
         match (host.probe_version)(target) {
             Some(tag) if tag == source_tag => (InstallAction::Current, Some(tag)),
@@ -323,10 +325,7 @@ fn finish_placement(staged: &Path, target: &Path) -> Result<(), BoxError> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("anda.exe"),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or_default()
+        updater::unique_path_suffix()
     ));
     let moved_aside = target.exists();
     if moved_aside {
@@ -475,6 +474,11 @@ fn append_path_to_profile(
 /// Prepends `dir` to the user PATH, like `install.ps1`.
 #[cfg(windows)]
 fn ensure_on_path(dir: &Path) -> Result<bool, BoxError> {
+    // Anda Desktop runs `anda install` on every start. Once the directory is
+    // on the inherited PATH, skip starting PowerShell just to confirm it.
+    if std::env::var_os("PATH").is_some_and(|path| path_var_contains(&path, dir)) {
+        return Ok(false);
+    }
     let dir = dir.to_string_lossy().replace('\'', "''");
     let script = format!(
         r#"$dir = '{dir}'
@@ -508,9 +512,30 @@ foreach ($part in $parts) {{
     Ok(String::from_utf8_lossy(&output.stdout).trim() == "changed")
 }
 
+/// Whether a PATH-style list names `dir`, ignoring case and a trailing
+/// separator as Windows does.
+#[cfg(any(windows, test))]
+fn path_var_contains(path_var: &std::ffi::OsStr, dir: &Path) -> bool {
+    let normalize = |path: &Path| {
+        path.to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_lowercase()
+    };
+    let dir = normalize(dir);
+    std::env::split_paths(path_var).any(|entry| normalize(&entry) == dir)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_var_contains_ignores_case_and_trailing_separators() {
+        let path_var = std::env::join_paths(["/usr/bin", "/Users/Me/AndaBot/"]).unwrap();
+        assert!(path_var_contains(&path_var, Path::new("/users/me/andabot")));
+        assert!(path_var_contains(&path_var, Path::new("/usr/bin/")));
+        assert!(!path_var_contains(&path_var, Path::new("/usr/local/bin")));
+    }
 
     fn host(version: Option<&'static str>) -> Host<'static> {
         // Leak one closure per call; tests are short-lived.
@@ -672,6 +697,25 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(std::fs::read_to_string(&cellar).unwrap(), "brew");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn homebrew_anda_installing_itself_leaves_path_to_brew() {
+        let (temp, _source, _target, home) = fixture();
+        let cellar = temp.path().join("Cellar/anda/0.13.0/bin/anda");
+        write_executable(&cellar, "brew");
+        let link = temp.path().join("brew-bin").join("anda");
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&cellar, &link).unwrap();
+        let host = Host {
+            add_to_path: &|_| Ok(true),
+            ..host(Some("v0.13.0"))
+        };
+
+        let report = install_from(&cellar, &link, &home, "v0.13.0", &host).unwrap();
+        assert_eq!(report.action, InstallAction::Homebrew);
+        assert!(!report.path_updated);
     }
 
     #[cfg(not(windows))]

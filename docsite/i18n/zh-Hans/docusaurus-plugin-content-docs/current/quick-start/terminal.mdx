@@ -86,7 +86,7 @@ Cron 定时任务和自主目标模式（`/goal ...`）始终以完全访问权�
 | `anda agent run --prompt "..."` | 不打开 UI，直接发起一次请求并等待完整结果。 |
 | `anda voice --record-secs 8` | 启动语音输入；需要配置 transcription。 |
 
-语音播放还需要 `tts.enabled: true`。如果只想语音输入、文字输出，可以加 `--no-playback`。
+语音播放还需要 `tts.enabled: true`，并且 PATH 中有音频播放器（`ffplay`、macOS 的 `afplay` 或 SoX 的 `play`），首次录音前会检查。如果只想语音输入、文字输出，可以加 `--no-playback`。某一轮失败时会提示错误，然后继续下一轮录音。
 
 `--prompt` 与 `--prompt-file` 必须且只能提供一个。`--wait-timeout-secs 120` 限制提交请求与等待完成的总时间；默认 `0` 表示不设总超时。超时只停止 CLI 等待，daemon 中的任务可能继续运行。
 

@@ -86,7 +86,7 @@ Cron jobs and autonomous goal mode (`/goal ...`) always run with full access, be
 | `anda agent run --prompt "..."` | Send one request and wait for the complete result without opening the UI. |
 | `anda voice --record-secs 8` | Start voice input; requires transcription configuration. |
 
-Voice playback also requires `tts.enabled: true`. If you only want spoken input and text output, add `--no-playback`.
+Voice playback also requires `tts.enabled: true` and an audio player on PATH (`ffplay`, macOS `afplay`, or SoX `play`), checked before the first recording. If you only want spoken input and text output, add `--no-playback`. A failed turn is reported and the next recording starts.
 
 Provide exactly one of `--prompt` and `--prompt-file`. `--wait-timeout-secs 120` bounds submission and completion polling together; `0` (the default) disables the overall timeout. A timeout stops the CLI wait, while the daemon task may continue.
 

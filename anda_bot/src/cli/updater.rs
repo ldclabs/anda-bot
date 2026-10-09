@@ -140,11 +140,7 @@ impl ReleaseTarget {
     }
 
     pub(crate) fn from_parts(os: &str, arch: &str) -> Option<Self> {
-        let arch = match arch {
-            "x86_64" | "amd64" => "x86_64",
-            "aarch64" | "arm64" => "arm64",
-            _ => return None,
-        };
+        let arch = normalized_arch(arch)?;
 
         match (os, arch) {
             ("linux", "x86_64" | "arm64") => Some(Self {
@@ -261,9 +257,11 @@ pub async fn run(
         println!("Using previously downloaded {asset_name}...");
         path
     } else {
+        // The checksum is tiny; fetch it first so a missing one fails before
+        // the binary download rather than after it.
+        let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
         println!("Downloading {asset_name}...");
         let actual_hash = download_binary(client, &asset_url, download.path()).await?;
-        let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
         verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
         download.path().to_path_buf()
     };
@@ -687,10 +685,9 @@ async fn install_release_launcher_if_present(
     #[cfg(not(windows))]
     let staged = StagedFile::new(staged_path);
 
+    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
     println!("Downloading {asset_name}...");
     let actual_hash = download_binary(client, &asset_url, download.path()).await?;
-
-    let expected_hash = fetch_expected_checksum(client, &checksum_url).await?;
     verify_checksum(&asset_name, &expected_hash, &actual_hash)?;
 
     stage_update(download.path(), staged.path()).await?;
@@ -865,50 +862,44 @@ pub(crate) async fn install_update(
     Ok(UpdateFinish::Scheduled)
 }
 
+/// `<pid>-<nanos>`: keeps staged and temporary paths of concurrent runs apart.
+pub(crate) fn unique_path_suffix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos}", std::process::id())
+}
+
 pub(crate) fn staged_update_path(install_dir: &Path, current_exe: &Path) -> PathBuf {
     let file_name = current_exe
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(BINARY_NAME);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-
-    install_dir.join(format!(
-        ".{file_name}.update-{}-{nanos}.tmp",
-        std::process::id()
-    ))
+    install_dir.join(format!(".{file_name}.update-{}.tmp", unique_path_suffix()))
 }
 
 pub(crate) fn temporary_download_path(asset_name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-
     std::env::temp_dir().join(format!(
-        "{asset_name}.download-{}-{nanos}.tmp",
-        std::process::id()
+        "{asset_name}.download-{}.tmp",
+        unique_path_suffix()
     ))
 }
 
 pub(crate) fn staged_skills_dir_path(home_dir: &Path) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
+    home_dir.join(format!(".skills.update-{}.tmp", unique_path_suffix()))
+}
 
-    home_dir.join(format!(".skills.update-{}-{nanos}.tmp", std::process::id()))
+fn normalized_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "x86_64" | "amd64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("arm64"),
+        _ => None,
+    }
 }
 
 fn normalized_target_name(os: &str, arch: &str) -> String {
-    let arch = match arch {
-        "x86_64" | "amd64" => "x86_64",
-        "aarch64" | "arm64" => "arm64",
-        other => other,
-    };
-    format!("{os}-{arch}")
+    format!("{os}-{}", normalized_arch(arch).unwrap_or(arch))
 }
 
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {

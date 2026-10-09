@@ -105,7 +105,6 @@ async fn list_users(
     daemon: &Daemon,
     identity_store: Arc<dyn IdentityKeyStore>,
 ) -> Result<(), BoxError> {
-    let cfg = load_cli_config(daemon).await?;
     let secrets =
         load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store).await?;
     let owner_key = Ed25519Key::new(*secrets.owner);
@@ -118,7 +117,7 @@ async fn list_users(
     println!("  private_key: {}", secrets.location);
 
     let mut listed = 0usize;
-    for (index, user) in cfg.users.iter().enumerate() {
+    for (index, user) in daemon.cfg.users.iter().enumerate() {
         if user.is_empty() {
             continue;
         }
@@ -282,11 +281,6 @@ async fn trusted_user_identity_store(
     ))
 }
 
-async fn load_cli_config(daemon: &Daemon) -> Result<Config, BoxError> {
-    let content = load_config_text(daemon).await?;
-    Config::from_contents(&content)
-}
-
 async fn load_config_text(daemon: &Daemon) -> Result<String, BoxError> {
     daemon.ensure_directories().await?;
     daemon.ensure_config_file_exists().await?;
@@ -333,10 +327,10 @@ fn ensure_user_id_available(cfg: &Config, id: &str) -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Adds a user to config text the caller already parsed, keeping its layout.
+/// `pubkey` is the canonical `encode_ed25519_pubkey` form.
 fn add_user_to_config_text(content: &str, id: &str, pubkey: &str) -> Result<String, BoxError> {
-    let _ = Config::from_contents(content)?;
-    let pubkey = Ed25519PubKey::from_str(pubkey)?;
-    let entry = user_entry_lines(id, &encode_ed25519_pubkey(&pubkey));
+    let entry = user_entry_lines(id, pubkey);
     let mut lines: Vec<String> = content.lines().map(ToOwned::to_owned).collect();
 
     if let Some(users_index) = find_top_level_key(&lines, "users") {
@@ -681,7 +675,7 @@ channels: {}
         .expect("create should succeed");
 
         // The config now contains the new user and the key file exists.
-        let cfg = load_cli_config(&daemon).await.unwrap();
+        let cfg = daemon.load_config_from_disk().await.unwrap();
         assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("alice")));
         let key_ref = IdentityKeyRef::trusted_user(&daemon.home, "alice");
         let trusted_store = trusted_user_identity_store(&daemon, identity_store.clone())
@@ -732,7 +726,7 @@ channels: {}
         .await
         .expect("import should succeed");
 
-        let cfg = load_cli_config(&daemon).await.unwrap();
+        let cfg = daemon.load_config_from_disk().await.unwrap();
         assert!(cfg.users.iter().any(|u| u.id().as_deref() == Some("dave")));
 
         // An invalid public key is rejected.

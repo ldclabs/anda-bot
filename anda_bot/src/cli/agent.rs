@@ -3,7 +3,6 @@ use anda_engine::memory::{Conversation, ConversationStatus};
 use clap::{ArgGroup, Args, Subcommand};
 use serde_json::json;
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -60,7 +59,7 @@ pub struct AgentRunCommand {
     #[arg(long, default_value_t = 0)]
     wait_timeout_secs: u64,
 
-    /// Poll interval in milliseconds while waiting for completion.
+    /// Poll interval in milliseconds while waiting for completion (minimum 500).
     #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
     poll_interval_ms: u64,
 }
@@ -73,13 +72,11 @@ pub async fn run(client: &gateway::Client, cmd: AgentCommand) -> Result<(), BoxE
 
 async fn run_once(client: &gateway::Client, cmd: AgentRunCommand) -> Result<(), BoxError> {
     let mut prompt = read_prompt(cmd.prompt.as_deref(), cmd.prompt_file.as_ref()).await?;
-    let workspace = match cmd.workspace.as_ref() {
-        Some(path) => {
-            let workspace = absolute_workspace(path)?;
-            Some(workspace)
-        }
-        None => None,
-    };
+    let workspace = cmd
+        .workspace
+        .as_deref()
+        .map(std::path::absolute)
+        .transpose()?;
 
     let mut meta = parse_meta(cmd.meta)?;
     if let Some(mode) = cmd.memory_mode {
@@ -133,14 +130,6 @@ async fn read_prompt(
 
 fn wait_timeout(secs: u64) -> Option<Duration> {
     (secs > 0).then(|| Duration::from_secs(secs))
-}
-
-fn absolute_workspace(path: &Path) -> Result<PathBuf, BoxError> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(std::env::current_dir()?.join(path))
-    }
 }
 
 fn parse_meta(meta: Option<String>) -> Result<RequestMeta, BoxError> {
@@ -212,7 +201,6 @@ async fn wait_for_agent_output(
     };
 
     let mut conversations = Vec::new();
-    let mut seen = HashSet::new();
     let mut current_id = root_id;
     let mut messages_offset = 0;
     let mut artifacts_offset = 0;
@@ -231,14 +219,16 @@ async fn wait_for_agent_output(
         // Final snapshots preserve in-place history edits (for example approval
         // actions) that append-only deltas cannot describe.
         let conversation = client.get_conversation(current_id).await?;
-        upsert_conversation(&mut conversations, &mut seen, conversation)?;
+        upsert_conversation(&mut conversations, conversation)?;
 
         let last = conversations
             .last()
             .expect("conversation list is populated after upsert");
 
         if let Some(child_id) = last.child {
-            if child_id == current_id || seen.contains(&child_id) {
+            // The chain holds every conversation followed so far, the current
+            // one included, so this is the only cycle check needed.
+            if conversations.iter().any(|conv| conv._id == child_id) {
                 return Err(
                     format!("conversation child chain contains a cycle at {child_id}").into(),
                 );
@@ -259,7 +249,6 @@ async fn wait_for_agent_output(
 
 fn upsert_conversation(
     conversations: &mut Vec<Conversation>,
-    seen: &mut HashSet<u64>,
     conversation: Conversation,
 ) -> Result<(), BoxError> {
     if let Some(last) = conversations.last_mut()
@@ -273,13 +262,6 @@ fn upsert_conversation(
         return Err(
             format!("conversation child chain is longer than {MAX_CONVERSATION_CHAIN}").into(),
         );
-    }
-    if !seen.insert(conversation._id) {
-        return Err(format!(
-            "conversation child chain contains a cycle at {}",
-            conversation._id
-        )
-        .into());
     }
     conversations.push(conversation);
     Ok(())
@@ -409,11 +391,9 @@ mod tests {
     #[test]
     fn upsert_conversation_updates_tail_without_growing_chain() {
         let mut conversations = Vec::new();
-        let mut seen = HashSet::new();
 
         upsert_conversation(
             &mut conversations,
-            &mut seen,
             Conversation {
                 _id: 1,
                 status: ConversationStatus::Working,
@@ -423,7 +403,6 @@ mod tests {
         .unwrap();
         upsert_conversation(
             &mut conversations,
-            &mut seen,
             Conversation {
                 _id: 1,
                 status: ConversationStatus::Completed,
@@ -914,17 +893,5 @@ mod tests {
 
         assert_eq!(wait_timeout(0), None);
         assert_eq!(wait_timeout(5), Some(Duration::from_secs(5)));
-
-        // "/tmp/abs" is not absolute on Windows (no drive prefix), so use a
-        // platform-appropriate absolute path.
-        #[cfg(windows)]
-        let abs_path = Path::new(r"C:\tmp\abs");
-        #[cfg(not(windows))]
-        let abs_path = Path::new("/tmp/abs");
-        let absolute = absolute_workspace(abs_path).unwrap();
-        assert_eq!(absolute, abs_path);
-        let relative = absolute_workspace(Path::new("rel")).unwrap();
-        assert!(relative.is_absolute());
-        assert!(relative.ends_with("rel"));
     }
 }

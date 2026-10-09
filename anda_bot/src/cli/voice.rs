@@ -1,12 +1,13 @@
 //! CLI voice input/output helpers.
 //!
-//! This module records bounded microphone input for `anda voice` and plays audio
-//! artifacts returned by the daemon. Wake-word detection is not handled here; a
-//! future wake model can decide when to invoke these helpers.
+//! `anda voice` records a bounded microphone turn, sends its transcript to the
+//! agent and speaks the reply. Wake-word detection is not handled here; a
+//! future wake model can decide when to start a turn.
 
 use anda_core::{AgentInput, BoxError, ByteBufB64, Message, RequestMeta, Resource, ToolInput};
 use anda_engine::memory::ConversationStatus;
 use ic_auth_types::Xid;
+use serde::Deserialize;
 use std::{
     future::Future,
     io::{self, Write},
@@ -50,98 +51,108 @@ pub async fn run_voice_loop(
     cfg: &config::Config,
     cmd: VoiceCommand,
 ) -> Result<(), BoxError> {
-    if cmd.record_secs == 0 {
-        return Err("--record-secs must be greater than zero".into());
-    }
-
     let runtime = build_voice_runtime(cfg, !cmd.no_playback)?;
-    let voice_channel = VoiceChannel::new();
     let mut base_meta = parse_request_meta(cmd.meta)?.unwrap_or_default();
     add_cli_voice_context(&mut base_meta);
     let mut cursor = initialize_voice_cursor(client, &base_meta).await?;
-    let mut turn = 1u64;
 
     eprintln!("Starting voice conversation. Press Ctrl-C to stop.");
-    loop {
+    for turn in 1u64.. {
         eprintln!("Listening for {}s (turn {turn})...", cmd.record_secs);
-        let audio_resource = tokio::select! {
-            result = voice_channel.record_microphone_audio(Duration::from_secs(cmd.record_secs)) => result?,
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Voice conversation stopped.");
-                break;
-            }
+        let audio = tokio::select! {
+            result = record_microphone_audio(Duration::from_secs(cmd.record_secs)) => result?,
+            _ = tokio::signal::ctrl_c() => break,
         };
-
-        eprintln!("Transcribing voice turn...");
-        let prompt = tokio::select! {
-            result = transcribe_voice_resource(&runtime.transcription, &audio_resource) => result?,
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("Voice conversation stopped.");
-                break;
-            }
-        };
-        if prompt.trim().is_empty() {
-            eprintln!("No speech was transcribed for this turn.");
-            turn += 1;
-            continue;
-        }
-        println!("You: {}", prompt.trim());
-
-        let mut request_meta = base_meta.clone();
-        request_meta.extra.insert(
-            keys::CONVERSATION.to_string(),
-            cursor.conversation_id.unwrap_or_default().into(),
-        );
-
-        let mut input = AgentInput::new(cmd.name.clone(), prompt);
-        input.meta = Some(request_meta);
-
-        let output = match wait_with_voice_status(
-            "Sending voice turn",
-            client.agent_run_in_cli_workspace(&input),
+        match run_voice_turn(
+            client,
+            &runtime,
+            &cmd.name,
+            &base_meta,
+            &mut cursor,
+            &audio,
+            turn,
         )
-        .await?
+        .await
         {
-            Some(output) => output,
-            None => break,
-        };
-
-        if let Some(reason) = &output.failed_reason {
-            eprintln!("Agent failed: {reason}");
+            Ok(true) => {}
+            Ok(false) => break,
+            // One failed turn (STT, agent, TTS or playback) must not end the
+            // conversation; the next recording starts a fresh attempt.
+            Err(err) => eprintln!("Voice turn failed: {err}"),
         }
-        let conversation_id = output
-            .conversation
-            .ok_or("agent response did not include a conversation id")?;
-        let response_text = match wait_with_voice_status(
-            "Waiting for assistant response",
-            poll_voice_response(client, &mut cursor, conversation_id),
-        )
-        .await?
-        {
-            Some(response_text) => response_text,
-            None => break,
-        };
-        if response_text.trim().is_empty() {
-            eprintln!("No assistant response was found for this turn.");
-            turn += 1;
-            continue;
-        }
-
-        println!("Anda: {}", response_text.trim());
-        if !cmd.no_playback {
-            let tts = runtime
-                .tts
-                .as_ref()
-                .ok_or("voice playback requires tts.enabled and a configured TTS provider")?;
-            if !play_voice_response(tts, &voice_channel, response_text.trim(), turn).await? {
-                break;
-            }
-        }
-
-        turn += 1;
     }
 
+    eprintln!("Voice conversation stopped.");
     Ok(())
+}
+
+/// Transcribes, sends and speaks one recorded turn. `Ok(false)` means Ctrl-C
+/// stopped the conversation.
+async fn run_voice_turn(
+    client: &gateway::Client,
+    runtime: &VoiceRuntime,
+    name: &str,
+    base_meta: &RequestMeta,
+    cursor: &mut VoiceConversationCursor,
+    audio: &Resource,
+    turn: u64,
+) -> Result<bool, BoxError> {
+    let Some(prompt) = wait_with_voice_status(
+        "Transcribing voice turn",
+        transcribe_voice_resource(&runtime.transcription, audio),
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        eprintln!("No speech was transcribed for this turn.");
+        return Ok(true);
+    }
+    println!("You: {prompt}");
+
+    let mut request_meta = base_meta.clone();
+    request_meta.extra.insert(
+        keys::CONVERSATION.to_string(),
+        cursor.conversation_id.unwrap_or_default().into(),
+    );
+    let mut input = AgentInput::new(name.to_string(), prompt.to_string());
+    input.meta = Some(request_meta);
+
+    let Some(output) = wait_with_voice_status(
+        "Sending voice turn",
+        client.agent_run_in_cli_workspace(&input),
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    if let Some(reason) = &output.failed_reason {
+        eprintln!("Agent failed: {reason}");
+    }
+    let conversation_id = output
+        .conversation
+        .ok_or("agent response did not include a conversation id")?;
+    let Some(response) = wait_with_voice_status(
+        "Waiting for assistant response",
+        poll_voice_response(client, cursor, conversation_id),
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    let response = response.trim();
+    if response.is_empty() {
+        eprintln!("No assistant response was found for this turn.");
+        return Ok(true);
+    }
+
+    println!("Anda: {response}");
+    match &runtime.tts {
+        Some(tts) => play_voice_response(tts, response, turn).await,
+        None => Ok(true),
+    }
 }
 
 fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRuntime, BoxError> {
@@ -160,6 +171,11 @@ fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRunt
         if !tts.is_enabled() {
             return Err("anda voice playback requires tts.enabled and a configured TTS provider; use --no-playback to disable speech output".into());
         }
+        // Check before the first turn: otherwise a missing player surfaces
+        // only after recording, transcription and paid speech synthesis.
+        if audio_players().is_empty() {
+            return Err("anda voice playback requires `ffplay`, `afplay`, or `play` on PATH; use --no-playback to disable speech output".into());
+        }
         Some(tts)
     } else {
         None
@@ -168,21 +184,20 @@ fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRunt
     Ok(VoiceRuntime { transcription, tts })
 }
 
+/// Speaks `text`. `Ok(false)` means Ctrl-C stopped the conversation.
 async fn play_voice_response(
     tts: &tts::TtsManager,
-    voice_channel: &VoiceChannel,
     text: &str,
     turn: u64,
 ) -> Result<bool, BoxError> {
     let cancel = CancellationToken::new();
-    let operation = play_voice_response_inner(tts, voice_channel, text, turn, &cancel);
+    let operation = play_voice_response_inner(tts, text, turn, &cancel);
     tokio::pin!(operation);
     tokio::select! {
         result = &mut operation => result.map(|()| true),
         _ = tokio::signal::ctrl_c() => {
             cancel.cancel();
             operation.await?;
-            eprintln!("Voice conversation stopped.");
             Ok(false)
         }
     }
@@ -190,16 +205,11 @@ async fn play_voice_response(
 
 async fn play_voice_response_inner(
     tts: &tts::TtsManager,
-    voice_channel: &VoiceChannel,
     text: &str,
     turn: u64,
     cancel: &CancellationToken,
 ) -> Result<(), BoxError> {
     let speech_text = prepare_voice_tts_text(text);
-    if speech_text.is_empty() {
-        return Err("assistant response did not contain speakable text".into());
-    }
-
     let chunks = split_voice_tts_text(&speech_text, VOICE_TTS_CHUNK_CHARS);
     let Some(first_chunk) = chunks.first() else {
         return Err("assistant response did not contain speakable text".into());
@@ -221,8 +231,7 @@ async fn play_voice_response_inner(
             index + 1,
             total
         );
-        let playback =
-            voice_channel.play_audio_artifacts(std::slice::from_ref(&current_artifact), cancel);
+        let playback = play_audio_artifact(&current_artifact, cancel);
         let synthesis = synthesize_voice_artifact(tts, next_chunk, turn, index, total, cancel);
         let (playback_result, synthesis_result) = tokio::join!(playback, synthesis);
         playback_result?;
@@ -233,10 +242,7 @@ async fn play_voice_response_inner(
     }
 
     eprintln!("Playing speech segment {total}/{total}...");
-    voice_channel
-        .play_audio_artifacts(std::slice::from_ref(&current_artifact), cancel)
-        .await?;
-    Ok(())
+    play_audio_artifact(&current_artifact, cancel).await
 }
 
 async fn synthesize_voice_artifact(
@@ -457,7 +463,10 @@ async fn wait_with_voice_status<T>(
     message: &str,
     operation: impl Future<Output = Result<T, BoxError>>,
 ) -> Result<Option<T>, BoxError> {
-    tokio::pin!(operation);
+    // One listener for the whole wait: a Ctrl-C between two ticks would be
+    // lost if each loop iteration created its own.
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(operation, ctrl_c);
     let mut spinner = VoiceStatusSpinner::new(message);
     let mut interval = tokio::time::interval(VOICE_STATUS_INTERVAL);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -468,9 +477,8 @@ async fn wait_with_voice_status<T>(
                 spinner.finish();
                 return result.map(Some);
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut ctrl_c => {
                 spinner.finish();
-                eprintln!("Voice conversation stopped.");
                 return Ok(None);
             }
             _ = interval.tick() => spinner.tick(),
@@ -531,10 +539,8 @@ async fn initialize_voice_cursor(
         );
         input.meta = Some(meta.clone());
         let output = client.tool_call::<_, ToolResponse>(&input).await?;
-        let state: crate::engine::SourceState = match output.output {
-            ToolResponse::Ok { result, .. } => serde_json::from_value(result)?,
-            other => return Err(format!("voice source state unavailable: {other:?}").into()),
-        };
+        let state: crate::engine::SourceState = gateway::tool_result(output.output)
+            .map_err(|err| format!("voice source state unavailable: {err}"))?;
         conversation_id = state.conv_id;
     }
     if conversation_id == 0 {
@@ -645,7 +651,7 @@ fn reset_voice_cursor_if_needed(cursor: &mut VoiceConversationCursor, conversati
 fn assistant_text_from_messages(messages: &[serde_json::Value]) -> String {
     messages
         .iter()
-        .filter_map(|raw| serde_json::from_value::<Message>(raw.clone()).ok())
+        .filter_map(|raw| Message::deserialize(raw).ok())
         .filter(|message| message.role == "assistant")
         .filter(|message| message.tool_calls().is_empty())
         .filter_map(|message| message.text())
@@ -682,102 +688,86 @@ fn add_cli_voice_context(meta: &mut RequestMeta) {
     }
 }
 
-/// Voice input/output helper used by the anda CLI.
-#[derive(Debug, Clone, Default)]
-pub struct VoiceChannel;
+/// Records microphone audio for a fixed duration and returns it as a WAV resource.
+async fn record_microphone_audio(duration: Duration) -> Result<Resource, BoxError> {
+    let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<AudioInputEvent>();
+    let input = open_default_input_stream(audio_tx)?;
 
-impl VoiceChannel {
-    pub fn new() -> Self {
-        Self
+    log::debug!(
+        name = "channel";
+        "voice channel recording on '{}' ({} Hz, {} channel(s), {:?}) for {:?}",
+        input.device_name,
+        input.sample_rate,
+        input.channels,
+        input.sample_format,
+        duration,
+    );
+
+    let stream = input.stream;
+    let deadline = tokio::time::Instant::now() + duration;
+    let expected_samples =
+        (duration.as_secs_f64() * f64::from(input.sample_rate) * f64::from(input.channels)).ceil()
+            as usize;
+    let mut samples = Vec::with_capacity(expected_samples);
+
+    loop {
+        let event = tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => break,
+            event = audio_rx.recv() => event,
+        };
+
+        let Some(event) = event else {
+            return Err("voice audio stream ended unexpectedly".into());
+        };
+
+        match event {
+            AudioInputEvent::Samples(chunk) => samples.extend_from_slice(&chunk),
+            AudioInputEvent::StreamError(error) => {
+                return Err(format!("voice audio stream error: {error}").into());
+            }
+        }
     }
 
-    /// Record microphone audio for a fixed duration and return it as a WAV resource.
-    pub async fn record_microphone_audio(&self, duration: Duration) -> Result<Resource, BoxError> {
-        if duration.is_zero() {
-            return Err("voice recording duration must be greater than zero".into());
-        }
+    if samples.is_empty() {
+        return Err("no audio samples captured from default input device".into());
+    }
 
-        let (audio_tx, mut audio_rx) = mpsc::unbounded_channel::<AudioInputEvent>();
-        let input = open_default_input_stream(audio_tx)?;
+    drop(stream);
+    let name = format!("anda_bot_voice_{}.wav", Xid::new());
+    let wav_bytes = encode_wav_from_f32(&samples, input.sample_rate, input.channels);
+    Ok(audio_resource_from_bytes(
+        wav_bytes,
+        name,
+        Some("Voice input captured by anda CLI".to_string()),
+    ))
+}
 
-        log::debug!(
-            name = "channel";
-            "voice channel recording on '{}' ({} Hz, {} channel(s), {:?}) for {:?}",
-            input.device_name,
-            input.sample_rate,
-            input.channels,
-            input.sample_format,
-            duration,
+/// Plays one speech artifact; an error cancels the turn's other speech work.
+async fn play_audio_artifact(
+    artifact: &Resource,
+    cancel: &CancellationToken,
+) -> Result<(), BoxError> {
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
+    let Some(blob) = artifact
+        .blob
+        .as_ref()
+        .filter(|_| transcription::is_audio_resource(artifact))
+    else {
+        eprintln!(
+            "No playable audio artifact was returned. Check tts.enabled and provider config."
         );
-
-        let _stream = input.stream;
-        let deadline = tokio::time::Instant::now() + duration;
-        let expected_samples =
-            (duration.as_secs_f64() * f64::from(input.sample_rate) * f64::from(input.channels))
-                .ceil() as usize;
-        let mut samples = Vec::with_capacity(expected_samples);
-
-        loop {
-            let event = tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => break,
-                event = audio_rx.recv() => event,
-            };
-
-            let Some(event) = event else {
-                return Err("voice audio stream ended unexpectedly".into());
-            };
-
-            match event {
-                AudioInputEvent::Samples(chunk) => samples.extend_from_slice(&chunk),
-                AudioInputEvent::StreamError(error) => {
-                    return Err(format!("voice audio stream error: {error}").into());
-                }
-            }
-        }
-
-        if samples.is_empty() {
-            return Err("no audio samples captured from default input device".into());
-        }
-
-        drop(_stream);
-        let name = format!("anda_bot_voice_{}.wav", Xid::new());
-        let wav_bytes = encode_wav_from_f32(&samples, input.sample_rate, input.channels);
-        Ok(audio_resource_from_bytes(
-            wav_bytes,
-            name,
-            Some("Voice input captured by anda CLI".to_string()),
-        ))
+        return Ok(());
+    };
+    let result = async {
+        let path = write_temp_audio_artifact(artifact, &blob.0).await?;
+        let played = play_audio_file(&path, cancel).await;
+        let _ = tokio::fs::remove_file(path).await;
+        played
     }
-
-    /// Play the first-party audio artifacts returned by the agent/TTS pipeline.
-    async fn play_audio_artifacts(
-        &self,
-        artifacts: &[Resource],
-        cancel: &CancellationToken,
-    ) -> Result<(), BoxError> {
-        let result = async {
-            let mut played = false;
-            for artifact in artifacts {
-                if cancel.is_cancelled() {
-                    return Ok(());
-                }
-                if transcription::is_audio_resource(artifact)
-                    && let Some(blob) = &artifact.blob
-                {
-                    let path = write_temp_audio_artifact(artifact, &blob.0).await?;
-                    let play_result = play_audio_file(&path, cancel).await;
-                    let _ = tokio::fs::remove_file(path).await;
-                    play_result?;
-                    played = true;
-                }
-            }
-            if !played {
-                eprintln!("No playable audio artifact was returned. Check tts.enabled and provider config.");
-            }
-            Ok::<(), BoxError>(())
-        }.await;
-        result.inspect_err(|_| cancel.cancel())
-    }
+    .await;
+    result.inspect_err(|_| cancel.cancel())
 }
 
 struct AudioInput {
@@ -892,7 +882,7 @@ where
 }
 
 /// Encode raw f32 PCM samples as a minimal 16-bit PCM WAV buffer.
-pub fn encode_wav_from_f32(samples: &[f32], sample_rate: u32, channels: u16) -> Vec<u8> {
+fn encode_wav_from_f32(samples: &[f32], sample_rate: u32, channels: u16) -> Vec<u8> {
     let bits_per_sample: u16 = 16;
     let byte_rate = u32::from(channels) * sample_rate * u32::from(bits_per_sample) / 8;
     let block_align = channels * bits_per_sample / 8;
@@ -968,18 +958,22 @@ async fn write_temp_audio_artifact(resource: &Resource, bytes: &[u8]) -> Result<
     Ok(path)
 }
 
-async fn play_audio_file(path: &Path, cancel: &CancellationToken) -> Result<(), BoxError> {
+/// Audio players found on PATH, in preference order (looked up once).
+fn audio_players() -> &'static [&'static str] {
     static PLAYERS: OnceLock<Vec<&'static str>> = OnceLock::new();
-    let players = PLAYERS.get_or_init(|| {
+    PLAYERS.get_or_init(|| {
         ["ffplay", "afplay", "play"]
             .into_iter()
             .filter(|player| {
                 (*player != "afplay" || cfg!(target_os = "macos")) && command_available(player)
             })
             .collect()
-    });
+    })
+}
+
+async fn play_audio_file(path: &Path, cancel: &CancellationToken) -> Result<(), BoxError> {
     let mut errors = Vec::new();
-    for &player in players {
+    for &player in audio_players() {
         if cancel.is_cancelled() {
             return Ok(());
         }
@@ -1294,12 +1288,6 @@ mod tests {
         spinner.finish();
         // Finishing twice is safe.
         spinner.finish();
-    }
-
-    #[test]
-    fn voice_channel_constructs() {
-        let _ = VoiceChannel::new();
-        let _ = VoiceChannel;
     }
 
     use anda_core::ByteBufB64;

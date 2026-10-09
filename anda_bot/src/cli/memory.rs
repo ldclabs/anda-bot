@@ -80,11 +80,13 @@ impl MemoryCommand {
     }
 }
 
+/// Runs the memory commands that read the daemon. `main` validates `cmd` and
+/// handles the offline guide and evaluations before building a client.
 pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), BoxError> {
-    cmd.validate()?;
     match &cmd.command {
-        Some(MemorySubcommand::Guide) => cmd.print_guide(),
-        Some(MemorySubcommand::Evaluate(command)) => return super::memory_eval::run(command).await,
+        Some(MemorySubcommand::Guide | MemorySubcommand::Evaluate(_)) => {
+            unreachable!("offline memory commands dispatch before a client is built")
+        }
         Some(MemorySubcommand::Inbox {
             command: Some(InboxCommand::Setup { apply }),
             ..

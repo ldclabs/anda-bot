@@ -268,7 +268,7 @@ anda agent run --prompt "总结一下你记得的当前项目背景"
 anda voice --record-secs 8
 ```
 
-语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`；如果只想语音输入、文字输出，可以加 `--no-playback`。 语音模式会等本轮答复完成后再开始下一轮录音。Ctrl-C 也可停止语音合成和播放。
+语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`，并且 PATH 中有音频播放器（`ffplay`、macOS 的 `afplay` 或 SoX 的 `play`），首次录音前会检查；如果只想语音输入、文字输出，可以加 `--no-playback`。 语音模式会等本轮答复完成后再开始下一轮录音；某一轮失败时会提示错误，然后继续下一轮录音。Ctrl-C 也可停止语音合成和播放。
 
 Google 转写接受不超过 60 秒的 WAV/FLAC 录音，Chrome 扩展会将其他录音格式转换为 WAV。`transcription.initial_prompt` 为 Groq/OpenAI Whisper 提供词汇提示。Edge 合成需要 PATH 中存在 `edge-tts`；`tts.default_format` 仅控制 StepFun，Edge/OpenAI/Google 输出 MP3。详见[语音服务限制与配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#语音服务)。
 

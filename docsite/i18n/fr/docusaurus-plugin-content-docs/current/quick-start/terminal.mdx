@@ -82,7 +82,7 @@ Les tâches cron et le mode objectif autonome (`/goal ...`) s'exécutent toujour
 | `anda agent run --prompt "..."` | Envoyer une requête et attendre le résultat complet sans ouvrir l'interface utilisateur. |
 | `anda voice --record-secs 8` | Démarrer la saisie vocale ; requiert la configuration de la transcription. |
 
-La lecture vocale requiert également `tts.enabled: true`. Si vous souhaitez uniquement une entrée vocale et une sortie textuelle, ajoutez `--no-playback`.
+La lecture vocale requiert également `tts.enabled: true` et un lecteur audio dans le PATH (`ffplay`, `afplay` sous macOS ou `play` de SoX), vérifié avant le premier enregistrement. Si vous souhaitez uniquement une entrée vocale et une sortie textuelle, ajoutez `--no-playback`. Si un tour échoue, l’erreur est signalée et l’enregistrement suivant commence.
 
 Fournissez exactement une option parmi `--prompt` et `--prompt-file`. `--wait-timeout-secs 120` limite la durée totale de soumission et d’attente ; `0` (par défaut) désactive cette limite. À expiration, la CLI cesse d’attendre, mais la tâche du daemon peut continuer.
 

@@ -81,18 +81,30 @@ pub async fn run(daemon: &Daemon, client: &Client, cmd: AuthCommand) -> Result<(
             if !no_browser && let Err(e) = open_browser(url) {
                 eprintln!("Could not open the browser: {e}. Open the URL above manually.");
             }
+            // One listener for the whole wait, so a Ctrl-C during a status
+            // request is not lost between loop iterations.
+            let ctrl_c = tokio::signal::ctrl_c();
+            tokio::pin!(ctrl_c);
             let completed = loop {
-                tokio::select! {
-                    _=tokio::signal::ctrl_c()=>{let _=client.chatgpt(&Request::LoginCancel{flow_id:flow.flow_id.clone()}).await;return Err("ChatGPT sign-in cancelled".into());}
-                    _=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}
-                }
-                let current: LoginView = serde_json::from_value(
+                let status = async {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     client
                         .chatgpt(&Request::LoginStatus {
                             flow_id: flow.flow_id.clone(),
                         })
-                        .await?,
-                )?;
+                        .await
+                };
+                let current: LoginView = tokio::select! {
+                    _ = &mut ctrl_c => {
+                        let _ = client
+                            .chatgpt(&Request::LoginCancel {
+                                flow_id: flow.flow_id.clone(),
+                            })
+                            .await;
+                        return Err("ChatGPT sign-in cancelled".into());
+                    }
+                    status = status => serde_json::from_value(status?)?,
+                };
                 match current.status.as_str() {
                     "completed" => break current,
                     "pending" | "exchanging" => {}
