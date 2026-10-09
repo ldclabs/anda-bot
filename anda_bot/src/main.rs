@@ -324,7 +324,7 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Stop) => {
             log::info!("Starting CLI with command 'stop' at {}", daemon.base_url());
 
-            let status_client = build_status_client(&daemon)?;
+            let status_client = build_status_client(&daemon);
             let shutdown_client = if status_client.status().await.is_ok() {
                 Some(build_control_client(&daemon).await?)
             } else {
@@ -349,7 +349,7 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Start) => {
             log::info!("Starting CLI with command 'start' at {}", daemon.base_url());
 
-            let client = build_status_client(&daemon)?;
+            let client = build_status_client(&daemon);
             let launch_state = if client.status().await.is_ok() {
                 daemon::LaunchState::AlreadyRunning
             } else {
@@ -383,7 +383,7 @@ async fn run() -> Result<(), BoxError> {
                 daemon.base_url()
             );
 
-            let client = build_status_client(&daemon)?;
+            let client = build_status_client(&daemon);
             print_daemon_status(&daemon, &client, cmd.json).await?;
         }
 
@@ -398,7 +398,7 @@ async fn run() -> Result<(), BoxError> {
                 identity::os_identity_key_store(),
             )
             .await?;
-            let status_client = build_status_client(&daemon)?;
+            let status_client = build_status_client(&daemon);
             let client = build_control_client_from_owner_secret(&daemon, *local_identity.owner)?;
             let stop_state = stop_daemon(
                 &daemon,
@@ -798,14 +798,11 @@ fn build_control_client_from_owner_secret(
     claims.audience = Some(config::ANDA_BOT_SPACE_ID.into());
     claims.extra.insert(identity::iana::CWTClaimScope, "*");
     let gateway_token = user_key.sign_cwt(claims)?;
-    let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
-
-    Ok(gateway::Client::new(daemon.base_url(), gateway_token).with_http_client(http_client))
+    Ok(gateway::Client::new(daemon.base_url(), gateway_token))
 }
 
-fn build_status_client(daemon: &daemon::Daemon) -> Result<gateway::Client, BoxError> {
-    let http_client = util::http_client::build_http_client(None, |client| client.no_proxy())?;
-    Ok(gateway::Client::new(daemon.base_url(), String::new()).with_http_client(http_client))
+fn build_status_client(daemon: &daemon::Daemon) -> gateway::Client {
+    gateway::Client::new(daemon.base_url(), String::new())
 }
 
 async fn build_browser_extension_token(
@@ -936,7 +933,6 @@ mod tests {
         );
     }
 
-    use crate::util::http_client::new_reqwest_client;
     use axum::{Router, routing};
 
     async fn spawn_status_mock() -> String {
@@ -997,15 +993,13 @@ mod tests {
         // Gateway responds, no pid file -> GatewayRunning.
         let base = spawn_status_mock().await;
         let (_dir, daemon) = temp_daemon();
-        let client =
-            gateway::Client::new(base, "t".to_string()).with_http_client(new_reqwest_client());
+        let client = gateway::Client::new(base, "t".to_string());
         let report = daemon_status_report(&daemon, &client).await.unwrap();
         assert!(matches!(report.state, DaemonStatusState::GatewayRunning));
 
         // No gateway, no pid -> NotRunning.
         let (_dir2, daemon2) = temp_daemon();
-        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string())
-            .with_http_client(new_reqwest_client());
+        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string());
         let report = daemon_status_report(&daemon2, &dead).await.unwrap();
         assert!(matches!(report.state, DaemonStatusState::NotRunning));
 
@@ -1023,8 +1017,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_for_gateway_down_returns_when_unreachable() {
-        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string())
-            .with_http_client(new_reqwest_client());
+        let dead = gateway::Client::new("http://127.0.0.1:1".to_string(), "t".to_string());
         wait_for_gateway_down(&dead, Duration::from_millis(500))
             .await
             .unwrap();

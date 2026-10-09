@@ -382,11 +382,8 @@ impl App {
         let resets_display = gateway::is_new_conversation_command(&text);
 
         self.clear_input();
-        if let Some(err) = self.chat.start_send(text) {
-            self.notice = err;
-        } else {
-            self.notice.clear();
-        }
+        self.chat.start_send(text);
+        self.notice.clear();
         if resets_display {
             self.clear_message_view();
         }

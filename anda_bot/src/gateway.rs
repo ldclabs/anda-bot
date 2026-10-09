@@ -1,11 +1,11 @@
 use anda_core::BoxError;
 use anda_db::database::AndaDB;
 use anda_engine::engine::EngineRef;
-use axum::Router;
-use std::{net::SocketAddr, sync::Arc};
+use axum::{Router, serve::ListenerExt};
+use std::sync::Arc;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tower_http::compression::CompressionLayer;
+use tower_http::{CompressionLevel, compression::CompressionLayer};
 
 use crate::{brain, channel, config, cron, engine};
 
@@ -18,7 +18,6 @@ pub use client::*;
 pub async fn serve(
     cancel_token: CancellationToken,
     db: Arc<AndaDB>,
-    addr: String,
     brain_cfg: brain::BrainConfig,
     engine_cfg: engine::EngineConfig,
     engine_ref: Arc<EngineRef>,
@@ -26,6 +25,7 @@ pub async fn serve(
     completion_hooks: Vec<Arc<dyn engine::CompletionHook>>,
     channel_sender: channel::ChannelSender,
 ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
+    let addr = engine_cfg.gateway_addr;
     let runtime_config = brain_cfg.runtime_config.clone();
     let brain = brain::Brain::new(db.object_store(), brain_cfg).await?;
     let brain_state = brain.state.clone();
@@ -42,13 +42,14 @@ pub async fn serve(
     )
     .await?;
 
-    let addr: SocketAddr = addr.parse()?;
-    // create_reuse_port_listener(addr).await?;
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    let server_cancel_token = cancel_token.clone();
-    let background_cancel_token = cancel_token.clone();
+    // Streamed WebSocket frames are small; send each one without waiting on
+    // the previous frame's ACK.
+    let listener = tokio::net::TcpListener::bind(addr).await?.tap_io(|tcp| {
+        if let Err(err) = tcp.set_nodelay(true) {
+            log::warn!(name = "gateway"; "failed to set TCP_NODELAY: {err}");
+        }
+    });
     let memory = engines.memory.clone();
-    let memory_cancel_token = cancel_token.clone();
     let brain_admission = engines.brain_admission_state();
     let plan_access = engines.plan_access_state();
     let app = Router::new()
@@ -65,7 +66,9 @@ pub async fn serve(
                     engine::plan_access,
                 )),
         )
-        .layer(CompressionLayer::new());
+        // Clients are almost always on loopback, where a tighter level only
+        // costs CPU on both ends.
+        .layer(CompressionLayer::new().quality(CompressionLevel::Fastest));
 
     log::warn!(
         name = "gateway";
@@ -77,27 +80,28 @@ pub async fn serve(
 
     Ok(tokio::spawn(async move {
         let mut tasks = JoinSet::new();
+        let shutdown = cancel_token.clone().cancelled_owned();
         tasks.spawn(async move {
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {
-                    server_cancel_token.cancelled_owned().await;
+                    shutdown.await;
                     log::warn!(
                         name = "gateway";
                         "received cancellation signal, starting graceful shutdown"
                     );
                 })
                 .await
-                .map_err(|error| -> BoxError { error.into() })
+                .map_err(BoxError::from)
         });
 
+        let background = cancel_token.clone();
         tasks.spawn(async move {
-            brain_state
-                .start_background_tasks(background_cancel_token)
-                .await;
+            brain_state.start_background_tasks(background).await;
             Ok(())
         });
+        let background = cancel_token.clone();
         tasks.spawn(async move {
-            memory.run_background(memory_cancel_token).await;
+            memory.run_background(background).await;
             Ok(())
         });
         supervise(tasks, cancel_token).await

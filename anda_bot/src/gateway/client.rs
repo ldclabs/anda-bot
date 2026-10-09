@@ -4,7 +4,6 @@ use anda_core::{
     http::{RPCRequestRef, RPCResponse},
 };
 use anda_engine::memory::{Conversation, ConversationDelta, ConversationStatus};
-use anda_kip::{Request as KipRequest, Response as KipWireResponse};
 use std::{
     io::SeekFrom,
     path::{Path, PathBuf},
@@ -14,13 +13,13 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::{
     auto_update::AutoUpdateState,
-    daemon::{Daemon, LaunchState, process_exists},
+    daemon::{BackgroundDaemon, Daemon, LaunchState, process_exists},
     engine::{
         AndaBotStatus, ConversationsTool, ConversationsToolArgs, DaemonModelsResponse,
         PromptCommand,
     },
     identity::LocalIdentitySecrets,
-    util::{http_client::new_reqwest_client, request_meta::keys},
+    util::{http_client::build_http_client, request_meta::keys},
 };
 
 const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
@@ -28,16 +27,22 @@ const DAEMON_STARTUP_LOG_TAIL_BYTES: u64 = 64 * 1024;
 // can answer status requests. A child that exits still fails immediately.
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-// Agent runs routinely outlast the shared HTTP client's 120s default timeout
-// (tool loops, model retries). Callers that need a quick failure signal, such
-// as the chat keepalive ping, should pass their own timeout via
-// `agent_run_with_timeout`.
+// Agent runs routinely take minutes (tool loops, model retries), so bound
+// them explicitly. Callers that need a quick failure signal, such as the chat
+// keepalive ping, pass their own timeout via `agent_run_with_timeout`.
 pub const AGENT_RUN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 // The status endpoint is a loopback health check polled from interactive
 // loops (TUI refresh, daemon readiness waits); fail fast instead of letting a
 // wedged daemon hold callers for the client's full default timeout.
 pub const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
+
+// Memory views are read interactively (CLI, TUI): fail while the user waits.
+const MEMORY_TIMEOUT: Duration = Duration::from_secs(12);
+
+// Error messages quote this much of a response body. A mismatched daemon can
+// answer with a whole conversation snapshot.
+const ERROR_BODY_EXCERPT: usize = 1024;
 
 /// Hard cap every conversation child-chain walk shares: a malformed chain
 /// (a cycle, or an absurd length) must never turn a polling loop into an
@@ -55,17 +60,15 @@ impl Client {
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
+
     pub fn new(base_url: String, auth_token: String) -> Self {
         Self {
-            http: new_reqwest_client(),
+            // The gateway is local: never route it through a proxy.
+            http: build_http_client(None, |client| client.no_proxy())
+                .expect("failed to build gateway HTTP client"),
             base_url,
             auth_token,
         }
-    }
-
-    pub fn with_http_client(mut self, http: reqwest::Client) -> Self {
-        self.http = http;
-        self
     }
 
     pub fn rebased(&self, base_url: String) -> Self {
@@ -89,18 +92,10 @@ impl Client {
     }
 
     pub async fn memory_overview(&self) -> Result<crate::brain::product::MemoryOverview, BoxError> {
-        let response = self
+        let req = self
             .request(reqwest::Method::GET, "/daemon/memory/v1/overview")
-            .timeout(Duration::from_secs(12))
-            .send()
-            .await?;
-        let envelope = self.decode_response::<ToolResponse>(response).await?;
-        match envelope {
-            ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
-            ToolResponse::Err { error, .. } => {
-                Err(format!("{}: {}", error.code, error.message).into())
-            }
-        }
+            .timeout(MEMORY_TIMEOUT);
+        tool_result(self.decode_response(req.send().await?).await?)
     }
 
     pub async fn memory_setup(
@@ -111,7 +106,7 @@ impl Client {
             Some(preview_digest) => {
                 self.post_json(
                     "/daemon/memory/v1/inbox/setup/commit",
-                    &serde_json::json!({"preview_digest":preview_digest}),
+                    &serde_json::json!({ "preview_digest": preview_digest }),
                 )
                 .await?
             }
@@ -123,43 +118,18 @@ impl Client {
                 .await?
             }
         };
-        match envelope {
-            ToolResponse::Ok { result, .. } => Ok(serde_json::from_value(result)?),
-            ToolResponse::Err { error, .. } => {
-                Err(format!("{}: {}", error.code, error.message).into())
-            }
-        }
+        tool_result(envelope)
     }
 
     pub async fn memory_activity(
         &self,
         query: &crate::brain::activity::ActivityQuery,
     ) -> Result<crate::brain::activity::ActivityPage, BoxError> {
-        let mut url = reqwest::Url::parse(&format!("{}/daemon/memory/v1/activity", self.base_url))?;
-        {
-            let mut params = url.query_pairs_mut();
-            if let Some(conversation) = &query.conversation {
-                params.append_pair("conversation", conversation);
-            }
-            if let Some(cursor) = &query.cursor {
-                params.append_pair("cursor", cursor);
-            }
-            if let Some(limit) = query.limit {
-                params.append_pair("limit", &limit.to_string());
-            }
-        }
-        let response = self
-            .request(
-                reqwest::Method::GET,
-                &format!(
-                    "/daemon/memory/v1/activity?{}",
-                    url.query().unwrap_or_default()
-                ),
-            )
-            .timeout(Duration::from_secs(12))
-            .send()
-            .await?;
-        match self.decode_response::<ToolResponse>(response).await? {
+        let req = self
+            .request(reqwest::Method::GET, "/daemon/memory/v1/activity")
+            .query(query)
+            .timeout(MEMORY_TIMEOUT);
+        match self.decode_response(req.send().await?).await? {
             ToolResponse::Ok {
                 result,
                 next_cursor,
@@ -169,9 +139,7 @@ impl Client {
                 page.next_cursor = next_cursor;
                 Ok(page)
             }
-            ToolResponse::Err { error, .. } => {
-                Err(format!("{}: {}", error.code, error.message).into())
-            }
+            error => tool_result(error),
         }
     }
 
@@ -225,18 +193,6 @@ impl Client {
         self.post_json("/daemon/shutdown", &()).await
     }
 
-    #[allow(unused)]
-    pub async fn execute_kip_readonly(
-        &self,
-        req: &KipRequest,
-    ) -> Result<KipWireResponse, BoxError> {
-        self.post_json(
-            "/v1/anda_bot/execute_kip_readonly",
-            &crate::brain::http_kip_args(req.clone())?,
-        )
-        .await
-    }
-
     pub async fn agent_run(&self, input: &AgentInput) -> Result<AgentOutput, BoxError> {
         self.agent_run_with_timeout(input, AGENT_RUN_TIMEOUT).await
     }
@@ -246,17 +202,7 @@ impl Client {
         input: &AgentInput,
         timeout: Duration,
     ) -> Result<AgentOutput, BoxError> {
-        let params = serde_json::to_vec(&(input,))?;
-        let req = self
-            .request(reqwest::Method::POST, "/engine/default")
-            .timeout(timeout)
-            .json(&RPCRequestRef {
-                method: "agent_run",
-                params: &ByteBufB64(params),
-            });
-        let rt: RPCResponse = self.decode_response(req.send().await?).await?;
-        let rt: AgentOutput = serde_json::from_slice(&(rt?))?;
-        Ok(rt)
+        self.rpc("agent_run", input, Some(timeout)).await
     }
 
     pub async fn tool_call<I, O>(&self, input: &ToolInput<I>) -> Result<ToolOutput<O>, BoxError>
@@ -264,7 +210,7 @@ impl Client {
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
-        self.tool_call_inner(input, None).await
+        self.rpc("tool_call", input, None).await
     }
 
     pub async fn tool_call_with_timeout<I, O>(
@@ -276,64 +222,18 @@ impl Client {
         I: serde::Serialize,
         O: serde::de::DeserializeOwned,
     {
-        self.tool_call_inner(input, Some(timeout)).await
+        self.rpc("tool_call", input, Some(timeout)).await
     }
 
-    async fn tool_call_inner<I, O>(
-        &self,
-        input: &ToolInput<I>,
-        timeout: Option<Duration>,
-    ) -> Result<ToolOutput<O>, BoxError>
-    where
-        I: serde::Serialize,
-        O: serde::de::DeserializeOwned,
-    {
-        let params = serde_json::to_vec(&(input,))?;
-        let mut req = self.request(reqwest::Method::POST, "/engine/default");
-        if let Some(timeout) = timeout {
-            req = req.timeout(timeout);
-        }
-        let req = req.json(&RPCRequestRef {
-            method: "tool_call",
-            params: &ByteBufB64(params),
-        });
-        let rt: RPCResponse = self.decode_response(req.send().await?).await?;
-        let rt: ToolOutput<O> = serde_json::from_slice(&(rt?))?;
-        Ok(rt)
-    }
-
-    /// Fetch a conversation by id, unwrapping the daemon's KIP envelope.
+    /// Fetch a conversation by id.
     pub async fn get_conversation(&self, conversation_id: u64) -> Result<Conversation, BoxError> {
-        let output = self
-            .tool_call::<ConversationsToolArgs, ToolResponse>(&ToolInput::new(
-                ConversationsTool::NAME.to_string(),
-                ConversationsToolArgs::GetConversation {
-                    _id: conversation_id,
-                },
-            ))
-            .await?;
-        tool_result(output.output)
-    }
-
-    /// Like [`Client::get_conversation`], failing fast with a per-call timeout
-    /// so polling loops are not held for the client's default timeout.
-    pub async fn get_conversation_with_timeout(
-        &self,
-        conversation_id: u64,
-        timeout: Duration,
-    ) -> Result<Conversation, BoxError> {
-        let output = self
-            .tool_call_with_timeout::<ConversationsToolArgs, ToolResponse>(
-                &ToolInput::new(
-                    ConversationsTool::NAME.to_string(),
-                    ConversationsToolArgs::GetConversation {
-                        _id: conversation_id,
-                    },
-                ),
-                timeout,
-            )
-            .await?;
-        tool_result(output.output)
+        self.conversations(
+            ConversationsToolArgs::GetConversation {
+                _id: conversation_id,
+            },
+            None,
+        )
+        .await
     }
 
     /// Fetch only the messages and artifacts appended after the given offsets.
@@ -343,16 +243,28 @@ impl Client {
         messages_offset: usize,
         artifacts_offset: usize,
     ) -> Result<ConversationDelta, BoxError> {
-        let output = self
-            .tool_call::<ConversationsToolArgs, ToolResponse>(&ToolInput::new(
-                ConversationsTool::NAME.to_string(),
-                ConversationsToolArgs::GetConversationDelta {
-                    _id: conversation_id,
-                    messages_offset,
-                    artifacts_offset,
-                },
-            ))
-            .await?;
+        self.conversations(
+            ConversationsToolArgs::GetConversationDelta {
+                _id: conversation_id,
+                messages_offset,
+                artifacts_offset,
+            },
+            None,
+        )
+        .await
+    }
+
+    /// Call the conversations tool, unwrapping the daemon's tool envelope.
+    pub(super) async fn conversations<T>(
+        &self,
+        args: ConversationsToolArgs,
+        timeout: Option<Duration>,
+    ) -> Result<T, BoxError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let input = ToolInput::new(ConversationsTool::NAME.to_string(), args);
+        let output: ToolOutput<ToolResponse> = self.rpc("tool_call", &input, timeout).await?;
         tool_result(output.output)
     }
 
@@ -379,13 +291,9 @@ impl Client {
             let _ = tokio::fs::remove_file(&pid_path).await;
         }
 
-        let mut child = if let Some(identity_secrets) = identity_secrets {
-            daemon.spawn_background_with_identity_secrets(Some(identity_secrets))?
-        } else {
-            daemon.spawn_background()?
-        };
+        let mut child = daemon.spawn_background_with_identity_secrets(identity_secrets)?;
         if let Err(err) = self
-            .wait_for_spawned_daemon_ready(&mut child, DAEMON_STARTUP_TIMEOUT)
+            .wait_until_ready(Some(&mut child), DAEMON_STARTUP_TIMEOUT)
             .await
         {
             return Err(format!("{err}; logs: {}", child.log_path.display()).into());
@@ -394,51 +302,73 @@ impl Client {
         Ok(LaunchState::Started(child))
     }
 
-    async fn wait_for_spawned_daemon_ready(
+    pub async fn wait_for_daemon_ready(&self, timeout: Duration) -> Result<(), BoxError> {
+        self.wait_until_ready(None, timeout).await
+    }
+
+    /// Poll the status endpoint until it answers. A daemon this client just
+    /// spawned fails the wait as soon as it exits, quoting its log.
+    async fn wait_until_ready(
         &self,
-        child: &mut crate::daemon::BackgroundDaemon,
+        mut child: Option<&mut BackgroundDaemon>,
         timeout: Duration,
     ) -> Result<(), BoxError> {
         let deadline = Instant::now() + timeout;
         let detail = loop {
-            match self.status().await {
+            let err = match self.status().await {
                 Ok(_) => return Ok(()),
-                Err(err) => {
-                    if let Some(status) = child.try_wait()? {
-                        let mut message = format!("Daemon exited during startup with {status}");
-                        if let Some(error) = daemon_startup_error(&child.log_path).await {
-                            message.push_str(": ");
-                            message.push_str(&error);
-                        }
-                        return Err(message.into());
-                    }
-                    if Instant::now() >= deadline {
-                        break err.to_string();
-                    }
+                Err(err) => err,
+            };
+            if let Some(child) = child.as_deref_mut()
+                && let Some(status) = child.try_wait()?
+            {
+                let mut message = format!("Daemon exited during startup with {status}");
+                if let Some(error) = daemon_startup_error(&child.log_path).await {
+                    message.push_str(": ");
+                    message.push_str(&error);
                 }
+                return Err(message.into());
+            }
+            if Instant::now() >= deadline {
+                break err.to_string();
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         };
 
         let mut message = format!("Daemon not ready within {timeout:?}: {detail}");
-        if let Some(error) = daemon_startup_error(&child.log_path).await {
+        if let Some(child) = child
+            && let Some(error) = daemon_startup_error(&child.log_path).await
+        {
             message.push_str("; last daemon error: ");
             message.push_str(&error);
         }
         Err(message.into())
     }
 
-    pub async fn wait_for_daemon_ready(&self, timeout: Duration) -> Result<(), BoxError> {
-        let deadline = Instant::now() + timeout;
-        let detail = loop {
-            match self.status().await {
-                Ok(_) => return Ok(()),
-                Err(err) if Instant::now() >= deadline => break err.to_string(),
-                Err(_) => {}
-            }
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        };
-        Err(format!("Daemon not ready within {timeout:?}: {detail}").into())
+    /// Call an engine RPC method. Its single argument travels as JSON
+    /// inside the base64 `params` envelope, and so does the result.
+    async fn rpc<A, O>(
+        &self,
+        method: &str,
+        args: &A,
+        timeout: Option<Duration>,
+    ) -> Result<O, BoxError>
+    where
+        A: serde::Serialize,
+        O: serde::de::DeserializeOwned,
+    {
+        let params = serde_json::to_vec(&(args,))?;
+        let mut req = self
+            .request(reqwest::Method::POST, "/engine/default")
+            .json(&RPCRequestRef {
+                method,
+                params: &ByteBufB64(params),
+            });
+        if let Some(timeout) = timeout {
+            req = req.timeout(timeout);
+        }
+        let response: RPCResponse = self.decode_response(req.send().await?).await?;
+        Ok(serde_json::from_slice(&response?)?)
     }
 
     async fn post_json<I, O>(&self, path: &str, input: &I) -> Result<O, BoxError>
@@ -465,27 +395,31 @@ impl Client {
     where
         O: serde::de::DeserializeOwned,
     {
-        if response.status().is_success() {
-            let text = response.text().await?;
-
-            match serde_json::from_str::<O>(&text) {
-                Ok(res) => Ok(res),
-                Err(err) => Err(format!(
-                    "[GatewayClient] Invalid response, error: {}, body: {}",
-                    err, text
-                )
-                .into()),
-            }
-        } else {
-            let status = response.status();
-            let msg = response.text().await?;
-            log::error!("[GatewayClient] request failed: {status}, body: {msg}");
-            Err(format!(
-                "[GatewayClient] request failed, status: {}, body: {}",
-                status, msg
+        let status = response.status();
+        let body = response.bytes().await?;
+        if !status.is_success() {
+            return Err(format!(
+                "[GatewayClient] request failed, status: {status}, body: {}",
+                body_excerpt(&body)
             )
-            .into())
+            .into());
         }
+        serde_json::from_slice(&body).map_err(|err| {
+            format!(
+                "[GatewayClient] Invalid response, error: {err}, body: {}",
+                body_excerpt(&body)
+            )
+            .into()
+        })
+    }
+}
+
+fn body_excerpt(body: &[u8]) -> String {
+    let excerpt = String::from_utf8_lossy(&body[..body.len().min(ERROR_BODY_EXCERPT)]);
+    if body.len() > ERROR_BODY_EXCERPT {
+        format!("{excerpt}… ({} bytes)", body.len())
+    } else {
+        excerpt.into_owned()
     }
 }
 
@@ -659,8 +593,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     async fn status_sends_bearer_token_and_decodes_response() {
         let base_url = crate::test_support::spawn_http_mock(status_app()).await;
 
-        let client = Client::new(base_url.clone(), "token-1".to_string())
-            .with_http_client(new_reqwest_client());
+        let client = Client::new(base_url.clone(), "token-1".to_string());
         let status = client.status().await.unwrap();
         assert_eq!(status.conversations, 7);
         assert_eq!(status.memory_nodes, 11);
@@ -722,6 +655,56 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
         let msg = err.to_string();
         assert!(msg.contains("Invalid response"), "got: {msg}");
         assert!(msg.contains("definitely not json"), "got: {msg}");
+
+        // A large body is quoted only in part.
+        let app = Router::new().route(
+            "/daemon/status",
+            routing::get(|| async { "x".repeat(100_000) }),
+        );
+        let client = Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token-1".to_string(),
+        );
+        let msg = client.status().await.map(|_| ()).unwrap_err().to_string();
+        assert!(
+            msg.len() < 2 * ERROR_BODY_EXCERPT,
+            "got {} bytes",
+            msg.len()
+        );
+        assert!(msg.ends_with("(100000 bytes)"), "got: {msg}");
+    }
+
+    #[tokio::test]
+    async fn memory_activity_sends_only_the_set_query_fields() {
+        let app = Router::new().route(
+            "/daemon/memory/v1/activity",
+            routing::get(|uri: http::Uri| async move {
+                assert_eq!(uri.query(), Some("conversation=42&limit=5"));
+                axum::Json(json!({
+                    "result": {
+                        "schema_version": 1,
+                        "items": [],
+                        "next_cursor": null,
+                        "complete": true,
+                        "partial_reason": null,
+                    },
+                    "next_cursor": "page-two",
+                }))
+            }),
+        );
+        let client = Client::new(
+            crate::test_support::spawn_http_mock(app).await,
+            "token-1".to_string(),
+        );
+        let page = client
+            .memory_activity(&crate::brain::activity::ActivityQuery {
+                conversation: Some("42".to_string()),
+                cursor: None,
+                limit: Some(5),
+            })
+            .await
+            .unwrap();
+        assert_eq!(page.next_cursor.as_deref(), Some("page-two"));
     }
 
     #[tokio::test]
@@ -1010,27 +993,9 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     }
 
     #[tokio::test]
-    async fn execute_kip_readonly_round_trip() {
-        let app = Router::new().route(
-            "/v1/anda_bot/execute_kip_readonly",
-            routing::post(|| async { axum::Json(anda_kip::Response::ok(json!({"ok": true}))) }),
-        );
-        let base_url = crate::test_support::spawn_http_mock(app).await;
-        let client = Client::new(base_url, "token-1".to_string());
-
-        let kip = client
-            .execute_kip_readonly(&anda_kip::Request::single("DESCRIBE PRIMER"))
-            .await
-            .unwrap();
-        assert_eq!(kip.status, anda_kip::TopLevelStatus::Succeeded);
-        assert_eq!(kip.first_result(), Some(&json!({"ok": true})));
-    }
-
-    #[tokio::test]
     async fn ensure_daemon_running_returns_already_running_when_status_ok() {
         let base_url = crate::test_support::spawn_http_mock(status_app()).await;
-        let client =
-            Client::new(base_url, "token-1".to_string()).with_http_client(new_reqwest_client());
+        let client = Client::new(base_url, "token-1".to_string());
         let dir = tempfile::tempdir().unwrap();
         let daemon =
             crate::daemon::Daemon::new(dir.path().to_path_buf(), crate::config::Config::default());
@@ -1042,8 +1007,7 @@ Error: "Default TTS provider 'stepfun' is not configured. Available: []"
     #[tokio::test]
     async fn wait_for_daemon_ready_times_out_without_daemon() {
         // No server listening: the readiness wait times out quickly.
-        let client = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string())
-            .with_http_client(new_reqwest_client());
+        let client = Client::new("http://127.0.0.1:1".to_string(), "token-1".to_string());
         let err = client
             .wait_for_daemon_ready(Duration::from_millis(300))
             .await

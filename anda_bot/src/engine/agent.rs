@@ -1109,6 +1109,11 @@ impl Agent<AgentCtx> for AndaBot {
                 }
             }
 
+            // A keepalive has no session to keep alive here. Reject it before
+            // the Brain lookups behind the system prompt.
+            if matches!(input.command, PromptCommand::Ping) {
+                return Err("prompt cannot be empty".into());
+            }
             if instructions.is_none() {
                 drop(guard);
                 available_tools = available_tool_names(&ctx).await;

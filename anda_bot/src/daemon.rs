@@ -205,10 +205,6 @@ impl Daemon {
         Config::from_file(&self.config_file_path()).await
     }
 
-    pub fn spawn_background(&self) -> Result<BackgroundDaemon, BoxError> {
-        self.spawn_background_with_identity_secrets(None)
-    }
-
     pub fn spawn_background_with_identity_secrets(
         &self,
         identity_secrets: Option<&identity::LocalIdentitySecrets>,
@@ -435,7 +431,6 @@ impl Daemon {
         let gateway_handle = gateway::serve(
             global_cancel_token.clone(),
             bot_db,
-            self.cfg.addr.clone(),
             brain_cfg,
             engine_cfg,
             engine_ref,

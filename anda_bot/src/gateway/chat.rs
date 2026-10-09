@@ -1,14 +1,15 @@
 use crate::util::tool_response::ToolResponse;
 use anda_core::{AgentInput, AgentOutput, BoxError, ContentPart, Message, RequestMeta, ToolInput};
 use anda_engine::{
-    memory::{Conversation, ConversationStatus},
+    memory::{Conversation, ConversationDelta, ConversationStatus},
     unix_ms,
 };
+use serde::Deserialize;
 use serde_json::Map;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
-use super::{Client, MAX_CONVERSATION_CHAIN, is_terminal_conversation_status};
+use super::{Client, MAX_CONVERSATION_CHAIN, is_terminal_conversation_status, tool_result};
 use crate::engine::{
     ConversationsTool, ConversationsToolArgs, PromptCommand, SourceState, payload_action_id,
     payload_is_pending, payload_responded_at,
@@ -22,76 +23,38 @@ const PING_INTERVAL: Duration = Duration::from_secs(60);
 const PING_TIMEOUT: Duration = Duration::from_secs(30);
 const CONVERSATION_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Build a synthetic system message (used for local notices / errors that
-/// aren't part of the persisted conversation history).
-fn system_message(text: impl Into<String>) -> Message {
+/// Build a local text message. System messages carry notices and errors
+/// that are not part of the persisted conversation history.
+fn text_message(role: &str, text: impl Into<String>) -> Message {
     Message {
-        role: "system".to_string(),
+        role: role.to_string(),
         content: vec![ContentPart::Text { text: text.into() }],
         name: None,
         user: None,
         timestamp: Some(unix_ms()),
-    }
-}
-
-fn user_message(text: impl Into<String>) -> Message {
-    Message {
-        role: "user".to_string(),
-        content: vec![ContentPart::Text { text: text.into() }],
-        name: None,
-        user: None,
-        timestamp: Some(unix_ms()),
-    }
-}
-
-fn assistant_message(text: impl Into<String>) -> Message {
-    Message {
-        role: "assistant".to_string(),
-        content: vec![ContentPart::Text { text: text.into() }],
-        name: None,
-        user: None,
-        timestamp: Some(unix_ms()),
-    }
-}
-
-fn current_request_meta(conversation: u64, full_access: bool) -> RequestMeta {
-    let mut extra = Map::new();
-    let workspace = std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok();
-    let source = if let Some(dir) = &workspace {
-        format!("cli:{dir}")
-    } else {
-        "cli".to_string()
-    };
-
-    extra.insert(keys::CONVERSATION.to_string(), conversation.into());
-    extra.insert(keys::SOURCE.to_string(), source.into());
-    if let Some(workspace) = workspace {
-        extra.insert(keys::WORKSPACE.to_string(), workspace.into());
-    };
-    if full_access {
-        // Runs shell commands and MCP connections without approval cards.
-        // Mirrors the Chrome extension's `full_access` setting.
-        extra.insert(
-            keys::APPROVAL_MODE.to_string(),
-            keys::APPROVAL_MODE_FULL_ACCESS.into(),
-        );
-    }
-
-    RequestMeta {
-        engine: None,
-        user: None,
-        extra,
     }
 }
 
 type SendResult = Result<AgentOutput, String>;
-type PollResult = Vec<Conversation>;
+type PollResult = Vec<Fetched>;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NewPromptCommand {
-    prompt: Option<String>,
+/// One conversation of a polled chain. The head arrives as a delta against
+/// the stored snapshot when nothing on display can still change.
+enum Fetched {
+    Full(Box<Conversation>),
+    Delta {
+        messages_offset: usize,
+        delta: ConversationDelta,
+    },
+}
+
+/// Whether a conversation can still change: it is running, or idle and
+/// waiting for follow-up input.
+fn is_live(status: &ConversationStatus) -> bool {
+    matches!(
+        status,
+        ConversationStatus::Submitted | ConversationStatus::Working | ConversationStatus::Idle
+    )
 }
 
 fn same_display_message(left: &Message, right: &Message) -> bool {
@@ -114,43 +77,41 @@ fn displayed_suffix_prefix_overlap(displayed: &[Message], incoming: &[Message]) 
     0
 }
 
-fn changed_message_values<'a>(
-    previous: &'a [serde_json::Value],
-    incoming: &'a [serde_json::Value],
-) -> impl Iterator<Item = (usize, &'a serde_json::Value)> {
-    incoming
-        .iter()
-        .enumerate()
-        .filter(|(index, value)| previous.get(*index) != Some(*value))
+fn parse_message(value: &serde_json::Value, conv_id: u64) -> Option<Message> {
+    Message::deserialize(value)
+        .inspect_err(|err| log::warn!("Failed to parse message for conv_id {conv_id}: {err}"))
+        .ok()
 }
 
-fn merge_action_payload_updates(displayed: &mut [Message], incoming: &[Message]) -> bool {
-    let incoming_actions = incoming
-        .iter()
-        .flat_map(|message| message.content.iter())
-        .filter_map(|part| match part {
-            ContentPart::Action { payload, .. } => {
-                payload_action_id(payload).map(|id| (id.to_string(), payload.clone()))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+fn has_pending_action(messages: &[Message]) -> bool {
+    messages.iter().flat_map(|message| &message.content).any(
+        |part| matches!(part, ContentPart::Action { payload, .. } if payload_is_pending(payload)),
+    )
+}
 
-    if incoming_actions.is_empty() {
-        return false;
-    }
-
+/// Apply the action resolutions in an updated history entry to the cards on
+/// display. A card can sit at another index there (local echoes, earlier
+/// conversations of the chain), so cards are matched by action id.
+fn merge_action_payload_updates(displayed: &mut [Message], incoming: &Message) -> bool {
     let mut changed = false;
-    for (action_id, incoming_payload) in incoming_actions {
+    for part in &incoming.content {
+        let ContentPart::Action {
+            payload: incoming_payload,
+            ..
+        } = part
+        else {
+            continue;
+        };
+        let Some(action_id) = payload_action_id(incoming_payload) else {
+            continue;
+        };
         for message in displayed.iter_mut() {
             for part in &mut message.content {
-                let ContentPart::Action { payload, .. } = part else {
-                    continue;
-                };
-                if payload_action_id(payload) != Some(action_id.as_str()) {
-                    continue;
+                if let ContentPart::Action { payload, .. } = part
+                    && payload_action_id(payload) == Some(action_id)
+                {
+                    changed |= merge_action_payload(payload, incoming_payload);
                 }
-                changed |= merge_action_payload(payload, &incoming_payload);
             }
         }
     }
@@ -196,20 +157,87 @@ fn incoming_action_is_stale(target: &serde_json::Value, incoming: &serde_json::V
     !payload_is_pending(target) && payload_is_pending(incoming)
 }
 
+/// Walk a conversation's child chain from `head`. With `head_delta`, the
+/// head is read as a delta from those (messages, artifacts) offsets. Only a
+/// failure on the head is an error; a later one ends the chain there.
+async fn fetch_chain(
+    client: &Client,
+    head: u64,
+    mut head_delta: Option<(usize, usize)>,
+) -> Result<Vec<Fetched>, BoxError> {
+    let mut fetched = Vec::new();
+    let mut seen = Vec::new();
+    let mut next = Some(head);
+    while let Some(id) = next {
+        if seen.contains(&id) {
+            log::warn!("Conversation child chain contains a cycle at {id}");
+            break;
+        }
+        if seen.len() >= MAX_CONVERSATION_CHAIN {
+            log::warn!("Conversation child chain is too long starting at {head}");
+            break;
+        }
+
+        let item = match head_delta.take() {
+            Some((messages_offset, artifacts_offset)) => client
+                .conversations::<ConversationDelta>(
+                    ConversationsToolArgs::GetConversationDelta {
+                        _id: id,
+                        messages_offset,
+                        artifacts_offset,
+                    },
+                    Some(CONVERSATION_FETCH_TIMEOUT),
+                )
+                .await
+                .map(|delta| {
+                    let child = delta.child;
+                    (
+                        child,
+                        Fetched::Delta {
+                            messages_offset,
+                            delta,
+                        },
+                    )
+                }),
+            None => client
+                .conversations::<Conversation>(
+                    ConversationsToolArgs::GetConversation { _id: id },
+                    Some(CONVERSATION_FETCH_TIMEOUT),
+                )
+                .await
+                .map(|conv| (conv.child, Fetched::Full(Box::new(conv)))),
+        };
+        match item {
+            Ok((child, item)) => {
+                seen.push(id);
+                next = child;
+                fetched.push(item);
+            }
+            Err(err) if fetched.is_empty() => return Err(err),
+            Err(err) => {
+                log::warn!("Conversation {id} fetch failed: {err}");
+                break;
+            }
+        }
+    }
+    Ok(fetched)
+}
+
 pub struct ChatSession {
     client: Client,
-    pub conv_id: Option<u64>,
+    /// The launch directory, read once: the session's source and its shell
+    /// workspace stay the same for as long as the TUI runs.
+    workspace: Option<String>,
+    conv_id: Option<u64>,
     pub conversation: Option<Conversation>,
-    pub prev_conversation: Option<Conversation>,
     pub messages: Vec<Message>,
     pub sending: bool,
-    pub errors: Vec<String>,
     awaiting_response: bool,
     last_ping: Instant,
     last_poll: Instant,
-    last_msg_offset: usize,
     pending_send: Option<oneshot::Receiver<SendResult>>,
-    pending_new_command: Option<NewPromptCommand>,
+    /// `Some(has_prompt)` while a `/new` command is in flight.
+    pending_new_command: Option<bool>,
     full_access: bool,
     pending_poll: Option<oneshot::Receiver<PollResult>>,
     poll_requested: bool,
@@ -220,16 +248,16 @@ impl ChatSession {
     pub fn new(client: Client) -> Self {
         Self {
             client,
+            workspace: std::env::current_dir()
+                .ok()
+                .map(|dir| dir.to_string_lossy().into_owned()),
             conv_id: None,
-            prev_conversation: None,
             conversation: None,
             messages: Vec::new(),
             sending: false,
-            errors: Vec::new(),
             awaiting_response: false,
             last_ping: Instant::now(),
             last_poll: Instant::now(),
-            last_msg_offset: 0,
             pending_send: None,
             pending_new_command: None,
             full_access: false,
@@ -255,21 +283,34 @@ impl ChatSession {
     }
 
     fn request_meta(&self, conversation: u64) -> RequestMeta {
-        current_request_meta(conversation, self.full_access)
+        let mut extra = Map::new();
+        extra.insert(keys::CONVERSATION.to_string(), conversation.into());
+        let source = match &self.workspace {
+            Some(dir) => format!("cli:{dir}"),
+            None => "cli".to_string(),
+        };
+        extra.insert(keys::SOURCE.to_string(), source.into());
+        if let Some(workspace) = &self.workspace {
+            extra.insert(keys::WORKSPACE.to_string(), workspace.clone().into());
+        }
+        if self.full_access {
+            // Runs shell commands and MCP connections without approval cards.
+            // Mirrors the Chrome extension's `full_access` setting.
+            extra.insert(
+                keys::APPROVAL_MODE.to_string(),
+                keys::APPROVAL_MODE_FULL_ACCESS.into(),
+            );
+        }
+
+        RequestMeta {
+            engine: None,
+            user: None,
+            extra,
+        }
     }
 
     fn status(&self) -> Option<&ConversationStatus> {
         self.conversation.as_ref().map(|c| &c.status)
-    }
-
-    pub fn is_active(&self) -> bool {
-        matches!(
-            self.status(),
-            Some(ConversationStatus::Submitted)
-                | Some(ConversationStatus::Working)
-                | Some(ConversationStatus::Idle)
-                | None
-        )
     }
 
     pub fn is_thinking(&self) -> bool {
@@ -295,47 +336,33 @@ impl ChatSession {
 
     #[cfg(test)]
     pub fn reset(&mut self) {
-        self.conv_id = None;
-        self.conversation = None;
-        self.prev_conversation = None;
-        self.messages.clear();
-        self.last_msg_offset = 0;
+        self.clear_display_for_new_command();
         self.sending = false;
         self.pending_send = None;
         self.pending_new_command = None;
         self.awaiting_response = false;
-        self.errors.clear();
-        self.pending_poll = None;
-        self.poll_requested = false;
-        self.mark_changed();
     }
 
     /// Start sending a user message without blocking the UI loop.
-    pub fn start_send(&mut self, text: String) -> Option<String> {
+    pub fn start_send(&mut self, text: String) {
         if self.sending {
-            return None;
+            return;
         }
 
         let text = text.trim().to_owned();
         if text.is_empty() {
-            return None;
+            return;
         }
 
-        let conv_id = self.conv_id.unwrap_or_else(|| {
-            self.prev_conversation
-                .as_ref()
-                .map(|c| c._id)
-                .unwrap_or_default()
-        });
-        let new_command = new_prompt_command(&text);
-
-        if let Some(command) = &new_command {
+        let conv_id = self.conv_id.unwrap_or_default();
+        let new_command = parse_new_command(&text);
+        if new_command.is_some() {
             self.clear_display_for_new_command();
-            if command.prompt.is_some() {
-                self.messages.push(user_message(text.clone()));
-            }
-        } else {
-            self.messages.push(user_message(text.clone()));
+        }
+        // A bare `/new` only clears the display; it gets no reply.
+        let expects_reply = new_command != Some(false);
+        if expects_reply {
+            self.messages.push(text_message("user", text.clone()));
         }
 
         let mut input = AgentInput::new(String::new(), text);
@@ -353,14 +380,10 @@ impl ChatSession {
         });
 
         self.sending = true;
-        self.awaiting_response = new_command
-            .as_ref()
-            .map(|command| command.prompt.is_some())
-            .unwrap_or(true);
+        self.awaiting_response = expects_reply;
         self.pending_send = Some(rx);
         self.pending_new_command = new_command;
         self.mark_changed();
-        None
     }
 
     /// Collect the result of a pending send if it has finished.
@@ -392,9 +415,9 @@ impl ChatSession {
             .unwrap_or_else(|_| Err("request task cancelled".to_string()));
         let error = self.apply_send_result(result);
         if let Some(rx) = self.pending_poll.take()
-            && let Ok(conversations) = rx.await
+            && let Ok(fetched) = rx.await
         {
-            self.apply_poll_result(conversations);
+            self.apply_poll_result(fetched);
         }
         error
     }
@@ -402,42 +425,32 @@ impl ChatSession {
     fn apply_send_result(&mut self, result: SendResult) -> Option<String> {
         self.sending = false;
         self.mark_changed();
-        let pending_new_command = self.pending_new_command.take();
+        let new_command = self.pending_new_command.take();
 
-        match result {
-            Ok(mut output) => {
-                if !output.content.trim().is_empty() {
-                    self.messages
-                        .push(assistant_message(output.content.clone()));
-                    self.awaiting_response = false;
-                }
-
-                if pending_new_command
-                    .as_ref()
-                    .map(|command| command.prompt.is_some())
-                    .unwrap_or(true)
-                {
-                    // Poll immediately to get the new conversation data.
-                    self.start_poll(output.conversation);
-                } else {
-                    self.clear_display_for_new_command();
-                    self.awaiting_response = false;
-                }
-                if let Some(reason) = output.failed_reason.take() {
-                    self.awaiting_response = false;
-                    self.errors.push(reason.clone());
-                    self.messages.push(system_message(reason.clone()));
-                    Some(reason)
-                } else {
-                    None
-                }
-            }
+        let output = match result {
+            Ok(output) => output,
             Err(msg) => {
                 self.awaiting_response = false;
-                self.messages.push(system_message(msg.clone()));
-                Some(format!("Request failed: {msg}"))
+                self.messages.push(text_message("system", msg.clone()));
+                return Some(format!("Request failed: {msg}"));
             }
+        };
+        if !output.content.trim().is_empty() {
+            self.messages
+                .push(text_message("assistant", output.content));
+            self.awaiting_response = false;
         }
+        if new_command == Some(false) {
+            self.clear_display_for_new_command();
+            self.awaiting_response = false;
+        } else {
+            // Poll immediately to get the new conversation data.
+            self.start_poll(output.conversation);
+        }
+        let reason = output.failed_reason?;
+        self.awaiting_response = false;
+        self.messages.push(text_message("system", reason.clone()));
+        Some(reason)
     }
 
     pub async fn restore_source_conversation(&mut self) -> Result<bool, BoxError> {
@@ -449,43 +462,25 @@ impl ChatSession {
 
         let output = self
             .client
-            .tool_call_with_timeout::<ConversationsToolArgs, ToolResponse>(
-                &input,
-                CONVERSATION_FETCH_TIMEOUT,
-            )
+            .tool_call_with_timeout::<_, ToolResponse>(&input, CONVERSATION_FETCH_TIMEOUT)
             .await?;
-
-        let state = match output.output {
-            ToolResponse::Ok { result, .. } => serde_json::from_value::<SourceState>(result)?,
-            other => return Err(format!("conversation API returned an error: {other:?}").into()),
-        };
+        let state: SourceState = tool_result(output.output)?;
         if state.conv_id == 0 {
             return Ok(false);
         }
 
-        let conversations = self.fetch_conversation_chain(state.conv_id).await?;
-        if !conversations
-            .last()
-            .is_some_and(|conv| should_restore_conversation_status(&conv.status))
-        {
+        let fetched = fetch_chain(&self.client, state.conv_id, None).await?;
+        if !matches!(
+            fetched.last(),
+            Some(Fetched::Full(conv)) if should_restore_conversation_status(&conv.status)
+        ) {
             return Ok(false);
         }
 
         self.conv_id = None;
         self.conversation = None;
-        self.prev_conversation = None;
         self.messages.clear();
-        self.last_msg_offset = 0;
-
-        for conv in conversations {
-            let child = conv.child;
-            self.conv_id = Some(conv._id);
-            self.apply_conversation_data(conv);
-            if let Some(id) = child {
-                self.conv_id = Some(id);
-            }
-        }
-
+        self.apply_poll_result(fetched);
         Ok(true)
     }
 
@@ -503,19 +498,25 @@ impl ChatSession {
         if self.pending_poll.is_some() {
             return;
         }
-        let force = self.poll_requested;
-        let fetch = self.conv_id.filter(|id| {
-            (force || self.last_poll.elapsed() >= POLL_INTERVAL)
-                && (self.is_active()
-                    || self
-                        .conversation
-                        .as_ref()
-                        .is_some_and(|conv| conv._id != *id))
-        });
-        let ping = self.last_ping.elapsed() >= PING_INTERVAL;
+        let due = self.poll_requested || self.last_poll.elapsed() >= POLL_INTERVAL;
+        let stored = self.conversation.as_ref();
+        let fetch = self
+            .conv_id
+            .filter(|id| due && stored.is_none_or(|conv| conv._id != *id || is_live(&conv.status)));
+        // The keepalive holds a live session open. Without one the daemon
+        // would build a whole system prompt only to reject the empty prompt.
+        let ping = stored.is_some_and(|conv| is_live(&conv.status))
+            && self.last_ping.elapsed() >= PING_INTERVAL;
         if fetch.is_none() && !ping {
             return;
         }
+        // Only action cards change after they are written. While one on
+        // display is pending, read the whole snapshot to see it resolved.
+        let head_delta = fetch
+            .and_then(|id| stored.filter(|conv| conv._id == id))
+            .filter(|_| !has_pending_action(&self.messages))
+            .map(|conv| (conv.messages.len(), conv.artifacts.len()));
+        let ping_meta = ping.then(|| self.request_meta(self.conv_id.unwrap_or_default()));
         self.poll_requested = false;
         if fetch.is_some() {
             self.last_poll = Instant::now();
@@ -524,41 +525,27 @@ impl ChatSession {
             self.last_ping = Instant::now();
         }
         let client = self.client.clone();
-        let meta = self.request_meta(self.conv_id.unwrap_or_default());
         let (tx, rx) = oneshot::channel();
         tokio::spawn(async move {
             // A slow keepalive must not delay fetching an approval card.
             let keepalive = async {
-                if ping {
+                if let Some(meta) = ping_meta {
                     let mut input = AgentInput::new(String::new(), String::new());
                     input.meta = Some(meta);
                     let _ = client.agent_run_with_timeout(&input, PING_TIMEOUT).await;
                 }
             };
             let fetches = async {
-                let mut conversations: Vec<Conversation> = Vec::new();
-                let mut next = fetch;
-                while let Some(id) = next {
-                    if conversations.len() >= MAX_CONVERSATION_CHAIN
-                        || conversations.iter().any(|conv| conv._id == id)
-                    {
-                        break;
-                    }
-                    match client
-                        .get_conversation_with_timeout(id, CONVERSATION_FETCH_TIMEOUT)
+                let fetched = match fetch {
+                    Some(id) => fetch_chain(&client, id, head_delta)
                         .await
-                    {
-                        Ok(conv) => {
-                            next = conv.child;
-                            conversations.push(conv);
-                        }
-                        Err(err) => {
+                        .unwrap_or_else(|err| {
                             log::warn!("Poll conversation {id} failed: {err}");
-                            break;
-                        }
-                    }
-                }
-                let _ = tx.send(conversations);
+                            Vec::new()
+                        }),
+                    None => Vec::new(),
+                };
+                let _ = tx.send(fetched);
             };
             tokio::join!(keepalive, fetches);
         });
@@ -570,9 +557,9 @@ impl ChatSession {
             return false;
         };
         match rx.try_recv() {
-            Ok(conversations) => {
+            Ok(fetched) => {
                 self.pending_poll = None;
-                self.apply_poll_result(conversations)
+                self.apply_poll_result(fetched)
             }
             Err(oneshot::error::TryRecvError::Empty) => false,
             Err(oneshot::error::TryRecvError::Closed) => {
@@ -582,15 +569,23 @@ impl ChatSession {
         }
     }
 
-    fn apply_poll_result(&mut self, conversations: PollResult) -> bool {
+    fn apply_poll_result(&mut self, fetched: PollResult) -> bool {
         let mut changed = false;
-        for conv in conversations {
-            let child = conv.child;
-            self.conv_id = Some(conv._id);
-            changed |= self.apply_conversation_data(conv);
-            if let Some(child) = child {
-                self.conv_id = Some(child);
-            }
+        for item in fetched {
+            // Follow the chain: the next poll starts at the newest child.
+            changed |= match item {
+                Fetched::Full(conv) => {
+                    self.conv_id = Some(conv.child.unwrap_or(conv._id));
+                    self.apply_conversation_data(*conv)
+                }
+                Fetched::Delta {
+                    messages_offset,
+                    delta,
+                } => {
+                    self.conv_id = Some(delta.child.unwrap_or(delta._id));
+                    self.apply_conversation_delta(messages_offset, delta)
+                }
+            };
         }
         changed
     }
@@ -602,62 +597,37 @@ impl ChatSession {
             return false;
         };
         match rx.await {
-            Ok(conversations) => self.apply_poll_result(conversations),
+            Ok(fetched) => self.apply_poll_result(fetched),
             Err(_) => false,
         }
     }
 
     fn apply_conversation_data(&mut self, conv: Conversation) -> bool {
         let old_len = self.messages.len();
-        let mut changed = self
+        let stored = self
             .conversation
             .as_ref()
-            .is_none_or(|previous| previous._id != conv._id || previous.status != conv.status);
-        if self.conv_id.is_none() {
-            self.conv_id = Some(conv._id);
+            .filter(|stored| stored._id == conv._id);
+        let mut changed = stored.is_none_or(|stored| stored.status != conv.status);
+        // Snapshots include edits to old approval cards. Only parse changed
+        // entries; unchanged history needs no cloned Message.
+        let previous = stored
+            .map(|stored| stored.messages.as_slice())
+            .unwrap_or_default();
+        let known = previous.len();
+        for (old, value) in previous.iter().zip(&conv.messages) {
+            if old != value
+                && let Some(message) = parse_message(value, conv._id)
+            {
+                changed |= merge_action_payload_updates(&mut self.messages, &message);
+            }
         }
-
-        if self.conv_id == Some(conv._id) {
-            if self.conversation.as_ref().map(|c| c._id) != Some(conv._id) {
-                self.prev_conversation = self.conversation.take();
-                self.last_msg_offset = 0;
-            }
-            // Snapshots include edits to old approval cards. Only deserialize
-            // new or changed entries; unchanged history needs no cloned Message.
-            let previous = self
-                .conversation
-                .as_ref()
-                .map(|conversation| conversation.messages.as_slice())
-                .unwrap_or_default();
-            let mut parsed_messages = Vec::new();
-            for (index, value) in changed_message_values(previous, &conv.messages) {
-                match serde_json::from_value::<Message>(value.clone()) {
-                    Ok(message) => {
-                        changed |= merge_action_payload_updates(
-                            &mut self.messages,
-                            std::slice::from_ref(&message),
-                        );
-                        if index >= self.last_msg_offset {
-                            parsed_messages.push(message);
-                        }
-                    }
-                    Err(err) => {
-                        log::warn!("Failed to parse message for conv_id {}: {err}", conv._id)
-                    }
-                }
-            }
-            let has_assistant_message = parsed_messages.iter().any(|msg| msg.role == "assistant");
-            let overlap = displayed_suffix_prefix_overlap(&self.messages, &parsed_messages);
-            self.messages
-                .extend(parsed_messages.into_iter().skip(overlap));
-            self.last_msg_offset = conv.messages.len();
-            if has_assistant_message || is_terminal_conversation_status(&conv.status) {
-                self.awaiting_response = false;
-            }
-            self.conversation = Some(conv);
-        } else {
-            // should not happen, but just in case, we update prev_conversation to keep the history.
-        }
+        self.append_new_messages(
+            conv.messages.get(known..).unwrap_or_default(),
+            conv._id,
+            &conv.status,
+        );
+        self.conversation = Some(conv);
 
         changed |= self.messages.len() != old_len;
         if changed {
@@ -666,69 +636,84 @@ impl ChatSession {
         changed
     }
 
+    /// Append a delta read against the stored snapshot. A delta for a
+    /// snapshot replaced while it was in flight no longer lines up and is
+    /// dropped.
+    fn apply_conversation_delta(
+        &mut self,
+        messages_offset: usize,
+        delta: ConversationDelta,
+    ) -> bool {
+        let Some(mut conv) = self
+            .conversation
+            .take_if(|conv| conv._id == delta._id && conv.messages.len() == messages_offset)
+        else {
+            return false;
+        };
+        let old_len = self.messages.len();
+        let mut changed = conv.status != delta.status;
+        conv.status = delta.status;
+        conv.child = delta.child;
+        conv.failed_reason = delta.failed_reason;
+        conv.usage = delta.usage;
+        conv.updated_at = delta.updated_at;
+        conv.artifacts.extend(delta.artifacts);
+        conv.messages.extend(delta.messages);
+        self.append_new_messages(&conv.messages[messages_offset..], conv._id, &conv.status);
+        self.conversation = Some(conv);
+
+        changed |= self.messages.len() != old_len;
+        if changed {
+            self.mark_changed();
+        }
+        changed
+    }
+
+    /// Display entries appended to the conversation, skipping the prefix
+    /// that repeats what is already shown (this session's own user echo).
+    fn append_new_messages(
+        &mut self,
+        values: &[serde_json::Value],
+        conv_id: u64,
+        status: &ConversationStatus,
+    ) {
+        let parsed: Vec<Message> = values
+            .iter()
+            .filter_map(|value| parse_message(value, conv_id))
+            .collect();
+        if parsed.iter().any(|message| message.role == "assistant")
+            || is_terminal_conversation_status(status)
+        {
+            self.awaiting_response = false;
+        }
+        let overlap = displayed_suffix_prefix_overlap(&self.messages, &parsed);
+        self.messages.extend(parsed.into_iter().skip(overlap));
+    }
+
     fn clear_display_for_new_command(&mut self) {
         self.conv_id = None;
         self.conversation = None;
-        self.prev_conversation = None;
         self.messages.clear();
-        self.last_msg_offset = 0;
-        self.errors.clear();
         self.pending_poll = None;
         self.poll_requested = false;
         self.mark_changed();
     }
-
-    async fn fetch_conversation(&self, conv_id: u64) -> Result<Conversation, BoxError> {
-        self.client
-            .get_conversation_with_timeout(conv_id, CONVERSATION_FETCH_TIMEOUT)
-            .await
-    }
-
-    async fn fetch_conversation_chain(&self, conv_id: u64) -> Result<Vec<Conversation>, BoxError> {
-        let mut conversations = Vec::new();
-        let mut next_id = Some(conv_id);
-
-        while let Some(conv_id) = next_id {
-            if conversations
-                .iter()
-                .any(|conv: &Conversation| conv._id == conv_id)
-            {
-                log::warn!("Conversation child chain contains a cycle at {conv_id}");
-                break;
-            }
-            if conversations.len() >= MAX_CONVERSATION_CHAIN {
-                log::warn!("Conversation child chain is too long starting at {conv_id}");
-                break;
-            }
-
-            let conv = self.fetch_conversation(conv_id).await?;
-            next_id = conv.child;
-            conversations.push(conv);
-        }
-
-        Ok(conversations)
-    }
 }
 
 pub fn is_new_conversation_command(text: &str) -> bool {
-    new_prompt_command(text).is_some()
+    parse_new_command(text).is_some()
 }
 
-fn new_prompt_command(text: &str) -> Option<NewPromptCommand> {
+/// `Some(has_prompt)` when `text` starts a new conversation.
+fn parse_new_command(text: &str) -> Option<bool> {
     match PromptCommand::from(text.to_string()) {
-        PromptCommand::New { prompt } => Some(NewPromptCommand { prompt }),
+        PromptCommand::New { prompt } => Some(prompt.is_some()),
         _ => None,
     }
 }
 
 fn should_restore_conversation_status(status: &ConversationStatus) -> bool {
-    matches!(
-        status,
-        ConversationStatus::Submitted
-            | ConversationStatus::Working
-            | ConversationStatus::Idle
-            | ConversationStatus::Failed
-    )
+    is_live(status) || *status == ConversationStatus::Failed
 }
 
 #[cfg(test)]
@@ -737,6 +722,34 @@ mod tests {
 
     fn test_client() -> Client {
         Client::new("http://127.0.0.1:8042".to_string(), String::new())
+    }
+
+    fn user_message(text: impl Into<String>) -> Message {
+        text_message("user", text)
+    }
+
+    fn assistant_message(text: impl Into<String>) -> Message {
+        text_message("assistant", text)
+    }
+
+    fn pending_action_message(id: &str) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            name: Some("$action".to_string()),
+            content: vec![ContentPart::Action {
+                name: "anda.tool_approval".to_string(),
+                payload: serde_json::json!({
+                    "id": id,
+                    "kind": "tool_approval",
+                    "title": "Approve shell command",
+                    "status": "pending",
+                    "details": [{"label": "Command", "value": "cargo test"}]
+                }),
+                recipients: None,
+                signature: None,
+            }],
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -815,23 +828,7 @@ mod tests {
     fn apply_conversation_data_merges_action_status_updates() {
         let mut session = ChatSession::new(test_client());
         session.conv_id = Some(55);
-        let pending = Message {
-            role: "assistant".to_string(),
-            name: Some("$action".to_string()),
-            content: vec![ContentPart::Action {
-                name: "anda.tool_approval".to_string(),
-                payload: serde_json::json!({
-                    "id": "act_1",
-                    "kind": "tool_approval",
-                    "title": "Approve shell command",
-                    "status": "pending",
-                    "details": [{"label": "Command", "value": "cargo test"}]
-                }),
-                recipients: None,
-                signature: None,
-            }],
-            ..Default::default()
-        };
+        let pending = pending_action_message("act_1");
         session.apply_conversation_data(Conversation {
             _id: 55,
             status: ConversationStatus::Working,
@@ -918,17 +915,9 @@ mod tests {
 
     #[test]
     fn new_conversation_command_detects_prompt_and_alias() {
-        assert_eq!(
-            new_prompt_command(" /NEW fresh start "),
-            Some(NewPromptCommand {
-                prompt: Some("/NEW fresh start".to_string())
-            })
-        );
-        assert_eq!(
-            new_prompt_command("/clear"),
-            Some(NewPromptCommand { prompt: None })
-        );
-        assert_eq!(new_prompt_command("/tmp/workspace"), None);
+        assert_eq!(parse_new_command(" /NEW fresh start "), Some(true));
+        assert_eq!(parse_new_command("/clear"), Some(false));
+        assert_eq!(parse_new_command("/tmp/workspace"), None);
     }
 
     #[test]
@@ -936,19 +925,12 @@ mod tests {
         let mut session = ChatSession::new(test_client());
         session.messages.push(user_message("hello"));
 
-        let assistant = Message {
-            role: "assistant".to_string(),
-            content: vec![ContentPart::Text {
-                text: "hi".to_string(),
-            }],
-            ..Default::default()
-        };
         let conv = Conversation {
             _id: 42,
             status: ConversationStatus::Completed,
             messages: vec![
                 serde_json::json!(user_message("hello")),
-                serde_json::json!(assistant),
+                serde_json::json!(assistant_message("hi")),
             ],
             ..Default::default()
         };
@@ -968,13 +950,7 @@ mod tests {
         let conv = Conversation {
             _id: 42,
             status: ConversationStatus::Idle,
-            messages: vec![serde_json::json!(Message {
-                role: "assistant".to_string(),
-                content: vec![ContentPart::Text {
-                    text: "done".to_string(),
-                }],
-                ..Default::default()
-            })],
+            messages: vec![serde_json::json!(assistant_message("done"))],
             ..Default::default()
         };
 
@@ -993,9 +969,61 @@ mod tests {
         assert!(!session.awaiting_response);
     }
 
+    #[test]
+    fn conversation_delta_extends_the_stored_snapshot() {
+        let mut session = ChatSession::new(test_client());
+        let conv = conversation(7, ConversationStatus::Working, None);
+        session.apply_conversation_data(conv.clone());
+        session.awaiting_response = true;
+
+        let mut next = conv;
+        next.messages
+            .push(serde_json::to_value(assistant_message("more")).unwrap());
+        next.status = ConversationStatus::Completed;
+        let revision = session.revision();
+        assert!(session.apply_conversation_delta(2, next.to_delta(2, 0)));
+
+        assert_eq!(session.messages.len(), 3);
+        assert_eq!(session.messages[2].text().as_deref(), Some("more"));
+        let stored = session.conversation.as_ref().unwrap();
+        assert_eq!(stored.messages.len(), 3);
+        assert_eq!(stored.status, ConversationStatus::Completed);
+        assert!(!session.awaiting_response);
+        assert_ne!(session.revision(), revision);
+
+        // The snapshot has grown since: the old offset no longer lines up.
+        assert!(!session.apply_conversation_delta(2, next.to_delta(2, 0)));
+        assert_eq!(session.messages.len(), 3);
+        // Nor does a delta of another conversation.
+        let mut other = next.to_delta(3, 0);
+        other._id = 8;
+        assert!(!session.apply_conversation_delta(3, other));
+    }
+
+    #[tokio::test]
+    async fn keepalive_ping_needs_a_live_conversation() {
+        let mut session = ChatSession::new(test_client());
+        session.last_ping = Instant::now() - PING_INTERVAL;
+        // Nothing to fetch and no session to keep alive: no request at all.
+        session.start_poll(None);
+        assert!(session.pending_poll.is_none());
+
+        session.conv_id = Some(7);
+        session.conversation = Some(Conversation {
+            _id: 7,
+            status: ConversationStatus::Completed,
+            ..Default::default()
+        });
+        session.start_poll(None);
+        assert!(session.pending_poll.is_none());
+    }
+
     use anda_core::ByteBufB64;
     use axum::{Router, extract::State, routing};
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
 
     struct ChatGateway {
         conversations: HashMap<u64, Conversation>,
@@ -1003,46 +1031,64 @@ mod tests {
         source_state: serde_json::Value,
     }
 
+    fn rpc_ok<T: serde::Serialize>(value: &T) -> serde_json::Value {
+        let rpc: anda_core::http::RPCResponse = Ok(ByteBufB64(serde_json::to_vec(value).unwrap()));
+        serde_json::to_value(&rpc).unwrap()
+    }
+
+    fn tool_ok<T: serde::Serialize>(value: &T) -> serde_json::Value {
+        rpc_ok(&anda_core::ToolOutput::new(ToolResponse::Ok {
+            result: serde_json::to_value(value).unwrap(),
+            next_cursor: None,
+        }))
+    }
+
+    /// Answers a conversations tool call from `conversations`, as a whole
+    /// conversation or as a delta from the requested offsets.
+    fn conversation_reply(
+        conversations: &HashMap<u64, Conversation>,
+        args: &serde_json::Value,
+    ) -> serde_json::Value {
+        let id = args["_id"].as_u64().unwrap_or_default();
+        let Some(conv) = conversations.get(&id) else {
+            let output = anda_core::ToolOutput::new(ToolResponse::Err {
+                error: crate::util::tool_response::ToolError::new(
+                    "KIP_404",
+                    format!("conversation {id} not found"),
+                ),
+                result: None,
+            });
+            return rpc_ok(&output);
+        };
+        match args["type"].as_str() {
+            Some("GetConversation") => tool_ok(conv),
+            Some("GetConversationDelta") => tool_ok(&conv.to_delta(
+                args["messages_offset"].as_u64().unwrap_or_default() as usize,
+                args["artifacts_offset"].as_u64().unwrap_or_default() as usize,
+            )),
+            other => panic!("unexpected tool args type: {other:?}"),
+        }
+    }
+
     async fn chat_gateway_handler(
         State(state): State<Arc<ChatGateway>>,
         axum::Json(request): axum::Json<anda_core::http::RPCRequest>,
     ) -> axum::Json<serde_json::Value> {
-        let rpc: anda_core::http::RPCResponse = if request.method == "agent_run" {
-            match &state.agent_output {
-                Ok(output) => Ok(ByteBufB64(serde_json::to_vec(output).unwrap())),
-                Err(()) => Err("agent unavailable".to_string()),
-            }
-        } else {
-            let (input,): (ToolInput<serde_json::Value>,) =
-                serde_json::from_slice(&request.params).unwrap();
-            let response = match input.args["type"].as_str() {
-                Some("GetSourceState") => ToolResponse::Ok {
-                    result: state.source_state.clone(),
-                    next_cursor: None,
-                },
-                Some("GetConversation") => {
-                    let id = input.args["_id"].as_u64().unwrap_or_default();
-                    match state.conversations.get(&id) {
-                        Some(conv) => ToolResponse::Ok {
-                            result: serde_json::to_value(conv).unwrap(),
-                            next_cursor: None,
-                        },
-                        None => ToolResponse::Err {
-                            error: crate::util::tool_response::ToolError::new(
-                                "KIP_404",
-                                format!("conversation {id} not found"),
-                            ),
-                            result: None,
-                        },
-                    }
+        if request.method == "agent_run" {
+            return axum::Json(match &state.agent_output {
+                Ok(output) => rpc_ok(output),
+                Err(()) => {
+                    let rpc: anda_core::http::RPCResponse = Err("agent unavailable".to_string());
+                    serde_json::to_value(&rpc).unwrap()
                 }
-                other => panic!("unexpected tool args type: {other:?}"),
-            };
-            let output: anda_core::ToolOutput<ToolResponse> = anda_core::ToolOutput::new(response);
-            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()))
-        };
-
-        axum::Json(serde_json::to_value(&rpc).unwrap())
+            });
+        }
+        let (input,): (ToolInput<serde_json::Value>,) =
+            serde_json::from_slice(&request.params).unwrap();
+        axum::Json(match input.args["type"].as_str() {
+            Some("GetSourceState") => tool_ok(&state.source_state),
+            _ => conversation_reply(&state.conversations, &input.args),
+        })
     }
 
     async fn spawn_chat_gateway(state: ChatGateway) -> Client {
@@ -1052,7 +1098,7 @@ mod tests {
     /// Records each directory the session registers before its prompts.
     async fn spawn_recording_chat_gateway(
         state: ChatGateway,
-        registered: Arc<std::sync::Mutex<Vec<String>>>,
+        registered: Arc<Mutex<Vec<String>>>,
     ) -> Client {
         let app = Router::new()
             .route("/engine/default", routing::post(chat_gateway_handler))
@@ -1102,7 +1148,8 @@ mod tests {
         let mut session = ChatSession::new(client);
 
         // Guards reject empty input and double sends.
-        assert!(session.start_send("   ".to_string()).is_none());
+        session.start_send("   ".to_string());
+        assert!(!session.sending);
         assert!(session.send("hello there".to_string()).await.is_none());
 
         assert_eq!(session.conv_id, Some(101));
@@ -1150,7 +1197,9 @@ mod tests {
 
         let error = session.send("hello".to_string()).await;
         assert_eq!(error.as_deref(), Some("model exploded"));
-        assert_eq!(session.errors, vec!["model exploded".to_string()]);
+        let last = session.messages.last().unwrap();
+        assert_eq!(last.role, "system");
+        assert_eq!(last.text().as_deref(), Some("model exploded"));
 
         let client = spawn_chat_gateway(ChatGateway {
             conversations: HashMap::new(),
@@ -1188,7 +1237,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_prompt_registers_the_launch_directory_again() {
-        let registered = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let registered = Arc::new(Mutex::new(Vec::new()));
         let client = spawn_recording_chat_gateway(
             ChatGateway {
                 conversations: HashMap::new(),
@@ -1273,20 +1322,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn conversation_chains_stop_on_cycles() {
+    async fn conversation_chains_stop_on_cycles_and_keep_what_was_read() {
         let client = spawn_chat_gateway(ChatGateway {
-            conversations: HashMap::from([(
-                400,
-                conversation(400, ConversationStatus::Idle, Some(400)),
-            )]),
+            conversations: HashMap::from([
+                (400, conversation(400, ConversationStatus::Idle, Some(400))),
+                (
+                    500,
+                    conversation(500, ConversationStatus::Completed, Some(501)),
+                ),
+            ]),
             agent_output: Ok(AgentOutput::default()),
             source_state: serde_json::json!({"c": 400}),
         })
         .await;
-        let session = ChatSession::new(client);
 
-        let chain = session.fetch_conversation_chain(400).await.unwrap();
+        let chain = fetch_chain(&client, 400, None).await.unwrap();
         assert_eq!(chain.len(), 1);
+        // A missing child ends the chain; only a missing head is an error.
+        let chain = fetch_chain(&client, 500, None).await.unwrap();
+        assert_eq!(chain.len(), 1);
+        assert!(fetch_chain(&client, 501, None).await.is_err());
     }
 
     #[tokio::test]
@@ -1311,6 +1366,45 @@ mod tests {
         });
         assert!(!session.poll(Some(7)).await);
     }
+
+    #[tokio::test]
+    async fn polls_read_deltas_unless_a_displayed_card_is_pending() {
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let observed = requests.clone();
+        let conversations =
+            HashMap::from([(7, conversation(7, ConversationStatus::Working, None))]);
+        let base = crate::test_support::spawn_http_mock(Router::new().route(
+            "/engine/default",
+            routing::post(
+                move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
+                    let observed = observed.clone();
+                    let conversations = conversations.clone();
+                    async move {
+                        let (input,): (ToolInput<serde_json::Value>,) =
+                            serde_json::from_slice(&request.params).unwrap();
+                        let kind = input.args["type"].as_str().unwrap_or_default();
+                        observed.lock().unwrap().push(kind.to_string());
+                        axum::Json(conversation_reply(&conversations, &input.args))
+                    }
+                },
+            ),
+        ))
+        .await;
+        let mut session = ChatSession::new(Client::new(base, String::new()));
+
+        // No snapshot yet, then nothing new since it.
+        assert!(session.poll(Some(7)).await);
+        assert!(!session.poll(Some(7)).await);
+        assert_eq!(session.messages.len(), 2);
+        // A pending card on display may still be resolved in place.
+        session.messages.push(pending_action_message("act_1"));
+        session.poll(Some(7)).await;
+        assert_eq!(
+            *requests.lock().unwrap(),
+            ["GetConversation", "GetConversationDelta", "GetConversation"]
+        );
+    }
+
     #[tokio::test]
     async fn pending_poll_is_applied_without_waiting_and_discarded_on_reset() {
         let client = spawn_chat_gateway(ChatGateway {
@@ -1324,8 +1418,14 @@ mod tests {
         let (tx, rx) = oneshot::channel();
         session.pending_poll = Some(rx);
         assert!(!session.finish_pending_poll());
-        tx.send(vec![conversation(7, ConversationStatus::Working, None)])
-            .unwrap();
+        assert!(
+            tx.send(vec![Fetched::Full(Box::new(conversation(
+                7,
+                ConversationStatus::Working,
+                None,
+            )))])
+            .is_ok()
+        );
         assert!(session.finish_pending_poll());
         assert_eq!(session.messages.len(), 2);
         assert!(!session.finish_pending_poll());
@@ -1334,8 +1434,12 @@ mod tests {
         session.pending_poll = Some(rx);
         session.reset();
         assert!(
-            tx.send(vec![conversation(7, ConversationStatus::Working, None)])
-                .is_err()
+            tx.send(vec![Fetched::Full(Box::new(conversation(
+                7,
+                ConversationStatus::Working,
+                None,
+            )))])
+            .is_err()
         );
         assert!(!session.finish_pending_poll());
         assert!(session.messages.is_empty());
@@ -1369,29 +1473,33 @@ mod tests {
 
     #[tokio::test]
     async fn slow_keepalive_does_not_hold_ready_conversation_data() {
-        let conv = conversation(7, ConversationStatus::Working, None);
+        let conversations =
+            HashMap::from([(7, conversation(7, ConversationStatus::Working, None))]);
         let base = crate::test_support::spawn_http_mock(Router::new().route(
             "/engine/default",
             routing::post(
                 move |axum::Json(request): axum::Json<anda_core::http::RPCRequest>| {
-                    let conv = conv.clone();
+                    let conversations = conversations.clone();
                     async move {
                         if request.method == "agent_run" {
                             return std::future::pending::<axum::Json<serde_json::Value>>().await;
                         }
-                        let output = anda_core::ToolOutput::new(ToolResponse::Ok {
-                            result: serde_json::to_value(conv).unwrap(),
-                            next_cursor: None,
-                        });
-                        let rpc: anda_core::http::RPCResponse =
-                            Ok(ByteBufB64(serde_json::to_vec(&output).unwrap()));
-                        axum::Json(serde_json::to_value(rpc).unwrap())
+                        let (input,): (ToolInput<serde_json::Value>,) =
+                            serde_json::from_slice(&request.params).unwrap();
+                        axum::Json(conversation_reply(&conversations, &input.args))
                     }
                 },
             ),
         ))
         .await;
         let mut session = ChatSession::new(Client::new(base, String::new()));
+        // A live conversation is due for its keepalive.
+        session.conv_id = Some(7);
+        session.conversation = Some(Conversation {
+            _id: 7,
+            status: ConversationStatus::Working,
+            ..Default::default()
+        });
         session.last_ping = Instant::now() - PING_INTERVAL;
         session.start_poll(Some(7));
         tokio::time::timeout(Duration::from_secs(2), async {
@@ -1405,25 +1513,6 @@ mod tests {
         .await
         .expect("conversation fetch must not wait for keepalive");
         assert_eq!(session.messages.len(), 2);
-    }
-
-    #[test]
-    fn unchanged_history_is_not_deserialized_again() {
-        let previous = (0..1000)
-            .map(|index| {
-                serde_json::to_value(assistant_message(format!("message {index}"))).unwrap()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(changed_message_values(&previous, &previous).count(), 0);
-        let mut incoming = previous.clone();
-        incoming[400] = serde_json::to_value(assistant_message("updated")).unwrap();
-        incoming.push(serde_json::to_value(assistant_message("new")).unwrap());
-        assert_eq!(
-            changed_message_values(&previous, &incoming)
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>(),
-            vec![400, 1000]
-        );
     }
 
     #[test]
