@@ -1,86 +1,97 @@
-use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput};
+use anda_core::{BoxError, FunctionDefinition, Resource, StateFeatures, Tool, ToolOutput};
 use anda_engine::context::BaseCtx;
 use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD};
-use reqwest::multipart::{Form, Part};
-use serde::{Deserialize, Serialize};
+use base64::{Engine, display::Base64Display, engine::general_purpose::STANDARD};
+use reqwest::multipart::Part;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use crate::config::TranscriptionConfig;
+use crate::config::{self, TranscriptionConfig};
+use crate::engine::ResourceStore;
 use crate::util::http_client::check_http_response;
 
 mod google;
-mod groq;
 mod local_whisper;
-mod openai;
 mod stepfun;
+mod whisper;
 
-pub use google::GoogleSttProvider;
-pub use groq::GroqProvider;
-pub use local_whisper::LocalWhisperProvider;
-pub use openai::OpenAiWhisperProvider;
-pub use stepfun::StepFunProvider;
+use google::GoogleSttProvider;
+use local_whisper::LocalWhisperProvider;
+use stepfun::StepFunProvider;
+use whisper::WhisperApiProvider;
 
 /// Maximum upload size accepted by most Whisper-compatible APIs (25 MB).
 const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
-/// Request timeout for transcription API calls (seconds).
-const TRANSCRIPTION_TIMEOUT_SECS: u64 = 120;
+/// Request timeout for cloud transcription API calls.
+const TRANSCRIPTION_TIMEOUT: Duration = Duration::from_secs(120);
 
 const WHISPER_COMPATIBLE_AUDIO_FORMATS: &[&str] = &[
     "webm", "ogg", "mp4", "m4a", "mp3", "mpeg", "mpga", "wav", "flac", "opus",
+];
+
+/// MIME types of the audio extensions Whisper-compatible APIs accept. `.oga`
+/// is uploaded as `.ogg` (see [`normalize_audio_filename`]).
+const AUDIO_MIME_TYPES: &[(&str, &str)] = &[
+    ("flac", "audio/flac"),
+    ("m4a", "audio/mp4"),
+    ("mp3", "audio/mpeg"),
+    ("mp4", "audio/mp4"),
+    ("mpeg", "audio/mpeg"),
+    ("mpga", "audio/mpeg"),
+    ("oga", "audio/ogg"),
+    ("ogg", "audio/ogg"),
+    ("opus", "audio/opus"),
+    ("wav", "audio/wav"),
+    ("webm", "audio/webm"),
 ];
 
 // ── Audio utilities ─────────────────────────────────────────────
 
 /// Map file extension to MIME type for Whisper-compatible transcription APIs.
 fn mime_for_audio(extension: &str) -> Option<&'static str> {
-    match extension.to_ascii_lowercase().as_str() {
-        "flac" => Some("audio/flac"),
-        "mp3" | "mpeg" | "mpga" => Some("audio/mpeg"),
-        "mp4" | "m4a" => Some("audio/mp4"),
-        "ogg" | "oga" => Some("audio/ogg"),
-        "opus" => Some("audio/opus"),
-        "wav" => Some("audio/wav"),
-        "webm" => Some("audio/webm"),
-        _ => None,
-    }
+    AUDIO_MIME_TYPES
+        .iter()
+        .find(|(ext, _)| ext.eq_ignore_ascii_case(extension))
+        .map(|(_, mime)| *mime)
+}
+
+/// Whether `extension` names an audio container some provider accepts.
+fn is_audio_extension(extension: &str) -> bool {
+    extension.eq_ignore_ascii_case("pcm") || mime_for_audio(extension).is_some()
 }
 
 pub fn supported_audio_resource_tags() -> Vec<String> {
-    [
-        "audio", "flac", "mp3", "mp4", "m4a", "mpeg", "mpga", "oga", "ogg", "opus", "pcm", "wav",
-        "webm",
-    ]
-    .into_iter()
-    .map(ToString::to_string)
-    .collect()
+    ["audio", "pcm"]
+        .into_iter()
+        .chain(AUDIO_MIME_TYPES.iter().map(|(ext, _)| *ext))
+        .map(ToString::to_string)
+        .collect()
 }
 
 pub fn is_audio_resource(resource: &Resource) -> bool {
-    resource.tags.iter().any(|tag| {
-        let tag = tag.to_ascii_lowercase();
-        tag == "audio" || tag == "pcm" || mime_for_audio(&tag).is_some()
-    }) || resource
-        .mime_type
-        .as_deref()
-        .is_some_and(|mime| mime.trim().to_ascii_lowercase().starts_with("audio/"))
+    resource
+        .tags
+        .iter()
+        .any(|tag| tag.eq_ignore_ascii_case("audio") || is_audio_extension(tag))
+        || resource.mime_type.as_deref().is_some_and(|mime| {
+            mime.trim()
+                .get(..6)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("audio/"))
+        })
 }
 
 pub fn audio_resource_file_name(resource: &Resource, fallback_stem: &str) -> String {
     let name = resource.name.trim();
     if let Some((_, ext)) = name.rsplit_once('.')
-        && (ext.eq_ignore_ascii_case("pcm") || mime_for_audio(ext).is_some())
+        && is_audio_extension(ext)
     {
         return name.to_string();
     }
 
-    if let Some(ext) = resource.tags.iter().find_map(|tag| {
-        let tag = tag.to_ascii_lowercase();
-        (tag == "pcm" || mime_for_audio(&tag).is_some()).then_some(tag)
-    }) {
-        return format!("{fallback_stem}.{ext}");
+    if let Some(ext) = resource.tags.iter().find(|tag| is_audio_extension(tag)) {
+        return format!("{fallback_stem}.{}", ext.to_ascii_lowercase());
     }
 
     if let Some(ext) = resource
@@ -127,8 +138,6 @@ fn normalize_audio_filename(file_name: &str) -> String {
 }
 
 /// Resolve MIME type and normalize filename from extension.
-///
-/// No size check — callers enforce their own limits.
 fn resolve_audio_format(file_name: &str) -> Result<(String, &'static str), BoxError> {
     let normalized_name = normalize_audio_filename(file_name);
     let extension = normalized_name
@@ -137,28 +146,11 @@ fn resolve_audio_format(file_name: &str) -> Result<(String, &'static str), BoxEr
         .unwrap_or("");
     let mime = mime_for_audio(extension).ok_or_else(|| {
         format!(
-            "Unsupported audio format '.{extension}' — \
-                 accepted: flac, mp3, mp4, mpeg, mpga, m4a, ogg, opus, wav, webm"
+            "Unsupported audio format '.{extension}' — accepted: {}",
+            WHISPER_COMPATIBLE_AUDIO_FORMATS.join(", ")
         )
     })?;
     Ok((normalized_name, mime))
-}
-
-/// Validate audio data and resolve MIME type from file name.
-///
-/// Enforces the 25 MB cloud API cap. Returns `(normalized_filename, mime_type)` on success.
-fn validate_audio(audio_data: &[u8], file_name: &str) -> Result<(String, &'static str), BoxError> {
-    if audio_data.is_empty() {
-        Err("Audio data must not be empty".into())
-    } else if audio_data.len() > MAX_AUDIO_BYTES {
-        Err(format!(
-            "Audio file too large ({} bytes, max {MAX_AUDIO_BYTES})",
-            audio_data.len()
-        )
-        .into())
-    } else {
-        resolve_audio_format(file_name)
-    }
 }
 
 fn audio_extension(file_name: &str) -> Option<String> {
@@ -167,70 +159,103 @@ fn audio_extension(file_name: &str) -> Option<String> {
         .map(|(_, ext)| ext.to_ascii_lowercase())
 }
 
+/// Rejects empty audio and audio larger than `max_bytes`.
+fn check_audio_size(audio: &[u8], max_bytes: usize) -> Result<(), BoxError> {
+    if audio.is_empty() {
+        return Err("Audio data must not be empty".into());
+    }
+    if audio.len() > max_bytes {
+        return Err(format!(
+            "Audio file too large ({} bytes, max {max_bytes})",
+            audio.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Serializes bytes as a Base64 string straight into a JSON body, without an
+/// intermediate `String` copy of the audio.
+struct Base64<'a>(&'a [u8]);
+
+impl Serialize for Base64<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&Base64Display::new(self.0, &STANDARD))
+    }
+}
+
+// ── Config validation ───────────────────────────────────────────
+
+/// A trimmed, non-empty config value; `field` is its path under `transcription`.
+fn required(value: &str, field: &str) -> Result<String, BoxError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("`transcription.{field}` must not be empty").into());
+    }
+    Ok(value.to_string())
+}
+
+/// A required HTTP or HTTPS endpoint URL.
+fn http_url(value: &str, field: &str) -> Result<String, BoxError> {
+    let url = required(value, field)?;
+    let parsed = url
+        .parse::<reqwest::Url>()
+        .map_err(|err| format!("invalid `transcription.{field}` {url:?}: {err}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!(
+            "`transcription.{field}` must use http or https, got {:?}",
+            parsed.scheme()
+        )
+        .into());
+    }
+    Ok(url)
+}
+
 // ── TranscriptionProvider trait ─────────────────────────────────
 
 /// Trait for speech-to-text provider implementations.
 #[async_trait]
 pub trait TranscriptionProvider: Send + Sync {
-    /// Human-readable provider name (e.g. "groq", "openai").
-    fn name(&self) -> &str;
-
     /// Audio container/extension names accepted by this provider.
     fn supported_audio_formats(&self) -> &'static [&'static str] {
         WHISPER_COMPATIBLE_AUDIO_FORMATS
     }
 
-    /// Transcribe raw audio bytes. `file_name` includes the extension for
-    /// format detection (e.g. "voice.ogg").
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError>;
+    /// Transcribe audio bytes. `file_name` includes the extension for format
+    /// detection (e.g. "voice.ogg").
+    async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError>;
 }
 
 // ── Shared Whisper requests and responses ───────────────────────
 
-fn whisper_form(
-    audio_data: &[u8],
-    file_name: &str,
-    model: &str,
-    language: Option<&str>,
-    prompt: Option<&str>,
-) -> Result<Form, BoxError> {
-    let (name, mime) = validate_audio(audio_data, file_name)?;
-    let file = Part::bytes(audio_data.to_vec())
-        .file_name(name)
-        .mime_str(mime)?;
-    let mut form = Form::new()
-        .part("file", file)
-        .text("model", model.to_string())
-        .text("response_format", "json");
-    if let Some(language) = language {
-        form = form.text("language", language.to_string());
-    }
-    if let Some(prompt) = prompt {
-        form = form.text("prompt", prompt.to_string());
-    }
-    Ok(form)
+/// The multipart `file` part; the audio moves into the request body.
+fn whisper_file_part(audio: Vec<u8>, file_name: &str) -> Result<Part, BoxError> {
+    let (name, mime) = resolve_audio_format(file_name)?;
+    Ok(Part::bytes(audio).file_name(name).mime_str(mime)?)
 }
 
-/// Parse a faster-whisper-compatible JSON response (`{ "text": "..." }`).
+/// Parse a Whisper-compatible JSON response (`{ "text": "..." }`).
 ///
 /// Checks HTTP status before attempting JSON parsing so that non-JSON error
 /// bodies (plain text, HTML, empty 5xx) produce a readable status error
 /// rather than a confusing "Failed to parse transcription response".
 async fn parse_whisper_response(resp: reqwest::Response) -> Result<String, BoxError> {
-    let resp = check_http_response(resp, "Transcription").await?;
-    let body: serde_json::Value = resp.json().await.map_err(|err| {
-        format!(
-            "Failed to parse transcription response: {:?}",
-            err.without_url()
-        )
-    })?;
+    #[derive(Deserialize)]
+    struct WhisperResponse {
+        text: String,
+    }
 
-    let text = body["text"]
-        .as_str()
-        .ok_or("Transcription response missing 'text' field")?
-        .to_string();
-
-    Ok(text)
+    let body: WhisperResponse = check_http_response(resp, "Transcription")
+        .await?
+        .json()
+        .await
+        .map_err(|err| {
+            format!(
+                "Failed to parse transcription response: {:?}",
+                err.without_url()
+            )
+        })?;
+    Ok(body.text)
 }
 
 // ── TranscriptionManager ────────────────────────────────────────
@@ -238,16 +263,18 @@ async fn parse_whisper_response(resp: reqwest::Response) -> Result<String, BoxEr
 /// Manages multiple STT providers and routes transcription requests.
 pub struct TranscriptionManager {
     providers: HashMap<String, Box<dyn TranscriptionProvider>>,
+    /// Always a key of `providers`.
     default_provider: String,
+    /// Loads the audio attachments the model names by `resource_id`.
+    resource_store: Option<Arc<ResourceStore>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct TranscriptionArgs {
-    #[serde(default)]
     pub provider: Option<String>,
-    #[serde(default)]
+    pub resource_id: Option<u64>,
     pub file_name: Option<String>,
-    #[serde(default)]
     pub audio_base64: Option<String>,
 }
 
@@ -261,125 +288,84 @@ pub struct TranscriptionOutput {
 impl TranscriptionManager {
     pub const NAME: &'static str = "transcribe_audio";
 
-    /// Build a `TranscriptionManager` from config.
+    /// Build a `TranscriptionManager` from config; `None` when transcription
+    /// is disabled.
     ///
-    /// Registers each provider when its config section is present.
-    ///
-    /// Invalid providers are skipped with a warning. An unavailable default
-    /// provider is reported at startup.
-    pub fn new(config: &TranscriptionConfig, http: reqwest::Client) -> Result<Self, BoxError> {
-        let mut providers: HashMap<String, Box<dyn TranscriptionProvider>> = HashMap::new();
-
+    /// An invalid default provider fails with its own error; other invalid
+    /// providers are skipped with a warning.
+    pub fn new(
+        config: &TranscriptionConfig,
+        http: reqwest::Client,
+    ) -> Result<Option<Self>, BoxError> {
         if !config.enabled {
-            return Ok(Self {
-                providers,
-                default_provider: config.default_provider.clone(),
-            });
-        }
-
-        if let Some(ref groq_cfg) = config.groq {
-            match GroqProvider::from_config(
-                groq_cfg,
-                config.initial_prompt.as_deref(),
-                http.clone(),
-            ) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping Groq STT provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref openai_cfg) = config.openai {
-            match OpenAiWhisperProvider::from_config(
-                openai_cfg,
-                config.initial_prompt.as_deref(),
-                http.clone(),
-            ) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping OpenAI STT provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref google_cfg) = config.google {
-            match GoogleSttProvider::from_config(google_cfg, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping Google STT provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref stepfun_cfg) = config.stepfun {
-            match StepFunProvider::from_config(stepfun_cfg, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping StepFun STT provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref local_cfg) = config.local_whisper {
-            match LocalWhisperProvider::from_config(local_cfg, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping local_whisper STT provider: {e}");
-                }
-            }
+            return Ok(None);
         }
 
         let default_provider = config.default_provider.clone();
+        let prompt = config.initial_prompt.as_deref();
+        let mut providers = HashMap::new();
+        if let Some(cfg) = &config.groq {
+            let provider = WhisperApiProvider::groq(cfg, prompt, http.clone());
+            register(&mut providers, &default_provider, "groq", provider)?;
+        }
+        if let Some(cfg) = &config.openai {
+            let provider = WhisperApiProvider::openai(cfg, prompt, http.clone());
+            register(&mut providers, &default_provider, "openai", provider)?;
+        }
+        if let Some(cfg) = &config.google {
+            let provider = GoogleSttProvider::new(cfg, http.clone());
+            register(&mut providers, &default_provider, "google", provider)?;
+        }
+        if let Some(cfg) = &config.stepfun {
+            let provider = StepFunProvider::new(cfg, http.clone());
+            register(&mut providers, &default_provider, "stepfun", provider)?;
+        }
+        if let Some(cfg) = &config.local_whisper {
+            let provider = LocalWhisperProvider::new(cfg, http);
+            register(&mut providers, &default_provider, "local_whisper", provider)?;
+        }
 
-        if !providers.contains_key(&default_provider) {
-            let available: Vec<&str> = providers.keys().map(|k| k.as_str()).collect();
+        let manager = Self {
+            providers,
+            default_provider,
+            resource_store: None,
+        };
+        if !manager.providers.contains_key(&manager.default_provider) {
             return Err(format!(
-                "Default transcription provider '{}' is not configured. Available: {available:?}",
-                default_provider
+                "Default transcription provider '{}' is not configured (available: {})",
+                manager.default_provider,
+                manager.available_providers().join(", ")
             )
             .into());
         }
-
-        Ok(Self {
-            providers,
-            default_provider,
-        })
+        Ok(Some(manager))
     }
 
-    pub fn is_enabled(&self) -> bool {
-        !self.providers.is_empty()
+    pub fn with_resource_store(mut self, resource_store: Arc<ResourceStore>) -> Self {
+        self.resource_store = Some(resource_store);
+        self
     }
 
     /// Transcribe audio using the default provider.
-    pub async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        self.transcribe_with_provider(audio_data, file_name, &self.default_provider)
+    pub async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError> {
+        self.transcribe_with(&self.default_provider, audio, file_name)
             .await
     }
 
     /// Transcribe audio using a specific named provider.
-    pub async fn transcribe_with_provider(
+    async fn transcribe_with(
         &self,
-        audio_data: &[u8],
-        file_name: &str,
         provider: &str,
+        audio: Vec<u8>,
+        file_name: &str,
     ) -> Result<String, BoxError> {
-        let p = self.providers.get(provider).ok_or_else(|| {
-            let available = self.available_providers();
-            format!("Transcription provider '{provider}' not configured. Available: {available:?}")
+        let stt = self.providers.get(provider).ok_or_else(|| {
+            format!(
+                "Transcription provider '{provider}' not configured (available: {})",
+                self.available_providers().join(", ")
+            )
         })?;
-
-        p.transcribe(audio_data, file_name).await
+        stt.transcribe(audio, file_name).await
     }
 
     /// List registered provider names.
@@ -389,18 +375,59 @@ impl TranscriptionManager {
         names
     }
 
+    /// Audio formats the default provider accepts.
     pub fn supported_audio_formats(&self) -> Vec<String> {
-        self.providers
-            .get(&self.default_provider)
-            .map(|provider| {
-                provider
-                    .supported_audio_formats()
-                    .iter()
-                    .map(|format| (*format).to_string())
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.providers[&self.default_provider]
+            .supported_audio_formats()
+            .iter()
+            .map(|format| (*format).to_string())
+            .collect()
     }
+
+    /// The attachment `resource_id` names, else the first attached audio
+    /// resource.
+    async fn audio_resource(
+        &self,
+        ctx: &BaseCtx,
+        resource_id: Option<u64>,
+        resources: Vec<Resource>,
+    ) -> Result<Resource, BoxError> {
+        let Some(id) = resource_id.filter(|id| *id > 0) else {
+            return resources
+                .into_iter()
+                .find(is_audio_resource)
+                .ok_or_else(|| "no audio provided: pass resource_id or audio_base64".into());
+        };
+        let store = self
+            .resource_store
+            .as_ref()
+            .ok_or("resource_id is not supported here; pass audio_base64")?;
+        let resource = store.get_resource_for(id, ctx.caller()).await?;
+        if !is_audio_resource(&resource) {
+            return Err(format!("resource {id} ({}) is not audio", resource.name).into());
+        }
+        Ok(resource)
+    }
+}
+
+fn register<P: TranscriptionProvider + 'static>(
+    providers: &mut HashMap<String, Box<dyn TranscriptionProvider>>,
+    default_provider: &str,
+    name: &str,
+    provider: Result<P, BoxError>,
+) -> Result<(), BoxError> {
+    match provider {
+        Ok(provider) => {
+            providers.insert(name.to_string(), Box::new(provider));
+        }
+        Err(err) if name == default_provider => {
+            return Err(
+                format!("Default transcription provider '{name}' is invalid: {err}").into(),
+            );
+        }
+        Err(err) => log::warn!("Skipping {name} STT provider: {err}"),
+    }
+    Ok(())
 }
 
 impl Tool<BaseCtx> for TranscriptionManager {
@@ -412,7 +439,12 @@ impl Tool<BaseCtx> for TranscriptionManager {
     }
 
     fn description(&self) -> String {
-        "Transcribe speech audio into text. Accepts an audio resource artifact, or an audio_base64 payload for direct tool calls.".to_string()
+        format!(
+            "Transcribe the speech in an audio attachment into text with a speech-to-text provider; it does not describe music or other sounds. Pass the attachment's resource_id. Available providers: {} (default: {}, accepting {}).",
+            self.available_providers().join(", "),
+            self.default_provider,
+            self.supported_audio_formats().join(", ")
+        )
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -426,16 +458,20 @@ impl Tool<BaseCtx> for TranscriptionManager {
                         "type": ["string", "null"],
                         "description": "Optional transcription provider name. Omit to use the configured default provider."
                     },
+                    "resource_id": {
+                        "type": ["integer", "null"],
+                        "description": "Resource _id of the audio attachment to transcribe."
+                    },
                     "file_name": {
                         "type": ["string", "null"],
-                        "description": "Audio file name with extension. Required when audio_base64 is provided and useful for format detection."
+                        "description": "Audio file name with extension, used for format detection. Required with audio_base64; omit for attachments."
                     },
                     "audio_base64": {
                         "type": ["string", "null"],
-                        "description": "Optional base64-encoded audio data. Prefer passing audio resources when available."
+                        "description": "Base64-encoded audio sent directly by a client. Omit when passing resource_id."
                     }
                 },
-                "required": ["provider", "file_name", "audio_base64"],
+                "required": ["provider", "resource_id", "file_name", "audio_base64"],
                 "additionalProperties": false
             }),
             strict: Some(true),
@@ -448,47 +484,40 @@ impl Tool<BaseCtx> for TranscriptionManager {
 
     async fn call(
         &self,
-        _ctx: BaseCtx,
+        ctx: BaseCtx,
         args: Self::Args,
         resources: Vec<Resource>,
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
-        let provider = crate::config::normalize_optional(&args.provider)
-            .unwrap_or_else(|| self.default_provider.clone());
-        let (audio, file_name) = if let Some(audio_base64) = args
-            .audio_base64
-            .as_deref()
-            .map(str::trim)
-            .filter(|audio| !audio.is_empty())
-        {
-            let file_name = args
-                .file_name
-                .as_deref()
-                .and_then(crate::config::normalize_string)
-                .unwrap_or_else(|| "audio.wav".to_string());
-            let audio = STANDARD
-                .decode(audio_base64)
-                .map_err(|_| "invalid audio_base64 payload")?;
-            (audio, file_name)
-        } else {
-            let resource = resources
-                .into_iter()
-                .find(is_audio_resource)
-                .ok_or("no audio resource provided")?;
-            let file_name = args
-                .file_name
-                .as_deref()
-                .and_then(crate::config::normalize_string)
-                .unwrap_or_else(|| audio_resource_file_name(&resource, "audio"));
-            let audio = resource
-                .blob
-                .ok_or("audio resource missing inline blob data")?
-                .0;
-            (audio, file_name)
+        let TranscriptionArgs {
+            provider,
+            resource_id,
+            file_name,
+            audio_base64,
+        } = args;
+        let provider =
+            config::normalize_optional(&provider).unwrap_or_else(|| self.default_provider.clone());
+        let file_name = config::normalize_optional(&file_name);
+        // The Base64 payload is dropped once decoded, before the upload starts.
+        let (audio, file_name) = match audio_base64.filter(|audio| !audio.trim().is_empty()) {
+            Some(audio_base64) => {
+                let audio = STANDARD
+                    .decode(audio_base64.trim())
+                    .map_err(|_| "invalid audio_base64 payload")?;
+                (audio, file_name.unwrap_or_else(|| "audio.wav".to_string()))
+            }
+            None => {
+                let resource = self.audio_resource(&ctx, resource_id, resources).await?;
+                let file_name =
+                    file_name.unwrap_or_else(|| audio_resource_file_name(&resource, "audio"));
+                let audio = resource
+                    .blob
+                    .ok_or("audio resource missing inline blob data")?
+                    .0;
+                (audio, file_name)
+            }
         };
 
-        let text = self
-            .transcribe_with_provider(&audio, &file_name, &provider)
-            .await?;
+        let text = self.transcribe_with(&provider, audio, &file_name).await?;
         Ok(ToolOutput::new(TranscriptionOutput {
             text,
             provider,
@@ -500,20 +529,55 @@ impl Tool<BaseCtx> for TranscriptionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        GoogleSttConfig, GroqSttConfig, LocalWhisperConfig, OpenAiSttConfig, StepFunSttConfig,
+    };
     use crate::util::http_client::new_reqwest_client;
     use crate::util::json_schema::assert_openai_strict_parameters;
-    use std::collections::HashMap;
+    use anda_core::ByteBufB64;
+    use anda_engine::engine::EngineBuilder;
+    use axum::{Router, routing};
+
+    /// Echoes the received file name and checks the audio buffer's address.
+    struct EchoProvider(Option<usize>);
+
+    #[async_trait]
+    impl TranscriptionProvider for EchoProvider {
+        async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError> {
+            if let Some(ptr) = self.0 {
+                assert_eq!(audio.as_ptr() as usize, ptr, "audio was copied");
+            }
+            Ok(format!("{file_name}:{}", audio.len()))
+        }
+    }
+
+    fn echo_manager(expected_ptr: Option<usize>) -> TranscriptionManager {
+        TranscriptionManager {
+            providers: HashMap::from([(
+                "echo".to_string(),
+                Box::new(EchoProvider(expected_ptr)) as Box<dyn TranscriptionProvider>,
+            )]),
+            default_provider: "echo".to_string(),
+            resource_store: None,
+        }
+    }
+
+    fn mock_ctx() -> BaseCtx {
+        EngineBuilder::new().mock_ctx().base
+    }
 
     #[test]
     fn transcription_tool_schema_is_openai_strict() {
-        let manager = TranscriptionManager {
-            providers: HashMap::new(),
-            default_provider: "openai".to_string(),
-        };
-        let definition = manager.definition();
+        let definition = echo_manager(None).definition();
 
         assert_eq!(definition.strict, Some(true));
         assert_openai_strict_parameters(&definition.parameters);
+        assert!(definition.description.contains("resource_id"));
+        assert!(
+            definition
+                .description
+                .contains("Available providers: echo (default: echo, accepting webm, ogg")
+        );
     }
 
     #[test]
@@ -524,16 +588,44 @@ mod tests {
 
     #[test]
     fn resolve_audio_format_rejects_unknown_extensions() {
-        assert!(resolve_audio_format("voice.txt").is_err());
+        let err = resolve_audio_format("voice.txt").unwrap_err().to_string();
+        assert!(err.contains("Unsupported audio format '.txt'"), "{err}");
+        assert!(err.contains("accepted: webm, ogg, mp4"), "{err}");
         assert_eq!(resolve_audio_format("voice.mp3").unwrap().1, "audio/mpeg");
+        assert_eq!(resolve_audio_format("voice.OGA").unwrap().1, "audio/ogg");
     }
 
-    use crate::config::{
-        GoogleSttConfig, GroqSttConfig, LocalWhisperConfig, OpenAiSttConfig, StepFunSttConfig,
-    };
-    use anda_core::ByteBufB64;
-    use anda_engine::engine::EngineBuilder;
-    use axum::{Router, routing};
+    #[test]
+    fn config_helpers_trim_and_validate() {
+        assert_eq!(required(" key ", "groq.api_key").unwrap(), "key");
+        assert!(
+            required(" ", "groq.api_key")
+                .unwrap_err()
+                .to_string()
+                .contains("`transcription.groq.api_key` must not be empty")
+        );
+        assert_eq!(
+            http_url(" https://example.com/asr ", "stepfun.api_url").unwrap(),
+            "https://example.com/asr"
+        );
+        for (url, expected) in [
+            (" ", "must not be empty"),
+            ("not a url", "invalid `transcription.stepfun.api_url`"),
+            ("ftp://example.com", "must use http or https"),
+        ] {
+            let err = http_url(url, "stepfun.api_url").unwrap_err().to_string();
+            assert!(err.contains(expected), "{url}: {err}");
+        }
+    }
+
+    #[test]
+    fn base64_serializes_without_an_intermediate_string() {
+        let json = serde_json::to_string(&json!({ "data": Base64(b"audio") })).unwrap();
+        assert_eq!(
+            json,
+            format!("{{\"data\":\"{}\"}}", STANDARD.encode(b"audio"))
+        );
+    }
 
     async fn spawn_whisper_mock(text: &'static str) -> String {
         let app = Router::new().route(
@@ -558,15 +650,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn manager_disabled_config_registers_no_providers() {
-        let manager =
-            TranscriptionManager::new(&TranscriptionConfig::default(), new_reqwest_client())
-                .unwrap();
+    fn new_manager(config: &TranscriptionConfig) -> TranscriptionManager {
+        TranscriptionManager::new(config, new_reqwest_client())
+            .unwrap()
+            .expect("transcription is enabled")
+    }
 
-        assert!(!manager.is_enabled());
-        assert!(manager.available_providers().is_empty());
-        assert!(manager.supported_audio_formats().is_empty());
+    fn manager_error(config: &TranscriptionConfig) -> String {
+        TranscriptionManager::new(config, new_reqwest_client())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
+    }
+
+    #[test]
+    fn manager_is_none_when_disabled() {
+        assert!(
+            TranscriptionManager::new(&TranscriptionConfig::default(), new_reqwest_client())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -597,9 +700,7 @@ mod tests {
             ..Default::default()
         };
 
-        let manager = TranscriptionManager::new(&config, new_reqwest_client()).unwrap();
-
-        assert!(manager.is_enabled());
+        let manager = new_manager(&config);
         assert_eq!(
             manager.available_providers(),
             vec!["google", "groq", "local_whisper", "stepfun"]
@@ -614,58 +715,59 @@ mod tests {
     }
 
     #[test]
-    fn manager_rejects_unavailable_default_provider() {
+    fn manager_reports_why_the_default_provider_is_unavailable() {
+        // A configured but invalid default provider fails with its own cause.
         let config = TranscriptionConfig {
             enabled: true,
             default_provider: "openai".to_string(),
             openai: Some(OpenAiSttConfig::default()),
             ..Default::default()
         };
+        assert_eq!(
+            manager_error(&config),
+            "Default transcription provider 'openai' is invalid: `transcription.openai.api_key` must not be empty"
+        );
 
-        let err = TranscriptionManager::new(&config, new_reqwest_client())
-            .map(|_| ())
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Default transcription provider 'openai'")
+        let mut config = enabled_config_with_groq("http://localhost:9/transcribe".to_string());
+        config.default_provider = "google".to_string();
+        assert_eq!(
+            manager_error(&config),
+            "Default transcription provider 'google' is not configured (available: groq)"
         );
     }
 
     #[tokio::test]
     async fn manager_routes_transcription_to_default_provider() {
         let url = spawn_whisper_mock("routed text").await;
-        let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
-                .unwrap();
+        let manager = new_manager(&enabled_config_with_groq(url));
 
-        let text = manager.transcribe(b"data", "voice.mp3").await.unwrap();
+        let text = manager
+            .transcribe(b"data".to_vec(), "voice.mp3")
+            .await
+            .unwrap();
         assert_eq!(text, "routed text");
 
         let err = manager
-            .transcribe_with_provider(b"data", "voice.mp3", "missing")
+            .transcribe_with("missing", b"data".to_vec(), "voice.mp3")
             .await
             .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("Transcription provider 'missing' not configured")
+        assert_eq!(
+            err.to_string(),
+            "Transcription provider 'missing' not configured (available: groq)"
         );
     }
 
     #[tokio::test]
     async fn transcription_tool_call_decodes_base64_payload() {
         let url = spawn_whisper_mock("from base64").await;
-        let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
-                .unwrap();
-        let ctx = EngineBuilder::new().mock_ctx().base;
+        let manager = new_manager(&enabled_config_with_groq(url));
 
         let output = manager
             .call(
-                ctx,
+                mock_ctx(),
                 TranscriptionArgs {
-                    provider: None,
-                    file_name: None,
                     audio_base64: Some(STANDARD.encode(b"data")),
+                    ..Default::default()
                 },
                 Vec::new(),
             )
@@ -680,10 +782,7 @@ mod tests {
     #[tokio::test]
     async fn transcription_tool_call_reads_audio_resource_blob() {
         let url = spawn_whisper_mock("from resource").await;
-        let manager =
-            TranscriptionManager::new(&enabled_config_with_groq(url), new_reqwest_client())
-                .unwrap();
-        let ctx = EngineBuilder::new().mock_ctx().base;
+        let manager = new_manager(&enabled_config_with_groq(url));
 
         let resource = Resource {
             name: "note.ogg".to_string(),
@@ -692,7 +791,7 @@ mod tests {
             ..Default::default()
         };
         let output = manager
-            .call(ctx, TranscriptionArgs::default(), vec![resource])
+            .call(mock_ctx(), TranscriptionArgs::default(), vec![resource])
             .await
             .unwrap();
 
@@ -702,15 +801,11 @@ mod tests {
 
     #[tokio::test]
     async fn transcription_tool_call_rejects_bad_input() {
-        let manager = TranscriptionManager {
-            providers: HashMap::new(),
-            default_provider: "groq".to_string(),
-        };
+        let manager = echo_manager(None);
 
-        let ctx = EngineBuilder::new().mock_ctx().base;
         let err = manager
             .call(
-                ctx.clone(),
+                mock_ctx(),
                 TranscriptionArgs {
                     audio_base64: Some("not base64!!!".to_string()),
                     ..Default::default()
@@ -723,11 +818,88 @@ mod tests {
         assert!(err.to_string().contains("invalid audio_base64 payload"));
 
         let err = manager
-            .call(ctx, TranscriptionArgs::default(), Vec::new())
+            .call(mock_ctx(), TranscriptionArgs::default(), Vec::new())
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("no audio resource provided"));
+        assert!(err.to_string().contains("no audio provided"));
+
+        let err = manager
+            .call(
+                mock_ctx(),
+                TranscriptionArgs {
+                    resource_id: Some(1),
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert!(err.to_string().contains("resource_id is not supported"));
+    }
+
+    #[tokio::test]
+    async fn resource_id_loads_an_owned_audio_attachment() {
+        let ctx = mock_ctx();
+        let store = Arc::new(
+            ResourceStore::connect(crate::test_support::memory_db("stt_resources").await)
+                .await
+                .unwrap(),
+        );
+        let audio = Resource {
+            name: "memo.m4a".to_string(),
+            tags: vec!["audio".to_string()],
+            blob: Some(ByteBufB64(b"voice".to_vec())),
+            ..Default::default()
+        };
+        let text = Resource {
+            name: "notes.txt".to_string(),
+            tags: vec!["text".to_string()],
+            blob: Some(ByteBufB64(b"hi".to_vec())),
+            ..Default::default()
+        };
+        let saved = store
+            .persist_resources(ctx.caller(), vec![audio.clone(), text])
+            .await
+            .unwrap();
+        // Message references carry no bytes: the tool must load them by id.
+        assert!(saved[0].blob.is_none());
+        // Different bytes, so the store does not dedupe it into ours.
+        let mut foreign_audio = audio;
+        foreign_audio.blob = Some(ByteBufB64(b"other voice".to_vec()));
+        let foreign = store
+            .persist_resources(
+                &anda_core::Principal::management_canister(),
+                vec![foreign_audio],
+            )
+            .await
+            .unwrap()[0]
+            ._id;
+        let manager = echo_manager(None).with_resource_store(store);
+        let call = |id: u64| {
+            manager.call(
+                ctx.clone(),
+                TranscriptionArgs {
+                    resource_id: Some(id),
+                    ..Default::default()
+                },
+                Vec::new(),
+            )
+        };
+
+        let output = call(saved[0]._id).await.unwrap();
+        assert_eq!(output.output.text, "memo.m4a:5");
+        assert_eq!(output.output.file_name, "memo.m4a");
+
+        let err = call(saved[1]._id).await.map(|_| ()).unwrap_err();
+        assert!(
+            err.to_string().contains("(notes.txt) is not audio"),
+            "{err}"
+        );
+
+        let err = call(foreign).await.map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("permission denied"), "{err}");
     }
 
     #[test]
@@ -770,7 +942,10 @@ mod tests {
         };
         assert!(!is_audio_resource(&not_audio));
 
-        assert!(supported_audio_resource_tags().contains(&"audio".to_string()));
+        let tags = supported_audio_resource_tags();
+        for tag in ["audio", "pcm", "oga", "m4a", "webm"] {
+            assert!(tags.contains(&tag.to_string()), "{tag}");
+        }
     }
 
     #[test]
@@ -788,10 +963,16 @@ mod tests {
             assert_eq!(audio_resource_file_name(&resource, "audio"), expected);
         }
         assert!(
-            validate_audio(b"", "empty.wav")
+            check_audio_size(b"", 10)
                 .unwrap_err()
                 .to_string()
                 .contains("empty")
+        );
+        assert!(
+            check_audio_size(b"12345", 4)
+                .unwrap_err()
+                .to_string()
+                .contains("too large (5 bytes, max 4)")
         );
     }
 
@@ -807,9 +988,9 @@ mod tests {
         for prompt in [None, Some("  "), Some("  Anda project names  ")] {
             let mut config = enabled_config_with_groq(format!("{base}/transcribe"));
             config.initial_prompt = prompt.map(str::to_string);
-            let manager = TranscriptionManager::new(&config, new_reqwest_client()).unwrap();
+            let manager = new_manager(&config);
             let multipart = manager
-                .transcribe(b"audio-data", "voice.oga")
+                .transcribe(b"audio-data".to_vec(), "voice.oga")
                 .await
                 .unwrap();
             assert!(multipart.contains("filename=\"voice.ogg\""));
@@ -825,27 +1006,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_moves_resource_blob_without_copying() {
-        struct InspectProvider(usize);
-        #[async_trait]
-        impl TranscriptionProvider for InspectProvider {
-            fn name(&self) -> &str {
-                "inspect"
-            }
-            async fn transcribe(&self, audio: &[u8], _: &str) -> Result<String, BoxError> {
-                assert_eq!(audio.as_ptr() as usize, self.0);
-                Ok("same buffer".into())
-            }
-        }
+    async fn tool_moves_audio_into_the_provider_without_copying() {
         let audio = vec![1u8; 1024 * 1024];
-        let provider = InspectProvider(audio.as_ptr() as usize);
-        let manager = TranscriptionManager {
-            providers: HashMap::from([(
-                "inspect".into(),
-                Box::new(provider) as Box<dyn TranscriptionProvider>,
-            )]),
-            default_provider: "inspect".into(),
-        };
+        let manager = echo_manager(Some(audio.as_ptr() as usize));
         let resource = Resource {
             name: "voice.wav".into(),
             tags: vec!["audio".into()],
@@ -853,13 +1016,9 @@ mod tests {
             ..Default::default()
         };
         let output = manager
-            .call(
-                EngineBuilder::new().mock_ctx().base,
-                TranscriptionArgs::default(),
-                vec![resource],
-            )
+            .call(mock_ctx(), TranscriptionArgs::default(), vec![resource])
             .await
             .unwrap();
-        assert_eq!(output.output.text, "same buffer");
+        assert_eq!(output.output.text, "voice.wav:1048576");
     }
 }

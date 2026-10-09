@@ -69,7 +69,7 @@ pub async fn run_voice_loop(
             &cmd.name,
             &base_meta,
             &mut cursor,
-            &audio,
+            audio,
             turn,
         )
         .await
@@ -94,7 +94,7 @@ async fn run_voice_turn(
     name: &str,
     base_meta: &RequestMeta,
     cursor: &mut VoiceConversationCursor,
-    audio: &Resource,
+    audio: Resource,
     turn: u64,
 ) -> Result<bool, BoxError> {
     let Some(prompt) = wait_with_voice_status(
@@ -159,12 +159,8 @@ fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRunt
     let http_client =
         util::http_client::build_http_client(cfg.https_proxy.clone(), |client| client)?;
     let transcription =
-        transcription::TranscriptionManager::new(&cfg.transcription, http_client.clone())?;
-    if !transcription.is_enabled() {
-        return Err(
-            "anda voice requires transcription.enabled and a configured STT provider".into(),
-        );
-    }
+        transcription::TranscriptionManager::new(&cfg.transcription, http_client.clone())?
+            .ok_or("anda voice requires transcription.enabled and a configured STT provider")?;
 
     let tts = if playback {
         let tts = tts::TtsManager::new(&cfg.tts, http_client)?.ok_or(
@@ -512,14 +508,13 @@ impl<'a> VoiceStatusSpinner<'a> {
 
 async fn transcribe_voice_resource(
     transcription: &transcription::TranscriptionManager,
-    resource: &Resource,
+    resource: Resource,
 ) -> Result<String, BoxError> {
+    let file_name = transcription::audio_resource_file_name(&resource, "voice");
     let audio = resource
         .blob
-        .as_ref()
         .ok_or("voice recording missing inline audio data")?;
-    let file_name = transcription::audio_resource_file_name(resource, "voice");
-    transcription.transcribe(&audio.0, &file_name).await
+    transcription.transcribe(audio.0, &file_name).await
 }
 
 async fn initialize_voice_cursor(

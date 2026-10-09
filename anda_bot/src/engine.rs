@@ -623,13 +623,9 @@ impl Engines {
             )
         });
         let tts_manager = TtsManager::new(&cfg.tts, outer_http_client.clone())?.map(Arc::new);
-        let transcription_manager = {
-            let manager = Arc::new(TranscriptionManager::new(
-                &cfg.transcription,
-                outer_http_client.clone(),
-            )?);
-            manager.is_enabled().then_some(manager)
-        };
+        let transcription_manager =
+            TranscriptionManager::new(&cfg.transcription, outer_http_client.clone())?
+                .map(|manager| Arc::new(manager.with_resource_store(resource_store.clone())));
 
         let (shell_tool, shell_session_tool) = build_shell_tools(
             &cfg.home_dir,

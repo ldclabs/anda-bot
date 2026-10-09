@@ -1,8 +1,11 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
-use reqwest::multipart::{Form, Part};
+use reqwest::multipart::Form;
+use std::time::Duration;
 
-use super::{TranscriptionProvider, parse_whisper_response, resolve_audio_format};
+use super::{
+    TranscriptionProvider, check_audio_size, http_url, parse_whisper_response, whisper_file_part,
+};
 use crate::config;
 
 /// Self-hosted faster-whisper-compatible STT provider.
@@ -15,53 +18,34 @@ pub struct LocalWhisperProvider {
     url: String,
     bearer_token: Option<String>,
     max_audio_bytes: usize,
-    timeout_secs: u64,
+    timeout: Duration,
     http: reqwest::Client,
 }
 
 impl LocalWhisperProvider {
-    /// Build from config. Fails if `url` is empty or invalid, if `url` is not
-    /// HTTP/HTTPS, if `max_audio_bytes` is zero, or if `timeout_secs` is zero.
-    pub fn from_config(
+    /// Fails if `url` is empty, invalid or not HTTP/HTTPS, or if
+    /// `max_audio_bytes` or `timeout_secs` is zero.
+    pub fn new(
         config: &config::LocalWhisperConfig,
         http: reqwest::Client,
     ) -> Result<Self, BoxError> {
-        let url = config.url.trim().to_string();
-        if url.is_empty() {
-            return Err("local_whisper: `url` must not be empty".into());
-        }
-
-        let parsed = url
-            .parse::<reqwest::Url>()
-            .map_err(|e| format!("local_whisper: invalid `url` {url:?}: {e}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(format!(
-                "local_whisper: `url` must use http or https scheme, got {:?}",
-                parsed.scheme()
-            )
-            .into());
-        }
-
-        let bearer_token = config
-            .bearer_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|token| !token.is_empty())
-            .map(ToOwned::to_owned);
-
+        let url = http_url(&config.url, "local_whisper.url")?;
         if config.max_audio_bytes == 0 {
-            return Err("local_whisper: `max_audio_bytes` must be greater than zero".into());
+            return Err(
+                "`transcription.local_whisper.max_audio_bytes` must be greater than zero".into(),
+            );
         }
-
         if config.timeout_secs == 0 {
-            return Err("local_whisper: `timeout_secs` must be greater than zero".into());
+            return Err(
+                "`transcription.local_whisper.timeout_secs` must be greater than zero".into(),
+            );
         }
 
         Ok(Self {
             url,
-            bearer_token,
+            bearer_token: config::normalize_optional(&config.bearer_token),
             max_audio_bytes: config.max_audio_bytes,
-            timeout_secs: config.timeout_secs,
+            timeout: Duration::from_secs(config.timeout_secs),
             http,
         })
     }
@@ -69,39 +53,17 @@ impl LocalWhisperProvider {
 
 #[async_trait]
 impl TranscriptionProvider for LocalWhisperProvider {
-    fn name(&self) -> &str {
-        "local_whisper"
-    }
-
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        if audio_data.is_empty() {
-            return Err("Audio data must not be empty".into());
-        }
-        if audio_data.len() > self.max_audio_bytes {
-            return Err(format!(
-                "Audio file too large ({} bytes, local_whisper max {})",
-                audio_data.len(),
-                self.max_audio_bytes
-            )
-            .into());
-        }
-
-        let (normalized_name, mime) = resolve_audio_format(file_name)?;
-
-        // to_vec() clones the buffer for the multipart payload; peak memory per
-        // call is ~2× max_audio_bytes while the caller retains the input slice.
-        let file_part = Part::bytes(audio_data.to_vec())
-            .file_name(normalized_name)
-            .mime_str(mime)?;
+    async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError> {
+        check_audio_size(&audio, self.max_audio_bytes)?;
+        let form = Form::new().part("file", whisper_file_part(audio, file_name)?);
 
         let mut request = self.http.post(&self.url);
-        if let Some(ref bearer_token) = self.bearer_token {
+        if let Some(bearer_token) = &self.bearer_token {
             request = request.bearer_auth(bearer_token);
         }
-
         let resp = request
-            .multipart(Form::new().part("file", file_part))
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .multipart(form)
+            .timeout(self.timeout)
             .send()
             .await
             .map_err(|err| {
@@ -136,51 +98,43 @@ mod tests {
     }
 
     fn config_error(config: &config::LocalWhisperConfig) -> String {
-        LocalWhisperProvider::from_config(config, new_reqwest_client())
+        LocalWhisperProvider::new(config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err()
             .to_string()
     }
 
     #[test]
-    fn from_config_rejects_empty_url() {
-        assert!(config_error(&whisper_config("  ")).contains("`url` must not be empty"));
-    }
-
-    #[test]
-    fn from_config_rejects_invalid_url() {
-        assert!(config_error(&whisper_config("not a url")).contains("invalid `url`"));
-    }
-
-    #[test]
-    fn from_config_rejects_non_http_scheme() {
+    fn new_validates_url_and_limits() {
+        assert!(
+            config_error(&whisper_config("  "))
+                .contains("`transcription.local_whisper.url` must not be empty")
+        );
         assert!(
             config_error(&whisper_config("ftp://localhost/transcribe"))
                 .contains("must use http or https")
         );
-    }
 
-    #[test]
-    fn from_config_rejects_zero_limits() {
         let mut config = whisper_config("http://localhost:8000");
         config.max_audio_bytes = 0;
-        assert!(config_error(&config).contains("`max_audio_bytes`"));
+        assert!(config_error(&config).contains("`transcription.local_whisper.max_audio_bytes`"));
 
         let mut config = whisper_config("http://localhost:8000");
         config.timeout_secs = 0;
-        assert!(config_error(&config).contains("`timeout_secs`"));
+        assert!(config_error(&config).contains("`transcription.local_whisper.timeout_secs`"));
     }
 
     #[test]
-    fn from_config_normalizes_bearer_token() {
-        let mut config = whisper_config("http://localhost:8000");
+    fn new_normalizes_url_and_bearer_token() {
+        let mut config = whisper_config(" http://localhost:8000 ");
         config.bearer_token = Some(" secret ".to_string());
-        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = LocalWhisperProvider::new(&config, new_reqwest_client()).unwrap();
+        assert_eq!(provider.url, "http://localhost:8000");
         assert_eq!(provider.bearer_token.as_deref(), Some("secret"));
-        assert_eq!(provider.name(), "local_whisper");
+        assert_eq!(provider.timeout, Duration::from_secs(5));
 
         config.bearer_token = Some("   ".to_string());
-        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = LocalWhisperProvider::new(&config, new_reqwest_client()).unwrap();
         assert_eq!(provider.bearer_token, None);
     }
 
@@ -188,10 +142,10 @@ mod tests {
     async fn transcribe_rejects_audio_over_configured_limit() {
         let mut config = whisper_config("http://localhost:8000");
         config.max_audio_bytes = 4;
-        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = LocalWhisperProvider::new(&config, new_reqwest_client()).unwrap();
 
         let err = provider
-            .transcribe(b"12345", "voice.mp3")
+            .transcribe(b"12345".to_vec(), "voice.mp3")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("Audio file too large"));
@@ -222,26 +176,33 @@ mod tests {
 
         let mut config = whisper_config(&url);
         config.bearer_token = Some("secret".to_string());
-        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
-        let text = provider.transcribe(b"data", "voice.ogg").await.unwrap();
+        let provider = LocalWhisperProvider::new(&config, new_reqwest_client()).unwrap();
+        let text = provider
+            .transcribe(b"data".to_vec(), "voice.ogg")
+            .await
+            .unwrap();
         assert_eq!(text, "local transcript");
 
         // Without the token the mock rejects the request and the status error
         // is surfaced to the caller.
         let provider =
-            LocalWhisperProvider::from_config(&whisper_config(&url), new_reqwest_client()).unwrap();
-        let err = provider.transcribe(b"data", "voice.ogg").await.unwrap_err();
+            LocalWhisperProvider::new(&whisper_config(&url), new_reqwest_client()).unwrap();
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.ogg")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("Transcription API error (401"));
     }
+
     #[tokio::test]
     async fn connection_errors_keep_cause_without_url_credentials() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
         let config = whisper_config(&format!("http://{addr}/transcribe?api_key=do-not-expose"));
-        let provider = LocalWhisperProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider = LocalWhisperProvider::new(&config, new_reqwest_client()).unwrap();
         let error = provider
-            .transcribe(b"audio", "voice.wav")
+            .transcribe(b"audio".to_vec(), "voice.wav")
             .await
             .unwrap_err()
             .to_string();

@@ -1,126 +1,139 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use futures::StreamExt;
-use reqwest::header::ACCEPT;
-use serde_json::json;
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use serde::Serialize;
 
-use super::{MAX_AUDIO_BYTES, TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, audio_extension};
+use super::{
+    Base64, MAX_AUDIO_BYTES, TRANSCRIPTION_TIMEOUT, TranscriptionProvider, audio_extension,
+    check_audio_size, http_url, required,
+};
 use crate::{config, util::http_client::check_http_response};
 
 /// StepFun Stepaudio ASR provider using HTTP+SSE.
 pub struct StepFunProvider {
     api_url: String,
     api_key: String,
-    model: String,
-    language: String,
-    hotwords: Vec<String>,
-    prompt: Option<String>,
-    enable_itn: bool,
-    pcm_codec: String,
-    pcm_rate: u32,
-    pcm_bits: u32,
-    pcm_channel: u32,
+    transcription: TranscriptionSettings,
+    pcm: PcmFormat,
     http: reqwest::Client,
 }
 
+/// `audio.input.transcription` of the request body.
+#[derive(Serialize)]
+struct TranscriptionSettings {
+    language: String,
+    hotwords: Vec<String>,
+    model: String,
+    enable_itn: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt: Option<String>,
+}
+
+/// Format details StepFun requires for raw `.pcm` audio.
+#[derive(Serialize)]
+struct PcmFormat {
+    codec: String,
+    rate: u32,
+    bits: u32,
+    channel: u32,
+}
+
+#[derive(Serialize)]
+struct AsrRequest<'a> {
+    audio: AsrAudio<'a>,
+}
+
+#[derive(Serialize)]
+struct AsrAudio<'a> {
+    data: Base64<'a>,
+    input: AsrInput<'a>,
+}
+
+#[derive(Serialize)]
+struct AsrInput<'a> {
+    transcription: &'a TranscriptionSettings,
+    format: AsrFormat<'a>,
+}
+
+#[derive(Serialize)]
+struct AsrFormat<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(flatten)]
+    pcm: Option<&'a PcmFormat>,
+}
+
 impl StepFunProvider {
-    pub fn from_config(
-        config: &config::StepFunSttConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        let api_key = config.api_key.trim();
-        if api_key.is_empty() {
-            return Err("Missing StepFun STT API key: set [transcription.stepfun].api_key".into());
+    pub fn new(config: &config::StepFunSttConfig, http: reqwest::Client) -> Result<Self, BoxError> {
+        let api_key = required(&config.api_key, "stepfun.api_key")?;
+        for (value, field) in [
+            (config.pcm_rate, "pcm_rate"),
+            (config.pcm_bits, "pcm_bits"),
+            (config.pcm_channel, "pcm_channel"),
+        ] {
+            if value == 0 {
+                return Err(
+                    format!("`transcription.stepfun.{field}` must be greater than zero").into(),
+                );
+            }
         }
-
-        let api_url = config.api_url.trim().to_string();
-        if api_url.is_empty() {
-            return Err("stepfun: `api_url` must not be empty".into());
-        }
-        let parsed = api_url
-            .parse::<reqwest::Url>()
-            .map_err(|e| format!("stepfun: invalid `api_url` {api_url:?}: {e}"))?;
-        if !matches!(parsed.scheme(), "http" | "https") {
-            return Err(format!(
-                "stepfun: `api_url` must use http or https scheme, got {:?}",
-                parsed.scheme()
-            )
-            .into());
-        }
-
-        let model = config.model.trim().to_string();
-        if model.is_empty() {
-            return Err("stepfun: `model` must not be empty".into());
-        }
-
-        let language = config.language.trim().to_string();
-        if language.is_empty() {
-            return Err("stepfun: `language` must not be empty".into());
-        }
-
-        if config.pcm_rate == 0 {
-            return Err("stepfun: `pcm_rate` must be greater than zero".into());
-        }
-        if config.pcm_bits == 0 {
-            return Err("stepfun: `pcm_bits` must be greater than zero".into());
-        }
-        if config.pcm_channel == 0 {
-            return Err("stepfun: `pcm_channel` must be greater than zero".into());
-        }
-
-        let pcm_codec = config.pcm_codec.trim().to_string();
-        if pcm_codec.is_empty() {
-            return Err("stepfun: `pcm_codec` must not be empty".into());
-        }
-
-        let hotwords = config
-            .hotwords
-            .iter()
-            .map(|hotword| hotword.trim())
-            .filter(|hotword| !hotword.is_empty())
-            .map(ToOwned::to_owned)
-            .collect();
-        let prompt = config.prompt.as_deref().and_then(config::normalize_string);
 
         Ok(Self {
-            api_url,
-            api_key: api_key.to_string(),
-            model,
-            language,
-            hotwords,
-            prompt,
-            enable_itn: config.enable_itn,
-            pcm_codec,
-            pcm_rate: config.pcm_rate,
-            pcm_bits: config.pcm_bits,
-            pcm_channel: config.pcm_channel,
+            api_url: http_url(&config.api_url, "stepfun.api_url")?,
+            api_key,
+            transcription: TranscriptionSettings {
+                language: required(&config.language, "stepfun.language")?,
+                hotwords: config::normalize_list(&config.hotwords),
+                model: required(&config.model, "stepfun.model")?,
+                enable_itn: config.enable_itn,
+                prompt: config::normalize_optional(&config.prompt),
+            },
+            pcm: PcmFormat {
+                codec: required(&config.pcm_codec, "stepfun.pcm_codec")?,
+                rate: config.pcm_rate,
+                bits: config.pcm_bits,
+                channel: config.pcm_channel,
+            },
             http,
         })
+    }
+
+    fn request_body(&self, audio: &[u8], format: &'static str) -> Result<Vec<u8>, BoxError> {
+        Ok(serde_json::to_vec(&AsrRequest {
+            audio: AsrAudio {
+                data: Base64(audio),
+                input: AsrInput {
+                    transcription: &self.transcription,
+                    format: AsrFormat {
+                        kind: format,
+                        pcm: (format == "pcm").then_some(&self.pcm),
+                    },
+                },
+            },
+        })?)
     }
 }
 
 #[async_trait]
 impl TranscriptionProvider for StepFunProvider {
-    fn name(&self) -> &str {
-        "stepfun"
-    }
-
     fn supported_audio_formats(&self) -> &'static [&'static str] {
         &["ogg", "mp3", "wav", "pcm"]
     }
 
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        validate_audio(audio_data, file_name)?;
+    async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError> {
+        check_audio_size(&audio, MAX_AUDIO_BYTES)?;
+        let body = self.request_body(&audio, stepfun_audio_format(file_name)?)?;
+        drop(audio); // The body carries the audio from here on.
 
-        let request_body = build_stepfun_request_body(audio_data, file_name, self)?;
         let resp = self
             .http
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .header(ACCEPT, "text/event-stream")
-            .json(&request_body)
-            .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
+            .header(CONTENT_TYPE, "application/json")
+            .body(body)
+            .timeout(TRANSCRIPTION_TIMEOUT)
             .send()
             .await
             .map_err(|err| {
@@ -134,22 +147,7 @@ impl TranscriptionProvider for StepFunProvider {
     }
 }
 
-fn validate_audio(audio_data: &[u8], file_name: &str) -> Result<(), BoxError> {
-    if audio_data.is_empty() {
-        return Err("Audio data must not be empty".into());
-    }
-    if audio_data.len() > MAX_AUDIO_BYTES {
-        return Err(format!(
-            "Audio file too large ({} bytes, max {MAX_AUDIO_BYTES})",
-            audio_data.len()
-        )
-        .into());
-    }
-
-    stepfun_audio_format_type(file_name).map(|_| ())
-}
-
-fn stepfun_audio_format_type(file_name: &str) -> Result<&'static str, BoxError> {
+fn stepfun_audio_format(file_name: &str) -> Result<&'static str, BoxError> {
     let extension = audio_extension(file_name).ok_or("StepFun ASR requires a file extension")?;
     match extension.as_str() {
         "ogg" | "oga" => Ok("ogg"),
@@ -158,50 +156,6 @@ fn stepfun_audio_format_type(file_name: &str) -> Result<&'static str, BoxError> 
         "pcm" => Ok("pcm"),
         ext => Err(format!("StepFun ASR does not support '.{ext}' input").into()),
     }
-}
-
-fn build_stepfun_request_body(
-    audio_data: &[u8],
-    file_name: &str,
-    provider: &StepFunProvider,
-) -> Result<serde_json::Value, BoxError> {
-    let mut transcription = serde_json::Map::new();
-    transcription.insert("language".to_string(), json!(&provider.language));
-    transcription.insert("hotwords".to_string(), json!(&provider.hotwords));
-    transcription.insert("model".to_string(), json!(&provider.model));
-    transcription.insert("enable_itn".to_string(), json!(provider.enable_itn));
-    if let Some(ref prompt) = provider.prompt {
-        transcription.insert("prompt".to_string(), json!(prompt));
-    }
-
-    Ok(json!({
-        "audio": {
-            "data": STANDARD.encode(audio_data),
-            "input": {
-                "transcription": transcription,
-                "format": stepfun_audio_format(file_name, provider)?,
-            },
-        }
-    }))
-}
-
-fn stepfun_audio_format(
-    file_name: &str,
-    provider: &StepFunProvider,
-) -> Result<serde_json::Value, BoxError> {
-    let format_type = stepfun_audio_format_type(file_name)?;
-
-    let mut format = serde_json::Map::new();
-    format.insert("type".to_string(), json!(format_type));
-
-    if format_type == "pcm" {
-        format.insert("codec".to_string(), json!(&provider.pcm_codec));
-        format.insert("rate".to_string(), json!(provider.pcm_rate));
-        format.insert("bits".to_string(), json!(provider.pcm_bits));
-        format.insert("channel".to_string(), json!(provider.pcm_channel));
-    }
-
-    Ok(serde_json::Value::Object(format))
 }
 
 async fn parse_stepfun_sse_response(resp: reqwest::Response) -> Result<String, BoxError> {
@@ -303,9 +257,11 @@ fn parse_stepfun_sse_event(data: &str) -> Result<Option<String>, BoxError> {
 mod tests {
     use super::*;
     use crate::util::http_client::new_reqwest_client;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde_json::json;
 
     fn test_stepfun_provider() -> StepFunProvider {
-        StepFunProvider::from_config(
+        StepFunProvider::new(
             &config::StepFunSttConfig {
                 api_key: "sk-test".to_string(),
                 ..Default::default()
@@ -315,36 +271,41 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn stepfun_audio_format_maps_supported_containers() {
-        let provider = test_stepfun_provider();
-
-        assert_eq!(
-            stepfun_audio_format("voice.oga", &provider).unwrap()["type"],
-            "ogg"
-        );
-        assert_eq!(
-            stepfun_audio_format("voice.mp3", &provider).unwrap()["type"],
-            "mp3"
-        );
-        assert_eq!(
-            stepfun_audio_format("voice.mpeg", &provider).unwrap()["type"],
-            "mp3"
-        );
-        assert!(stepfun_audio_format("voice.webm", &provider).is_err());
+    fn request_json(
+        provider: &StepFunProvider,
+        audio: &[u8],
+        file_name: &str,
+    ) -> serde_json::Value {
+        let format = stepfun_audio_format(file_name).unwrap();
+        serde_json::from_slice(&provider.request_body(audio, format).unwrap()).unwrap()
     }
 
     #[test]
-    fn stepfun_audio_format_includes_pcm_details() {
-        let provider = test_stepfun_provider();
-        let format = stepfun_audio_format("voice.pcm", &provider).unwrap();
+    fn stepfun_audio_format_maps_supported_containers() {
+        for (name, format) in [
+            ("voice.oga", "ogg"),
+            ("voice.mp3", "mp3"),
+            ("voice.mpeg", "mp3"),
+            ("voice.WAV", "wav"),
+            ("voice.pcm", "pcm"),
+        ] {
+            assert_eq!(stepfun_audio_format(name).unwrap(), format, "{name}");
+        }
+        assert!(stepfun_audio_format("voice.webm").is_err());
+        assert!(stepfun_audio_format("voice").is_err());
+    }
 
-        assert_eq!(format["type"], "pcm");
-        assert_eq!(format["codec"], "pcm_s16le");
-        assert_eq!(format["rate"], 16000);
-        assert_eq!(format["bits"], 16);
-        assert_eq!(format["channel"], 1);
-        assert!(validate_audio(&[0, 1, 2], "voice.pcm").is_ok());
+    #[test]
+    fn request_format_includes_pcm_details_only_for_pcm() {
+        let provider = test_stepfun_provider();
+        let format = &request_json(&provider, &[0, 1, 2], "voice.pcm")["audio"]["input"]["format"];
+        assert_eq!(
+            format,
+            &json!({"type": "pcm", "codec": "pcm_s16le", "rate": 16000, "bits": 16, "channel": 1})
+        );
+
+        let format = &request_json(&provider, b"audio", "voice.wav")["audio"]["input"]["format"];
+        assert_eq!(format, &json!({"type": "wav"}));
     }
 
     #[test]
@@ -381,71 +342,66 @@ mod tests {
             ..Default::default()
         };
         mutate(&mut config);
-        StepFunProvider::from_config(&config, new_reqwest_client())
+        StepFunProvider::new(&config, new_reqwest_client())
             .map(|_| ())
             .unwrap_err()
             .to_string()
     }
 
     #[test]
-    fn from_config_validates_every_field() {
-        assert!(config_error(|c| c.api_key = " ".into()).contains("Missing StepFun STT API key"));
-        assert!(config_error(|c| c.api_url = " ".into()).contains("`api_url` must not be empty"));
-        assert!(config_error(|c| c.api_url = "not a url".into()).contains("invalid `api_url`"));
+    fn new_validates_every_field() {
+        let empty = |field: &str| format!("`transcription.stepfun.{field}` must not be empty");
+        assert!(config_error(|c| c.api_key = " ".into()).contains(&empty("api_key")));
+        assert!(config_error(|c| c.api_url = " ".into()).contains(&empty("api_url")));
         assert!(
             config_error(|c| c.api_url = "ftp://example.com".into())
                 .contains("must use http or https")
         );
-        assert!(config_error(|c| c.model = " ".into()).contains("`model` must not be empty"));
-        assert!(config_error(|c| c.language = " ".into()).contains("`language` must not be empty"));
-        assert!(config_error(|c| c.pcm_rate = 0).contains("`pcm_rate`"));
-        assert!(config_error(|c| c.pcm_bits = 0).contains("`pcm_bits`"));
-        assert!(config_error(|c| c.pcm_channel = 0).contains("`pcm_channel`"));
-        assert!(
-            config_error(|c| c.pcm_codec = " ".into()).contains("`pcm_codec` must not be empty")
-        );
+        assert!(config_error(|c| c.model = " ".into()).contains(&empty("model")));
+        assert!(config_error(|c| c.language = " ".into()).contains(&empty("language")));
+        assert!(config_error(|c| c.pcm_codec = " ".into()).contains(&empty("pcm_codec")));
+        let zero = "` must be greater than zero";
+        assert!(config_error(|c| c.pcm_rate = 0).contains(&format!("pcm_rate{zero}")));
+        assert!(config_error(|c| c.pcm_bits = 0).contains(&format!("pcm_bits{zero}")));
+        assert!(config_error(|c| c.pcm_channel = 0).contains(&format!("pcm_channel{zero}")));
     }
 
     #[test]
-    fn from_config_normalizes_hotwords_and_prompt() {
-        let provider = StepFunProvider::from_config(
+    fn request_body_carries_normalized_settings_and_audio() {
+        let provider = StepFunProvider::new(
             &config::StepFunSttConfig {
                 api_key: "sk-test".to_string(),
                 hotwords: vec![" 阶跃 ".to_string(), "  ".to_string()],
-                prompt: Some("  转写提示  ".to_string()),
+                prompt: Some("  领域词提示  ".to_string()),
                 ..Default::default()
             },
             new_reqwest_client(),
         )
         .unwrap();
-
-        assert_eq!(provider.hotwords, vec!["阶跃".to_string()]);
-        assert_eq!(provider.prompt.as_deref(), Some("转写提示"));
-        assert_eq!(provider.name(), "stepfun");
         assert_eq!(
             provider.supported_audio_formats(),
             &["ogg", "mp3", "wav", "pcm"]
         );
-    }
 
-    #[test]
-    fn request_body_includes_prompt_and_audio_payload() {
-        let provider = StepFunProvider::from_config(
-            &config::StepFunSttConfig {
-                api_key: "sk-test".to_string(),
-                prompt: Some("领域词提示".to_string()),
-                ..Default::default()
-            },
-            new_reqwest_client(),
-        )
-        .unwrap();
-
-        let body = build_stepfun_request_body(b"audio-bytes", "voice.mp3", &provider).unwrap();
+        let body = request_json(&provider, b"audio-bytes", "voice.mp3");
         assert_eq!(body["audio"]["data"], STANDARD.encode(b"audio-bytes"));
         assert_eq!(body["audio"]["input"]["format"]["type"], "mp3");
         assert_eq!(
-            body["audio"]["input"]["transcription"]["prompt"],
-            "领域词提示"
+            body["audio"]["input"]["transcription"],
+            json!({
+                "language": "zh",
+                "hotwords": ["阶跃"],
+                "model": "stepaudio-2.5-asr",
+                "enable_itn": true,
+                "prompt": "领域词提示"
+            })
+        );
+
+        let body = request_json(&test_stepfun_provider(), b"audio", "voice.mp3");
+        assert!(
+            body["audio"]["input"]["transcription"]
+                .get("prompt")
+                .is_none()
         );
     }
 
@@ -497,7 +453,7 @@ mod tests {
     }
 
     async fn provider_for(api_url: String) -> StepFunProvider {
-        StepFunProvider::from_config(
+        StepFunProvider::new(
             &config::StepFunSttConfig {
                 api_key: "sk-test".to_string(),
                 api_url,
@@ -514,7 +470,10 @@ mod tests {
         let url = spawn_sse_mock(body, http::StatusCode::OK).await;
         let provider = provider_for(url).await;
 
-        let text = provider.transcribe(b"data", "voice.mp3").await.unwrap();
+        let text = provider
+            .transcribe(b"data".to_vec(), "voice.mp3")
+            .await
+            .unwrap();
         assert_eq!(text, "你好，世界");
     }
 
@@ -524,7 +483,10 @@ mod tests {
         let url = spawn_sse_mock(body, http::StatusCode::OK).await;
         let provider = provider_for(url).await;
 
-        let err = provider.transcribe(b"data", "voice.wav").await.unwrap_err();
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.wav")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("without a transcript.text.done"));
     }
 
@@ -536,7 +498,10 @@ mod tests {
         let url = spawn_sse_mock(body, http::StatusCode::OK).await;
         let provider = provider_for(url).await;
 
-        let text = provider.transcribe(b"data", "voice.ogg").await.unwrap();
+        let text = provider
+            .transcribe(b"data".to_vec(), "voice.ogg")
+            .await
+            .unwrap();
         assert_eq!(text, "完整");
     }
 
@@ -544,18 +509,27 @@ mod tests {
     async fn transcribe_reports_stream_and_status_errors() {
         let url = spawn_sse_mock("", http::StatusCode::OK).await;
         let provider = provider_for(url).await;
-        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.mp3")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("ended without"));
 
         let url = spawn_sse_mock("quota exceeded", http::StatusCode::TOO_MANY_REQUESTS).await;
         let provider = provider_for(url).await;
-        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.mp3")
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("StepFun ASR API error (429"), "got: {msg}");
 
         let url = spawn_sse_mock("data: not json\n\n", http::StatusCode::OK).await;
         let provider = provider_for(url).await;
-        let err = provider.transcribe(b"data", "voice.mp3").await.unwrap_err();
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.mp3")
+            .await
+            .unwrap_err();
         assert!(
             err.to_string()
                 .contains("Failed to parse StepFun ASR SSE event")
@@ -564,7 +538,7 @@ mod tests {
         // Unsupported container is rejected before any request is sent.
         let provider = test_stepfun_provider();
         let err = provider
-            .transcribe(b"data", "voice.webm")
+            .transcribe(b"data".to_vec(), "voice.webm")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("does not support '.webm'"));
@@ -583,7 +557,10 @@ mod tests {
         let base = crate::test_support::spawn_http_mock(app).await;
         let provider = provider_for(format!("{base}/asr")).await;
         assert_eq!(
-            provider.transcribe(b"audio", "voice.wav").await.unwrap(),
+            provider
+                .transcribe(b"audio".to_vec(), "voice.wav")
+                .await
+                .unwrap(),
             "完整"
         );
     }

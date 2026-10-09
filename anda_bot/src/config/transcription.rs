@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TranscriptionConfig {
-    /// Enable voice transcription for channels that support it.
+    /// Enable speech-to-text for voice input and audio attachments.
     pub enabled: bool,
     /// Default STT provider: "groq", "openai", "google", "stepfun", "local_whisper".
     pub default_provider: String,
@@ -160,8 +160,7 @@ pub struct LocalWhisperConfig {
     /// Maximum audio file size in bytes accepted by this endpoint.
     /// Defaults to 25 MB — matching the cloud API cap for a safe out-of-the-box
     /// experience. Self-hosted endpoints can accept much larger files; raise this
-    /// as needed, but note that each transcription call clones the audio buffer
-    /// into a multipart payload, so peak memory per request is ~2× this value.
+    /// as needed.
     #[serde(default = "default_local_whisper_max_audio_bytes")]
     pub max_audio_bytes: usize,
     /// Request timeout in seconds. Defaults to 300 (large files on local GPU).

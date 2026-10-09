@@ -1,10 +1,11 @@
 use anda_core::BoxError;
 use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD};
-use serde::Deserialize;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
 
-use super::{TRANSCRIPTION_TIMEOUT_SECS, TranscriptionProvider, audio_extension, validate_audio};
+use super::{
+    Base64, MAX_AUDIO_BYTES, TRANSCRIPTION_TIMEOUT, TranscriptionProvider, audio_extension,
+    check_audio_size, required,
+};
 use crate::{config, util::http_client::check_http_response};
 
 const GOOGLE_MAX_REQUEST_BYTES: usize = 10_000_000;
@@ -18,18 +19,10 @@ pub struct GoogleSttProvider {
 }
 
 impl GoogleSttProvider {
-    pub fn from_config(
-        config: &config::GoogleSttConfig,
-        http: reqwest::Client,
-    ) -> Result<Self, BoxError> {
-        let api_key = config.api_key.trim();
-        if api_key.is_empty() {
-            return Err("Missing Google STT API key: set [transcription.google].api_key".into());
-        }
-
+    pub fn new(config: &config::GoogleSttConfig, http: reqwest::Client) -> Result<Self, BoxError> {
         Ok(Self {
-            api_key: api_key.to_string(),
-            language_code: config.language_code.clone(),
+            api_key: required(&config.api_key, "google.api_key")?,
+            language_code: required(&config.language_code, "google.language_code")?,
             http,
         })
     }
@@ -37,16 +30,13 @@ impl GoogleSttProvider {
 
 #[async_trait]
 impl TranscriptionProvider for GoogleSttProvider {
-    fn name(&self) -> &str {
-        "google"
-    }
-
     fn supported_audio_formats(&self) -> &'static [&'static str] {
         &["wav", "flac"]
     }
 
-    async fn transcribe(&self, audio_data: &[u8], file_name: &str) -> Result<String, BoxError> {
-        let body = build_request_body(audio_data, file_name, &self.language_code)?;
+    async fn transcribe(&self, audio: Vec<u8>, file_name: &str) -> Result<String, BoxError> {
+        let body = build_request_body(&audio, file_name, &self.language_code)?;
+        drop(audio); // The body carries the audio from here on.
 
         let resp = self
             .http
@@ -54,7 +44,7 @@ impl TranscriptionProvider for GoogleSttProvider {
             .header("x-goog-api-key", &self.api_key)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body)
-            .timeout(std::time::Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS))
+            .timeout(TRANSCRIPTION_TIMEOUT)
             .send()
             .await
             .map_err(|err| {
@@ -68,15 +58,36 @@ impl TranscriptionProvider for GoogleSttProvider {
     }
 }
 
+/// `speech:recognize` request body. WAV/FLAC headers describe both encoding
+/// and sample rate, so neither is set: overriding the encoding with LINEAR16
+/// would reject otherwise supported MULAW WAV files.
+#[derive(Serialize)]
+struct RecognizeRequest<'a> {
+    config: RecognitionConfig<'a>,
+    audio: RecognitionAudio<'a>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecognitionConfig<'a> {
+    language_code: &'a str,
+    enable_automatic_punctuation: bool,
+}
+
+#[derive(Serialize)]
+struct RecognitionAudio<'a> {
+    content: Base64<'a>,
+}
+
 fn build_request_body(audio: &[u8], file_name: &str, language: &str) -> Result<Vec<u8>, BoxError> {
-    validate_audio(audio, file_name)?;
+    check_audio_size(audio, MAX_AUDIO_BYTES)?;
     let extension = audio_extension(file_name).unwrap_or_default();
     if !matches!(extension.as_str(), "wav" | "flac") {
         return Err(
             format!("Google STT does not support '.{extension}' input; use WAV or FLAC").into(),
         );
     }
-    // Reject oversized content before allocating its Base64 representation.
+    // Reject oversized content before encoding its Base64 representation.
     if audio.len().div_ceil(3) * 4 > GOOGLE_MAX_REQUEST_BYTES {
         return Err("Google STT request exceeds the 10 MB limit (including Base64 audio)".into());
     }
@@ -88,12 +99,15 @@ fn build_request_body(audio: &[u8], file_name: &str, language: &str) -> Result<V
         );
     }
 
-    // WAV/FLAC headers describe both encoding and sample rate. Overriding the
-    // encoding with LINEAR16 would reject otherwise supported MULAW WAV files.
-    let body = serde_json::to_vec(&json!({
-        "config": { "languageCode": language, "enableAutomaticPunctuation": true },
-        "audio": { "content": STANDARD.encode(audio) }
-    }))?;
+    let body = serde_json::to_vec(&RecognizeRequest {
+        config: RecognitionConfig {
+            language_code: language,
+            enable_automatic_punctuation: true,
+        },
+        audio: RecognitionAudio {
+            content: Base64(audio),
+        },
+    })?;
     if body.len() > GOOGLE_MAX_REQUEST_BYTES {
         return Err("Google STT request exceeds the 10 MB limit (including Base64 audio)".into());
     }
@@ -181,45 +195,53 @@ async fn parse_response(resp: reqwest::Response) -> Result<String, BoxError> {
 mod tests {
     use super::*;
     use crate::util::http_client::new_reqwest_client;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde_json::json;
 
-    #[test]
-    fn from_config_rejects_empty_api_key() {
-        let config = config::GoogleSttConfig {
-            api_key: "\t".to_string(),
-            language_code: "en-US".to_string(),
-        };
-
-        let err = GoogleSttProvider::from_config(&config, new_reqwest_client())
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("Missing Google STT API key"));
+    fn google_config(api_key: &str, language_code: &str) -> config::GoogleSttConfig {
+        config::GoogleSttConfig {
+            api_key: api_key.to_string(),
+            language_code: language_code.to_string(),
+        }
     }
 
     #[test]
-    fn from_config_trims_api_key_and_copies_language() {
-        let config = config::GoogleSttConfig {
-            api_key: " key-1 ".to_string(),
-            language_code: "zh-CN".to_string(),
-        };
+    fn new_requires_api_key_and_language() {
+        for (config, field) in [
+            (google_config("\t", "en-US"), "google.api_key"),
+            (google_config("key-1", " "), "google.language_code"),
+        ] {
+            let err = GoogleSttProvider::new(&config, new_reqwest_client())
+                .map(|_| ())
+                .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("`transcription.{field}` must not be empty"))
+            );
+        }
+    }
 
-        let provider = GoogleSttProvider::from_config(&config, new_reqwest_client()).unwrap();
+    #[test]
+    fn new_trims_api_key_and_copies_language() {
+        let provider =
+            GoogleSttProvider::new(&google_config(" key-1 ", "zh-CN"), new_reqwest_client())
+                .unwrap();
         assert_eq!(provider.api_key, "key-1");
         assert_eq!(provider.language_code, "zh-CN");
-        assert_eq!(provider.name(), "google");
         assert_eq!(provider.supported_audio_formats(), &["wav", "flac"]);
     }
 
     #[tokio::test]
     async fn transcribe_rejects_extensions_google_does_not_support() {
-        let config = config::GoogleSttConfig {
-            api_key: "key-1".to_string(),
-            language_code: "en-US".to_string(),
-        };
-        let provider = GoogleSttProvider::from_config(&config, new_reqwest_client()).unwrap();
+        let provider =
+            GoogleSttProvider::new(&google_config("key-1", "en-US"), new_reqwest_client()).unwrap();
 
-        // `.m4a` passes the generic audio validation but is not accepted by
-        // Google STT, so the error surfaces before any network request.
-        let err = provider.transcribe(b"data", "voice.m4a").await.unwrap_err();
+        // `.m4a` is a Whisper-compatible format but Google STT rejects it, so
+        // the error surfaces before any network request.
+        let err = provider
+            .transcribe(b"data".to_vec(), "voice.m4a")
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("does not support '.m4a'"));
     }
 

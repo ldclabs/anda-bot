@@ -61,7 +61,7 @@ GLM_API_KEY
 - `local_whisper.max_audio_bytes` 独立控制自托管接口的上传大小，不受云端默认上限约束。
 - `tts.max_text_length` 按字符计数，默认 4096；同时遵守 provider 自身限制。Google TTS 每次最多 5000 个 UTF-8 字节，StepFun 每次最多 1000 个字符。语音对话已将回复分成较短的片段。
 - `tts.default_format` 选择 StepFun 的输出格式：`mp3`、`opus`、`wav` 或 `flac`。Edge、OpenAI 和 Google 固定输出 MP3。不支持的格式会报错；裸 `pcm` 任何客户端都无法播放，因此也会被拒绝，请改用 `wav`。生成附件的后缀始终与实际音频一致。
-- 如果 `tts.default_provider` 对应的配置缺失或无效，启动时会报出该服务自身的错误；其他无效的服务配置会被跳过并记录警告。
+- 如果 `tts.default_provider` 或 `transcription.default_provider` 对应的配置缺失或无效，启动时会报出该服务自身的错误；其他无效的服务配置会被跳过并记录警告。
 - Edge 需要 PATH 中存在 `edge-tts`（`pip install edge-tts`）。`tts.edge.binary_path` 应为 `edge-tts`，不支持 `edge-playback` 包装程序。取消或超时会终止合成子进程。
 - StepFun ASR 必须收到最终的 `transcript.text.done` 事件。流结束时如果只有部分文本，会返回错误。
 

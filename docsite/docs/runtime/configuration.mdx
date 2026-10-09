@@ -61,7 +61,7 @@ Enable `transcription.enabled` for speech input and `tts.enabled` for speech out
 - `local_whisper.max_audio_bytes` controls the self-hosted endpoint's upload limit independently of the cloud limit.
 - `tts.max_text_length` is a character limit (default 4096); provider limits also apply. Google TTS permits up to 5000 UTF-8 bytes and StepFun permits up to 1000 characters per call. Voice conversations already split replies into shorter segments.
 - `tts.default_format` selects StepFun output (`mp3`, `opus`, `wav`, or `flac`). Edge, OpenAI, and Google output MP3. Unknown formats are rejected; raw `pcm` is rejected because no client can play it, so use `wav` instead. Artifact extensions always match the produced audio.
-- If the `tts.default_provider` section is missing or invalid, startup fails with that provider's error. Other invalid provider sections are skipped with a warning.
+- If the `tts.default_provider` or `transcription.default_provider` section is missing or invalid, startup fails with that provider's error. Other invalid provider sections are skipped with a warning.
 - Edge requires `edge-tts` on PATH (`pip install edge-tts`). Set `tts.edge.binary_path` to `edge-tts`; the `edge-playback` wrapper is not supported. Cancelling or timing out synthesis terminates the subprocess.
 - StepFun ASR requires a final `transcript.text.done` event. A stream that ends with only partial text returns an error.
 
