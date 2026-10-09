@@ -3,7 +3,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{TTS_HTTP_TIMEOUT, TtsProvider};
+use super::{TTS_TIMEOUT, TtsProvider};
 use crate::{config, util::http_client::check_http_response};
 
 const GOOGLE_MAX_TEXT_BYTES: usize = 5000;
@@ -33,10 +33,6 @@ impl GoogleTtsProvider {
 
 #[async_trait::async_trait]
 impl TtsProvider for GoogleTtsProvider {
-    fn name(&self) -> &str {
-        "google"
-    }
-
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
         if text.len() > GOOGLE_MAX_TEXT_BYTES {
             return Err(format!(
@@ -62,7 +58,7 @@ impl TtsProvider for GoogleTtsProvider {
             .post(url)
             .header("x-goog-api-key", &self.api_key)
             .json(&body)
-            .timeout(TTS_HTTP_TIMEOUT)
+            .timeout(TTS_TIMEOUT)
             .send()
             .await
             .map_err(|err| format!("Failed to send Google TTS request: {:?}", err.without_url()))?;
@@ -88,13 +84,9 @@ async fn parse_response(resp: reqwest::Response) -> Result<Vec<u8>, BoxError> {
                 err.without_url()
             )
         })?;
-    let bytes = STANDARD
+    STANDARD
         .decode(body.audio_content)
-        .map_err(|err| format!("Failed to decode Google TTS base64 audio: {err}"))?;
-    if bytes.is_empty() {
-        return Err("Google TTS response body contained empty audio".into());
-    }
-    Ok(bytes)
+        .map_err(|err| format!("Failed to decode Google TTS base64 audio: {err}").into())
 }
 
 #[cfg(test)]
@@ -127,7 +119,7 @@ mod tests {
         assert_eq!(provider.api_key, "key-1");
         assert_eq!(provider.language_code, "zh-CN");
         assert_eq!(provider.voice, "zh-CN-Standard-A");
-        assert_eq!(provider.name(), "google");
+        assert_eq!(provider.audio_format(), "mp3");
     }
 
     #[tokio::test]
@@ -147,7 +139,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn response_requires_nonempty_valid_audio() {
+    async fn response_requires_valid_audio() {
         use axum::{Router, routing};
         let app = Router::new()
             .route(
@@ -155,10 +147,6 @@ mod tests {
                 routing::get(|| async {
                     axum::Json(json!({"audioContent": STANDARD.encode(b"MP3")}))
                 }),
-            )
-            .route(
-                "/empty",
-                routing::get(|| async { axum::Json(json!({"audioContent": ""})) }),
             )
             .route(
                 "/invalid",
@@ -174,7 +162,6 @@ mod tests {
         let response = client.get(format!("{base}/audio")).send().await.unwrap();
         assert_eq!(parse_response(response).await.unwrap(), b"MP3");
         for (path, message) in [
-            ("empty", "empty audio"),
             ("invalid", "decode"),
             ("missing", "audioContent"),
             ("proxy", "502"),

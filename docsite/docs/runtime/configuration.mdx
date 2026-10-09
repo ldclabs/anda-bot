@@ -60,8 +60,9 @@ Enable `transcription.enabled` for speech input and `tts.enabled` for speech out
 - Google STT accepts WAV/FLAC through its synchronous API. The Chrome extension converts unsupported recording formats to WAV. Requests must fit within 10 MB including Base64/JSON, and audio must be at most 60 seconds. Anda rejects oversized requests and known WAV/FLAC header durations above this limit; files without a known duration are still subject to Google's limit. Longer audio requires another provider or a shorter recording.
 - `local_whisper.max_audio_bytes` controls the self-hosted endpoint's upload limit independently of the cloud limit.
 - `tts.max_text_length` is a character limit (default 4096); provider limits also apply. Google TTS permits up to 5000 UTF-8 bytes and StepFun permits up to 1000 characters per call. Voice conversations already split replies into shorter segments.
-- `tts.default_format` selects StepFun output (`mp3`, `opus`, `wav`, `flac`, or `pcm`). Edge, OpenAI, and Google output MP3. Unknown formats are rejected; artifact extensions always match the produced audio.
-- Edge requires `edge-tts` on PATH. Set `tts.edge.binary_path` to `edge-tts`; the `edge-playback` wrapper is not supported. Cancelling or timing out synthesis terminates the subprocess.
+- `tts.default_format` selects StepFun output (`mp3`, `opus`, `wav`, or `flac`). Edge, OpenAI, and Google output MP3. Unknown formats are rejected; raw `pcm` is rejected because no client can play it, so use `wav` instead. Artifact extensions always match the produced audio.
+- If the `tts.default_provider` section is missing or invalid, startup fails with that provider's error. Other invalid provider sections are skipped with a warning.
+- Edge requires `edge-tts` on PATH (`pip install edge-tts`). Set `tts.edge.binary_path` to `edge-tts`; the `edge-playback` wrapper is not supported. Cancelling or timing out synthesis terminates the subprocess.
 - StepFun ASR requires a final `transcript.text.done` event. A stream that ends with only partial text returns an error.
 
 The unused `transcription.max_duration_secs`, `transcription.transcribe_non_ptt_audio`, and `transcription.groq.language_code` settings have been removed from the configuration form and example. Old configuration files still load; these keys are ignored. Use `transcription.groq.language` for a Groq language hint.

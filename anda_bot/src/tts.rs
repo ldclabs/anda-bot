@@ -12,33 +12,25 @@ mod google;
 mod openai;
 mod stepfun;
 
-pub use edge::EdgeTtsProvider;
-pub use google::GoogleTtsProvider;
-pub use openai::OpenAiTtsProvider;
-pub use stepfun::StepFunTtsProvider;
+use edge::EdgeTtsProvider;
+use google::GoogleTtsProvider;
+use openai::OpenAiTtsProvider;
+use stepfun::StepFunTtsProvider;
 
 /// Maximum text length before synthesis is rejected (default: 4096 chars).
 const DEFAULT_MAX_TEXT_LENGTH: usize = 4096;
 
-/// Default HTTP request timeout for TTS API calls.
-const TTS_HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Timeout for one synthesis: an HTTP request or an `edge-tts` run.
+const TTS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 // ── TtsProvider trait ────────────────────────────────────────────
 
 /// Trait for pluggable TTS backends.
 #[async_trait::async_trait]
 pub trait TtsProvider: Send + Sync {
-    /// Provider identifier (e.g. `"openai"`, `"google"`).
-    fn name(&self) -> &str;
-
     /// Canonical lowercase audio format returned by this provider.
-    fn audio_format(&self) -> &str {
+    fn audio_format(&self) -> &'static str {
         "mp3"
-    }
-
-    /// Audio format names this provider can currently return through this manager.
-    fn supported_audio_formats(&self) -> Vec<String> {
-        vec![self.audio_format().to_string()]
     }
 
     /// Synthesize `text`, returning raw audio bytes.
@@ -50,8 +42,8 @@ pub trait TtsProvider: Send + Sync {
 /// Central manager for multi-provider TTS synthesis.
 pub struct TtsManager {
     providers: HashMap<String, Box<dyn TtsProvider>>,
+    /// Always a key of `providers`.
     default_provider: String,
-    default_format: String,
     max_text_length: usize,
 }
 
@@ -76,132 +68,93 @@ pub struct TtsOutput {
 impl TtsManager {
     pub const NAME: &'static str = "synthesize_speech";
 
-    /// Build a `TtsManager` from config, initializing all configured providers.
-    pub fn new(config: &config::TtsConfig, http: reqwest::Client) -> Result<Self, BoxError> {
-        let mut providers: HashMap<String, Box<dyn TtsProvider>> = HashMap::new();
-
-        let max_text_length = if config.max_text_length == 0 {
-            DEFAULT_MAX_TEXT_LENGTH
-        } else {
-            config.max_text_length
-        };
-
+    /// Build a `TtsManager` from config; `None` when TTS is disabled.
+    ///
+    /// An invalid default provider fails with its own error; other invalid
+    /// providers are skipped with a warning.
+    pub fn new(
+        config: &config::TtsConfig,
+        http: reqwest::Client,
+    ) -> Result<Option<Self>, BoxError> {
         if !config.enabled {
-            return Ok(Self {
-                providers,
-                default_provider: config.default_provider.clone(),
-                default_format: normalize_audio_format(&config.default_format)
-                    .unwrap_or("mp3")
-                    .to_string(),
-                max_text_length,
-            });
+            return Ok(None);
         }
 
-        let default_format = normalize_audio_format(&config.default_format)?.to_string();
-
-        if let Some(ref openai_cfg) = config.openai {
-            match OpenAiTtsProvider::new(openai_cfg, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping OpenAI TTS provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref google_cfg) = config.google {
-            match GoogleTtsProvider::new(google_cfg, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping Google TTS provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref edge_cfg) = config.edge {
-            match EdgeTtsProvider::new(edge_cfg) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping Edge TTS provider: {e}");
-                }
-            }
-        }
-
-        if let Some(ref stepfun_cfg) = config.stepfun {
-            match StepFunTtsProvider::new(stepfun_cfg, &config.default_format, http.clone()) {
-                Ok(p) => {
-                    providers.insert(p.name().to_string(), Box::new(p));
-                }
-                Err(e) => {
-                    log::warn!("Skipping StepFun TTS provider: {e}");
-                }
-            }
-        }
-
+        let default_format = parse_audio_format(&config.default_format)?;
         let default_provider = config.default_provider.clone();
-        if !providers.contains_key(&default_provider) {
-            let available: Vec<&str> = providers.keys().map(|key| key.as_str()).collect();
+        let mut providers = HashMap::new();
+        if let Some(cfg) = &config.openai {
+            let provider = OpenAiTtsProvider::new(cfg, http.clone());
+            register(&mut providers, &default_provider, "openai", provider)?;
+        }
+        if let Some(cfg) = &config.google {
+            let provider = GoogleTtsProvider::new(cfg, http.clone());
+            register(&mut providers, &default_provider, "google", provider)?;
+        }
+        if let Some(cfg) = &config.edge {
+            let provider = EdgeTtsProvider::new(cfg);
+            register(&mut providers, &default_provider, "edge", provider)?;
+        }
+        if let Some(cfg) = &config.stepfun {
+            let provider = StepFunTtsProvider::new(cfg, default_format, http);
+            register(&mut providers, &default_provider, "stepfun", provider)?;
+        }
+
+        let manager = Self {
+            providers,
+            default_provider,
+            max_text_length: if config.max_text_length == 0 {
+                DEFAULT_MAX_TEXT_LENGTH
+            } else {
+                config.max_text_length
+            },
+        };
+        if !manager.providers.contains_key(&manager.default_provider) {
             return Err(format!(
-                "Default TTS provider '{}' is not configured. Available: {available:?}",
-                default_provider
+                "Default TTS provider '{}' is not configured (available: {})",
+                manager.default_provider,
+                manager.available_providers().join(", ")
             )
             .into());
         }
-
-        Ok(Self {
-            providers,
-            default_provider,
-            default_format,
-            max_text_length,
-        })
+        Ok(Some(manager))
     }
 
-    pub fn is_enabled(&self) -> bool {
-        !self.providers.is_empty()
-    }
-
-    /// Synthesize text using the default provider and voice.
+    /// Synthesize text using the default provider.
     pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        self.synthesize_with_provider(text, &self.default_provider)
-            .await
+        let (audio, _) = self.synthesize_with(&self.default_provider, text).await?;
+        Ok(audio)
     }
 
-    /// Synthesize text using a specific provider and voice.
-    pub async fn synthesize_with_provider(
+    /// Synthesize text using `provider`, returning the audio and its format.
+    async fn synthesize_with(
         &self,
-        text: &str,
         provider: &str,
-    ) -> Result<Vec<u8>, BoxError> {
+        text: &str,
+    ) -> Result<(Vec<u8>, &'static str), BoxError> {
+        let tts = self.providers.get(provider).ok_or_else(|| {
+            format!(
+                "TTS provider '{provider}' not configured (available: {})",
+                self.available_providers().join(", ")
+            )
+        })?;
         if text.trim().is_empty() {
             return Err("TTS text must not be empty".into());
         }
         let char_count = text.chars().count();
         if char_count > self.max_text_length {
             return Err(format!(
-                "TTS text too long ({} chars, max {})",
-                char_count, self.max_text_length
+                "TTS text too long ({char_count} chars, max {})",
+                self.max_text_length
             )
             .into());
         }
-
-        let tts = self.providers.get(provider).ok_or_else(|| {
-            format!(
-                "TTS provider '{}' not configured (available: {})",
-                provider,
-                self.available_providers().join(", ")
-            )
-        })?;
 
         let audio = tts.synthesize(text).await?;
         if audio.is_empty() {
             return Err(format!("TTS provider '{provider}' returned empty audio").into());
         }
-        Ok(audio)
+        Ok((audio, tts.audio_format()))
     }
 
     /// List names of all initialized providers.
@@ -211,44 +164,37 @@ impl TtsManager {
         names
     }
 
-    pub fn audio_format(&self) -> &str {
-        self.providers
-            .get(&self.default_provider)
-            .map(|provider| provider.audio_format())
-            .unwrap_or(&self.default_format)
+    /// Audio format of the default provider.
+    pub fn audio_format(&self) -> &'static str {
+        self.providers[&self.default_provider].audio_format()
     }
 
     pub fn supported_audio_formats(&self) -> Vec<String> {
-        self.providers
-            .get(&self.default_provider)
-            .map(|provider| provider.supported_audio_formats())
-            .unwrap_or_default()
+        vec![self.audio_format().to_string()]
     }
 
-    #[cfg(test)]
-    pub fn audio_mime_type(&self) -> &'static str {
-        mime_for_audio_format(self.audio_format())
-    }
-
+    /// Wraps audio from [`Self::synthesize`] as an artifact.
     pub fn audio_artifact(&self, bytes: Vec<u8>, name: Option<String>) -> Resource {
         audio_artifact_with_format(bytes, name, self.audio_format())
     }
+}
 
-    pub fn audio_artifact_for_provider(
-        &self,
-        provider: &str,
-        bytes: Vec<u8>,
-        name: Option<String>,
-    ) -> Result<Resource, BoxError> {
-        let tts = self.providers.get(provider).ok_or_else(|| {
-            format!(
-                "TTS provider '{}' not configured (available: {})",
-                provider,
-                self.available_providers().join(", ")
-            )
-        })?;
-        Ok(audio_artifact_with_format(bytes, name, tts.audio_format()))
+fn register<P: TtsProvider + 'static>(
+    providers: &mut HashMap<String, Box<dyn TtsProvider>>,
+    default_provider: &str,
+    name: &str,
+    provider: Result<P, BoxError>,
+) -> Result<(), BoxError> {
+    match provider {
+        Ok(provider) => {
+            providers.insert(name.to_string(), Box::new(provider));
+        }
+        Err(err) if name == default_provider => {
+            return Err(format!("Default TTS provider '{name}' is invalid: {err}").into());
+        }
+        Err(err) => log::warn!("Skipping {name} TTS provider: {err}"),
     }
+    Ok(())
 }
 
 fn audio_artifact_with_format(bytes: Vec<u8>, name: Option<String>, format: &str) -> Resource {
@@ -274,7 +220,12 @@ impl Tool<BaseCtx> for TtsManager {
     }
 
     fn description(&self) -> String {
-        "Convert text into speech audio. Returns the synthesized audio as an artifact resource that callers can play or attach.".to_string()
+        format!(
+            "Convert text into speech audio. Returns the synthesized audio as an artifact resource that callers can play or attach. Available providers: {} (default: {}). Text is limited to {} characters and some providers accept less, so split long text across calls.",
+            self.available_providers().join(", "),
+            self.default_provider,
+            self.max_text_length
+        )
     }
 
     fn definition(&self) -> FunctionDefinition {
@@ -312,14 +263,13 @@ impl Tool<BaseCtx> for TtsManager {
     ) -> Result<ToolOutput<Self::Output>, BoxError> {
         let provider = config::normalize_optional(&args.provider)
             .unwrap_or_else(|| self.default_provider.clone());
-        let bytes = self.synthesize_with_provider(&args.text, &provider).await?;
-        let artifact = self.audio_artifact_for_provider(&provider, bytes, args.artifact_name)?;
-        let format = self.providers[&provider].audio_format().to_string();
+        let (bytes, format) = self.synthesize_with(&provider, &args.text).await?;
+        let artifact = audio_artifact_with_format(bytes, args.artifact_name, format);
         let output = TtsOutput {
             provider,
             artifact: artifact.name.clone(),
-            mime_type: artifact.mime_type.clone().unwrap_or_default(),
-            format,
+            mime_type: mime_for_audio_format(format).to_string(),
+            format: format.to_string(),
             size: artifact.size.unwrap_or_default(),
         };
         let mut result = ToolOutput::new(output);
@@ -328,14 +278,16 @@ impl Tool<BaseCtx> for TtsManager {
     }
 }
 
-fn normalize_audio_format(format: &str) -> Result<&'static str, BoxError> {
+/// Parses `tts.default_format`. Raw PCM has no header, so no Anda client can
+/// play it; WAV carries the same samples.
+fn parse_audio_format(format: &str) -> Result<&'static str, BoxError> {
     match format.trim().to_ascii_lowercase().as_str() {
         "mp3" => Ok("mp3"),
         "wav" => Ok("wav"),
         "opus" => Ok("opus"),
-        "ogg" => Ok("ogg"),
         "flac" => Ok("flac"),
-        "pcm" => Ok("pcm"),
+        "pcm" => Err("TTS audio format 'pcm' cannot be played; use 'wav' instead".into()),
+        "ogg" => Err("TTS audio format 'ogg' is not supported; use 'opus' instead".into()),
         _ => Err(format!("Unsupported TTS audio format '{format}'").into()),
     }
 }
@@ -344,9 +296,7 @@ fn mime_for_audio_format(format: &str) -> &'static str {
     match format {
         "wav" => "audio/wav",
         "opus" => "audio/opus",
-        "ogg" => "audio/ogg",
         "flac" => "audio/flac",
-        "pcm" => "audio/pcm",
         _ => "audio/mpeg",
     }
 }
@@ -365,117 +315,110 @@ mod tests {
     use super::*;
     use crate::util::http_client::new_reqwest_client;
     use crate::util::json_schema::assert_openai_strict_parameters;
+    use anda_engine::engine::EngineBuilder;
 
     struct StaticTtsProvider {
-        name: &'static str,
         format: &'static str,
+        audio: Vec<u8>,
     }
 
     #[async_trait::async_trait]
     impl TtsProvider for StaticTtsProvider {
-        fn name(&self) -> &str {
-            self.name
-        }
-
-        fn audio_format(&self) -> &str {
+        fn audio_format(&self) -> &'static str {
             self.format
         }
 
         async fn synthesize(&self, _text: &str) -> Result<Vec<u8>, BoxError> {
-            Ok(vec![1, 2, 3])
+            Ok(self.audio.clone())
         }
     }
 
-    fn manager_with_provider(provider: StaticTtsProvider, default_format: &str) -> TtsManager {
-        let default_provider = provider.name.to_string();
+    fn manager_with_provider(name: &str, format: &'static str) -> TtsManager {
         let mut providers: HashMap<String, Box<dyn TtsProvider>> = HashMap::new();
-        providers.insert(default_provider.clone(), Box::new(provider));
+        providers.insert(
+            name.to_string(),
+            Box::new(StaticTtsProvider {
+                format,
+                audio: vec![1, 2, 3],
+            }),
+        );
         TtsManager {
             providers,
-            default_provider,
-            default_format: default_format.to_string(),
+            default_provider: name.to_string(),
             max_text_length: DEFAULT_MAX_TEXT_LENGTH,
         }
+    }
+
+    fn edge_config() -> config::TtsConfig {
+        config::TtsConfig {
+            enabled: true,
+            default_provider: "edge".to_string(),
+            edge: Some(config::EdgeTtsConfig::default()),
+            ..Default::default()
+        }
+    }
+
+    fn new_manager_error(config: config::TtsConfig) -> String {
+        TtsManager::new(&config, new_reqwest_client())
+            .map(|_| ())
+            .unwrap_err()
+            .to_string()
     }
 
     #[test]
     fn tts_tool_schema_is_openai_strict() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "mp3",
-            },
-            "mp3",
-        );
-        let definition = manager.definition();
+        let definition = manager_with_provider("edge", "mp3").definition();
 
         assert_eq!(definition.strict, Some(true));
         assert_openai_strict_parameters(&definition.parameters);
+        assert!(
+            definition
+                .description
+                .contains("Available providers: edge (default: edge)")
+        );
+        assert!(definition.description.contains("4096 characters"));
     }
 
     #[test]
     fn audio_artifact_uses_default_provider_actual_format() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "mp3",
-            },
-            "wav",
-        );
+        let manager = manager_with_provider("stepfun", "wav");
+        assert_eq!(manager.audio_format(), "wav");
+        assert_eq!(manager.supported_audio_formats(), vec!["wav"]);
 
         let artifact = manager.audio_artifact(vec![1, 2, 3], Some("voice".to_string()));
-
-        assert_eq!(artifact.name, "voice.mp3");
-        assert_eq!(artifact.tags, vec!["audio", "mp3"]);
-        assert_eq!(artifact.mime_type.as_deref(), Some("audio/mpeg"));
-    }
-
-    #[test]
-    fn audio_artifact_for_provider_uses_requested_provider_format() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "stepfun",
-                format: "wav",
-            },
-            "mp3",
-        );
-
-        let artifact = manager
-            .audio_artifact_for_provider("stepfun", vec![1, 2, 3], Some("voice".to_string()))
-            .unwrap();
 
         assert_eq!(artifact.name, "voice.wav");
         assert_eq!(artifact.tags, vec!["audio", "wav"]);
         assert_eq!(artifact.mime_type.as_deref(), Some("audio/wav"));
-    }
-
-    use anda_engine::engine::EngineBuilder;
-
-    fn empty_manager(default_provider: &str, default_format: &str) -> TtsManager {
-        TtsManager {
-            providers: HashMap::new(),
-            default_provider: default_provider.to_string(),
-            default_format: default_format.to_string(),
-            max_text_length: DEFAULT_MAX_TEXT_LENGTH,
-        }
+        assert_eq!(artifact.size, Some(3));
     }
 
     #[test]
-    fn manager_disabled_config_registers_no_providers() {
-        let manager = TtsManager::new(&config::TtsConfig::default(), new_reqwest_client()).unwrap();
+    fn manager_disabled_config_builds_nothing() {
+        let manager = TtsManager::new(&config::TtsConfig::default(), new_reqwest_client());
+        assert!(manager.unwrap().is_none());
 
-        assert!(!manager.is_enabled());
-        assert!(manager.available_providers().is_empty());
-        assert!(manager.supported_audio_formats().is_empty());
+        // Disabled sections are not validated.
+        let config = config::TtsConfig {
+            default_format: "typo".into(),
+            ..Default::default()
+        };
+        assert!(
+            TtsManager::new(&config, new_reqwest_client())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn manager_zero_max_text_length_falls_back_to_default() {
         let config = config::TtsConfig {
             max_text_length: 0,
-            ..Default::default()
+            ..edge_config()
         };
-        let manager = TtsManager::new(&config, new_reqwest_client()).unwrap();
+        let manager = TtsManager::new(&config, new_reqwest_client())
+            .unwrap()
+            .unwrap();
 
         assert_eq!(manager.max_text_length, DEFAULT_MAX_TEXT_LENGTH);
     }
@@ -483,108 +426,122 @@ mod tests {
     #[test]
     fn manager_registers_valid_providers_and_skips_invalid_ones() {
         let config = config::TtsConfig {
-            enabled: true,
-            default_provider: "edge".to_string(),
             // Empty API keys: these providers are skipped with a warning.
             openai: Some(config::OpenAiTtsConfig::default()),
             google: Some(config::GoogleTtsConfig::default()),
-            edge: Some(config::EdgeTtsConfig::default()),
             stepfun: Some(config::StepFunTtsConfig {
                 api_key: "sk-test".to_string(),
                 ..Default::default()
             }),
-            ..Default::default()
+            ..edge_config()
         };
 
-        let manager = TtsManager::new(&config, new_reqwest_client()).unwrap();
+        let manager = TtsManager::new(&config, new_reqwest_client())
+            .unwrap()
+            .unwrap();
 
-        assert!(manager.is_enabled());
         assert_eq!(manager.available_providers(), vec!["edge", "stepfun"]);
+        assert_eq!(manager.audio_format(), "mp3");
     }
 
     #[test]
-    fn manager_rejects_unavailable_default_provider() {
-        let config = config::TtsConfig {
-            enabled: true,
+    fn manager_reports_why_the_default_provider_is_unavailable() {
+        let err = new_manager_error(config::TtsConfig {
             default_provider: "openai".to_string(),
             openai: Some(config::OpenAiTtsConfig::default()),
-            ..Default::default()
-        };
+            ..edge_config()
+        });
+        assert!(
+            err.contains(
+                "Default TTS provider 'openai' is invalid: OpenAI TTS API key must not be empty"
+            ),
+            "got: {err}"
+        );
 
-        let err = TtsManager::new(&config, new_reqwest_client())
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("Default TTS provider 'openai'"));
+        let err = new_manager_error(config::TtsConfig {
+            default_provider: "stepfun".to_string(),
+            stepfun: Some(config::StepFunTtsConfig::default()),
+            ..edge_config()
+        });
+        assert!(err.contains("Missing StepFun TTS API key"), "got: {err}");
+
+        let err = new_manager_error(config::TtsConfig {
+            default_provider: "google".to_string(),
+            ..edge_config()
+        });
+        assert!(
+            err.contains("Default TTS provider 'google' is not configured (available: edge)"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn enabled_manager_rejects_unplayable_or_unknown_output_formats() {
+        for (format, message) in [
+            ("pcm", "use 'wav'"),
+            ("ogg", "use 'opus'"),
+            ("typo", "Unsupported TTS audio format 'typo'"),
+        ] {
+            let err = new_manager_error(config::TtsConfig {
+                default_format: format.into(),
+                ..edge_config()
+            });
+            assert!(err.contains(message), "{format}: {err}");
+        }
     }
 
     #[tokio::test]
-    async fn synthesize_validates_text_and_provider() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "mp3",
-            },
-            "mp3",
-        );
+    async fn synthesize_validates_text_provider_and_audio() {
+        let mut manager = manager_with_provider("edge", "mp3");
 
         assert_eq!(manager.synthesize("hello").await.unwrap(), vec![1, 2, 3]);
 
-        let err = manager.synthesize("").await.unwrap_err();
-        assert!(err.to_string().contains("must not be empty"));
+        for text in ["", " \n\t"] {
+            let err = manager.synthesize(text).await.unwrap_err();
+            assert!(err.to_string().contains("must not be empty"));
+        }
 
         let err = manager
-            .synthesize_with_provider("hello", "missing")
+            .synthesize_with("missing", "hello")
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("TTS provider 'missing'"));
+        assert!(
+            err.to_string()
+                .contains("TTS provider 'missing' not configured (available: edge)")
+        );
 
-        let mut short_manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
+        manager.max_text_length = 3;
+        let err = manager.synthesize("hello").await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("TTS text too long (5 chars, max 3)")
+        );
+
+        manager.providers.insert(
+            "edge".into(),
+            Box::new(StaticTtsProvider {
                 format: "mp3",
-            },
-            "mp3",
+                audio: Vec::new(),
+            }),
         );
-        short_manager.max_text_length = 3;
-        let err = short_manager.synthesize("hello").await.unwrap_err();
-        assert!(err.to_string().contains("TTS text too long"));
+        let err = manager.synthesize("hi").await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("TTS provider 'edge' returned empty audio")
+        );
     }
 
     #[test]
-    fn audio_format_falls_back_to_default_format_without_provider() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "wav",
-            },
-            "mp3",
-        );
-        assert_eq!(manager.audio_format(), "wav");
-        assert_eq!(manager.audio_mime_type(), "audio/wav");
-        assert_eq!(manager.supported_audio_formats(), vec!["wav"]);
+    fn parse_audio_format_accepts_playable_formats() {
+        for format in ["mp3", "wav", "opus", "flac"] {
+            assert_eq!(parse_audio_format(format).unwrap(), format);
+        }
+        assert_eq!(parse_audio_format(" WAV ").unwrap(), "wav");
 
-        let empty = empty_manager("edge", "opus");
-        assert_eq!(empty.audio_format(), "opus");
-        assert!(empty.supported_audio_formats().is_empty());
-        let err = empty
-            .audio_artifact_for_provider("edge", vec![1], None)
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("TTS provider 'edge'"));
-    }
-
-    #[test]
-    fn normalize_audio_format_rejects_unknown_formats() {
-        assert_eq!(normalize_audio_format(" WAV ").unwrap(), "wav");
-        assert_eq!(normalize_audio_format("opus").unwrap(), "opus");
-        assert_eq!(normalize_audio_format("ogg").unwrap(), "ogg");
-        assert_eq!(normalize_audio_format("flac").unwrap(), "flac");
-        assert_eq!(normalize_audio_format("pcm").unwrap(), "pcm");
-        assert!(normalize_audio_format("anything").is_err());
-
-        assert_eq!(mime_for_audio_format("ogg"), "audio/ogg");
-        assert_eq!(mime_for_audio_format("pcm"), "audio/pcm");
         assert_eq!(mime_for_audio_format("mp3"), "audio/mpeg");
+        assert_eq!(mime_for_audio_format("wav"), "audio/wav");
+        assert_eq!(mime_for_audio_format("opus"), "audio/opus");
+        assert_eq!(mime_for_audio_format("flac"), "audio/flac");
     }
 
     #[test]
@@ -607,13 +564,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tts_tool_call_returns_artifact_and_metadata() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "mp3",
-            },
-            "mp3",
+    async fn tts_tool_call_returns_artifact_in_the_requested_providers_format() {
+        let mut manager = manager_with_provider("edge", "mp3");
+        manager.providers.insert(
+            "stepfun".into(),
+            Box::new(StaticTtsProvider {
+                format: "wav",
+                audio: vec![4, 5],
+            }),
         );
         let ctx = EngineBuilder::new().mock_ctx().base;
 
@@ -623,13 +581,12 @@ mod tests {
                 TtsArgs {
                     text: "hello".to_string(),
                     provider: None,
-                    artifact_name: Some("greeting".to_string()),
+                    artifact_name: Some("greeting.wav".to_string()),
                 },
                 Vec::new(),
             )
             .await
             .unwrap();
-
         assert_eq!(result.output.provider, "edge");
         assert_eq!(result.output.artifact, "greeting.mp3");
         assert_eq!(result.output.mime_type, "audio/mpeg");
@@ -637,6 +594,25 @@ mod tests {
         assert_eq!(result.output.size, 3);
         assert_eq!(result.artifacts.len(), 1);
         assert_eq!(result.artifacts[0].name, "greeting.mp3");
+        assert_eq!(result.artifacts[0].tags, vec!["audio", "mp3"]);
+
+        let result = manager
+            .call(
+                ctx.clone(),
+                TtsArgs {
+                    text: "hello".to_string(),
+                    provider: Some(" stepfun ".to_string()),
+                    artifact_name: Some("greeting".to_string()),
+                },
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.output.provider, "stepfun");
+        assert_eq!(result.output.artifact, "greeting.wav");
+        assert_eq!(result.output.mime_type, "audio/wav");
+        assert_eq!(result.output.format, "wav");
+        assert_eq!(result.output.size, 2);
 
         let err = manager
             .call(
@@ -652,83 +628,5 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(err.to_string().contains("TTS provider 'missing'"));
-    }
-
-    #[tokio::test]
-    async fn tool_output_extension_matches_requested_provider() {
-        let manager = manager_with_provider(
-            StaticTtsProvider {
-                name: "edge",
-                format: "mp3",
-            },
-            "wav",
-        );
-        let result = manager
-            .call(
-                EngineBuilder::new().mock_ctx().base,
-                TtsArgs {
-                    text: "Hello".into(),
-                    artifact_name: Some("voice.wav".into()),
-                    ..Default::default()
-                },
-                Vec::new(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(result.output.artifact, "voice.mp3");
-        assert_eq!(result.output.format, "mp3");
-        assert_eq!(result.output.mime_type, "audio/mpeg");
-        assert_eq!(result.artifacts[0].tags, vec!["audio", "mp3"]);
-        assert!(
-            manager
-                .synthesize(" \n\t")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("must not be empty")
-        );
-    }
-
-    #[tokio::test]
-    async fn manager_rejects_empty_provider_audio() {
-        struct EmptyProvider;
-        #[async_trait::async_trait]
-        impl TtsProvider for EmptyProvider {
-            fn name(&self) -> &str {
-                "empty"
-            }
-            async fn synthesize(&self, _: &str) -> Result<Vec<u8>, BoxError> {
-                Ok(Vec::new())
-            }
-        }
-        let mut manager = empty_manager("empty", "mp3");
-        manager
-            .providers
-            .insert("empty".into(), Box::new(EmptyProvider));
-        assert!(
-            manager
-                .synthesize("hello")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("empty audio")
-        );
-    }
-
-    #[test]
-    fn enabled_manager_rejects_unknown_output_format() {
-        let config = config::TtsConfig {
-            enabled: true,
-            default_format: "typo".into(),
-            edge: Some(config::EdgeTtsConfig::default()),
-            ..Default::default()
-        };
-        assert!(
-            TtsManager::new(&config, new_reqwest_client())
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("Unsupported TTS audio format")
-        );
     }
 }

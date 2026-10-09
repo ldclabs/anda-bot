@@ -1,8 +1,12 @@
 use anda_core::BoxError;
 use std::time::Duration;
 
-use super::{TTS_HTTP_TIMEOUT, TtsProvider};
+use super::{TTS_TIMEOUT, TtsProvider};
 use crate::config;
+
+/// The only accepted `binary_path`: a bare command resolved on PATH, so the
+/// config cannot point synthesis at an arbitrary executable.
+const EDGE_TTS_BINARY: &str = "edge-tts";
 
 /// Edge TTS provider — free, uses the `edge-tts` CLI subprocess.
 pub struct EdgeTtsProvider {
@@ -11,31 +15,16 @@ pub struct EdgeTtsProvider {
 }
 
 impl EdgeTtsProvider {
-    /// Allowed basenames for the Edge TTS binary.
-    const ALLOWED_BINARIES: &[&str] = &["edge-tts"];
-
-    /// Create a new Edge TTS provider from config.
-    ///
-    /// `binary_path` must be a bare command name (no path separators) matching
-    /// one of [`Self::ALLOWED_BINARIES`]. This prevents arbitrary executable
-    /// paths like `/tmp/malicious/edge-tts` from passing the basename check.
     pub fn new(config: &config::EdgeTtsConfig) -> Result<Self, BoxError> {
-        let path = &config.binary_path;
-        if path.contains('/') || path.contains('\\') {
+        if config.binary_path != EDGE_TTS_BINARY {
             return Err(format!(
-                "Edge TTS binary_path must be a bare command name without path separators, got: {path}"
-            )
-            .into());
-        }
-        if !Self::ALLOWED_BINARIES.contains(&path.as_str()) {
-            return Err(format!(
-                "Edge TTS binary_path must be one of {:?}, got: {path}",
-                Self::ALLOWED_BINARIES,
+                "Edge TTS binary_path must be `{EDGE_TTS_BINARY}` (resolved on PATH), got: {}",
+                config.binary_path
             )
             .into());
         }
         Ok(Self {
-            binary_path: config.binary_path.clone(),
+            binary_path: EDGE_TTS_BINARY.to_string(),
             voice: config.voice.clone(),
         })
     }
@@ -57,14 +46,27 @@ impl EdgeTtsProvider {
         )
         .await
         .map_err(|_| "Edge TTS subprocess timed out")?
-        .map_err(|err| format!("Failed to run edge-tts subprocess: {err}"))?;
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                format!(
+                    "`{}` was not found on PATH; install it with `pip install edge-tts`",
+                    self.binary_path
+                )
+            } else {
+                format!("Failed to run edge-tts subprocess: {err}")
+            }
+        })?;
 
         if !output.status.success() {
+            // edge-tts reports failures as a Python traceback whose last line
+            // names the error.
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("edge-tts failed (exit {}): {}", output.status, stderr).into());
-        }
-        if output.stdout.is_empty() {
-            return Err("edge-tts returned empty audio".into());
+            let reason = stderr
+                .lines()
+                .map(str::trim)
+                .rfind(|line| !line.is_empty())
+                .unwrap_or("no error output");
+            return Err(format!("edge-tts failed ({}): {reason}", output.status).into());
         }
         Ok(output.stdout)
     }
@@ -72,12 +74,8 @@ impl EdgeTtsProvider {
 
 #[async_trait::async_trait]
 impl TtsProvider for EdgeTtsProvider {
-    fn name(&self) -> &str {
-        "edge"
-    }
-
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
-        self.synthesize_with_timeout(text, TTS_HTTP_TIMEOUT).await
+        self.synthesize_with_timeout(text, TTS_TIMEOUT).await
     }
 }
 
@@ -93,39 +91,37 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_paths_with_separators() {
-        for path in ["/tmp/edge-tts", "tools\\edge-tts", "./edge-tts"] {
+    fn new_accepts_only_the_bare_edge_tts_command() {
+        let provider = EdgeTtsProvider::new(&edge_config("edge-tts")).unwrap();
+        assert_eq!(provider.binary_path, "edge-tts");
+        assert_eq!(provider.voice, "en-US-AriaNeural");
+        assert_eq!(provider.audio_format(), "mp3");
+
+        for path in [
+            "/tmp/edge-tts",
+            "tools\\edge-tts",
+            "./edge-tts",
+            "malicious-tts",
+            "edge-playback",
+        ] {
             let err = EdgeTtsProvider::new(&edge_config(path))
                 .map(|_| ())
                 .unwrap_err();
             assert!(
-                err.to_string().contains("without path separators"),
-                "expected separator error for {path:?}, got: {err}"
+                err.to_string().contains("must be `edge-tts`"),
+                "expected rejection for {path:?}, got: {err}"
             );
         }
     }
 
-    #[test]
-    fn new_rejects_unknown_binary_names() {
-        let err = EdgeTtsProvider::new(&edge_config("malicious-tts"))
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("must be one of"));
-    }
-
-    #[test]
-    fn new_accepts_allowed_binaries() {
-        for path in EdgeTtsProvider::ALLOWED_BINARIES {
-            let provider = EdgeTtsProvider::new(&edge_config(path)).unwrap();
-            assert_eq!(provider.binary_path, *path);
-            assert_eq!(provider.voice, "en-US-AriaNeural");
-            assert_eq!(provider.name(), "edge");
-        }
-    }
-
-    #[test]
-    fn rejects_playback_wrapper() {
-        assert!(EdgeTtsProvider::new(&edge_config("edge-playback")).is_err());
+    #[tokio::test]
+    async fn missing_binary_reports_install_hint() {
+        let provider = EdgeTtsProvider {
+            binary_path: "anda-missing-edge-tts".into(),
+            voice: "test-voice".into(),
+        };
+        let err = provider.synthesize("hi").await.unwrap_err().to_string();
+        assert!(err.contains("was not found on PATH"), "got: {err}");
     }
 
     #[cfg(unix)]
@@ -153,18 +149,16 @@ printf 'MP3DATA'
         );
         assert_eq!(provider.synthesize("-hello").await.unwrap(), b"MP3DATA");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
-        let (_dir, provider) = fake_cli("printf 'service failed' >&2; exit 7");
-        let err = provider.synthesize("hi").await.unwrap_err().to_string();
-        assert!(err.contains('7') && err.contains("service failed"));
-        let (_dir, provider) = fake_cli("exit 0");
-        assert!(
-            provider
-                .synthesize("hi")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("empty audio")
+        let (_dir, provider) = fake_cli(
+            "printf 'Traceback (most recent call last):\\n  File \"x\"\\nNoAudioReceived: service failed\\n\\n' >&2; exit 7",
         );
+        let err = provider.synthesize("hi").await.unwrap_err().to_string();
+        assert!(err.contains('7'), "got: {err}");
+        assert!(
+            err.ends_with("NoAudioReceived: service failed"),
+            "got: {err}"
+        );
+        assert!(!err.contains("Traceback"), "got: {err}");
     }
 
     #[cfg(unix)]

@@ -622,10 +622,7 @@ impl Engines {
                 tool(browser_bridge.clone()).with_screenshot_workspace(default_workspace.clone()),
             )
         });
-        let tts_manager = {
-            let manager = Arc::new(TtsManager::new(&cfg.tts, outer_http_client.clone())?);
-            manager.is_enabled().then_some(manager)
-        };
+        let tts_manager = TtsManager::new(&cfg.tts, outer_http_client.clone())?.map(Arc::new);
         let transcription_manager = {
             let manager = Arc::new(TranscriptionManager::new(
                 &cfg.transcription,

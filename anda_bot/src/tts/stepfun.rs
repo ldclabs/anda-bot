@@ -1,8 +1,8 @@
 use anda_core::BoxError;
 use reqwest::header::ACCEPT;
-use serde_json::json;
+use serde::Serialize;
 
-use super::{TTS_HTTP_TIMEOUT, TtsProvider, normalize_audio_format};
+use super::{TTS_TIMEOUT, TtsProvider};
 use crate::{config, util::http_client::check_http_response};
 
 /// StepFun rejects TTS input longer than 1000 characters.
@@ -16,7 +16,7 @@ pub struct StepFunTtsProvider {
     api_key: String,
     model: String,
     voice: String,
-    response_format: String,
+    response_format: &'static str,
     speed: f64,
     volume: f64,
     instruction: Option<String>,
@@ -27,9 +27,10 @@ pub struct StepFunTtsProvider {
 }
 
 impl StepFunTtsProvider {
+    /// `response_format` is the already validated `tts.default_format`.
     pub fn new(
         config: &config::StepFunTtsConfig,
-        default_format: &str,
+        response_format: &'static str,
         http: reqwest::Client,
     ) -> Result<Self, BoxError> {
         let api_key = config.api_key.trim();
@@ -95,7 +96,7 @@ impl StepFunTtsProvider {
             api_key: api_key.to_string(),
             model,
             voice,
-            response_format: normalize_stepfun_response_format(default_format)?.to_string(),
+            response_format,
             speed: config.speed,
             volume: config.volume,
             instruction,
@@ -105,16 +106,51 @@ impl StepFunTtsProvider {
             http,
         })
     }
+
+    fn request<'a>(&'a self, text: &'a str) -> SpeechRequest<'a> {
+        SpeechRequest {
+            model: &self.model,
+            input: text,
+            voice: &self.voice,
+            response_format: self.response_format,
+            speed: self.speed,
+            volume: self.volume,
+            sample_rate: self.sample_rate,
+            instruction: self.instruction.as_deref(),
+            pronunciation_map: (!self.pronunciation_map.is_empty()).then_some(PronunciationMap {
+                tone: &self.pronunciation_map,
+            }),
+            markdown_filter: self.markdown_filter,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SpeechRequest<'a> {
+    model: &'a str,
+    input: &'a str,
+    voice: &'a str,
+    response_format: &'a str,
+    speed: f64,
+    volume: f64,
+    sample_rate: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instruction: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pronunciation_map: Option<PronunciationMap<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    markdown_filter: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct PronunciationMap<'a> {
+    tone: &'a [String],
 }
 
 #[async_trait::async_trait]
 impl TtsProvider for StepFunTtsProvider {
-    fn name(&self) -> &str {
-        "stepfun"
-    }
-
-    fn audio_format(&self) -> &str {
-        &self.response_format
+    fn audio_format(&self) -> &'static str {
+        self.response_format
     }
 
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
@@ -127,14 +163,13 @@ impl TtsProvider for StepFunTtsProvider {
             .into());
         }
 
-        let body = build_stepfun_tts_request_body(text, self);
         let resp = self
             .http
             .post(&self.api_url)
             .bearer_auth(&self.api_key)
             .header(ACCEPT, "audio/*")
-            .json(&body)
-            .timeout(TTS_HTTP_TIMEOUT)
+            .json(&self.request(text))
+            .timeout(TTS_TIMEOUT)
             .send()
             .await
             .map_err(|err| {
@@ -152,65 +187,25 @@ impl TtsProvider for StepFunTtsProvider {
                 err.without_url()
             )
         })?;
-        if bytes.is_empty() {
-            return Err("StepFun TTS response body was empty".into());
-        }
-
-        Ok(bytes.to_vec())
+        Ok(Vec::from(bytes))
     }
-}
-
-fn normalize_stepfun_response_format(format: &str) -> Result<&'static str, BoxError> {
-    let format = normalize_audio_format(format)?;
-    match format {
-        "mp3" | "wav" | "flac" | "opus" | "pcm" => Ok(format),
-        "ogg" => {
-            Err("StepFun TTS does not support `default_format: ogg`; use `opus` instead".into())
-        }
-        _ => unreachable!("normalize_audio_format only returns known formats"),
-    }
-}
-
-fn build_stepfun_tts_request_body(text: &str, provider: &StepFunTtsProvider) -> serde_json::Value {
-    let mut body = serde_json::Map::new();
-    body.insert("model".to_string(), json!(&provider.model));
-    body.insert("input".to_string(), json!(text));
-    body.insert("voice".to_string(), json!(&provider.voice));
-    body.insert(
-        "response_format".to_string(),
-        json!(&provider.response_format),
-    );
-    body.insert("speed".to_string(), json!(provider.speed));
-    body.insert("volume".to_string(), json!(provider.volume));
-    body.insert("sample_rate".to_string(), json!(provider.sample_rate));
-
-    if let Some(ref instruction) = provider.instruction {
-        body.insert("instruction".to_string(), json!(instruction));
-    }
-    if !provider.pronunciation_map.is_empty() {
-        body.insert(
-            "pronunciation_map".to_string(),
-            json!({ "tone": &provider.pronunciation_map }),
-        );
-    }
-    if let Some(markdown_filter) = provider.markdown_filter {
-        body.insert("markdown_filter".to_string(), json!(markdown_filter));
-    }
-
-    serde_json::Value::Object(body)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::mime_for_audio_format;
     use super::*;
     use crate::util::http_client::new_reqwest_client;
+    use serde_json::json;
 
     fn test_stepfun_provider(
         config: config::StepFunTtsConfig,
-        default_format: &str,
+        response_format: &'static str,
     ) -> StepFunTtsProvider {
-        StepFunTtsProvider::new(&config, default_format, new_reqwest_client()).unwrap()
+        StepFunTtsProvider::new(&config, response_format, new_reqwest_client()).unwrap()
+    }
+
+    fn request_body(provider: &StepFunTtsProvider, text: &str) -> serde_json::Value {
+        serde_json::to_value(provider.request(text)).unwrap()
     }
 
     #[test]
@@ -229,7 +224,7 @@ mod tests {
             "wav",
         );
 
-        let body = build_stepfun_tts_request_body("智能阶跃", &provider);
+        let body = request_body(&provider, "智能阶跃");
 
         assert_eq!(body["model"], "stepaudio-2.5-tts");
         assert_eq!(body["input"], "智能阶跃");
@@ -240,6 +235,21 @@ mod tests {
         assert_eq!(body["sample_rate"], 24000);
         assert_eq!(body["pronunciation_map"]["tone"][0], "阿胶/e1胶");
         assert_eq!(body["markdown_filter"], true);
+        assert!(body.get("instruction").is_none());
+
+        let body = request_body(
+            &test_stepfun_provider(
+                config::StepFunTtsConfig {
+                    api_key: "sk-test".to_string(),
+                    ..Default::default()
+                },
+                "mp3",
+            ),
+            "hi",
+        );
+        for field in ["instruction", "pronunciation_map", "markdown_filter"] {
+            assert!(body.get(field).is_none(), "{field} should be omitted");
+        }
     }
 
     #[test]
@@ -254,21 +264,10 @@ mod tests {
             "mp3",
         );
 
-        let body = build_stepfun_tts_request_body("你以为这是开玩笑的吗", &provider);
+        let body = request_body(&provider, "你以为这是开玩笑的吗");
 
         assert_eq!(body["model"], STEPFUN_TTS_25_MODEL);
         assert_eq!(body["instruction"], "语气极其愤怒，压迫感强，语速偏快");
-    }
-
-    #[test]
-    fn stepfun_tts_format_validation_matches_documented_formats() {
-        assert_eq!(normalize_audio_format("flac").unwrap(), "flac");
-        assert_eq!(normalize_audio_format("pcm").unwrap(), "pcm");
-        assert_eq!(mime_for_audio_format("flac"), "audio/flac");
-        assert_eq!(mime_for_audio_format("pcm"), "audio/pcm");
-        assert_eq!(normalize_stepfun_response_format("opus").unwrap(), "opus");
-        assert!(normalize_stepfun_response_format("ogg").is_err());
-        assert!(normalize_stepfun_response_format("typo").is_err());
     }
 
     fn tts_config_error(mutate: impl FnOnce(&mut config::StepFunTtsConfig)) -> String {
@@ -341,17 +340,12 @@ mod tests {
     async fn synthesize_returns_audio_bytes_and_reports_errors() {
         let provider = provider_with_mock(200, "MP3DATA").await;
         assert_eq!(provider.synthesize("你好").await.unwrap(), b"MP3DATA");
-        assert_eq!(provider.name(), "stepfun");
         assert_eq!(provider.audio_format(), "mp3");
 
         // Oversized input is rejected before sending.
         let long_text = "好".repeat(STEPFUN_MAX_INPUT_LENGTH + 1);
         let err = provider.synthesize(&long_text).await.unwrap_err();
         assert!(err.to_string().contains("text too long"));
-
-        let provider = provider_with_mock(200, "").await;
-        let err = provider.synthesize("hi").await.unwrap_err();
-        assert!(err.to_string().contains("body was empty"));
 
         let provider = provider_with_mock(429, r#"{"error":{"message":"rate limited"}}"#).await;
         let err = provider.synthesize("hi").await.unwrap_err();

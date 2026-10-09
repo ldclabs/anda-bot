@@ -173,7 +173,7 @@ export const ttsFields: FieldSchema[] = [
     key: 'default_format',
     label: getMessage('configFieldStepFunOutputFormat') || 'StepFun output format',
     kind: 'select',
-    options: ['mp3', 'opus', 'wav', 'flac', 'pcm']
+    options: ['mp3', 'opus', 'wav', 'flac']
   },
   {
     key: 'max_text_length',

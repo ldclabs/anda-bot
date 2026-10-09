@@ -1,7 +1,7 @@
 use anda_core::BoxError;
 use serde_json::json;
 
-use super::{TTS_HTTP_TIMEOUT, TtsProvider};
+use super::{TTS_TIMEOUT, TtsProvider};
 use crate::{config, util::http_client::check_http_response};
 
 /// OpenAI TTS provider (`POST /v1/audio/speech`).
@@ -31,10 +31,6 @@ impl OpenAiTtsProvider {
 
 #[async_trait::async_trait]
 impl TtsProvider for OpenAiTtsProvider {
-    fn name(&self) -> &str {
-        "openai"
-    }
-
     async fn synthesize(&self, text: &str) -> Result<Vec<u8>, BoxError> {
         let body = json!({
             "model": self.model,
@@ -49,7 +45,7 @@ impl TtsProvider for OpenAiTtsProvider {
             .post("https://api.openai.com/v1/audio/speech")
             .bearer_auth(&self.api_key)
             .json(&body)
-            .timeout(TTS_HTTP_TIMEOUT)
+            .timeout(TTS_TIMEOUT)
             .send()
             .await
             .map_err(|err| format!("Failed to send OpenAI TTS request: {:?}", err.without_url()))?;
@@ -62,10 +58,7 @@ impl TtsProvider for OpenAiTtsProvider {
                 err.without_url()
             )
         })?;
-        if bytes.is_empty() {
-            return Err("OpenAI TTS response body was empty".into());
-        }
-        Ok(bytes.to_vec())
+        Ok(Vec::from(bytes))
     }
 }
 
@@ -101,6 +94,6 @@ mod tests {
         assert_eq!(provider.model, "tts-1-hd");
         assert_eq!(provider.speed, 1.5);
         assert_eq!(provider.voice, "nova");
-        assert_eq!(provider.name(), "openai");
+        assert_eq!(provider.audio_format(), "mp3");
     }
 }

@@ -8,7 +8,7 @@ pub struct TtsConfig {
     pub enabled: bool,
     /// Default TTS provider (`"openai"`, `"google"`, `"edge"`, `"stepfun"`).
     pub default_provider: String,
-    /// StepFun audio output format (`"mp3"`, `"opus"`, `"wav"`, `"flac"`, `"pcm"`).
+    /// StepFun audio output format (`"mp3"`, `"opus"`, `"wav"`, `"flac"`).
     /// Edge, OpenAI, and Google always return MP3.
     pub default_format: String,
     /// Maximum input text length in characters (default 4096).

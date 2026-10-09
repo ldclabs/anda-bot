@@ -167,10 +167,9 @@ fn build_voice_runtime(cfg: &config::Config, playback: bool) -> Result<VoiceRunt
     }
 
     let tts = if playback {
-        let tts = tts::TtsManager::new(&cfg.tts, http_client)?;
-        if !tts.is_enabled() {
-            return Err("anda voice playback requires tts.enabled and a configured TTS provider; use --no-playback to disable speech output".into());
-        }
+        let tts = tts::TtsManager::new(&cfg.tts, http_client)?.ok_or(
+            "anda voice playback requires tts.enabled and a configured TTS provider; use --no-playback to disable speech output",
+        )?;
         // Check before the first turn: otherwise a missing player surfaces
         // only after recording, transcription and paid speech synthesis.
         if audio_players().is_empty() {
@@ -1541,6 +1540,7 @@ mod tests {
             },
             crate::util::http_client::new_reqwest_client(),
         )
+        .unwrap()
         .unwrap();
         for index in [0, 1] {
             let cancel = CancellationToken::new();
