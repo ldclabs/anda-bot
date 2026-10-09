@@ -61,10 +61,21 @@ model:
     # Legacy Codex auth.json configurations should migrate via that login flow.
 
     - family: openai
-      model: "gpt-6-luna"
+      model: "gpt-6.1-sol"
       api_base: "https://api.openai.com/v1"
       api_key: ""
       effort: high
+      context_window: 400000
+      max_output: 128000
+      labels: ["memory"]
+      stream: true
+      disabled: false
+
+    - family: openai
+      model: "gpt-6-luna"
+      api_base: "https://api.openai.com/v1"
+      api_key: ""
+      effort: max
       context_window: 400000
       max_output: 128000
       labels: ["flash", "image", "audio", "video"]
@@ -78,18 +89,18 @@ model:
       effort: high
       context_window: 400000
       max_output: 128000
-      labels: ["memory", "image", "audio", "video"]
+      labels: ["memory"]
       stream: true
       disabled: false
 
     - family: anthropic
-      model: "claude-sonnet-5-5"
+      model: "claude-haiku-5-5"
       api_base: "https://api.anthropic.com/v1"
       api_key: ""
-      effort: high
-      context_window: 200000
-      max_output: 64000
-      labels: ["flash"]
+      effort: max
+      context_window: 400000
+      max_output: 128000
+      labels: ["flash", "image", "audio", "video"]
       stream: true
       disabled: false
 
@@ -100,7 +111,7 @@ model:
       effort: high
       context_window: 400000
       max_output: 64000
-      labels: ["memory", "image", "audio", "video"]
+      labels: ["memory"]
       stream: true
       disabled: false
 
@@ -111,7 +122,7 @@ model:
       effort: max
       context_window: 400000
       max_output: 64000
-      labels: ["flash", "memory", "image", "audio", "video"]
+      labels: ["flash", "image", "audio", "video"]
       stream: true
       disabled: false
 
@@ -133,7 +144,7 @@ model:
       effort: high
       context_window: 400000
       max_output: 128000
-      labels: []
+      labels: ["memory"]
       stream: true
       disabled: false
       bearer_auth: true

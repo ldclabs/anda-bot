@@ -158,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "anda_bot"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "anda_brain",
  "anda_cognitive_nexus",
@@ -228,9 +228,9 @@ dependencies = [
 
 [[package]]
 name = "anda_brain"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b82ccae27732221a4d53c99713875be0349e2b2a08a7d0e44bc6738056c52a4a"
+checksum = "9b1ce0116f040ea62895d5449e1e7381df9684a4cb887121feb363ca4a2a4fc7"
 dependencies = [
  "anda_cognitive_nexus",
  "anda_core",
@@ -458,9 +458,9 @@ dependencies = [
 
 [[package]]
 name = "anda_engine"
-version = "0.16.5"
+version = "0.16.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c81291a1dda7762999e12b060bb80c5b5dd7d350129c86c87e2d79af42ab368b"
+checksum = "2751b1c4c1cfa25761186da9cfda131cf8d201f76f7e465a93bfe1913d143c61"
 dependencies = [
  "anda_cloud_cdk",
  "anda_cognitive_nexus",
@@ -536,9 +536,9 @@ dependencies = [
 
 [[package]]
 name = "anda_kip"
-version = "0.14.1"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3dea73ef29e9e25f85822cd1602bbe6fbed7b13f3cb574539c14d70b02f77ad7"
+checksum = "48e8eda090ff12de28b6330f59f6b31afe8d4ec2058605c507068e229aae9059"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5781,7 +5781,7 @@ version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
- "toml_edit 0.25.16+spec-1.1.0",
+ "toml_edit 0.25.17+spec-1.1.0",
 ]
 
 [[package]]
@@ -7852,9 +7852,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.16+spec-1.1.0"
+version = "0.25.17+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88f38f3af8bf71841c67a990f4e2b52143b2d0a1a994c72513ff4c14977fc722"
+checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap",
  "toml_datetime 1.1.2+spec-1.1.0",
@@ -7864,9 +7864,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.1.4+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed810ee007d8e7f9cf20b4774e7198142fa27186e0f805871da7f3c39eaf333"
+checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow 1.0.4",
 ]
@@ -9012,18 +9012,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.61"
+version = "0.8.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "879fb705ce98c32e41ebdb970fbe1204f8492423b314c6ab0354c3e7b5542866"
+checksum = "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.61"
+version = "0.8.62"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "708882a28301d604fa039cc7727607a98d04c4b86dc76ec9cc683f805d709759"
+checksum = "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a"
 dependencies = [
  "proc-macro2",
  "quote",
