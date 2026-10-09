@@ -1160,8 +1160,8 @@ async fn daemon_maintenance(
         "begin" => gate.begin().map(|value| {
             token = Some(value);
         }),
-        "renew" | "shutdown" => gate.renew(token.as_deref().unwrap_or_default(), false),
-        "release" => gate.renew(token.as_deref().unwrap_or_default(), true),
+        "renew" | "shutdown" => gate.renew(token.as_deref().unwrap_or_default()),
+        "release" => gate.release(token.as_deref().unwrap_or_default()),
         _ => Err("Unknown maintenance operation"),
     };
     if let Err(error) = result {

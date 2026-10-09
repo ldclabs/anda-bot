@@ -1,6 +1,5 @@
 //! Model-provider environment routing for the `anda` config loader: the
 //! provider → env-var table that decides which variable supplies an API key.
-//! Keep it dependency-free.
 
 /// API base that marks a provider as authenticating through ChatGPT Codex
 /// OAuth instead of an API key.
@@ -8,7 +7,11 @@ pub const CODEX_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
 /// Resolve the endpoint's provider first: model names often identify a vendor
 /// different from the service hosting it (for example DeepSeek on OpenRouter).
-pub fn api_key_env_candidates(family: &str, model: &str, api_base: &str) -> Vec<&'static str> {
+pub fn api_key_env_candidates(
+    family: &str,
+    model: &str,
+    api_base: &str,
+) -> &'static [&'static str] {
     let family = family.trim().to_ascii_lowercase();
     let model = model.trim().to_ascii_lowercase();
     let api_base = api_base.trim().to_ascii_lowercase();
@@ -32,7 +35,7 @@ pub fn api_key_env_candidates(family: &str, model: &str, api_base: &str) -> Vec<
                 .strip_suffix(name)
                 .is_some_and(|prefix| prefix.ends_with('.'))
     };
-    let endpoint: &[&str] = if domain("openrouter.ai") {
+    let endpoint: &'static [&'static str] = if domain("openrouter.ai") {
         &["OPENROUTER_API_KEY"]
     } else if domain("groq.com") {
         &["GROQ_API_KEY"]
@@ -60,9 +63,9 @@ pub fn api_key_env_candidates(family: &str, model: &str, api_base: &str) -> Vec<
         &[]
     };
     if !endpoint.is_empty() {
-        return endpoint.to_vec();
+        return endpoint;
     }
-    let fallback: &[&str] = if model.contains("deepseek") {
+    if model.contains("deepseek") {
         &["DEEPSEEK_API_KEY"]
     } else if model.contains("minimax") {
         &["MINIMAX_API_KEY", "MINIMAXI_API_KEY"]
@@ -83,14 +86,13 @@ pub fn api_key_env_candidates(family: &str, model: &str, api_base: &str) -> Vec<
             "gemini" | "google" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
             _ => &[],
         }
-    };
-    fallback.to_vec()
+    }
 }
 
 /// First non-empty value among [`api_key_env_candidates`].
 pub fn env_api_key(family: &str, model: &str, api_base: &str) -> Option<String> {
     api_key_env_candidates(family, model, api_base)
-        .into_iter()
+        .iter()
         .find_map(|name| {
             std::env::var(name).ok().and_then(|value| {
                 let value = value.trim().to_string();

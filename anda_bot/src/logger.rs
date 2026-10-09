@@ -18,8 +18,9 @@ pub fn init_daily_json_logger(
     logs_dir: PathBuf,
     file_prefix: &'static str,
 ) -> io::Result<()> {
+    let writer = DailyJsonWriter::new(logs_dir.clone(), file_prefix)?;
     Builder::with_level(level)
-        .with_target_writer("*", new_daily_json_writer(logs_dir.clone(), file_prefix)?)
+        .with_target_writer("*", Box::new(writer))
         .init();
     prune_old_daily_logs(&logs_dir, LOG_RETENTION_DAYS);
     Ok(())
@@ -59,18 +60,18 @@ fn daily_log_file_date(file_name: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(date, "%Y%m%d").ok()
 }
 
-pub fn current_daily_log_file_path(logs_dir: PathBuf, file_prefix: &str) -> PathBuf {
+pub fn current_daily_log_file_path(logs_dir: &Path, file_prefix: &str) -> PathBuf {
     logs_dir.join(daily_log_file_name(file_prefix, Local::now().date_naive()))
 }
 
 struct DailyJsonWriter {
-    state: parking_lot::Mutex<DailyJsonWriterState>,
-}
-
-struct DailyJsonWriterState {
     logs_dir: PathBuf,
     file_prefix: &'static str,
-    current_date: NaiveDate,
+    current: parking_lot::Mutex<DailyLogFile>,
+}
+
+struct DailyLogFile {
+    date: NaiveDate,
     file: File,
 }
 
@@ -78,16 +79,13 @@ impl DailyJsonWriter {
     fn new(logs_dir: PathBuf, file_prefix: &'static str) -> io::Result<Self> {
         std::fs::create_dir_all(&logs_dir)?;
 
-        let current_date = Local::now().date_naive();
-        let file = open_daily_log_file(&logs_dir, file_prefix, current_date)?;
+        let date = Local::now().date_naive();
+        let file = open_daily_log_file(&logs_dir, file_prefix, date)?;
 
         Ok(Self {
-            state: parking_lot::Mutex::new(DailyJsonWriterState {
-                logs_dir,
-                file_prefix,
-                current_date,
-                file,
-            }),
+            logs_dir,
+            file_prefix,
+            current: parking_lot::Mutex::new(DailyLogFile { date, file }),
         })
     }
 }
@@ -98,22 +96,15 @@ impl Writer for DailyJsonWriter {
         serde_json::to_writer(&mut buf, value).map_err(io::Error::from)?;
         buf.write_all(b"\n")?;
 
-        let current_date = Local::now().date_naive();
-        let mut state = self.state.lock();
-        if state.current_date != current_date {
-            state.file = open_daily_log_file(&state.logs_dir, state.file_prefix, current_date)?;
-            state.current_date = current_date;
+        let date = Local::now().date_naive();
+        let mut current = self.current.lock();
+        if current.date != date {
+            current.file = open_daily_log_file(&self.logs_dir, self.file_prefix, date)?;
+            current.date = date;
         }
 
-        state.file.write_all(&buf)
+        current.file.write_all(&buf)
     }
-}
-
-fn new_daily_json_writer(
-    logs_dir: PathBuf,
-    file_prefix: &'static str,
-) -> io::Result<Box<dyn Writer>> {
-    Ok(Box::new(DailyJsonWriter::new(logs_dir, file_prefix)?))
 }
 
 fn open_daily_log_file(logs_dir: &Path, file_prefix: &str, date: NaiveDate) -> io::Result<File> {
@@ -143,7 +134,7 @@ mod tests {
 
     #[test]
     fn current_daily_log_file_path_joins_logs_dir_and_prefix() {
-        let path = current_daily_log_file_path(PathBuf::from("/tmp/anda/logs"), "anda-daemon");
+        let path = current_daily_log_file_path(Path::new("/tmp/anda/logs"), "anda-daemon");
         let file_name = path.file_name().and_then(|name| name.to_str()).unwrap();
 
         assert_eq!(path.parent(), Some(Path::new("/tmp/anda/logs")));

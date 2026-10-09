@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn api_key_env_candidates_cover_known_brands() {
         fn candidates(family: &str, model: &str, api_base: &str) -> Vec<&'static str> {
-            crate::provider_env::api_key_env_candidates(family, model, api_base)
+            crate::provider_env::api_key_env_candidates(family, model, api_base).to_vec()
         }
 
         assert_eq!(

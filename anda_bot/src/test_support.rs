@@ -69,3 +69,21 @@ pub async fn spawn_http_mock(app: Router) -> String {
     });
     format!("http://{addr}")
 }
+
+/// Starts a 30 s `sleep` in the background and returns its pid: a live
+/// process that is not this test's child. The shell that started it exits at
+/// once, so init reaps the sleeper after a signal; a direct child would linger
+/// as a zombie and never count as exited.
+#[cfg(unix)]
+pub fn spawn_orphan_sleeper() -> u32 {
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("sleep 30 >/dev/null 2>&1 & echo $!")
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}

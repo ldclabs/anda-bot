@@ -65,6 +65,31 @@ pub enum Request {
     },
 }
 impl ChatGptApi {
+    /// The API of the setup-only gateway: no engines or live models exist
+    /// yet, and only the owner key is trusted.
+    pub fn for_setup(
+        service: Arc<ChatGptService>,
+        home: PathBuf,
+        daemon_id: Principal,
+        owner: &crate::identity::Ed25519PubKey,
+    ) -> Self {
+        Self {
+            service,
+            home,
+            auth: AppState {
+                engines: Arc::new(Default::default()),
+                default_engine: daemon_id,
+                start_time_ms: anda_engine::unix_ms(),
+                extra_info: Arc::new(Default::default()),
+                ed25519_pubkeys: Arc::new(vec![owner.clone().into()]),
+            },
+            owner: owner.id(),
+            config_lock: Arc::new(Mutex::new(())),
+            runtime: None,
+            setup_complete: CancellationToken::new(),
+        }
+    }
+
     pub fn router(self) -> Router {
         Router::new()
             .route("/daemon/chatgpt", post(handle))

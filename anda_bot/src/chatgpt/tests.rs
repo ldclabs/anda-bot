@@ -261,21 +261,7 @@ fn owner_api(service: Arc<ChatGptService>, home: &Path) -> (api::ChatGptApi, Str
         .extra
         .insert(crate::identity::iana::CWTClaimScope, "*");
     let token = key.sign_cwt(claims).unwrap();
-    let api = api::ChatGptApi {
-        service,
-        home: home.into(),
-        auth: anda_engine_server::handler::AppState {
-            engines: Arc::new(Default::default()),
-            default_engine: key.id(),
-            start_time_ms: anda_engine::unix_ms(),
-            extra_info: Arc::new(Default::default()),
-            ed25519_pubkeys: Arc::new(vec![key.pubkey().into()]),
-        },
-        owner: key.id(),
-        config_lock: Arc::new(Mutex::new(())),
-        runtime: None,
-        setup_complete: CancellationToken::new(),
-    };
+    let api = api::ChatGptApi::for_setup(service, home.into(), key.id(), &key.pubkey());
     (api, token)
 }
 #[tokio::test]

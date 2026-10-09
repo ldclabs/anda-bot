@@ -14,7 +14,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{fs::OpenOptions, io::AsyncWriteExt};
+use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(unix)]
@@ -39,9 +39,10 @@ use crate::{
 };
 
 const DAEMON_PID_FILE: &str = "anda-daemon.pid";
-// Held (flocked / exclusively opened) for the daemon's lifetime; makes the
-// stale-pid cleanup in acquire_pid_file race-free between two starting
-// daemons. The file itself is never deleted — only the lock matters.
+// Held (flocked / exclusively opened) for the daemon's lifetime. It, not the
+// pid file, decides whether a daemon is running: a daemon that died without
+// cleanup leaves its pid file behind, and that pid may since belong to an
+// unrelated process. The file itself is never deleted — only the lock matters.
 const DAEMON_LOCK_FILE: &str = "anda-daemon.lock";
 
 pub struct Daemon {
@@ -88,6 +89,10 @@ impl Daemon {
 
     pub fn pid_file_path(&self) -> PathBuf {
         self.home.join(DAEMON_PID_FILE)
+    }
+
+    fn lock_file_path(&self) -> PathBuf {
+        self.home.join(DAEMON_LOCK_FILE)
     }
 
     pub fn keys_dir_path(&self) -> PathBuf {
@@ -173,27 +178,48 @@ impl Daemon {
     }
 
     pub fn log_file_path(&self) -> PathBuf {
-        logger::current_daily_log_file_path(self.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)
+        logger::current_daily_log_file_path(&self.logs_dir_path(), logger::DAEMON_LOG_FILE_PREFIX)
     }
 
-    pub async fn read_pid_file(&self) -> Result<Option<u32>, BoxError> {
-        let pid_path = self.pid_file_path();
-        match util::text::read_text_file(&pid_path).await {
-            Ok(content) => Ok(content.trim().parse::<u32>().ok()),
+    async fn read_pid_file(&self) -> Result<Option<u32>, BoxError> {
+        match util::text::read_text_file(&self.pid_file_path()).await {
+            // kill(2) reads 0 and values above i32::MAX as a process group or
+            // every process, never as one pid.
+            Ok(content) => Ok(content
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pid| (1..=i32::MAX as u32).contains(pid))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err.into()),
         }
     }
 
+    /// The pid of the daemon serving this home, if one is running. A pid file
+    /// whose daemon lock is free was left by a daemon that died without
+    /// cleanup; it is removed instead of trusted.
+    pub async fn running_pid(&self) -> Result<Option<u32>, BoxError> {
+        let pid = self.read_pid_file().await?;
+        if pid.is_some() && !daemon_lock_held(&self.lock_file_path()) {
+            remove_file_if_exists(&self.pid_file_path()).await?;
+            return Ok(None);
+        }
+        Ok(pid)
+    }
+
     pub async fn ensure_directories(&self) -> Result<(), BoxError> {
-        tokio::fs::create_dir_all(self.keys_dir_path()).await?;
-        tokio::fs::create_dir_all(self.db_dir_path()).await?;
-        tokio::fs::create_dir_all(self.skills_dir_path()).await?;
-        tokio::fs::create_dir_all(self.bundled_skills_dir_path()).await?;
-        tokio::fs::create_dir_all(self.sandbox_dir_path()).await?;
-        tokio::fs::create_dir_all(self.logs_dir_path()).await?;
-        tokio::fs::create_dir_all(self.channels_dir_path()).await?;
-        tokio::fs::create_dir_all(self.workspace_dir_path()).await?;
+        for dir in [
+            self.keys_dir_path(),
+            self.db_dir_path(),
+            self.skills_dir_path(),
+            self.bundled_skills_dir_path(),
+            self.sandbox_dir_path(),
+            self.logs_dir_path(),
+            self.channels_dir_path(),
+            self.workspace_dir_path(),
+        ] {
+            tokio::fs::create_dir_all(dir).await?;
+        }
         Ok(())
     }
 
@@ -239,13 +265,7 @@ impl Daemon {
             .stderr(Stdio::from(stderr));
         configure_background_daemon_command(&mut command);
 
-        let mut child = match command.spawn() {
-            Ok(child) => child,
-            Err(err) => {
-                log::error!("Failed to spawn background daemon process: {err}");
-                return Err(err.into());
-            }
-        };
+        let mut child = command.spawn()?;
 
         if let Some(payload) = identity_payload {
             let mut stdin = child
@@ -266,28 +286,13 @@ impl Daemon {
         })
     }
 
-    #[cfg(any(unix, windows))]
-    pub async fn stop_background(&self, timeout: Duration) -> Result<StopState, BoxError> {
-        let pid_path = self.pid_file_path();
-        let Some(pid) = self.read_pid_file().await? else {
-            remove_file_if_exists(&pid_path).await?;
-            return Ok(StopState::NotRunning);
-        };
-
-        if !process_exists(pid) {
-            remove_file_if_exists(&pid_path).await?;
-            return Ok(StopState::NotRunning);
-        }
-
+    /// Terminates the running daemon `pid` (from [`Self::running_pid`]) and
+    /// waits for it to exit.
+    pub async fn terminate(&self, pid: u32, timeout: Duration) -> Result<(), BoxError> {
         terminate_process(pid)?;
         wait_for_process_exit(pid, timeout).await?;
-        remove_file_if_exists(&pid_path).await?;
-        Ok(StopState::Stopped(pid))
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    pub async fn stop_background(&self, _timeout: Duration) -> Result<StopState, BoxError> {
-        Err("anda daemon stop/restart is not supported on this platform".into())
+        // A forced kill skips the daemon's own pid file cleanup.
+        remove_file_if_exists(&self.pid_file_path()).await
     }
 
     pub async fn wait_for_background_exit(
@@ -298,8 +303,15 @@ impl Daemon {
         wait_for_process_exit(pid, timeout).await
     }
 
-    pub async fn remove_pid_file_if_exists(&self) -> Result<(), BoxError> {
-        remove_file_if_exists(&self.pid_file_path()).await
+    /// Takes the daemon singleton lock and records this process's pid. The
+    /// guard removes the pid file and releases the lock when dropped.
+    pub(crate) async fn acquire_pid_file(&self) -> Result<PidFileGuard, BoxError> {
+        // With the lock held no other daemon is running, so any existing pid
+        // file is stale and overwritten rather than trusted.
+        let lock = acquire_daemon_lock(&self.lock_file_path())?;
+        let path = self.pid_file_path();
+        tokio::fs::write(&path, std::process::id().to_string()).await?;
+        Ok(PidFileGuard { path, _lock: lock })
     }
 
     pub async fn serve(
@@ -307,11 +319,10 @@ impl Daemon {
         id_key: identity::Ed25519Key,
         user_pubkey: identity::Ed25519PubKey,
     ) -> Result<(), BoxError> {
-        let _pid_guard = acquire_pid_file(self.pid_file_path()).await?;
+        let _pid_guard = self.acquire_pid_file().await?;
 
-        if let Ok(addr) = self.cfg.socket_addr()
-            && !addr.ip().is_loopback()
-        {
+        let mut addr = self.cfg.socket_addr()?;
+        if !addr.ip().is_loopback() {
             log::warn!(
                 name = "daemon";
                 "gateway binds non-loopback address {addr}: /daemon/status, / and the MCP OAuth callback are reachable without authentication from the network"
@@ -331,32 +342,17 @@ impl Daemon {
         let chatgpt =
             crate::chatgpt::ChatGptService::open(&self.home, id_key.as_bytes(), auth_http)?;
         if !self.cfg.setup_issues().is_empty() {
-            let auth = anda_engine_server::handler::AppState {
-                engines: Arc::new(Default::default()),
-                default_engine: id_key.id(),
-                start_time_ms: anda_engine::unix_ms(),
-                extra_info: Arc::new(Default::default()),
-                ed25519_pubkeys: Arc::new(vec![user_pubkey.clone().into()]),
-            };
-            let api = crate::chatgpt::api::ChatGptApi {
-                service: chatgpt.clone(),
-                home: self.home.clone(),
-                auth,
-                owner: user_pubkey.id(),
-                config_lock: Arc::new(tokio::sync::Mutex::new(())),
-                runtime: None,
-                setup_complete: CancellationToken::new(),
-            };
-            if !crate::chatgpt::setup::serve(
-                api,
-                self.cfg.socket_addr()?,
-                global_cancel_token.clone(),
-            )
-            .await?
-            {
+            let api = crate::chatgpt::api::ChatGptApi::for_setup(
+                chatgpt.clone(),
+                self.home.clone(),
+                id_key.id(),
+                &user_pubkey,
+            );
+            if !crate::chatgpt::setup::serve(api, addr, global_cancel_token.clone()).await? {
                 return Ok(());
             }
             self.cfg = Config::from_file(&self.config_file_path()).await?;
+            addr = self.cfg.socket_addr()?;
         }
         let models = Arc::new(
             self.cfg
@@ -400,7 +396,7 @@ impl Daemon {
             https_proxy: self.cfg.https_proxy.clone(),
             http_client: outer_http_client.clone(),
             auto_updater,
-            gateway_addr: self.cfg.socket_addr()?,
+            gateway_addr: addr,
             chatgpt: Some(chatgpt),
         };
 
@@ -454,18 +450,9 @@ impl Daemon {
             futures::future::select_all([cron_handle, channel_handle, gateway_handle]).await;
         global_cancel_token.cancel();
 
-        let mut first_error: Option<BoxError> = match first {
-            Ok(Ok(())) => None,
-            Ok(Err(err)) => Some(err),
-            Err(join_err) => Some(join_err.into()),
-        };
+        let mut first_error = task_error(first);
         for handle in remaining {
-            let error = match handle.await {
-                Ok(Ok(())) => None,
-                Ok(Err(err)) => Some(err),
-                Err(join_err) => Some(join_err.into()),
-            };
-            if let Some(error) = error {
+            if let Some(error) = task_error(handle.await) {
                 if first_error.is_none() {
                     first_error = Some(error);
                 } else {
@@ -474,10 +461,14 @@ impl Daemon {
             }
         }
 
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+fn task_error(result: Result<Result<(), BoxError>, JoinError>) -> Option<BoxError> {
+    match result {
+        Ok(result) => result.err(),
+        Err(join_err) => Some(join_err.into()),
     }
 }
 
@@ -487,10 +478,10 @@ fn push_unique_workspace(workspaces: &mut Vec<PathBuf>, path: PathBuf) {
     }
 }
 
-struct PidFileGuard {
+pub(crate) struct PidFileGuard {
     path: PathBuf,
     // Keeps the daemon lock file exclusively held for the process lifetime.
-    _lock: Option<std::fs::File>,
+    _lock: std::fs::File,
 }
 
 impl Drop for PidFileGuard {
@@ -500,7 +491,7 @@ impl Drop for PidFileGuard {
 }
 
 #[cfg(unix)]
-fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
+fn acquire_daemon_lock(lock_path: &Path) -> Result<std::fs::File, BoxError> {
     use std::os::fd::AsRawFd;
 
     let file = std::fs::OpenOptions::new()
@@ -510,7 +501,7 @@ fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxErr
         .open(lock_path)?;
     let rt = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if rt == 0 {
-        return Ok(Some(file));
+        return Ok(file);
     }
 
     let err = io::Error::last_os_error();
@@ -522,7 +513,7 @@ fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxErr
 }
 
 #[cfg(windows)]
-fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
+fn acquire_daemon_lock(lock_path: &Path) -> Result<std::fs::File, BoxError> {
     use std::os::windows::fs::OpenOptionsExt;
 
     // share_mode(0): no other process can open the file while we hold it.
@@ -533,68 +524,37 @@ fn acquire_daemon_lock(lock_path: &Path) -> Result<Option<std::fs::File>, BoxErr
         .share_mode(0)
         .open(lock_path)
     {
-        Ok(file) => Ok(Some(file)),
-        // ERROR_SHARING_VIOLATION
-        Err(err) if err.raw_os_error() == Some(32) => {
+        Ok(file) => Ok(file),
+        Err(err) if err.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => {
             Err("anda daemon is already running (daemon lock is held)".into())
         }
         Err(err) => Err(err.into()),
     }
 }
 
-#[cfg(not(any(unix, windows)))]
-fn acquire_daemon_lock(_lock_path: &Path) -> Result<Option<std::fs::File>, BoxError> {
-    Ok(None)
+/// Whether a daemon holds the lock. The shared probe conflicts only with the
+/// daemon's exclusive lock, so concurrent probes never fail each other.
+#[cfg(unix)]
+fn daemon_lock_held(lock_path: &Path) -> bool {
+    use std::os::fd::AsRawFd;
+
+    let Ok(file) = std::fs::File::open(lock_path) else {
+        return false;
+    };
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) != 0 }
 }
 
-async fn acquire_pid_file(pid_path: PathBuf) -> Result<PidFileGuard, BoxError> {
-    // The lock serializes daemon startup: with it held, any existing pid file
-    // was left by a dead daemon (or a pre-lock release, which the live-pid
-    // check below still catches), so removing it cannot race a healthy peer.
-    let lock = acquire_daemon_lock(&pid_path.with_file_name(DAEMON_LOCK_FILE))?;
-    loop {
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&pid_path)
-            .await
-        {
-            Ok(mut file) => {
-                let pid = std::process::id().to_string();
-                if let Err(err) = file.write_all(pid.as_bytes()).await {
-                    let _ = tokio::fs::remove_file(&pid_path).await;
-                    return Err(err.into());
-                }
-                if let Err(err) = file.flush().await {
-                    let _ = tokio::fs::remove_file(&pid_path).await;
-                    return Err(err.into());
-                }
-                return Ok(PidFileGuard {
-                    path: pid_path,
-                    _lock: lock,
-                });
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                match util::text::read_text_file(&pid_path).await {
-                    Ok(content) => {
-                        let existing_pid = content.trim().parse::<u32>().ok();
-                        if let Some(pid) = existing_pid
-                            && process_exists(pid)
-                        {
-                            return Err(
-                                format!("anda daemon is already running with pid {pid}").into()
-                            );
-                        }
-                        let _ = tokio::fs::remove_file(&pid_path).await;
-                    }
-                    Err(read_err) if read_err.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(read_err) => return Err(read_err.into()),
-                }
-            }
-            Err(err) => return Err(err.into()),
-        }
-    }
+/// Whether a daemon holds the lock: it opened the file with share_mode(0).
+#[cfg(windows)]
+fn daemon_lock_held(lock_path: &Path) -> bool {
+    matches!(
+        std::fs::File::open(lock_path),
+        Err(err) if err.raw_os_error() == Some(ERROR_SHARING_VIOLATION)
+    )
 }
+
+#[cfg(windows)]
+const ERROR_SHARING_VIOLATION: i32 = 32;
 
 async fn remove_file_if_exists(path: &Path) -> Result<(), BoxError> {
     match tokio::fs::remove_file(path).await {
@@ -642,7 +602,6 @@ fn terminate_process(pid: u32) -> Result<(), BoxError> {
     Err(err.into())
 }
 
-#[cfg(any(unix, windows))]
 async fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), BoxError> {
     let deadline = Instant::now() + timeout;
 
@@ -659,11 +618,6 @@ async fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), BoxErr
 
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-}
-
-#[cfg(not(any(unix, windows)))]
-async fn wait_for_process_exit(_pid: u32, _timeout: Duration) -> Result<(), BoxError> {
-    Err("waiting for daemon exit is not supported on this platform".into())
 }
 
 #[cfg(unix)]
@@ -683,14 +637,10 @@ fn configure_background_daemon_command(command: &mut Command) {
     command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
-#[cfg(not(any(unix, windows)))]
-fn configure_background_daemon_command(_command: &mut Command) {}
-
 #[cfg(unix)]
-pub fn process_exists(pid: u32) -> bool {
-    // Unix 的一个约定：当信号值是 0 时，kill(pid, 0) 不会真的发送信号，只会让内核检查两件事：
-    // 1. 这个 pid 对应的进程是否存在。
-    // 2. 当前进程有没有权限向它发信号。
+fn process_exists(pid: u32) -> bool {
+    // Signal 0 sends nothing: it only checks that the pid exists and whether
+    // this process may signal it (EPERM still means it exists).
     let rt = unsafe { libc::kill(pid as i32, 0) };
     if rt == 0 {
         return true;
@@ -700,7 +650,7 @@ pub fn process_exists(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-pub fn process_exists(pid: u32) -> bool {
+fn process_exists(pid: u32) -> bool {
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
         return false;
@@ -713,11 +663,6 @@ pub fn process_exists(pid: u32) -> bool {
     }
 
     ok && exit_code == STILL_ACTIVE as u32
-}
-
-#[cfg(not(any(unix, windows)))]
-pub fn process_exists(_pid: u32) -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -842,25 +787,21 @@ mod tests {
     const DEAD_PID: u32 = 4_000_000;
 
     #[tokio::test]
-    async fn read_pid_file_handles_missing_garbage_and_valid_content() {
+    async fn read_pid_file_accepts_only_single_process_pids() {
         let (_dir, daemon) = temp_daemon();
 
         assert_eq!(daemon.read_pid_file().await.unwrap(), None);
-
-        tokio::fs::write(daemon.pid_file_path(), "not a pid")
-            .await
-            .unwrap();
-        assert_eq!(daemon.read_pid_file().await.unwrap(), None);
+        for content in ["not a pid", "0", "4294967295", "-1"] {
+            tokio::fs::write(daemon.pid_file_path(), content)
+                .await
+                .unwrap();
+            assert_eq!(daemon.read_pid_file().await.unwrap(), None, "{content}");
+        }
 
         tokio::fs::write(daemon.pid_file_path(), " 12345 \n")
             .await
             .unwrap();
         assert_eq!(daemon.read_pid_file().await.unwrap(), Some(12345));
-
-        daemon.remove_pid_file_if_exists().await.unwrap();
-        assert_eq!(daemon.read_pid_file().await.unwrap(), None);
-        // Removing again is a no-op.
-        daemon.remove_pid_file_if_exists().await.unwrap();
     }
 
     #[tokio::test]
@@ -873,6 +814,7 @@ mod tests {
             daemon.keys_dir_path(),
             daemon.db_dir_path(),
             daemon.skills_dir_path(),
+            daemon.bundled_skills_dir_path(),
             daemon.sandbox_dir_path(),
             daemon.logs_dir_path(),
             daemon.channels_dir_path(),
@@ -912,90 +854,62 @@ mod tests {
         let (_dir, daemon) = temp_daemon();
         let pid_path = daemon.pid_file_path();
 
-        let guard = acquire_pid_file(pid_path.clone()).await.unwrap();
+        let guard = daemon.acquire_pid_file().await.unwrap();
         let content = tokio::fs::read_to_string(&pid_path).await.unwrap();
         assert_eq!(content, std::process::id().to_string());
+        assert_eq!(
+            daemon.running_pid().await.unwrap(),
+            Some(std::process::id())
+        );
+
+        // A second daemon is refused while the lock is held.
+        let err = daemon.acquire_pid_file().await.map(|_| ()).unwrap_err();
+        assert!(err.to_string().contains("already running"));
 
         drop(guard);
         assert!(!pid_path.exists());
+        assert_eq!(daemon.running_pid().await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn acquire_pid_file_rejects_live_daemon_and_replaces_stale_pid() {
+    async fn pid_file_without_the_daemon_lock_is_stale_even_if_its_pid_lives() {
         let (_dir, daemon) = temp_daemon();
         let pid_path = daemon.pid_file_path();
 
-        // A live pid (this test process) blocks acquisition.
-        tokio::fs::write(&pid_path, std::process::id().to_string())
-            .await
-            .unwrap();
-        let err = acquire_pid_file(pid_path.clone())
-            .await
-            .map(|_| ())
-            .unwrap_err();
-        assert!(err.to_string().contains("already running"));
+        // A daemon that died without cleanup left its pid behind, and that
+        // pid now belongs to an unrelated live process (this test process
+        // stands in for it: it does not hold the daemon lock).
+        let reused = std::process::id().to_string();
+        tokio::fs::write(&pid_path, &reused).await.unwrap();
+        assert_eq!(daemon.running_pid().await.unwrap(), None);
+        assert!(!pid_path.exists());
 
-        // A stale pid is removed and acquisition succeeds.
-        tokio::fs::write(&pid_path, DEAD_PID.to_string())
-            .await
-            .unwrap();
-        let guard = acquire_pid_file(pid_path.clone()).await.unwrap();
-        let content = tokio::fs::read_to_string(&pid_path).await.unwrap();
-        assert_eq!(content, std::process::id().to_string());
+        // A starting daemon takes over instead of refusing to start.
+        tokio::fs::write(&pid_path, &reused).await.unwrap();
+        let guard = daemon.acquire_pid_file().await.unwrap();
+        assert_eq!(
+            daemon.running_pid().await.unwrap(),
+            Some(std::process::id())
+        );
         drop(guard);
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn stop_background_handles_missing_stale_and_live_processes() {
+    async fn terminate_stops_the_process_and_removes_its_pid_file() {
         let (_dir, daemon) = temp_daemon();
-
-        // No pid file at all.
-        assert_eq!(
-            daemon
-                .stop_background(Duration::from_secs(1))
-                .await
-                .unwrap(),
-            StopState::NotRunning
-        );
-
-        // A stale pid file is cleaned up.
-        tokio::fs::write(daemon.pid_file_path(), DEAD_PID.to_string())
-            .await
-            .unwrap();
-        assert_eq!(
-            daemon
-                .stop_background(Duration::from_secs(1))
-                .await
-                .unwrap(),
-            StopState::NotRunning
-        );
-        assert!(!daemon.pid_file_path().exists());
-
-        // A live helper process is terminated and reported. The helper is
-        // started through a short-lived shell so init reaps it after SIGTERM;
-        // a direct child would linger as a zombie and never "exit".
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg("sleep 30 >/dev/null 2>&1 & echo $!")
-            .output()
-            .unwrap();
-        let pid: u32 = String::from_utf8(output.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
+        let pid = crate::test_support::spawn_orphan_sleeper();
         assert!(process_exists(pid));
         tokio::fs::write(daemon.pid_file_path(), pid.to_string())
             .await
             .unwrap();
-        assert_eq!(
-            daemon
-                .stop_background(Duration::from_secs(10))
-                .await
-                .unwrap(),
-            StopState::Stopped(pid)
-        );
+
+        daemon
+            .terminate(pid, Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        assert!(!process_exists(pid));
         assert!(!daemon.pid_file_path().exists());
     }
 

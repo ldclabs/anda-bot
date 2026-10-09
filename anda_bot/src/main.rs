@@ -1,9 +1,9 @@
 use anda_core::{BoxError, Json, ToolInput};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use mimalloc::MiMalloc;
 use std::{
     path::PathBuf,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 rust_i18n::i18n!("locales", fallback = "en");
@@ -170,6 +170,8 @@ pub struct StatusCommand {
 use daemon_protocol::{DaemonStatusReport, DaemonStatusState};
 
 const CHROME_EXTENSION_DIR: &str = "chrome-extension";
+const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const NO_OWNER_IDENTITY: &str = "No existing owner identity is available. Run `anda start` to initialize Anda. / 无法读取已有身份，请先运行 anda start。";
 
 /// ```bash
 /// cargo run -p anda_bot -- --help
@@ -187,13 +189,14 @@ async fn main() -> Result<(), BoxError> {
 }
 
 async fn run() -> Result<(), BoxError> {
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let command_name = matches.subcommand_name();
     let Cli {
         home,
         identity_secrets_stdin,
         full_access,
         command,
-    } = cli;
+    } = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
 
     if identity_secrets_stdin && !matches!(command, Some(Commands::Daemon)) {
         return Err("--identity-secrets-stdin can only be used with `anda daemon`".into());
@@ -221,12 +224,15 @@ async fn run() -> Result<(), BoxError> {
         return Ok(());
     }
 
+    let custom_home = home.is_some();
+    let home = home.map(PathBuf::from).unwrap_or_else(default_home);
+
     // Memory guide/status are read-only and must never initialize a home,
     // credentials, logging or a daemon as a side effect of inspection.
     if let Some(Commands::Memory(cmd)) = command.as_ref() {
         cmd.validate()?;
         if let Some(evaluation) = cmd.evaluation() {
-            if home.is_some() {
+            if custom_home {
                 return Err("Memory evaluations are isolated; --home is not supported".into());
             }
             return cli::memory_eval::run(evaluation).await;
@@ -235,32 +241,25 @@ async fn run() -> Result<(), BoxError> {
             cmd.print_guide();
             return Ok(());
         }
-        let memory_home = home
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_home);
-        let cfg = config::Config::from_file(&config::Config::file_path(&memory_home)).await?;
-        let daemon = daemon::Daemon::new(memory_home.clone(), cfg);
+        let cfg = config::Config::from_file(&config::Config::file_path(&home)).await?;
         let owner = identity::load_identity_secret_with_location_with_store(
-            &identity::IdentityKeyRef::owner(&memory_home), identity::os_identity_key_store(),
-        ).await.map_err(|_| "No existing owner identity is available. Run `anda start` to initialize Anda. / 无法读取已有身份，请先运行 anda start。")?;
+            &identity::IdentityKeyRef::owner(&home),
+            identity::os_identity_key_store(),
+        )
+        .await
+        .map_err(|_| NO_OWNER_IDENTITY)?;
+        let daemon = daemon::Daemon::new(home, cfg);
         let client = build_control_client_from_owner_secret(&daemon, owner.secret)?;
         return cli::memory::run(&client, cmd).await;
     }
 
     #[cfg(feature = "mib")]
     if let Some(Commands::Mib(cmd)) = command.as_ref() {
-        if home.is_some() {
+        if custom_home {
             return Err("MIB runs use private in-memory state; --home is not supported".into());
         }
         return mib::serve(cmd).await;
     }
-
-    let home = if let Some(home) = home {
-        PathBuf::from(home)
-    } else {
-        default_home()
-    };
 
     tokio::fs::create_dir_all(&home).await?;
     // Installing only copies files; it must not create a config or identity.
@@ -276,19 +275,23 @@ async fn run() -> Result<(), BoxError> {
         return Ok(());
     }
 
-    if matches!(command, Some(Commands::Daemon)) {
-        logger::init_daily_json_logger(
-            &daemon.cfg.log_level,
-            daemon.logs_dir_path(),
-            logger::DAEMON_LOG_FILE_PREFIX,
-        )?;
+    let log_file_prefix = if matches!(command, Some(Commands::Daemon)) {
+        logger::DAEMON_LOG_FILE_PREFIX
     } else {
-        logger::init_daily_json_logger(
-            &daemon.cfg.log_level,
-            daemon.logs_dir_path(),
-            logger::CLI_LOG_FILE_PREFIX,
-        )?;
-    }
+        logger::CLI_LOG_FILE_PREFIX
+    };
+    logger::init_daily_json_logger(
+        &daemon.cfg.log_level,
+        daemon.logs_dir_path(),
+        log_file_prefix,
+    )?;
+    log::info!(
+        "Starting anda{} at {}",
+        command_name
+            .map(|name| format!(" {name}"))
+            .unwrap_or_default(),
+        daemon.base_url()
+    );
 
     match command {
         Some(Commands::ValidateConfig) => {
@@ -297,16 +300,15 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Memory(_)) => unreachable!("memory dispatches before daemon initialization"),
         #[cfg(feature = "mib")]
         Some(Commands::Mib(_)) => unreachable!("MIB dispatches before daemon initialization"),
+        Some(Commands::Update(_) | Commands::Install(_)) => {
+            unreachable!("update and install are handled before daemon setup")
+        }
         None => {
-            log::info!("Starting CLI at {}", daemon.base_url());
             let client = build_control_client(&daemon).await?;
             tui::run(daemon, client, full_access).await?
         }
         Some(Commands::Daemon) => {
-            log::info!("Starting daemon at {}", daemon.base_url());
-
             daemon.ensure_directories().await?;
-            daemon.ensure_config_file_exists().await?;
 
             let local_identity = if identity_secrets_stdin {
                 identity::read_local_identity_secrets_from_stdin().await?
@@ -322,33 +324,15 @@ async fn run() -> Result<(), BoxError> {
             daemon.serve(ed25519_key, user_key.pubkey()).await?
         }
         Some(Commands::Stop) => {
-            log::info!("Starting CLI with command 'stop' at {}", daemon.base_url());
-
-            let status_client = build_status_client(&daemon);
-            let shutdown_client = if status_client.status().await.is_ok() {
+            // The owner identity is only needed to ask a live gateway.
+            let gateway = if build_status_client(&daemon).status().await.is_ok() {
                 Some(build_control_client(&daemon).await?)
             } else {
                 None
             };
-            match stop_daemon(
-                &daemon,
-                &status_client,
-                shutdown_client.as_ref(),
-                Duration::from_secs(10),
-            )
-            .await?
-            {
-                daemon::StopState::NotRunning => println!("anda daemon is not running"),
-                daemon::StopState::Stopped(pid) => {
-                    println!("Stopped anda daemon (pid {pid})")
-                }
-                daemon::StopState::StoppedUnknown => println!("Stopped anda daemon"),
-            }
+            print_stop_state(stop_daemon(&daemon, gateway.as_ref(), STOP_TIMEOUT).await?);
         }
-
         Some(Commands::Start) => {
-            log::info!("Starting CLI with command 'start' at {}", daemon.base_url());
-
             let client = build_status_client(&daemon);
             let launch_state = if client.status().await.is_ok() {
                 daemon::LaunchState::AlreadyRunning
@@ -362,100 +346,31 @@ async fn run() -> Result<(), BoxError> {
                     .ensure_daemon_running_with_identity_secrets(&daemon, Some(&local_identity))
                     .await?
             };
-
-            match launch_state {
-                daemon::LaunchState::AlreadyRunning => {
-                    println!("anda daemon is already running at {}", daemon.base_url())
-                }
-                daemon::LaunchState::Started(child) => {
-                    println!(
-                        "Started anda daemon (pid {}). Logs: {}",
-                        child.pid,
-                        child.log_path.display()
-                    );
-                }
-            }
+            print_launch_state(&daemon, &launch_state);
         }
-
         Some(Commands::Status(cmd)) => {
-            log::info!(
-                "Starting CLI with command 'status' at {}",
-                daemon.base_url()
-            );
-
             let client = build_status_client(&daemon);
             print_daemon_status(&daemon, &client, cmd.json).await?;
         }
-
-        Some(Commands::Restart) | Some(Commands::Reload) => {
-            log::info!(
-                "Starting CLI with command 'restart' at {}",
-                daemon.base_url()
-            );
-
+        Some(Commands::Restart | Commands::Reload) => {
             let local_identity = identity::load_or_init_local_identity_secrets_with_store(
                 &daemon.home,
                 identity::os_identity_key_store(),
             )
             .await?;
-            let status_client = build_status_client(&daemon);
             let client = build_control_client_from_owner_secret(&daemon, *local_identity.owner)?;
-            let stop_state = stop_daemon(
-                &daemon,
-                &status_client,
-                Some(&client),
-                Duration::from_secs(10),
-            )
-            .await?;
-
-            match (
-                stop_state,
-                client
-                    .ensure_daemon_running_with_identity_secrets(&daemon, Some(&local_identity))
-                    .await?,
-            ) {
-                (daemon::StopState::Stopped(old_pid), daemon::LaunchState::Started(child)) => {
-                    println!(
-                        "Restarted anda daemon (old pid {old_pid}, new pid {}). Logs: {}",
-                        child.pid,
-                        child.log_path.display()
-                    );
-                }
-                (daemon::StopState::NotRunning, daemon::LaunchState::Started(child)) => {
-                    println!(
-                        "Started anda daemon (pid {}). Logs: {}",
-                        child.pid,
-                        child.log_path.display()
-                    );
-                }
-                (daemon::StopState::Stopped(old_pid), daemon::LaunchState::AlreadyRunning) => {
-                    println!(
-                        "Stopped anda daemon (pid {old_pid}) and connected to daemon at {}",
-                        daemon.base_url()
-                    );
-                }
-                (daemon::StopState::NotRunning, daemon::LaunchState::AlreadyRunning) => {
-                    println!("anda daemon is already running at {}", daemon.base_url());
-                }
-                (daemon::StopState::StoppedUnknown, daemon::LaunchState::Started(child)) => {
-                    println!(
-                        "Restarted anda daemon (new pid {}). Logs: {}",
-                        child.pid,
-                        child.log_path.display()
-                    );
-                }
-                (daemon::StopState::StoppedUnknown, daemon::LaunchState::AlreadyRunning) => {
-                    println!("Connected to daemon at {}", daemon.base_url());
-                }
+            // `/daemon/status` takes no credential, so the control client asks.
+            let gateway = client.status().await.is_ok().then_some(&client);
+            let stop_state = stop_daemon(&daemon, gateway, STOP_TIMEOUT).await?;
+            if stop_state != daemon::StopState::NotRunning {
+                print_stop_state(stop_state);
             }
-        }
-        Some(Commands::Update(_)) => unreachable!("update command is handled before daemon setup"),
-        Some(Commands::Install(_)) => {
-            unreachable!("install command is handled before daemon setup")
+            let launch_state = client
+                .ensure_daemon_running_with_identity_secrets(&daemon, Some(&local_identity))
+                .await?;
+            print_launch_state(&daemon, &launch_state);
         }
         Some(Commands::Tool(cmd)) => {
-            log::info!("Starting CLI with command 'tool' at {}", daemon.base_url());
-
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
 
@@ -476,45 +391,32 @@ async fn run() -> Result<(), BoxError> {
             }
         }
         Some(Commands::Agent(cmd)) => {
-            log::info!("Starting CLI with command 'agent' at {}", daemon.base_url());
-
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
             cli::agent::run(&client, cmd).await?;
         }
-        Some(Commands::Browser(cmd)) => {
-            log::info!(
-                "Starting CLI with command 'browser' at {}",
-                daemon.base_url()
-            );
-            match cmd {
-                BrowserCommand::Token { days, json } => {
-                    let token = build_browser_extension_token(&daemon, days).await?;
-                    if json {
-                        let report = daemon_protocol::BrowserTokenReport {
-                            gateway_url: daemon.base_url().to_string(),
-                            token,
-                            extension_dir: CHROME_EXTENSION_DIR.to_string(),
-                        };
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        println!("Gateway URL: {}", daemon.base_url());
-                        println!("Bearer token: {token}");
-                        println!("Extension directory: {CHROME_EXTENSION_DIR}");
-                    }
+        Some(Commands::Browser(cmd)) => match cmd {
+            BrowserCommand::Token { days, json } => {
+                let token = build_browser_extension_token(&daemon, days).await?;
+                if json {
+                    let report = daemon_protocol::BrowserTokenReport {
+                        gateway_url: daemon.base_url(),
+                        token,
+                        extension_dir: CHROME_EXTENSION_DIR.to_string(),
+                    };
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("Gateway URL: {}", daemon.base_url());
+                    println!("Bearer token: {token}");
+                    println!("Extension directory: {CHROME_EXTENSION_DIR}");
                 }
             }
-        }
+        },
         Some(Commands::Auth(cmd)) => {
             let client = build_control_client(&daemon).await?;
             cli::auth::run(&daemon, &client, cmd).await?;
         }
         Some(Commands::Models(cmd)) => {
-            log::info!(
-                "Starting CLI with command 'models' at {}",
-                daemon.base_url()
-            );
-
             let client = build_control_client(&daemon).await?;
             match cmd {
                 ModelsCommand::Reload => {
@@ -523,34 +425,15 @@ async fn run() -> Result<(), BoxError> {
                 }
             }
         }
-        Some(Commands::Autostart(cmd)) => {
-            log::info!("Starting CLI with command 'autostart'");
-            run_autostart_command(&daemon, cmd).await?;
-        }
-        Some(Commands::Channel(cmd)) => {
-            log::info!(
-                "Starting CLI with command 'channel' at {}",
-                daemon.base_url()
-            );
-            cli::channel::run(&daemon, cmd).await?;
-        }
-        Some(Commands::User(cmd)) => {
-            log::info!("Starting CLI with command 'user' at {}", daemon.base_url());
-            cli::user::run(&daemon, cmd).await?;
-        }
+        Some(Commands::Autostart(cmd)) => run_autostart_command(&daemon, cmd).await?,
+        Some(Commands::Channel(cmd)) => cli::channel::run(&daemon, cmd).await?,
+        Some(Commands::User(cmd)) => cli::user::run(&daemon, cmd).await?,
         Some(Commands::Session(cmd)) => {
-            log::info!(
-                "Starting CLI with command 'session' at {}",
-                daemon.base_url()
-            );
-
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
             cli::session::run(&client, cmd).await?;
         }
         Some(Commands::Voice(cmd)) => {
-            log::info!("Starting CLI with command 'voice' at {}", daemon.base_url());
-
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;
             client
@@ -562,52 +445,55 @@ async fn run() -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Stops the daemon serving this home. `gateway` is an authenticated client
+/// when the gateway answered; shutdown goes through it before any signal.
 async fn stop_daemon(
     daemon: &daemon::Daemon,
-    status_client: &gateway::Client,
-    shutdown_client: Option<&gateway::Client>,
+    gateway: Option<&gateway::Client>,
     timeout: Duration,
 ) -> Result<daemon::StopState, BoxError> {
-    let pid = daemon.read_pid_file().await?;
-    let gateway_running = status_client.status().await.is_ok();
-
-    match pid {
-        Some(pid) if daemon::process_exists(pid) => {
-            if gateway_running {
-                let shutdown_client =
-                    shutdown_client.ok_or("authenticated shutdown client is required")?;
-                if let Err(err) = shutdown_client.shutdown().await {
+    match (daemon.running_pid().await?, gateway) {
+        (Some(pid), gateway) => {
+            if let Some(client) = gateway {
+                if let Err(err) = client.shutdown().await {
                     log::warn!("Failed to request graceful daemon shutdown: {err}");
                 } else if let Err(err) = daemon.wait_for_background_exit(pid, timeout).await {
                     log::warn!("Graceful daemon shutdown timed out: {err}");
                 } else {
-                    daemon.remove_pid_file_if_exists().await?;
                     return Ok(daemon::StopState::Stopped(pid));
                 }
             }
-
-            daemon.stop_background(timeout).await
+            daemon.terminate(pid, timeout).await?;
+            Ok(daemon::StopState::Stopped(pid))
         }
-        Some(_) => {
-            daemon.remove_pid_file_if_exists().await?;
-            if gateway_running {
-                let shutdown_client =
-                    shutdown_client.ok_or("authenticated shutdown client is required")?;
-                shutdown_client.shutdown().await?;
-                wait_for_gateway_down(status_client, timeout).await?;
-                Ok(daemon::StopState::StoppedUnknown)
-            } else {
-                Ok(daemon::StopState::NotRunning)
-            }
-        }
-        None if gateway_running => {
-            let shutdown_client =
-                shutdown_client.ok_or("authenticated shutdown client is required")?;
-            shutdown_client.shutdown().await?;
-            wait_for_gateway_down(status_client, timeout).await?;
+        // A gateway answers but no daemon of this home holds the lock.
+        (None, Some(client)) => {
+            client.shutdown().await?;
+            wait_for_gateway_down(client, timeout).await?;
             Ok(daemon::StopState::StoppedUnknown)
         }
-        None => Ok(daemon::StopState::NotRunning),
+        (None, None) => Ok(daemon::StopState::NotRunning),
+    }
+}
+
+fn print_stop_state(state: daemon::StopState) {
+    match state {
+        daemon::StopState::NotRunning => println!("anda daemon is not running"),
+        daemon::StopState::Stopped(pid) => println!("Stopped anda daemon (pid {pid})"),
+        daemon::StopState::StoppedUnknown => println!("Stopped anda daemon"),
+    }
+}
+
+fn print_launch_state(daemon: &daemon::Daemon, state: &daemon::LaunchState) {
+    match state {
+        daemon::LaunchState::AlreadyRunning => {
+            println!("anda daemon is already running at {}", daemon.base_url())
+        }
+        daemon::LaunchState::Started(child) => println!(
+            "Started anda daemon (pid {}). Logs: {}",
+            child.pid,
+            child.log_path.display()
+        ),
     }
 }
 
@@ -649,21 +535,16 @@ async fn daemon_status_report(
     daemon: &daemon::Daemon,
     client: &gateway::Client,
 ) -> Result<DaemonStatusReport, BoxError> {
-    let pid = daemon.read_pid_file().await?;
+    let pid = daemon.running_pid().await?;
     let status = client.status().await.ok();
-    let alive_pid = pid.filter(|pid| daemon::process_exists(*pid));
 
-    if pid.is_some() && alive_pid.is_none() {
-        daemon.remove_pid_file_if_exists().await?;
-    }
-
-    Ok(match (status, alive_pid) {
+    Ok(match (status, pid) {
         (Some(status), Some(pid)) => DaemonStatusReport {
             state: DaemonStatusState::Running,
             summary: format!("anda daemon is running (pid {pid})"),
             pid: Some(pid),
             pid_file: None,
-            gateway_url: Some(daemon.base_url().to_string()),
+            gateway_url: Some(daemon.base_url()),
             log_file: Some(daemon.log_file_path().display().to_string()),
             conversations: Some(status.conversations),
             memory_nodes: Some(status.memory_nodes),
@@ -674,7 +555,7 @@ async fn daemon_status_report(
             summary: "anda daemon gateway is running".to_string(),
             pid: None,
             pid_file: Some("missing".to_string()),
-            gateway_url: Some(daemon.base_url().to_string()),
+            gateway_url: Some(daemon.base_url()),
             log_file: None,
             conversations: Some(status.conversations),
             memory_nodes: Some(status.memory_nodes),
@@ -736,7 +617,6 @@ async fn run_autostart_command(
     match cmd {
         autostart::AutostartCommand::Install => {
             daemon.ensure_directories().await?;
-            daemon.ensure_config_file_exists().await?;
             autostart::install(&std::env::current_exe()?, &daemon.home)?;
             println!("Registered Anda to start when the current user logs in.");
         }
@@ -776,8 +656,6 @@ async fn build_control_client_with_store(
     daemon: &daemon::Daemon,
     identity_store: std::sync::Arc<dyn identity::IdentityKeyStore>,
 ) -> Result<gateway::Client, BoxError> {
-    daemon.ensure_directories().await?;
-
     let secrets =
         identity::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
             .await?;
@@ -788,17 +666,13 @@ fn build_control_client_from_owner_secret(
     daemon: &daemon::Daemon,
     owner_secret: [u8; 32],
 ) -> Result<gateway::Client, BoxError> {
-    let user_key = identity::Ed25519Key::new(owner_secret);
     // The token is minted once per CLI process and `gateway::Client` has no
     // refresh path, so the lifetime must cover the longest-lived command: the
     // interactive TUI (`anda` with no subcommand) and `anda voice` both hold
     // one client for the whole session. A few minutes would make every request
     // 401 mid-session; one day keeps the credential bounded without that.
-    let mut claims = identity::expiring_claims(Duration::from_secs(24 * 60 * 60))?;
-    claims.audience = Some(config::ANDA_BOT_SPACE_ID.into());
-    claims.extra.insert(identity::iana::CWTClaimScope, "*");
-    let gateway_token = user_key.sign_cwt(claims)?;
-    Ok(gateway::Client::new(daemon.base_url(), gateway_token))
+    let token = owner_token(owner_secret, Duration::from_secs(24 * 60 * 60), None)?;
+    Ok(gateway::Client::new(daemon.base_url(), token))
 }
 
 fn build_status_client(daemon: &daemon::Daemon) -> gateway::Client {
@@ -817,31 +691,31 @@ async fn build_browser_extension_token_with_store(
     days: u64,
     identity_store: std::sync::Arc<dyn identity::IdentityKeyStore>,
 ) -> Result<String, BoxError> {
-    daemon.ensure_directories().await?;
-
     let secrets =
         identity::load_or_init_local_identity_secrets_with_store(&daemon.home, identity_store)
             .await?;
-    let user_key = identity::Ed25519Key::new(*secrets.owner);
-    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let days = days.clamp(1, 3650);
-    let expires_secs = now_secs.saturating_add(days * 24 * 60 * 60);
+    let lifetime = Duration::from_secs(days.clamp(1, 3650) * 24 * 60 * 60);
+    owner_token(*secrets.owner, lifetime, Some("chrome_extension"))
+}
 
-    let mut claims = identity::Claims {
-        issued_at: Some(now_secs.into()),
-        expiration: Some(expires_secs.into()),
-        audience: Some(config::ANDA_BOT_SPACE_ID.into()),
-        ..Default::default()
-    };
+/// An owner bearer for the Anda Bot space; `client` labels who holds it.
+fn owner_token(
+    owner_secret: [u8; 32],
+    lifetime: Duration,
+    client: Option<&str>,
+) -> Result<String, BoxError> {
+    let mut claims = identity::expiring_claims(lifetime)?;
+    claims.audience = Some(config::ANDA_BOT_SPACE_ID.into());
     claims.extra.insert(identity::iana::CWTClaimScope, "*");
-    claims.extra.insert("client", "chrome_extension");
-    user_key.sign_cwt(claims)
+    if let Some(client) = client {
+        claims.extra.insert("client", client);
+    }
+    identity::Ed25519Key::new(owner_secret).sign_cwt(claims)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
 
     #[test]
     fn command_constraints_accept_supported_combinations() {
@@ -1003,16 +877,43 @@ mod tests {
         let report = daemon_status_report(&daemon2, &dead).await.unwrap();
         assert!(matches!(report.state, DaemonStatusState::NotRunning));
 
-        // No gateway, alive pid -> ProcessUnresponsive.
+        // No gateway, a daemon holding the lock -> ProcessUnresponsive.
         let (_dir3, daemon3) = temp_daemon();
-        tokio::fs::write(daemon3.pid_file_path(), std::process::id().to_string())
-            .await
-            .unwrap();
+        let guard = daemon3.acquire_pid_file().await.unwrap();
         let report = daemon_status_report(&daemon3, &dead).await.unwrap();
         assert!(matches!(
             report.state,
             DaemonStatusState::ProcessUnresponsive
         ));
+        drop(guard);
+
+        // A live pid left without the lock was reused -> NotRunning.
+        tokio::fs::write(daemon3.pid_file_path(), std::process::id().to_string())
+            .await
+            .unwrap();
+        let report = daemon_status_report(&daemon3, &dead).await.unwrap();
+        assert!(matches!(report.state, DaemonStatusState::NotRunning));
+        assert!(!daemon3.pid_file_path().exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_daemon_never_signals_a_pid_no_daemon_holds() {
+        let (_dir, daemon) = temp_daemon();
+        let pid = crate::test_support::spawn_orphan_sleeper();
+        tokio::fs::write(daemon.pid_file_path(), pid.to_string())
+            .await
+            .unwrap();
+
+        let state = stop_daemon(&daemon, None, Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(state, daemon::StopState::NotRunning);
+        assert!(!daemon.pid_file_path().exists());
+        let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+        unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        assert!(alive, "stop_daemon signalled an unrelated process");
     }
 
     #[tokio::test]

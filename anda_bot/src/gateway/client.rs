@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::{
     auto_update::AutoUpdateState,
-    daemon::{BackgroundDaemon, Daemon, LaunchState, process_exists},
+    daemon::{BackgroundDaemon, Daemon, LaunchState},
     engine::{
         AndaBotStatus, ConversationsTool, ConversationsToolArgs, DaemonModelsResponse,
         PromptCommand,
@@ -282,13 +282,10 @@ impl Client {
             return Ok(LaunchState::AlreadyRunning);
         }
 
-        let pid_path = daemon.pid_file_path();
-        if let Some(pid) = daemon.read_pid_file().await? {
-            if process_exists(pid) {
-                self.wait_for_daemon_ready(Duration::from_secs(10)).await?;
-                return Ok(LaunchState::AlreadyRunning);
-            }
-            let _ = tokio::fs::remove_file(&pid_path).await;
+        // A running daemon whose gateway is not up yet is still starting.
+        if daemon.running_pid().await?.is_some() {
+            self.wait_for_daemon_ready(Duration::from_secs(10)).await?;
+            return Ok(LaunchState::AlreadyRunning);
         }
 
         let mut child = daemon.spawn_background_with_identity_secrets(identity_secrets)?;

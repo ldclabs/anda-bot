@@ -954,7 +954,7 @@ mod tests {
             runtime.store.due_job_ids(unix_ms(), 8, &running).unwrap()[0],
             job._id
         );
-        runtime.admission.renew(&lease, true).unwrap();
+        runtime.admission.release(&lease).unwrap();
         assert_eq!(
             runtime
                 .process_due_jobs_once(engine, &mut tasks, &mut running, &cancel)

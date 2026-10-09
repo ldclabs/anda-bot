@@ -28,8 +28,6 @@ pub enum DaemonStatusState {
 }
 
 /// Report printed by `anda status --json` and parsed by Anda Desktop.
-// Each binary reads only the fields it displays; unused ones are still wire.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DaemonStatusReport {
@@ -64,8 +62,6 @@ pub enum AutoUpdateStatus {
 
 /// Auto-update state persisted by the daemon and printed by
 /// `anda update --check[-if-due] --json`.
-// Each binary reads only the fields it displays; unused ones are still wire.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AutoUpdateState {

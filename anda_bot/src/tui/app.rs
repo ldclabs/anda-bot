@@ -8,7 +8,7 @@ use crate::{
     auto_update::AutoUpdateState,
     brain::AttentionPage,
     config::Config,
-    daemon::{Daemon, LaunchState, process_exists},
+    daemon::{Daemon, LaunchState},
     gateway,
 };
 
@@ -136,7 +136,7 @@ impl App {
 
     pub(super) fn log_file_path(&self) -> PathBuf {
         crate::logger::current_daily_log_file_path(
-            self.home.join("logs"),
+            &self.home.join("logs"),
             crate::logger::DAEMON_LOG_FILE_PREFIX,
         )
     }
@@ -834,14 +834,7 @@ impl App {
         daemon: Daemon,
         client: gateway::Client,
     ) -> Result<(Option<u32>, bool), BoxError> {
-        let mut pid = daemon.read_pid_file().await?;
-        if let Some(value) = pid
-            && !process_exists(value)
-        {
-            let _ = tokio::fs::remove_file(daemon.pid_file_path()).await;
-            pid = None;
-        }
-        Ok((pid, client.status().await.is_ok()))
+        Ok((daemon.running_pid().await?, client.status().await.is_ok()))
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent, input_content_width: u16) {
