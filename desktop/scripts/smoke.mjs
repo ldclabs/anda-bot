@@ -781,6 +781,50 @@ try {
     project
   )
   await page.screenshot({ path: join(screenshotDir, '09-terminal.png') })
+  if (process.platform !== 'win32') {
+    // Switching back to a tab replays its output, and the terminal must not
+    // answer the queries in it again into the shell. bash consumes the live
+    // answer to a DA1 query, then reads everything up to a `Z` sent after the
+    // switch and dumps it, so a replayed answer shows up as `033`. The steps
+    // read the rendered rows: `list` resyncs a renderer and drops the output
+    // still on its way to it, the live query included.
+    const rows = page.locator('.terminal-panel .xterm-rows')
+    await page.evaluate(({ id, data }) => window.anda.terminal({ action: 'input', id, data }), {
+      id: term.id,
+      data:
+        `bash -c 'stty -echo -icanon; printf "\\033[c"; IFS= read -r -d c reply; ` +
+        `printf "ANDA_%s_WAIT\\n" REPLAY; IFS= read -r -d Z stray; printf "%s" "$stray" | od -An -c; ` +
+        `printf "ANDA_%s_DONE\\n" REPLAY; stty sane'\r`
+    })
+    await rows.getByText('ANDA_REPLAY_WAIT').waitFor()
+    const tabs = page.locator('.terminal-panel .workbench-tabs')
+    await page.getByRole('button', { name: 'New terminal', exact: true }).click()
+    await tabs.getByRole('button', { name: /2 ·/ }).waitFor()
+    await rows.getByText('ANDA_REPLAY_WAIT').waitFor({ state: 'detached' })
+    await tabs.getByRole('button', { name: /1 ·/ }).click()
+    // The marker follows the query, so once it is redrawn the replay has
+    // passed the query and any answer to it is already on its way.
+    await rows.getByText('ANDA_REPLAY_WAIT').waitFor()
+    await page.evaluate(({ id }) => window.anda.terminal({ action: 'input', id, data: 'Z' }), {
+      id: term.id
+    })
+    await rows.getByText('ANDA_REPLAY_DONE').waitFor()
+    const screen = await rows.innerText()
+    const stray = screen.slice(
+      screen.indexOf('ANDA_REPLAY_WAIT'),
+      screen.indexOf('ANDA_REPLAY_DONE')
+    )
+    assert.ok(
+      !stray.includes('033'),
+      `Tab switch answered a replayed query: ${JSON.stringify(stray)}`
+    )
+    for (const session of await page.evaluate(
+      (workspace) => window.anda.terminal({ action: 'list', workspace }),
+      project
+    ))
+      if (session.id !== term.id)
+        await page.evaluate((id) => window.anda.terminal({ action: 'close', id }), session.id)
+  }
   await page.evaluate((id) => window.anda.terminal({ action: 'close', id }), term.id)
   // The workbench opens the folder of a chat started from the `anda` terminal,
   // named only by its source, and still refuses any other folder.

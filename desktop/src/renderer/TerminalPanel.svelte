@@ -22,13 +22,23 @@
   let error = $state('')
   let query = $state('')
   let disposed = false
+  // Showing a session replays its output, and xterm answers the terminal
+  // queries in it (device attributes, cursor position, colors) again. Those
+  // answers belong to the past, so input is held back until the replay is
+  // parsed. reset() keeps queued writes, so a newer replay owns the gate.
+  let replays = 0
+  let replaying = 0
   function fail(e: unknown) {
     error = e instanceof Error ? e.message : String(e)
   }
   function select(session: TerminalSession) {
     active = session.id
     terminal.reset()
-    terminal.write(session.output.slice(-SCROLLBACK))
+    const replay = ++replays
+    replaying = replay
+    terminal.write(session.output.slice(-SCROLLBACK), () => {
+      if (replaying === replay) replaying = 0
+    })
     void window.anda
       .terminal({ action: 'ack', id: session.id, sequence: session.sequence })
       .catch(() => {})
@@ -91,7 +101,8 @@
     terminal.open(host)
     fit.fit()
     terminal.onData((data) => {
-      if (active) void window.anda.terminal({ action: 'input', id: active, data }).catch(fail)
+      if (active && !replaying)
+        void window.anda.terminal({ action: 'input', id: active, data }).catch(fail)
     })
     const observer = new ResizeObserver(resize)
     observer.observe(host)
