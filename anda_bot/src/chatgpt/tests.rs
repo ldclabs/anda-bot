@@ -500,4 +500,7 @@ async fn chatgpt_tool_roundtrip_replays_calls_without_repeating_history() {
     let cache_keys = cache_keys.lock().unwrap();
     assert_eq!(cache_keys.len(), 2);
     assert_eq!(cache_keys[0], cache_keys[1]);
+    // A 128-bit digest in hex, as Anda Engine's Responses adapter derives it.
+    assert_eq!(cache_keys[0].len(), 32);
+    assert!(cache_keys[0].bytes().all(|b| b.is_ascii_hexdigit()));
 }

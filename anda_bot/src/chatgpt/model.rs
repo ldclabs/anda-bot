@@ -369,30 +369,18 @@ fn build_request(
 }
 
 /// ChatGPT keys prompt-cache affinity on the `session-id` header, and the Codex
-/// CLI sends its session id there and as `prompt_cache_key`. Without them, the
+/// CLI sends the same key there and as `prompt_cache_key`. Without them, the
 /// rounds of one conversation land on unrelated caches and most of a stable
 /// prefix is billed again. The instructions and the first input item stay fixed
-/// for a conversation, so their digest keeps every round on one cache. It is
-/// shaped as a UUID, as the Codex CLI's header is.
+/// for a conversation, so their digest keeps every round on one cache. Neither
+/// needs a UUID; this is the key Anda Engine's Responses adapter derives.
 fn prompt_cache_key(body: &wire::CompletionRequest) -> Option<String> {
     let first = serde_json::to_vec(body.input.first()?).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(body.instructions.as_deref().unwrap_or_default());
     hasher.update([0]);
     hasher.update(first);
-    let mut bytes: [u8; 16] = hasher.finalize()[..16].try_into().ok()?;
-    // Version 8 (custom) with the RFC 9562 variant.
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = crate::cli::updater::hex_lower(&bytes);
-    Some(format!(
-        "{}-{}-{}-{}-{}",
-        &hex[..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..]
-    ))
+    Some(crate::cli::updater::hex_lower(&hasher.finalize()[..16]))
 }
 
 async fn read_stream(
