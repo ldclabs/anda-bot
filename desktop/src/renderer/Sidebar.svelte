@@ -4,6 +4,8 @@
     restart(): Promise<void>
     stop(): void
     checkUpdate(): Promise<void>
+    /** Downloads the offered release, or restarts into a downloaded one. */
+    continueUpdate(): Promise<void>
     showLogs(): void
     copyToken(): Promise<void>
   }
@@ -13,8 +15,9 @@
   /**
    * The chat sidebar: history buttons beside the window controls, a title
    * filter, navigation, pinned and recent chats (optionally grouped), and the
-   * runtime footer. Each chat row leads with its state: working, waiting for
-   * approval, failed or unread.
+   * runtime footer, topped by the offered update's download or restart. Each
+   * chat row leads with its state: working, waiting for approval, failed or
+   * unread.
    */
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import {
@@ -25,11 +28,13 @@
     Bookmark,
     BrainCircuit,
     Clock3,
+    Download,
     ListFilter,
     LoaderCircle,
     MoreHorizontal,
     PanelLeftClose,
     Pin,
+    RotateCw,
     Search,
     Settings,
     ShieldAlert,
@@ -313,6 +318,24 @@
   </section>
 </div>
 <div class="sidebar-bottom">
+  {#if client.updateOffer}
+    {@const offer = client.updateOffer}
+    {@const progress = client.updateStatus?.phase === 'running' ? client.updateStatus.message : ''}
+    <button
+      class="update-row"
+      class:busy={progress}
+      title={progress || undefined}
+      onclick={() => void runtime.continueUpdate()}
+    >
+      {#if progress}<LoaderCircle size={15} />{:else if offer.ready}<RotateCw
+          size={15}
+        />{:else}<Download size={15} />{/if}
+      <span class="runtime-text">
+        <span>{progress || t(offer.ready ? 'restartToUpdate' : 'downloadUpdate')}</span>
+        <small>Anda {offer.version.replace(/^v/, '')}</small>
+      </span>
+    </button>
+  {/if}
   <DropdownMenu
     class="runtime-row"
     items={runtimeItems}

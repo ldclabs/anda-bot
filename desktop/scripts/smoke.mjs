@@ -540,6 +540,28 @@ try {
   })
   await page.getByText('What would you like to do?', { exact: true }).waitFor({ timeout: 30_000 })
   await page.screenshot({ path: join(screenshotDir, '01-welcome.png') })
+  // The status bar offers a found release's download, then the restart into it.
+  const sendEvent = (event) =>
+    app.evaluate(({ BrowserWindow }, event) => {
+      BrowserWindow.getAllWindows()[0].webContents.send('anda:event', event)
+    }, event)
+  const updateRow = page.locator('.sidebar-bottom .update-row')
+  await sendEvent({ type: 'update-offer', value: { version: '0.15.0', ready: false } })
+  await updateRow.getByText('Download update', { exact: true }).waitFor()
+  await updateRow.getByText('Anda 0.15.0', { exact: true }).waitFor()
+  await page.screenshot({ path: join(screenshotDir, '17-update-download.png') })
+  await sendEvent({
+    type: 'update-status',
+    value: { phase: 'running', message: 'Downloading update: 42%' }
+  })
+  await updateRow.getByText('Downloading update: 42%', { exact: true }).waitFor()
+  await sendEvent({ type: 'update-status', value: { phase: 'complete', message: 'Downloaded.' } })
+  await sendEvent({ type: 'update-offer', value: { version: 'v0.15.0', ready: true } })
+  await updateRow.getByText('Restart to update', { exact: true }).waitFor()
+  await updateRow.getByText('Anda 0.15.0', { exact: true }).waitFor()
+  await page.screenshot({ path: join(screenshotDir, '18-update-restart.png') })
+  await sendEvent({ type: 'update-offer', value: null })
+  await updateRow.waitFor({ state: 'detached' })
   const editor = page.locator('.composer-container textarea').first()
   await editor.fill('Test the native desktop connection')
   await editor.press('Enter')

@@ -116,6 +116,14 @@ export class DaemonClient extends EventEmitter {
   private get bundled(): string {
     return join(this.resources, 'runtime', executable)
   }
+  /**
+   * Whether the shared `anda` is the one this app installs from its bundle on
+   * start, so a desktop update also updates it. Known once `discover` ran.
+   */
+  get bundleOwnsRuntime(): boolean {
+    const action = this.installReport?.action
+    return Boolean(action && action !== 'homebrew' && !this.store.state.binary)
+  }
   /** The release bundled with this app, as `vX.Y.Z`. */
   async bundledRelease(): Promise<string | null> {
     try {

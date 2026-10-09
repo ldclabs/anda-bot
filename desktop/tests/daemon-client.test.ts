@@ -242,3 +242,30 @@ describe('daemon transport and recovery', () => {
     expect(restored.state.preferences.drafts).toEqual({ one: 'draft 9' })
   })
 })
+
+it('lets a desktop update carry only the runtime this app installed', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-test-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  const store = new DesktopStore(join(directory, 'desktop.json'))
+  await store.load()
+  const client = new DaemonClient(directory, directory, store)
+  expect(client.bundleOwnsRuntime).toBe(false)
+  const report = {
+    path: '/bin/anda',
+    version: 'v0.13.0',
+    skills_installed: false,
+    path_updated: false,
+    launcher_retired: false,
+    launcher_started_at_login: false
+  }
+  for (const action of ['installed', 'upgraded', 'current', 'kept_newer'] as const) {
+    client.installReport = { ...report, action }
+    expect(client.bundleOwnsRuntime).toBe(true)
+  }
+  // Homebrew updates its own anda, and a chosen executable is never replaced.
+  client.installReport = { ...report, action: 'homebrew' }
+  expect(client.bundleOwnsRuntime).toBe(false)
+  client.installReport = { ...report, action: 'current' }
+  store.state.binary = '/opt/anda'
+  expect(client.bundleOwnsRuntime).toBe(false)
+})

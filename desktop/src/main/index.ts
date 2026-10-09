@@ -221,6 +221,11 @@ function refreshTray(): void {
     ])
   )
 }
+/** The tray and the status bar follow the releases the updater knows about. */
+function updatesChanged(): void {
+  refreshTray()
+  emit({ type: 'update-offer', value: updater?.offer ?? null })
+}
 function openExternal(url: unknown): void {
   try {
     void shell.openExternal(externalUrl(url)).catch(() => {})
@@ -563,6 +568,7 @@ async function bootstrap(): Promise<Bootstrap> {
     version: app.getVersion(),
     pending: store.state.pending,
     update: updater.status,
+    updateOffer: updater.offer,
     updateRequested,
     fullScreen: window?.isFullScreen() ?? false
   }
@@ -639,7 +645,7 @@ async function setup(): Promise<void> {
     store,
     () => terminals.running,
     inform,
-    refreshTray,
+    updatesChanged,
     (value) => emit({ type: 'update-status', value })
   )
   void updater.recover().catch((error) => emit({ type: 'update', value: String(error) }))
@@ -725,6 +731,7 @@ async function setup(): Promise<void> {
     rendererReady = true
     // Replay the latest status: a check may finish between bootstrap and ready.
     if (updater.status) emit({ type: 'update-status', value: updater.status })
+    emit({ type: 'update-offer', value: updater.offer })
     if (pendingMenuAction) {
       emit({ type: 'menu', value: pendingMenuAction })
       pendingMenuAction = null
@@ -881,6 +888,11 @@ async function setup(): Promise<void> {
   })
   handle('anda:logs', showLogs)
   handle('anda:update', () => runUpdate(() => updater.check()))
+  // The status bar shows a download inline; the renderer opens the dialog itself.
+  handle('anda:update-continue', async () => {
+    await updater.continueUpdate().catch(() => {})
+    return updater.status
+  })
   handle('anda:extension-token', copyExtensionToken)
   const command = (
     action: MenuAction,

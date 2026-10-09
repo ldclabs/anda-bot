@@ -72,12 +72,18 @@ export interface Bootstrap {
   version: string
   pending: PendingSubmission[]
   update: UpdateStatus | null
+  updateOffer: UpdateOffer | null
   updateRequested: boolean
   fullScreen: boolean
 }
 export interface UpdateStatus {
   phase: 'running' | 'complete' | 'error'
   message: string
+}
+/** The status bar's update step: download a found release, or restart into a downloaded one. */
+export interface UpdateOffer {
+  version: string
+  ready: boolean
 }
 export interface PendingSubmission {
   id: string
@@ -94,6 +100,7 @@ export interface NativeEvent {
     | 'menu'
     | 'update'
     | 'update-status'
+    | 'update-offer'
     | 'submissions'
     | 'state'
     | 'terminal'
@@ -133,6 +140,8 @@ export interface DesktopBridge {
   showLogs(): Promise<void>
   printHtml(html: string): Promise<void>
   checkUpdate(): Promise<string>
+  /** Takes the offered update step and reports the operation's final status. */
+  continueUpdate(): Promise<UpdateStatus | null>
   copyExtensionToken(): Promise<void>
   onEvent(listener: (event: NativeEvent) => void): () => void
 }

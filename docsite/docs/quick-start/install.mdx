@@ -129,7 +129,7 @@ If installed through the install script, update with:
 anda update
 ```
 
-Homebrew installs update with `brew upgrade anda`. **Check for updates** in Anda Desktop's tray or Settings checks both `anda` and the desktop app. Runtime installation waits for active tasks to finish; the desktop check continues whether that update is installed, postponed or fails. Signed desktop releases can update the app without stopping the service; unsigned builds require manually installing the new desktop package.
+Homebrew installs update with `brew upgrade anda`. **Check for updates** in Anda Desktop's tray or Settings checks both `anda` and the desktop app. A signed desktop release carries the same release's `anda`, so when the desktop installed `anda` it is the whole update: one download, one confirmation, then the service drains and the app restarts it on the new `anda`. With a Homebrew or Settings-chosen `anda`, runtime installation waits for active tasks to finish and the desktop update restarts only the app. A found or downloaded release also appears at the bottom of the sidebar as **Download update** or **Restart to update**. Unsigned builds require manually installing the new desktop package.
 
 Manage the background daemon with:
 

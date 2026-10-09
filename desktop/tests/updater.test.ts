@@ -55,8 +55,12 @@ function fixture(running = true) {
   const emitted = vi.fn()
   const changed = vi.fn()
   const daemon = {
-    view: { connected: running },
+    view: { connected: running, version: '0.13.0' },
     manuallyStopped: !running,
+    // Homebrew or a chosen executable: the desktop package does not carry it.
+    bundleOwnsRuntime: false,
+    discover: vi.fn(async () => '/bin/anda'),
+    connect: vi.fn(async () => daemon.view),
     maintenance: vi.fn(async (action: string) => {
       actions.push(action)
       return { token: 'lease', ready: true }
@@ -103,6 +107,14 @@ function packagedFixture(running = true) {
   vi.stubGlobal('process', { ...process, resourcesPath: '/test/resources' })
   vi.mocked(readFile).mockResolvedValue(JSON.stringify({ signed: true }))
   return fixture(running)
+}
+
+/** The app installed the shared runtime from its bundle, so desktop releases carry it. */
+function bundledFixture(running = true) {
+  const f = packagedFixture(running)
+  f.daemon.bundleOwnsRuntime = true
+  vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease(true))
+  return f
 }
 
 it('keeps the drained service stopped when installation outlasts its lease', async () => {
@@ -163,6 +175,8 @@ it('publishes progress immediately and retains the final check result', async ()
     return { status: 'current', current_tag: 'v0.14.0' }
   })
   const checking = f.updater.check()
+  expect(f.updater.status).toEqual({ phase: 'running', message: 'Checking for updates…' })
+  await vi.advanceTimersByTimeAsync(0)
   expect(f.updater.status).toEqual({
     phase: 'running',
     message: expect.stringContaining('Checking Anda runtime')
@@ -210,7 +224,7 @@ it('shows runtime errors returned by the CLI as failures', async () => {
 })
 
 it.each([0, 1])(
-  'continues to download and install desktop after the runtime prompt (response: %s)',
+  'continues to the desktop update after the runtime prompt when it owns no runtime (response: %s)',
   async (response) => {
     const f = packagedFixture()
     f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
@@ -226,12 +240,9 @@ it.each([0, 1])(
     expect(f.daemon.view.connected).toBe(true)
     expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(2)
     expect(dialog.showMessageBox).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ message: 'Download Anda Desktop 0.15.0?' })
-    )
-    expect(dialog.showMessageBox).toHaveBeenNthCalledWith(
-      3,
       expect.objectContaining({ message: 'Install Anda Desktop 0.15.0 and restart it?' })
     )
     expect(f.store.state.updateIntent).toEqual({
@@ -260,10 +271,10 @@ it('still offers a desktop update after a runtime installation fails and recover
   expect(f.actions).toEqual(['begin', 'renew', 'stop', 'start'])
   expect(f.daemon.view.connected).toBe(true)
   expect(message).toContain('Anda runtime: replacement failed')
-  expect(message).toContain('Desktop update available; download postponed.')
+  expect(message).toContain('Desktop update downloaded. Choose Check for updates')
   expect(f.updater.desktopRelease).toBe('0.15.0')
   expect(f.updater.status).toEqual({ phase: 'error', message })
-  expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
   expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
 })
 
@@ -312,27 +323,20 @@ it('reports a failed check without installing the download it keeps', async () =
   expect(message).toContain('Anda Desktop is up to date.')
   expect(dialog.showMessageBox).not.toHaveBeenCalled()
   expect(f.actions).toEqual([])
-  // The tray keeps offering the downloaded release.
+  // The tray keeps offering the downloaded release; the status bar, which does
+  // not ask before stopping the service, does not.
   expect(f.updater.runtimeRelease).toBe('v0.14.0')
+  expect(f.updater.offer).toBeNull()
   expect(f.updater.status).toEqual({ phase: 'error', message })
 })
 
-it('looks up the desktop feed while the runtime check is still running', async () => {
+it('looks up the desktop feed before the runtime check downloads a release', async () => {
   const f = packagedFixture()
-  let finishRuntime!: (state: RuntimeUpdateState) => void
-  f.daemon.runtimeUpdateState.mockReturnValueOnce(
-    new Promise((resolve) => (finishRuntime = resolve))
-  )
-  // Rejected before anything awaits it: must not surface as an unhandled rejection.
   vi.mocked(autoUpdater.checkForUpdates).mockRejectedValue(new Error('Desktop feed unavailable'))
-  const checking = f.updater.check()
-  await vi.waitFor(() => expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1))
-  expect(f.updater.status?.message).toBe(
-    'Checking Anda runtime updates and downloading any new release…'
+  const message = await f.updater.check()
+  expect(vi.mocked(autoUpdater.checkForUpdates).mock.invocationCallOrder[0]).toBeLessThan(
+    f.daemon.runtimeUpdateState.mock.invocationCallOrder[0]!
   )
-
-  finishRuntime({ status: 'current', current_tag: 'v0.14.0' })
-  const message = await checking
   expect(message).toBe(
     'Anda runtime v0.14.0 is up to date.\n\nAnda Desktop: Desktop feed unavailable'
   )
@@ -513,9 +517,10 @@ it('opens desktop updates independently of a failed runtime check', async () => 
   f.updater.runtime = { status: 'failed', current_tag: 'v0.14.0', error: 'Runtime unavailable' }
   vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease(true))
   vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false })
-  await expect(f.updater.checkDesktop()).resolves.toContain('download postponed')
+  await expect(f.updater.checkDesktop()).resolves.toContain('Desktop update downloaded')
   expect(f.updater.status?.phase).toBe('complete')
   expect(f.updater.desktopRelease).toBe('0.15.0')
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
   expect(f.daemon.runtimeUpdateState).not.toHaveBeenCalled()
 })
 
@@ -524,4 +529,178 @@ it('does not report a null desktop check result as up to date', async () => {
   vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(null)
   await expect(f.updater.checkDesktop()).rejects.toThrow('Unable to check')
   expect(f.updater.status?.phase).toBe('error')
+})
+
+it('installs a release the desktop package carries with one download and one restart', async () => {
+  const f = bundledFixture()
+  const checking = f.updater.check()
+  await vi.runAllTimersAsync()
+  const message = await checking
+
+  expect(message).toBe('Installing update…')
+  // The bundled runtime arrives with the app; the CLI download would repeat it.
+  expect(f.daemon.runtimeUpdateState).not.toHaveBeenCalled()
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(dialog.showMessageBox).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ message: 'Install Anda 0.15.0 and restart?' })
+  )
+  // Drained and stopped; the restarted app starts the service on the new runtime.
+  expect(f.actions).toEqual(['begin', 'renew', 'stop'])
+  expect(f.daemon.startRuntime).not.toHaveBeenCalled()
+  expect(f.store.state.updateIntent).toEqual({
+    previous: '0.13.0',
+    target: '0.15.0',
+    startedAt: expect.any(Number)
+  })
+  expect(autoUpdater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+  expect(f.updater.installing).toBe(true)
+  // The downloaded runtime is no separate tray action any more.
+  expect(f.updater.runtimeRelease).toBeNull()
+})
+
+it('brings the stopped service back when the app installation fails', async () => {
+  const f = bundledFixture()
+  const onError = vi.mocked(autoUpdater.on).mock.calls.find(([event]) => event === 'error')![1]
+  const checking = f.updater.check()
+  await vi.runAllTimersAsync()
+  await checking
+  onError(new Error('Code signature mismatch'))
+
+  expect(f.actions).toEqual(['begin', 'renew', 'stop', 'start'])
+  expect(f.daemon.view.connected).toBe(true)
+  expect(f.updater.installing).toBe(false)
+  expect(f.updater.status).toEqual({ phase: 'error', message: 'Code signature mismatch' })
+  onError(new Error('Later failure'))
+  expect(f.daemon.startRuntime).toHaveBeenCalledTimes(1)
+})
+
+it('keeps the service and the download when tasks stay active', async () => {
+  const f = bundledFixture()
+  f.daemon.maintenance.mockImplementation(async (action: string) => {
+    f.actions.push(action)
+    return { token: 'lease', ready: false }
+  })
+  const result = expect(f.updater.check()).rejects.toThrow('Tasks are still active')
+  await vi.runAllTimersAsync()
+  await result
+
+  expect(f.actions.at(-1)).toBe('release')
+  expect(f.daemon.stopForUpdate).not.toHaveBeenCalled()
+  expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
+  expect(f.updater.installing).toBe(false)
+  expect(f.updater.desktopRelease).toBe('0.15.0')
+  // Retrying installs the kept download without fetching it again.
+  f.daemon.maintenance.mockImplementation(async (action: string) => {
+    f.actions.push(action)
+    return { token: 'lease', ready: true }
+  })
+  const retry = f.updater.checkDesktop()
+  await vi.runAllTimersAsync()
+  await expect(retry).resolves.toBe('Installing update…')
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  ['already runs the release', true, '0.15.0'],
+  ['was stopped explicitly', false, '0.13.0']
+])('restarts only the app when the service %s', async (_, running, version) => {
+  const f = bundledFixture(running)
+  f.daemon.view.version = version
+  const onError = vi.mocked(autoUpdater.on).mock.calls.find(([event]) => event === 'error')![1]
+  await expect(f.updater.check()).resolves.toBe('Installing update…')
+
+  expect(dialog.showMessageBox).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ message: 'Install Anda Desktop 0.15.0 and restart it?' })
+  )
+  expect(f.actions).toEqual([])
+  expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1)
+  onError(new Error('Install failed'))
+  expect(f.daemon.startRuntime).not.toHaveBeenCalled()
+})
+
+it('keeps the download and leaves the service alone when the restart is postponed', async () => {
+  const f = bundledFixture()
+  vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 0, checkboxChecked: false })
+  await expect(f.updater.check()).resolves.toBe(
+    'Desktop update downloaded. Choose Check for updates when ready to install.'
+  )
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(f.actions).toEqual([])
+  expect(f.daemon.runtimeUpdateState).not.toHaveBeenCalled()
+  expect(f.updater.installing).toBe(false)
+  expect(f.updater.desktopRelease).toBe('0.15.0')
+})
+
+it('offers the runtime on its own when it is newer than the desktop release', async () => {
+  const f = bundledFixture()
+  f.updater.runtime = { ...f.updater.runtime!, latest_tag: 'v0.16.0' }
+  f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime)
+  vi.mocked(dialog.showMessageBox)
+    .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
+    .mockResolvedValueOnce({ response: 0, checkboxChecked: false })
+  await f.updater.check()
+  expect(f.daemon.runtimeUpdateState).toHaveBeenCalledExactlyOnceWith(true)
+  expect(dialog.showMessageBox).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ message: 'Install Anda v0.16.0 and restart the service?' })
+  )
+  expect(f.updater.runtimeRelease).toBe('v0.16.0')
+})
+
+it('skips the runtime download in automatic checks when the desktop release carries it', async () => {
+  const f = bundledFixture()
+  f.updater.startAutomaticChecks()
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
+  expect(f.daemon.runtimeUpdateState).not.toHaveBeenCalled()
+  expect(f.emitted).toHaveBeenCalledExactlyOnceWith('Anda Desktop 0.15.0 available')
+  expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  expect(f.updater.runtimeRelease).toBeNull()
+})
+
+it('offers a found desktop release for download, then a restart that asks nothing more', async () => {
+  const f = bundledFixture()
+  f.updater.runtime = undefined
+  expect(f.updater.offer).toBeNull()
+  f.updater.startAutomaticChecks()
+  await vi.advanceTimersByTimeAsync(60_000)
+  f.updater.stop()
+  expect(f.updater.offer).toEqual({ version: '0.15.0', ready: false })
+
+  const changes = f.changed.mock.calls.length
+  await expect(f.updater.continueUpdate()).resolves.toBe(
+    'Anda Desktop 0.15.0 is downloaded. Restart to update.'
+  )
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(f.changed.mock.calls.length).toBeGreaterThan(changes)
+  expect(f.updater.offer).toEqual({ version: '0.15.0', ready: true })
+  expect(dialog.showMessageBox).not.toHaveBeenCalled()
+  expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
+
+  const restarting = f.updater.continueUpdate()
+  await vi.runAllTimersAsync()
+  await expect(restarting).resolves.toBe('Installing update…')
+  expect(dialog.showMessageBox).not.toHaveBeenCalled()
+  expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(f.actions).toEqual(['begin', 'renew', 'stop'])
+  expect(autoUpdater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
+})
+
+it('restarts into a downloaded runtime from the status bar without asking again', async () => {
+  const f = fixture()
+  expect(f.updater.offer).toEqual({ version: 'v0.14.0', ready: true })
+  const installing = f.updater.continueUpdate()
+  await vi.runAllTimersAsync()
+  await expect(installing).resolves.toBe('Anda v0.14.0 is installed.')
+  expect(dialog.showMessageBox).not.toHaveBeenCalled()
+  expect(f.actions).toEqual(['begin', 'renew', 'stop', 'install', 'start'])
+})
+
+it('checks for updates when the status bar has nothing left to offer', async () => {
+  const f = fixture()
+  f.updater.runtime = { status: 'current', current_tag: 'v0.14.0' }
+  expect(f.updater.offer).toBeNull()
+  await expect(f.updater.continueUpdate()).resolves.toContain('v0.14.0 is up to date')
+  expect(f.daemon.runtimeUpdateState).toHaveBeenCalledExactlyOnceWith(true)
 })

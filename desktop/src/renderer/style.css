@@ -357,6 +357,7 @@ kbd {
 }
 .sidebar-bottom {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   padding: 8px 0 12px;
@@ -373,6 +374,30 @@ kbd {
 .runtime-row:hover,
 .runtime-row[data-state='open'] {
   background: var(--desk-hover);
+}
+/* The offered update sits on its own line above the runtime row. */
+.update-row {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--desk-text);
+  text-align: start;
+}
+.update-row:hover {
+  background: var(--desk-hover);
+}
+.update-row svg {
+  flex-shrink: 0;
+  color: var(--desk-accent);
+}
+.update-row.busy svg {
+  animation: spin 1.1s linear infinite;
 }
 .runtime-text {
   display: grid;

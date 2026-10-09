@@ -31,6 +31,7 @@ import {
   type DaemonView,
   type PendingSubmission,
   type UpdateStatus,
+  type UpdateOffer,
   type ChatEntry
 } from '../shared/contract'
 import en from '../../../chrome-extension/public/_locales/en/messages.json'
@@ -58,6 +59,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   status = $state('connecting')
   systemMessage = $state<{ kind: 'info' | 'error'; text: string } | null>(null)
   updateStatus = $state<UpdateStatus | null>(null)
+  /** The download or restart the status bar offers. */
+  updateOffer = $state<UpdateOffer | null>(null)
   updateDialogOpen = $state(false)
   modelSetupOpen = $state(false)
   modelSetupAcknowledged = $state(false)
@@ -189,6 +192,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.modelSetupAcknowledged = setupStorage[this.modelSetupStorageKey] === true
     this.pending = bootstrap.pending
     this.updateStatus = bootstrap.update
+    this.updateOffer = bootstrap.updateOffer
     this.updateDialogOpen = bootstrap.updateRequested || bootstrap.update?.phase === 'running'
     const language = normalizeUiLanguage(this.preferences.language || navigator.language) || 'en'
     this.preferences.language = language
@@ -224,6 +228,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         this.systemMessage = { kind: 'info', text: String(event.value) }
       } else if (event.type === 'update-status') {
         this.updateStatus = event.value as UpdateStatus
+      } else if (event.type === 'update-offer') {
+        this.updateOffer = event.value as UpdateOffer | null
       } else if (event.type === 'preferences') {
         this.preferences = event.value as Preferences
       } else if (event.type === 'fullscreen') {

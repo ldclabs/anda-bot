@@ -90,6 +90,21 @@
       }
     }
   }
+  /** The status bar's update button: a download stays inline, a restart shows its progress. */
+  async function continueUpdate(): Promise<void> {
+    const running = client.updateStatus?.phase === 'running'
+    if (running || client.updateOffer?.ready) client.updateDialogOpen = true
+    if (running) return
+    try {
+      if ((await window.anda.continueUpdate())?.phase === 'error') client.updateDialogOpen = true
+    } catch (error) {
+      client.updateStatus = {
+        phase: 'error',
+        message: error instanceof Error ? error.message : String(error)
+      }
+      client.updateDialogOpen = true
+    }
+  }
   let pageVisible = $state(!document.hidden)
   let collapsed = $state(false)
   let rightOpen = $state(false)
@@ -567,6 +582,7 @@
     },
     stop: () => (confirmStopOpen = true),
     checkUpdate,
+    continueUpdate,
     showLogs: () => void window.anda.showLogs(),
     copyToken: async () => {
       try {
