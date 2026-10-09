@@ -984,8 +984,7 @@ try {
     ),
     nativeViews - 1
   )
-  // Below 1150px the panel is a drawer over the header's Resources toggle, as
-  // on 1024px-wide CI displays, so close it from the panel itself.
+  // The panel closes from its own header too.
   await page
     .locator('.resource-panel > header')
     .getByRole('button', { name: 'Close', exact: true })
@@ -1027,7 +1026,16 @@ try {
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setBounds({ width: 900, height: 700 })
   )
+  await page.waitForFunction(() => window.innerWidth < 1150)
+  // Below 1150px the panel is a drawer. It opens below the header, whose
+  // buttons still switch between panels and close the open one.
+  await header.getByRole('button', { name: 'Resources', exact: true }).click()
+  await page.locator('.resource-panel .panel-title').getByText('Resources').waitFor()
+  await header.getByRole('button', { name: 'Changes', exact: true }).click()
+  await page.locator('.resource-panel .panel-title').getByText('Changes').waitFor()
   await page.screenshot({ path: join(screenshotDir, '05-narrow.png') })
+  await header.getByRole('button', { name: 'Changes', exact: true }).click()
+  await page.locator('.resource-panel').waitFor({ state: 'detached' })
   await page
     .locator('.sidebar-bottom')
     .getByRole('button', { name: 'Settings', exact: true })

@@ -1967,13 +1967,15 @@ button.primary {
   .panel-maximized .main-column {
     display: flex;
   }
+  /* The drawer opens below the header, whose buttons switch between panels. */
   .desktop-shell.with-panel .resource-panel {
     position: fixed;
     z-index: 30;
     right: 0;
-    top: 0;
+    top: 52px;
     bottom: 0;
     width: min(var(--panel-width, 560px), 80vw);
+    border-top: 1px solid var(--desk-border);
     box-shadow: -12px 0 30px #0002;
   }
   .desktop-shell:not(.workbench-open).with-panel:not(.panel-sized) .resource-panel {
@@ -1982,6 +1984,12 @@ button.primary {
   .desktop-shell.with-panel.panel-maximized .resource-panel {
     width: auto;
     left: 0;
+    top: 0;
+    border-top: 0;
+  }
+  /* Only a maximized drawer reaches up to the caption buttons. */
+  [data-platform='win32'] .with-panel:not(.panel-maximized) .panel-actions {
+    margin-right: 0;
   }
   .desktop-shell {
     --sidebar-column: minmax(180px, var(--sidebar-width, 210px));
