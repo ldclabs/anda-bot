@@ -6,7 +6,14 @@ import {
   fileTarget,
   workspaceRelative
 } from '../src/renderer/transcript'
-import { diffLineKind, formatElapsed, formatTokens, modelLabel } from '../src/renderer/presentation'
+import {
+  cacheHitPercent,
+  contextPercent,
+  diffLineKind,
+  formatElapsed,
+  formatTokens,
+  modelLabel
+} from '../src/renderer/presentation'
 import { accelerator, shortcutLabel } from '../src/shared/shortcuts'
 import type { ChatEntry } from '../src/shared/contract'
 import type { ChatMessage } from '$lib/anda/client/types'
@@ -136,6 +143,14 @@ describe('presentation', () => {
     ])
     expect([950, 12_345, 4_100_000].map(formatTokens)).toEqual(['950', '12k', '4.1M'])
     expect(formatTokens(1234)).toBe('1.2k')
+    expect(contextPercent(47_279, 400_000)).toBe(12)
+    expect(contextPercent(500_000, 400_000)).toBe(100)
+    expect(contextPercent(47_279, 0)).toBeUndefined()
+    expect([
+      cacheHitPercent(813_935, 0),
+      cacheHitPercent(315_252, 86_016),
+      cacheHitPercent(0, 0)
+    ]).toEqual([0, 27, 0])
     expect([7_000, 750_000, 3_725_000].map(formatElapsed)).toEqual(['0:07', '12:30', '1:02:05'])
   })
 

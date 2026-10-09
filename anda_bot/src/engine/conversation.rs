@@ -19,6 +19,39 @@ use std::{
 
 use crate::util::request_meta::{keys, request_meta_extra_as};
 
+/// Key of [`ContextUsage`] in a conversation's `extra` and in the
+/// `GetConversation` and `GetConversationDelta` results.
+pub const CONTEXT_USAGE_KEY: &str = "context_usage";
+
+/// The context the conversation's latest model request filled. A
+/// conversation's `usage` sums every request, recall runs included, so it says
+/// what the conversation consumed, not how full the context is.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ContextUsage {
+    /// Input and output tokens of the latest model request.
+    pub tokens: u64,
+    /// The model's context window; 0 when it is not configured.
+    pub window: u64,
+}
+
+impl ContextUsage {
+    pub fn of(conversation: &Conversation) -> Option<Self> {
+        let value = conversation.extra.as_ref()?.get(CONTEXT_USAGE_KEY)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+
+    pub fn save(self, conversation: &mut Conversation) {
+        let value = json!(self);
+        match &mut conversation.extra {
+            Some(Value::Object(extra)) => {
+                extra.insert(CONTEXT_USAGE_KEY.to_string(), value);
+            }
+            extra @ None => *extra = Some(json!({ CONTEXT_USAGE_KEY: value })),
+            Some(_) => {}
+        }
+    }
+}
+
 /// Arguments for "conversation_api" tool
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type")]
@@ -529,6 +562,15 @@ fn memory_reusable(
     Ok(space.product_source_allowed(&source))
 }
 
+/// Lifts [`ContextUsage`] to the top level, beside `usage`, where a client
+/// polling deltas finds it.
+fn with_context_usage(mut result: Value, context: Option<ContextUsage>) -> Value {
+    if let (Some(context), Some(result)) = (context, result.as_object_mut()) {
+        result.insert(CONTEXT_USAGE_KEY.to_string(), json!(context));
+    }
+    result
+}
+
 fn ok(result: Value) -> ToolOutput<Response> {
     ToolOutput::new(Response::Ok {
         result,
@@ -708,7 +750,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                 Ok(ok(if is_agent {
                     json!(Document::from(conversation))
                 } else {
-                    json!(conversation)
+                    with_context_usage(json!(conversation), ContextUsage::of(&conversation))
                 }))
             }
             ConversationsToolArgs::GetConversationDelta {
@@ -719,8 +761,10 @@ impl Tool<BaseCtx> for ConversationsTool {
                 let conversation = self.conversations.get_conversation(_id).await?;
                 self.check_readable(&conversation, caller, is_agent).await?;
 
-                Ok(ok(json!(
-                    conversation.into_delta(messages_offset, artifacts_offset)
+                let context = ContextUsage::of(&conversation);
+                Ok(ok(with_context_usage(
+                    json!(conversation.into_delta(messages_offset, artifacts_offset)),
+                    context,
                 )))
             }
             ConversationsToolArgs::BatchGetConversations { ids } => {
@@ -1279,11 +1323,19 @@ mod tests {
         let tool = test_tool().await;
         let ctx = EngineBuilder::new().mock_ctx().base;
 
-        let mine = Conversation {
+        let mut mine = Conversation {
             user: Principal::anonymous(),
             messages: vec![json!({"role": "user", "content": "hello world"})],
+            extra: Some(json!({"workspace": "/work"})),
             ..Default::default()
         };
+        let context = ContextUsage {
+            tokens: 47_279,
+            window: 400_000,
+        };
+        context.save(&mut mine);
+        assert_eq!(ContextUsage::of(&mine), Some(context));
+        assert_eq!(mine.extra.as_ref().unwrap()["workspace"], "/work");
         let my_id = tool
             .conversations
             .add_conversation(ConversationRef::from(&mine))
@@ -1310,6 +1362,7 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(result["_id"], my_id);
+        assert_eq!(result[CONTEXT_USAGE_KEY], json!(context));
 
         let err = tool
             .call(
@@ -1336,6 +1389,7 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(result["messages"].as_array().map(Vec::len), Some(1));
+        assert_eq!(result[CONTEXT_USAGE_KEY], json!(context));
 
         let err = tool
             .call(

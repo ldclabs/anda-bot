@@ -32,6 +32,17 @@ export function formatTokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1)}M`
 }
 
+/** Share of the context window in use, 0–100; undefined when the window is unknown. */
+export function contextPercent(tokens: number, window: number): number | undefined {
+  if (!(window > 0)) return undefined
+  return Math.min(100, Math.round((tokens / window) * 100))
+}
+
+/** Share of input tokens read from the prompt cache, 0–100. */
+export function cacheHitPercent(input: number, cached: number): number {
+  return input > 0 ? Math.min(100, Math.round((cached / input) * 100)) : 0
+}
+
 /** `0:07`, `12:30`, `1:02:05`. */
 export function formatElapsed(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000))

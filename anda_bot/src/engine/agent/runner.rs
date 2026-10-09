@@ -26,7 +26,7 @@ use crate::engine::SkillLibrary;
 use crate::engine::{
     ActionEvent, CompletionHook, action_id_from_message, action_id_from_message_value,
     apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
-    conversation::SourceState,
+    conversation::{ContextUsage, SourceState},
     goal::{self},
     is_action_message_value, multimodal,
     prompt::{PromptCommand, skill_command_directive},
@@ -255,6 +255,21 @@ struct SessionRunner {
 }
 
 impl SessionRunner {
+    /// Sets the conversation's accumulated usage and records the context the
+    /// latest model request filled. A runner that has not requested yet, such as
+    /// one rebuilt after a restart, keeps the recorded context.
+    fn record_usage(&mut self, usage: Usage) {
+        self.conversation.usage = usage;
+        let latest = self.runner.current_usage();
+        if latest.input_tokens > 0 {
+            ContextUsage {
+                tokens: latest.input_tokens.saturating_add(latest.output_tokens),
+                window: self.runner.model().context_window as u64,
+            }
+            .save(&mut self.conversation);
+        }
+    }
+
     async fn persist_conversation_state(&self) -> Result<(), BoxError> {
         self.assistant
             .persist_conversation_state(&self.conversation)
@@ -391,7 +406,7 @@ impl SessionRunner {
         self.replace_conversation_messages_from_chat_history(output.chat_history);
         self.conversation.failed_reason = None;
         self.conversation.status = ConversationStatus::Idle;
-        self.conversation.usage = output.usage;
+        self.record_usage(output.usage);
         self.conversation.updated_at = now_ms;
         self.persist_conversation_state().await
     }
@@ -526,7 +541,7 @@ impl SessionRunner {
         };
 
         self.conversation.status = ConversationStatus::Completed;
-        self.conversation.usage = output.usage;
+        self.record_usage(output.usage);
         self.collect_artifacts();
         for artifact in artifacts {
             if !self
@@ -1192,7 +1207,7 @@ impl SessionRunner {
                 };
                 if self.conversation.status != next_status || history_changed {
                     if next_status == ConversationStatus::Working {
-                        self.conversation.usage = self.runner.total_usage().clone();
+                        self.record_usage(self.runner.total_usage().clone());
                     }
                     self.conversation.status = next_status;
                     self.conversation.updated_at = now_ms;
@@ -1246,7 +1261,7 @@ impl SessionRunner {
                 } else {
                     ConversationStatus::Working
                 };
-                self.conversation.usage = res.usage;
+                self.record_usage(res.usage);
                 self.conversation.updated_at = now_ms;
                 self.conversation.failed_reason = res.failed_reason.take();
                 if self.conversation.status == ConversationStatus::Failed {
@@ -2318,6 +2333,43 @@ mod tests {
         assert_eq!(
             request_text(&recorded[0]),
             "follow up after background usage"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_runner_records_the_latest_request_context_apart_from_total_usage() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 300);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        // Usage reported by a background task, such as a recall run, counts
+        // toward the conversation's total but not toward its context.
+        let mut background_input = input(PromptCommand::Plain {
+            prompt: "follow up after background usage".to_string(),
+        });
+        background_input.usage = Usage {
+            input_tokens: 100_000,
+            output_tokens: 0,
+            cached_tokens: 0,
+            requests: 3,
+        };
+
+        sess_runner
+            .run(vec![background_input], &mut snapshot)
+            .await
+            .unwrap();
+
+        let conversation = &sess_runner.conversation;
+        assert_eq!(conversation.usage.input_tokens, 100_300);
+        assert_eq!(conversation.usage.requests, 4);
+        assert_eq!(
+            ContextUsage::of(conversation),
+            Some(ContextUsage {
+                tokens: 310,
+                window: 1_000,
+            })
         );
     }
 

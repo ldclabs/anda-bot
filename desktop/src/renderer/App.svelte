@@ -59,7 +59,14 @@
     type EditedFile,
     type FileTarget
   } from './transcript'
-  import { formatElapsed, formatTokens, matchesShortcut, modelLabel } from './presentation'
+  import {
+    cacheHitPercent,
+    contextPercent,
+    formatElapsed,
+    formatTokens,
+    matchesShortcut,
+    modelLabel
+  } from './presentation'
   import { tip } from './tooltip'
   import Automations from './Automations.svelte'
   import Sidebar, { type RuntimeActions } from './Sidebar.svelte'
@@ -251,6 +258,7 @@
     return started ? formatElapsed(now - started) : ''
   })
   const usage = $derived(channel?.usage)
+  const contextUsage = $derived(channel?.contextUsage)
   const recentFolders = $derived(
     [
       ...new Set(
@@ -1110,17 +1118,52 @@
               onDraftChange={(draft) => client.saveDraft(client.activeSource, draft)}
             >
               {#snippet actions()}
-                {#if usage && usage.input_tokens + usage.output_tokens > 0}
-                  {@const text = t('tokenUsage', {
-                    input: formatTokens(usage.input_tokens),
-                    output: formatTokens(usage.output_tokens),
-                    cached: formatTokens(usage.cached_tokens)
-                  })}
-                  <span class="usage-meter" role="img" aria-label={text} use:tip={text}
-                    ><Gauge size={14} />{formatTokens(
-                      usage.input_tokens + usage.output_tokens
-                    )}</span
+                {#if contextUsage && contextUsage.tokens > 0}
+                  {@const percent = contextPercent(contextUsage.tokens, contextUsage.window)}
+                  {@const used = formatTokens(contextUsage.tokens)}
+                  {@const capacity = formatTokens(contextUsage.window)}
+                  {@const lines = [
+                    percent === undefined
+                      ? t('contextUsageNoWindow', { used })
+                      : t('contextUsage', { used, window: capacity, percent: String(percent) }),
+                    ...(usage
+                      ? [
+                          t('conversationUsage', {
+                            input: formatTokens(usage.input_tokens),
+                            cached: formatTokens(usage.cached_tokens),
+                            hitRate: String(
+                              cacheHitPercent(usage.input_tokens, usage.cached_tokens)
+                            ),
+                            output: formatTokens(usage.output_tokens),
+                            requests: String(usage.requests)
+                          })
+                        ]
+                      : [])
+                  ]}
+                  <span
+                    class="usage-meter"
+                    class:usage-meter-high={percent !== undefined && percent >= 80}
+                    role="img"
+                    aria-label={lines.join('. ')}
+                    use:tip={lines.join('\n')}
                   >
+                    {#if percent === undefined}
+                      <Gauge size={14} />{used}
+                    {:else}
+                      <svg class="context-ring" viewBox="0 0 16 16" aria-hidden="true">
+                        <circle cx="8" cy="8" r="6" pathLength="100" />
+                        <circle
+                          class="context-ring-fill"
+                          cx="8"
+                          cy="8"
+                          r="6"
+                          pathLength="100"
+                          stroke-dasharray="{percent} 100"
+                          transform="rotate(-90 8 8)"
+                        />
+                      </svg>{used} / {capacity}
+                    {/if}
+                  </span>
                 {/if}
                 {#if modelItems.length}
                   <DropdownMenu

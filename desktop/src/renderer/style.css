@@ -874,6 +874,22 @@ kbd {
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
+.usage-meter-high {
+  color: var(--desk-warning);
+}
+.context-ring {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.context-ring circle:first-child {
+  opacity: 0.25;
+}
+.context-ring-fill {
+  stroke-linecap: round;
+}
 .composer-context {
   display: flex;
   align-items: center;
@@ -1225,6 +1241,7 @@ button.danger {
   color: var(--desk-bg);
   font-size: 11.5px;
   line-height: 1.4;
+  white-space: pre-line;
   pointer-events: none;
   box-shadow: 0 2px 8px #0002;
 }

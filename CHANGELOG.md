@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Anda Desktop's composer shows the context in use**: its token count added up every request of the conversation, Brain recall runs included, so a figure like 882k read as a full context window when the latest request held 47k. The composer now shows how much of the model's context window the latest request filled (`47k / 400k`, with a ring that turns amber from 80%, where Anda compacts), and its tooltip adds the conversation's totals: input with the share read from the prompt cache, output and requests. The daemon records this as `context_usage` in the conversation and returns it with `GetConversation` and `GetConversationDelta`; a conversation that has made no request since this change shows no count.
+
 ### Fixed
 
 - **ChatGPT plan conversations reuse the prompt cache**: ChatGPT keys prompt-cache affinity on the `session-id` header, which the Codex CLI sends along with `prompt_cache_key`; Anda sent neither, so the rounds of one conversation landed on unrelated caches and most of an unchanged prefix was billed again (conversation #941 on `gpt-6.1-sol` read 27% of its input from the cache). Each request now carries a key derived from the instructions and the first input item, which stay fixed for a conversation, as both the header and `prompt_cache_key`.

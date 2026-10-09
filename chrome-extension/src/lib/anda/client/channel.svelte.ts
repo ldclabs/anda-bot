@@ -19,6 +19,7 @@ import type {
   ActionApiOutput,
   ChatAttachment,
   ChatMessage,
+  ContextUsage,
   Conversation,
   ConversationDelta,
   ConversationStatus,
@@ -152,6 +153,11 @@ export class Channel extends EventTarget {
   /** Token usage of the latest conversation, which the daemon totals over its requests. */
   get usage(): Usage | undefined {
     return this.#conversation?.usage
+  }
+
+  /** The context the latest conversation's most recent model request filled. */
+  get contextUsage(): ContextUsage | undefined {
+    return this.#conversation?.context_usage
   }
 
   get conversationId(): number {
@@ -690,13 +696,15 @@ export class Channel extends EventTarget {
         conversation.updated_at !== result.updated_at ||
         conversation.failed_reason !== result.failed_reason ||
         conversation.child !== result.child ||
-        JSON.stringify(conversation.usage) !== JSON.stringify(result.usage)
+        JSON.stringify(conversation.usage) !== JSON.stringify(result.usage) ||
+        JSON.stringify(conversation.context_usage) !== JSON.stringify(result.context_usage)
       if (result.messages.length)
         conversation.messages = [...(conversation.messages || []), ...result.messages]
       if (result.artifacts.length)
         conversation.artifacts = [...(conversation.artifacts || []), ...result.artifacts]
       conversation.status = result.status
       conversation.usage = result.usage
+      conversation.context_usage = result.context_usage
       conversation.failed_reason = result.failed_reason
       conversation.updated_at = result.updated_at
       conversation.child = result.child
@@ -714,6 +722,7 @@ export class Channel extends EventTarget {
         conversation.artifacts = refreshed.artifacts || []
         conversation.status = refreshed.status
         conversation.usage = refreshed.usage
+        conversation.context_usage = refreshed.context_usage
         conversation.failed_reason = refreshed.failed_reason
         conversation.updated_at = refreshed.updated_at
         conversation.child = refreshed.child

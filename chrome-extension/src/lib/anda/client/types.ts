@@ -487,6 +487,14 @@ export interface Usage {
   requests: number
 }
 
+/** The context the conversation's latest model request filled. */
+export interface ContextUsage {
+  /** Input and output tokens of that request. */
+  tokens: number
+  /** The model's context window; 0 when it is not configured. */
+  window: number
+}
+
 export interface Conversation {
   _id: number
   user: Principal
@@ -496,6 +504,7 @@ export interface Conversation {
   artifacts?: Resource[]
   status: ConversationStatus
   usage: Usage
+  context_usage?: ContextUsage
   failed_reason?: string
   steering_messages?: string[]
   follow_up_messages?: string[]
@@ -513,6 +522,7 @@ export interface ConversationDelta {
   artifacts: Resource[]
   status: ConversationStatus
   usage: Usage
+  context_usage?: ContextUsage
   failed_reason?: string
   updated_at: number
   child?: number
