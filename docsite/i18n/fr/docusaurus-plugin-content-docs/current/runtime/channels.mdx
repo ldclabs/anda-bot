@@ -151,7 +151,7 @@ channels:
 
 Chaque fragment et pièce jointe est réessayé séparément. Un échec ultérieur ou d’écriture de l’historique ne renvoie pas les parties livrées. Un échec après livraison partielle est signalé sans rejouer toute la réponse. Un délai de transport dépassé dont le résultat est inconnu n’est pas automatiquement réessayé.
 
-Les réponses contenant uniquement des pièces jointes sont également livrées. Lark/Feishu envoie des liens HTTP(S) ; les fichiers locaux et les pièces jointes binaires produisent une erreur explicite de non-prise en charge. Les images entrantes des utilisateurs et les messages enrichis directs ou localisés sont pris en charge.
+Les réponses contenant uniquement des pièces jointes sont également livrées. Lark/Feishu place les pièces jointes HTTP(S) en liens dans la carte et téléverse les fichiers locaux et pièces jointes binaires comme messages image ou fichier (images jusqu’à 10 Mo, fichiers jusqu’à 30 Mo). Les images entrantes des utilisateurs et les messages enrichis directs ou localisés sont pris en charge. Quand Anda refuse le message d’un utilisateur de confiance (par exemple `/goal` sans consigne), la raison est renvoyée dans la même conversation ; les utilisateurs externes ne reçoivent aucun détail interne.
 
 L’historique référence les fichiers du dossier `attachments` de l’espace de travail du canal ; conservez-le avec les sauvegardes. WeChat réutilise son client HTTP et migre les anciens fichiers de jetons vers `context_tokens_v2.json`, qui regroupe chaque jeton et sa date de mise à jour.
 

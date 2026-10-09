@@ -1,21 +1,20 @@
 use anda_core::{BoxError, Json, Resource};
 use anda_db::schema::{AndaDBSchema, FieldTyped};
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// Message to send through a channel
-#[derive(Debug, Clone, Default, Deserialize, Serialize, FieldTyped)]
+#[derive(Debug, Clone, Default)]
 pub struct SendMessage {
     pub content: String,
     pub recipient: String,
-    pub subject: Option<String>,
     /// Platform thread identifier for threaded replies (e.g. Slack `thread`).
     pub thread: Option<String>,
     /// File attachments to send with the message.
@@ -58,23 +57,6 @@ impl SendMessage {
         Self {
             content: content.into(),
             recipient: recipient.into(),
-            subject: None,
-            thread: None,
-            attachments: vec![],
-        }
-    }
-
-    /// Create a new message with content, recipient, and subject
-    #[cfg(test)]
-    pub fn with_subject(
-        content: impl Into<String>,
-        recipient: impl Into<String>,
-        subject: impl Into<String>,
-    ) -> Self {
-        Self {
-            content: content.into(),
-            recipient: recipient.into(),
-            subject: Some(subject.into()),
             thread: None,
             attachments: vec![],
         }
@@ -142,13 +124,13 @@ impl RecentEventDedup {
 
     /// Returns true when `event_id` was already observed inside the window,
     /// recording it otherwise. Empty ids are never treated as duplicates.
-    pub(crate) async fn is_duplicate(&self, event_id: &str) -> bool {
+    pub(crate) fn is_duplicate(&self, event_id: &str) -> bool {
         if event_id.trim().is_empty() {
             return false;
         }
 
         let now = Instant::now();
-        let mut state = self.seen.lock().await;
+        let mut state = self.seen.lock();
         let (seen, last_cleanup) = &mut *state;
         if now.duration_since(*last_cleanup) >= self.window.min(Duration::from_secs(60)) {
             seen.retain(|_, instant| now.duration_since(*instant) < self.window);
@@ -190,24 +172,16 @@ pub(crate) fn apply_continuation_markers(chunks: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Uniform random index in `0..len` via rejection sampling (no modulo bias).
-pub(crate) fn pick_uniform_index(len: usize) -> usize {
-    debug_assert!(len > 0);
-    let upper = len as u64;
-    let reject_threshold = (u64::MAX / upper) * upper;
-
-    loop {
-        let value = rand::random::<u64>();
-        if value < reject_threshold {
-            return (value % upper) as usize;
-        }
-    }
-}
-
 /// Picks a uniformly random entry from a static pool (e.g. ACK reactions).
 pub(crate) fn random_from_pool(pool: &'static [&'static str]) -> &'static str {
-    pool[pick_uniform_index(pool.len())]
+    pool[rand::random_range(0..pool.len())]
 }
+
+// Room to close a code fence at the end of a chunk ("\n```") and reopen it
+// at the start of the next one (a fence line of at most `MAX_REOPENED_FENCE`
+// chars plus "\n").
+const CODE_FENCE_RESERVE: usize = 24;
+const MAX_REOPENED_FENCE: usize = 16;
 
 /// Splits `message` into chunks, preferring to break on newline and then
 /// whitespace boundaries.
@@ -218,9 +192,10 @@ pub(crate) fn random_from_pool(pool: &'static [&'static str]) -> &'static str {
 /// append continuation markers without exceeding `max_len`. Callers must pass
 /// `split_limit <= max_len`.
 ///
-/// A newline break is only taken when it falls in the second half of the chunk;
-/// otherwise the last space is used, falling back to a hard character split when
-/// neither boundary is available.
+/// A newline or space break is only taken when it falls in the second half of
+/// the chunk, so text with few breaks (e.g. CJK) is not cut into slivers; a
+/// hard character split is used otherwise. A code block cut by a split is
+/// closed at the end of its chunk and reopened at the start of the next one.
 pub(crate) fn split_message_on_word_boundaries(
     message: &str,
     max_len: usize,
@@ -230,6 +205,13 @@ pub(crate) fn split_message_on_word_boundaries(
         return vec![message.to_string()];
     }
 
+    let has_fences = message.contains("```");
+    let body_limit = if has_fences && split_limit > 2 * CODE_FENCE_RESERVE {
+        split_limit - CODE_FENCE_RESERVE
+    } else {
+        split_limit
+    };
+
     let mut chunks = Vec::new();
     let mut remaining = message;
 
@@ -238,38 +220,55 @@ pub(crate) fn split_message_on_word_boundaries(
         // so the tail chunk still leaves room for continuation markers.
         let hard_split = remaining
             .char_indices()
-            .nth(split_limit)
+            .nth(body_limit)
             .map_or(remaining.len(), |(idx, _)| idx);
         let chunk_end = if hard_split == remaining.len() {
             hard_split
         } else {
             let search_area = &remaining[..hard_split];
-            match search_area.rfind('\n') {
-                Some(pos) if search_area[..pos].chars().count() >= split_limit / 2 => pos + 1,
-                _ => search_area.rfind(' ').map_or(hard_split, |pos| pos + 1),
-            }
+            let in_second_half =
+                |pos: &usize| search_area[..*pos].chars().count() >= body_limit / 2;
+            search_area
+                .rfind('\n')
+                .filter(in_second_half)
+                .or_else(|| search_area.rfind(' ').filter(in_second_half))
+                .map_or(hard_split, |pos| pos + 1)
         };
 
         chunks.push(remaining[..chunk_end].to_string());
         remaining = &remaining[chunk_end..];
     }
 
+    if has_fences {
+        balance_code_fences(&mut chunks);
+    }
     chunks
 }
 
-/// Returns whether a send error string looks like a transient transport or
-/// rate-limit failure that is worth retrying. Channels share this baseline and
-/// may layer additional, platform-specific checks on top.
-pub(crate) fn is_transient_send_error(error: &str) -> bool {
-    let error = error.to_ascii_lowercase();
-    error.contains("timeout")
-        || error.contains("connection")
-        || error.contains("temporarily")
-        || error.contains("too many requests")
-        || error.contains("429")
-        || error.contains("502")
-        || error.contains("503")
-        || error.contains("504")
+fn balance_code_fences(chunks: &mut [String]) {
+    let mut open_fence: Option<String> = None;
+    for chunk in chunks {
+        let reopened = open_fence.clone();
+        for line in chunk.split('\n') {
+            let line = line.trim();
+            if line.starts_with("```") {
+                open_fence = match open_fence {
+                    Some(_) => None,
+                    None if line.chars().count() <= MAX_REOPENED_FENCE => Some(line.to_string()),
+                    None => Some("```".to_string()),
+                };
+            }
+        }
+        if let Some(fence) = reopened {
+            chunk.insert_str(0, &format!("{fence}\n"));
+        }
+        if open_fence.is_some() {
+            if !chunk.ends_with('\n') {
+                chunk.push('\n');
+            }
+            chunk.push_str("```");
+        }
+    }
 }
 
 /// Returns the filesystem directory name for a channel workspace.
@@ -393,9 +392,6 @@ fn is_reserved_windows_name(value: &str) -> bool {
 /// Core channel trait — implement for any messaging platform
 #[async_trait]
 pub trait Channel: Send + Sync {
-    /// Human-readable channel name
-    fn name(&self) -> &str;
-
     fn username(&self) -> &str;
 
     /// Unique channel identifier for message metadata (e.g. "wechat:personal").
@@ -421,13 +417,6 @@ pub trait Channel: Send + Sync {
         cancel_token: CancellationToken,
         tx: tokio::sync::mpsc::Sender<ChannelMessage>,
     ) -> Result<(), BoxError>;
-
-    /// Whether a send error is transient and worth retrying in the runtime.
-    /// Implementations can use this to surface reconnect windows or platform-
-    /// specific transport failures without forcing protocol logic into runtime.
-    fn should_retry_send(&self, _error: &str) -> bool {
-        false
-    }
 }
 
 #[cfg(test)]
@@ -440,25 +429,23 @@ mod tests {
 
         assert_eq!(message.content, "hello");
         assert_eq!(message.recipient, "alice");
-        assert_eq!(message.subject, None);
         assert_eq!(message.thread, None);
         assert!(message.attachments.is_empty());
     }
 
     #[test]
-    fn send_message_builders_preserve_subject_thread_and_attachments() {
+    fn send_message_builders_preserve_thread_and_attachments() {
         let attachment = Resource {
             name: "voice.mp3".to_string(),
             mime_type: Some("audio/mpeg".to_string()),
             ..Default::default()
         };
-        let message = SendMessage::with_subject("report", "ops", "daily")
+        let message = SendMessage::new("report", "ops")
             .in_thread(Some("thread-42".to_string()))
             .with_attachments(vec![attachment]);
 
         assert_eq!(message.content, "report");
         assert_eq!(message.recipient, "ops");
-        assert_eq!(message.subject.as_deref(), Some("daily"));
         assert_eq!(message.thread.as_deref(), Some("thread-42"));
         assert_eq!(message.attachments.len(), 1);
         assert_eq!(message.attachments[0].name, "voice.mp3");
@@ -528,24 +515,20 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn recent_event_dedup_suppresses_repeats_and_ignores_empty_ids() {
+    #[test]
+    fn recent_event_dedup_suppresses_repeats_and_ignores_empty_ids() {
         let dedup = RecentEventDedup::new(Duration::from_secs(60));
-        assert!(!dedup.is_duplicate("evt_1").await);
-        assert!(dedup.is_duplicate("evt_1").await);
-        assert!(!dedup.is_duplicate("evt_2").await);
-        assert!(!dedup.is_duplicate("").await);
-        assert!(!dedup.is_duplicate("  ").await);
+        assert!(!dedup.is_duplicate("evt_1"));
+        assert!(dedup.is_duplicate("evt_1"));
+        assert!(!dedup.is_duplicate("evt_2"));
+        assert!(!dedup.is_duplicate(""));
+        assert!(!dedup.is_duplicate("  "));
     }
 
     struct MinimalChannel;
 
     #[async_trait]
     impl Channel for MinimalChannel {
-        fn name(&self) -> &str {
-            "minimal"
-        }
-
         fn username(&self) -> &str {
             "minimal-bot"
         }
@@ -602,11 +585,39 @@ mod tests {
     }
 
     #[test]
-    fn shared_transient_error_check_matches_baseline_signatures() {
-        assert!(is_transient_send_error("Connection reset"));
-        assert!(is_transient_send_error("HTTP 429"));
-        assert!(is_transient_send_error("Service Temporarily Unavailable"));
-        assert!(!is_transient_send_error("400 bad request"));
+    fn shared_split_does_not_break_on_an_early_space() {
+        // CJK text has few spaces: an early one must not leave a sliver chunk.
+        let text = format!("好的 {}", "字".repeat(30));
+        let chunks = split_message_on_word_boundaries(&text, 20, 16);
+        assert_eq!(chunks[0].chars().count(), 16);
+        assert!(chunks.iter().all(|chunk| !chunk.trim().is_empty()));
+
+        // A space in the second half is still preferred over a hard split.
+        let text = format!("{} {}", "a".repeat(12), "b".repeat(30));
+        let chunks = split_message_on_word_boundaries(&text, 20, 16);
+        assert_eq!(chunks[0], format!("{} ", "a".repeat(12)));
+    }
+
+    #[test]
+    fn shared_split_closes_and_reopens_cut_code_blocks() {
+        let code = (0..200)
+            .map(|i| format!("let value_{i} = {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = format!("Intro\n```rust\n{code}\n```\nDone");
+        let chunks = split_message_on_word_boundaries(&text, 2000, 2000);
+
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            assert!(chunk.chars().count() <= 2000);
+            let fences = chunk
+                .lines()
+                .filter(|line| line.trim().starts_with("```"))
+                .count();
+            assert_eq!(fences % 2, 0, "unbalanced chunk: {chunk}");
+        }
+        assert!(chunks[1].starts_with("```rust\n"));
+        assert!(chunks.last().unwrap().ends_with("Done"));
     }
 
     #[tokio::test]
@@ -617,7 +628,5 @@ mod tests {
         let result = channel.init(ChannelInitOptions::default()).await.unwrap();
         assert!(!result.changed);
         assert!(result.message.contains("minimal:test"));
-
-        assert!(!channel.should_retry_send("timeout"));
     }
 }

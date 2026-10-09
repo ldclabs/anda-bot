@@ -3,10 +3,15 @@ use anda_db::unix_ms;
 use async_trait::async_trait;
 use futures::{Sink, SinkExt, StreamExt};
 use prost::Message as ProstMessage;
-use reqwest::Client;
+use reqwest::{
+    Client,
+    multipart::{Form, Part},
+};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
+    future::Future,
     path::PathBuf,
     sync::{Arc, RwLock as StdRwLock},
     time::{Duration, Instant},
@@ -18,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use super::delivery::{http_send_error, send_step};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    file_name_for_resource, is_http_url, local_resource_bytes, random_from_pool,
     resource_from_bytes,
 };
 use crate::config::{self, normalize_identity};
@@ -26,6 +31,8 @@ use crate::config::{self, normalize_identity};
 const LARK_CARD_MARKDOWN_MAX_BYTES: usize = 28_000;
 const LARK_MAX_FILE_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 const LARK_MAX_AUDIO_BYTES: u64 = 25 * 1024 * 1024;
+const LARK_MAX_IMAGE_UPLOAD_BYTES: u64 = 10 * 1024 * 1024;
+const LARK_MAX_FILE_UPLOAD_BYTES: u64 = 30 * 1024 * 1024;
 const LARK_TOKEN_REFRESH_SKEW: Duration = Duration::from_secs(120);
 const LARK_DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(7200);
 const LARK_INVALID_ACCESS_TOKEN_CODE: i64 = 99_991_663;
@@ -384,26 +391,14 @@ impl LarkChannel {
     }
 
     async fn refresh_bot_open_id(&self) -> Result<Option<String>, BoxError> {
-        let token = self.get_tenant_access_token().await?;
-        let (status, body) = self.fetch_bot_open_id_with_token(&token).await?;
-
-        let body = if should_refresh_lark_tenant_token(status, &body) {
-            self.invalidate_token().await;
-            let token = self.get_tenant_access_token().await?;
-            let (retry_status, retry_body) = self.fetch_bot_open_id_with_token(&token).await?;
-            if !retry_status.is_success() {
-                return Err(format!(
-                    "Lark bot info failed after token refresh ({retry_status}): {retry_body}"
-                )
-                .into());
-            }
-            retry_body
-        } else {
-            if !status.is_success() {
-                return Err(format!("Lark bot info failed ({status}): {body}").into());
-            }
-            body
-        };
+        let (status, body) = self
+            .with_tenant_token(
+                |token| async move { self.fetch_bot_open_id_with_token(&token).await },
+            )
+            .await?;
+        if !status.is_success() {
+            return Err(format!("Lark bot info failed ({status}): {body}").into());
+        }
 
         let code = extract_lark_response_code(&body).unwrap_or(-1);
         if code != 0 {
@@ -442,6 +437,24 @@ impl LarkChannel {
         }
     }
 
+    /// Runs `request` with the cached tenant token, refreshing the token and
+    /// retrying once when Lark reports it expired.
+    async fn with_tenant_token<F, Fut>(
+        &self,
+        mut request: F,
+    ) -> Result<(reqwest::StatusCode, Value), BoxError>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: Future<Output = Result<(reqwest::StatusCode, Value), BoxError>>,
+    {
+        let (status, body) = request(self.get_tenant_access_token().await?).await?;
+        if !should_refresh_lark_tenant_token(status, &body) {
+            return Ok((status, body));
+        }
+        self.invalidate_token().await;
+        request(self.get_tenant_access_token().await?).await
+    }
+
     async fn post_json_with_token(
         &self,
         url: &str,
@@ -456,43 +469,99 @@ impl LarkChannel {
             .json(body)
             .send()
             .await?;
-        let status = response.status();
-        let headers = response.headers().clone();
-        let raw = response.text().await?;
-        if !status.is_success() && status != reqwest::StatusCode::UNAUTHORIZED {
-            return Err(http_send_error(status, &headers, &raw));
-        }
-        let data = serde_json::from_str::<Value>(&raw)
-            .unwrap_or_else(|_| serde_json::json!({ "raw": raw }));
-        Ok((status, data))
+        lark_response(response).await
     }
 
-    async fn send_card(&self, url: &str, body: &Value) -> Result<(), BoxError> {
-        let token = self.get_tenant_access_token().await?;
-        let (status, response) = self.post_json_with_token(url, &token, body).await?;
-        if should_refresh_lark_tenant_token(status, &response) {
-            self.invalidate_token().await;
-            let token = self.get_tenant_access_token().await?;
-            let (status, response) = self.post_json_with_token(url, &token, body).await?;
-            ensure_lark_send_success(status, &response, "after token refresh")
-        } else {
-            ensure_lark_send_success(status, &response, "without token refresh")
-        }
-    }
-
-    async fn post_message_reaction_with_token(
+    /// Posts one message to a chat, or into the thread under `thread`.
+    async fn post_message(
         &self,
-        message_id: &str,
-        token: &str,
-        emoji_type: &str,
-    ) -> Result<(reqwest::StatusCode, Value), BoxError> {
-        let body = serde_json::json!({
-            "reaction_type": {
-                "emoji_type": emoji_type,
-            }
-        });
-        self.post_json_with_token(&self.message_reaction_url(message_id), token, &body)
-            .await
+        recipient: &str,
+        thread: Option<&str>,
+        msg_type: &str,
+        content: &str,
+    ) -> Result<(), BoxError> {
+        let (url, body) = match thread {
+            Some(root) => (
+                format!("{}/im/v1/messages/{root}/reply", self.api_base),
+                serde_json::json!({
+                    "msg_type": msg_type,
+                    "content": content,
+                    "reply_in_thread": true,
+                }),
+            ),
+            None => (
+                self.send_message_url(),
+                serde_json::json!({
+                    "receive_id": recipient,
+                    "msg_type": msg_type,
+                    "content": content,
+                }),
+            ),
+        };
+        let (url, body) = (&url, &body);
+        let (status, response) = self
+            .with_tenant_token(
+                |token| async move { self.post_json_with_token(url, &token, body).await },
+            )
+            .await?;
+        ensure_lark_send_success(status, &response)
+    }
+
+    /// Uploads a local file or blob and returns the message type and content
+    /// that refer to it. Images go up as images; everything else as a file.
+    async fn upload_resource(
+        &self,
+        resource: &Resource,
+    ) -> Result<(&'static str, Value), BoxError> {
+        let bytes = local_resource_bytes(resource).await?;
+        let size = bytes.len() as u64;
+        let is_image = is_lark_image(resource) && size <= LARK_MAX_IMAGE_UPLOAD_BYTES;
+        if !is_image && size > LARK_MAX_FILE_UPLOAD_BYTES {
+            return Err(format!(
+                "Lark attachment '{}' exceeds {} bytes",
+                resource.name, LARK_MAX_FILE_UPLOAD_BYTES
+            )
+            .into());
+        }
+
+        let (kind, key_field, msg_type) = if is_image {
+            ("images", "image_key", "image")
+        } else {
+            ("files", "file_key", "file")
+        };
+        let url = format!("{}/im/v1/{kind}", self.api_base);
+        let file_name = file_name_for_resource(resource).to_string();
+        let (url, bytes, file_name) = (&url, &bytes, &file_name);
+        let (status, response) = self
+            .with_tenant_token(|token| async move {
+                let part = Part::bytes(bytes.clone()).file_name(file_name.clone());
+                let form = if is_image {
+                    Form::new()
+                        .text("image_type", "message")
+                        .part("image", part)
+                } else {
+                    Form::new()
+                        .text("file_type", "stream")
+                        .text("file_name", file_name.clone())
+                        .part("file", part)
+                };
+                let response = self
+                    .client
+                    .post(url)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .multipart(form)
+                    .send()
+                    .await?;
+                lark_response(response).await
+            })
+            .await?;
+        ensure_lark_send_success(status, &response)?;
+
+        let key = response
+            .pointer(&format!("/data/{key_field}"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("Lark upload response missing {key_field}: {response}"))?;
+        Ok((msg_type, serde_json::json!({ key_field: key })))
     }
 
     async fn try_add_ack_reaction(&self, message_id: &str, emoji_type: &str) {
@@ -500,44 +569,22 @@ impl LarkChannel {
             return;
         }
 
-        let mut token = match self.get_tenant_access_token().await {
-            Ok(token) => token,
-            Err(err) => {
-                log::debug!("Lark failed to fetch token for ACK reaction: {err}");
-                return;
+        let url = &self.message_reaction_url(message_id);
+        let body = &serde_json::json!({
+            "reaction_type": {
+                "emoji_type": emoji_type,
             }
-        };
-
-        let mut retried = false;
-        loop {
-            let (status, body) = match self
-                .post_message_reaction_with_token(message_id, &token, emoji_type)
-                .await
-            {
-                Ok(result) => result,
-                Err(err) => {
-                    log::debug!("Lark failed to add ACK reaction: {err}");
-                    return;
-                }
-            };
-
-            if should_refresh_lark_tenant_token(status, &body) && !retried {
-                self.invalidate_token().await;
-                token = match self.get_tenant_access_token().await {
-                    Ok(token) => token,
-                    Err(err) => {
-                        log::debug!("Lark failed to refresh token for ACK reaction: {err}");
-                        return;
-                    }
-                };
-                retried = true;
-                continue;
-            }
-
-            if !status.is_success() || extract_lark_response_code(&body).unwrap_or(0) != 0 {
-                log::debug!("Lark add ACK reaction failed ({status}): {body}");
-            }
-            return;
+        });
+        match self
+            .with_tenant_token(
+                |token| async move { self.post_json_with_token(url, &token, body).await },
+            )
+            .await
+        {
+            Ok((status, body))
+                if status.is_success() && extract_lark_response_code(&body).unwrap_or(0) == 0 => {}
+            Ok((status, body)) => log::debug!("Lark add ACK reaction failed ({status}): {body}"),
+            Err(err) => log::debug!("Lark failed to add ACK reaction: {err}"),
         }
     }
 
@@ -710,7 +757,10 @@ impl LarkChannel {
                     let event: LarkEventEnvelope = match serde_json::from_slice(&payload) {
                         Ok(event) => event,
                         Err(err) => {
+                            // Ack anyway: a payload that cannot be parsed now
+                            // would only be redelivered and fail again.
                             log::debug!("Lark websocket event JSON parse error: {err}");
+                            write.send(WsMsg::Binary(ack.encode_to_vec().into())).await?;
                             continue;
                         }
                     };
@@ -818,7 +868,7 @@ impl LarkChannel {
     }
 
     async fn parse_event_object(&self, event: &Value) -> Option<ChannelMessage> {
-        let recv: LarkReceiveEvent = match serde_json::from_value(event.clone()) {
+        let recv = match LarkReceiveEvent::deserialize(event) {
             Ok(recv) => recv,
             Err(err) => {
                 log::debug!("Lark event parse error: {err}");
@@ -838,7 +888,7 @@ impl LarkChannel {
         }
 
         let lark_message = recv.message;
-        if self.is_duplicate_message(&lark_message.message_id).await {
+        if self.dedup.is_duplicate(&lark_message.message_id) {
             return None;
         }
 
@@ -913,10 +963,6 @@ impl LarkChannel {
             extra,
             ..Default::default()
         })
-    }
-
-    async fn is_duplicate_message(&self, message_id: &str) -> bool {
-        self.dedup.is_duplicate(message_id).await
     }
 
     async fn parse_message_content(
@@ -1141,10 +1187,6 @@ impl LarkChannel {
 
 #[async_trait]
 impl Channel for LarkChannel {
-    fn name(&self) -> &str {
-        self.channel_name()
-    }
-
     fn username(&self) -> &str {
         &self.username
     }
@@ -1158,37 +1200,40 @@ impl Channel for LarkChannel {
     }
 
     async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
-        if message
+        // HTTP attachments are linked from the card; local files and blobs are
+        // uploaded and sent as their own messages.
+        let (links, uploads): (Vec<&Resource>, Vec<&Resource>) = message
             .attachments
             .iter()
-            .any(|r| !r.uri.as_deref().is_some_and(is_http_url))
-        {
-            return Err("Lark currently sends attachment HTTP links only; local files and blobs are not supported".into());
-        }
-        let content = outgoing_markdown_with_resources(&message.content, &message.attachments);
-        let content = if content.trim().is_empty() {
-            "…".to_string()
-        } else {
-            content
-        };
-        let url = match message.thread.as_deref().filter(|t| !t.is_empty()) {
-            Some(root) => format!("{}/im/v1/messages/{root}/reply", self.api_base),
-            None => self.send_message_url(),
-        };
+            .partition(|resource| resource.uri.as_deref().is_some_and(is_http_url));
+        let content = markdown_with_links(&message.content, &links);
+        let thread = message.thread.as_deref().filter(|t| !t.is_empty());
         let mut delivered = 0;
-        for chunk in split_markdown_chunks(&content, LARK_CARD_MARKDOWN_MAX_BYTES) {
-            let mut body = build_interactive_card_body(&message.recipient, chunk);
-            if message.thread.as_ref().is_some_and(|t| !t.is_empty()) {
-                body.as_object_mut().unwrap().remove("receive_id");
-                body["reply_in_thread"] = Value::Bool(true);
+
+        if !content.trim().is_empty() || uploads.is_empty() {
+            let content = if content.trim().is_empty() {
+                "…"
+            } else {
+                content.as_str()
+            };
+            for chunk in split_markdown_chunks(content, LARK_CARD_MARKDOWN_MAX_BYTES) {
+                let card = build_card_content(chunk);
+                send_step(&mut delivered, || {
+                    self.post_message(&message.recipient, thread, "interactive", &card)
+                })
+                .await?;
             }
-            send_step(&mut delivered, || self.send_card(&url, &body)).await?;
+        }
+
+        for resource in uploads {
+            send_step(&mut delivered, || async {
+                let (msg_type, content) = self.upload_resource(resource).await?;
+                self.post_message(&message.recipient, thread, msg_type, &content.to_string())
+                    .await
+            })
+            .await?;
         }
         Ok(())
-    }
-
-    fn should_retry_send(&self, error: &str) -> bool {
-        is_transient_send_error(error)
     }
 
     async fn listen(
@@ -1327,14 +1372,6 @@ fn build_card_content(markdown: &str) -> String {
     .to_string()
 }
 
-fn build_interactive_card_body(recipient: &str, markdown: &str) -> Value {
-    serde_json::json!({
-        "receive_id": recipient,
-        "msg_type": "interactive",
-        "content": build_card_content(markdown),
-    })
-}
-
 fn split_markdown_chunks(text: &str, max_bytes: usize) -> Vec<&str> {
     if text.len() <= max_bytes {
         return vec![text];
@@ -1394,12 +1431,6 @@ fn extract_lark_token_ttl_seconds(body: &Value) -> u64 {
     body.get("expire")
         .or_else(|| body.get("expires_in"))
         .and_then(Value::as_u64)
-        .or_else(|| {
-            body.get("expire")
-                .or_else(|| body.get("expires_in"))
-                .and_then(Value::as_i64)
-                .and_then(|value| u64::try_from(value).ok())
-        })
         .unwrap_or(LARK_DEFAULT_TOKEN_TTL.as_secs())
         .max(1)
 }
@@ -1411,25 +1442,49 @@ fn next_token_refresh_deadline(now: Instant, ttl_seconds: u64) -> Instant {
         .unwrap_or(Duration::from_secs(1))
 }
 
-fn ensure_lark_send_success(
-    status: reqwest::StatusCode,
-    body: &Value,
-    context: &str,
-) -> Result<(), BoxError> {
+/// Reads a Lark API response. Non-2xx statuses other than 401 become send
+/// errors (retryable for 429/5xx); a 401 is returned so the caller can
+/// refresh the tenant token.
+async fn lark_response(
+    response: reqwest::Response,
+) -> Result<(reqwest::StatusCode, Value), BoxError> {
+    let status = response.status();
+    let headers = response.headers().clone();
+    let raw = response.text().await?;
+    if !status.is_success() && status != reqwest::StatusCode::UNAUTHORIZED {
+        return Err(http_send_error(status, &headers, &raw));
+    }
+    let data =
+        serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| serde_json::json!({ "raw": raw }));
+    Ok((status, data))
+}
+
+fn ensure_lark_send_success(status: reqwest::StatusCode, body: &Value) -> Result<(), BoxError> {
     if !status.is_success() {
-        return Err(format!("Lark send failed {context}: status={status}, body={body}").into());
+        return Err(format!("Lark send failed: status={status}, body={body}").into());
     }
 
     let code = extract_lark_response_code(body).unwrap_or(-1);
     if code != 0 {
-        return Err(format!("Lark send failed {context}: code={code}, body={body}").into());
+        return Err(format!("Lark send failed: code={code}, body={body}").into());
     }
 
     Ok(())
 }
 
-fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> String {
-    if resources.is_empty() {
+fn is_lark_image(resource: &Resource) -> bool {
+    let mime_type = resource.mime_type.as_deref().unwrap_or_default();
+    // Lark does not accept SVG as an image message.
+    mime_type != "image/svg+xml"
+        && (mime_type.starts_with("image/")
+            || resource
+                .tags
+                .iter()
+                .any(|tag| tag.eq_ignore_ascii_case("image")))
+}
+
+fn markdown_with_links(content: &str, links: &[&Resource]) -> String {
+    if links.is_empty() {
         return content.to_string();
     }
 
@@ -1438,13 +1493,10 @@ fn outgoing_markdown_with_resources(content: &str, resources: &[Resource]) -> St
         lines.push(content.trim().to_string());
     }
     lines.push("Attachments:".to_string());
-    for resource in resources {
+    for resource in links {
         let name = file_name_for_resource(resource);
-        if let Some(uri) = resource.uri.as_deref().filter(|uri| is_http_url(uri)) {
-            lines.push(format!("- [{name}]({uri})"));
-        } else {
-            lines.push(format!("- {name}"));
-        }
+        let uri = resource.uri.as_deref().unwrap_or_default();
+        lines.push(format!("- [{name}]({uri})"));
     }
     lines.join("\n")
 }
@@ -1705,7 +1757,6 @@ mod tests {
     #[test]
     fn lark_channel_identity() {
         let channel = test_channel();
-        assert_eq!(channel.name(), "lark");
         assert_eq!(channel.username(), "anda-lark");
         assert_eq!(channel.id(), "lark:test");
     }
@@ -1984,6 +2035,10 @@ mod tests {
             serde_json::json!({"code": LARK_INVALID_ACCESS_TOKEN_CODE, "msg": "token expired"})
         } else if path == "bot/v3/info" {
             serde_json::json!({"code": 0, "bot": {"open_id": "ou_bot"}})
+        } else if path == "im/v1/images" {
+            serde_json::json!({"code": 0, "data": {"image_key": "img_up"}})
+        } else if path == "im/v1/files" {
+            serde_json::json!({"code": 0, "data": {"file_key": "file_up"}})
         } else if path.starts_with("im/v1/images/") || path.contains("/resources/") {
             serde_json::json!({"bytes": "BINDATA"})
         } else {
@@ -2148,12 +2203,12 @@ mod tests {
         assert!(image.content.contains("download failed"));
     }
 
-    #[tokio::test]
-    async fn duplicate_message_ids_are_suppressed() {
+    #[test]
+    fn duplicate_message_ids_are_suppressed() {
         let channel = test_channel();
-        assert!(!channel.is_duplicate_message("om_dup").await);
-        assert!(channel.is_duplicate_message("om_dup").await);
-        assert!(!channel.is_duplicate_message("").await);
+        assert!(!channel.dedup.is_duplicate("om_dup"));
+        assert!(channel.dedup.is_duplicate("om_dup"));
+        assert!(!channel.dedup.is_duplicate(""));
     }
 
     #[tokio::test]
@@ -2416,47 +2471,35 @@ mod tests {
     #[test]
     fn send_success_check_rejects_status_and_code_errors() {
         let ok = serde_json::json!({"code": 0});
-        assert!(ensure_lark_send_success(reqwest::StatusCode::OK, &ok, "ctx").is_ok());
+        assert!(ensure_lark_send_success(reqwest::StatusCode::OK, &ok).is_ok());
 
-        let err = ensure_lark_send_success(
-            reqwest::StatusCode::BAD_GATEWAY,
-            &serde_json::json!({}),
-            "ctx",
-        )
-        .map(|_| ())
-        .unwrap_err();
+        let err =
+            ensure_lark_send_success(reqwest::StatusCode::BAD_GATEWAY, &serde_json::json!({}))
+                .unwrap_err();
         assert!(err.to_string().contains("status=502"));
 
         let err = ensure_lark_send_success(
             reqwest::StatusCode::OK,
             &serde_json::json!({"code": 230002, "msg": "bot not in chat"}),
-            "ctx",
         )
-        .map(|_| ())
         .unwrap_err();
         assert!(err.to_string().contains("code=230002"));
     }
 
     #[test]
     fn outgoing_markdown_appends_resource_links() {
-        assert_eq!(outgoing_markdown_with_resources("text", &[]), "text");
+        assert_eq!(markdown_with_links("text", &[]), "text");
 
-        let with_url = outgoing_markdown_with_resources(
-            "text",
-            &[
-                Resource {
-                    name: "pic.png".to_string(),
-                    uri: Some("https://cdn.example.com/pic.png".to_string()),
-                    ..Default::default()
-                },
-                Resource {
-                    name: "blob.bin".to_string(),
-                    ..Default::default()
-                },
-            ],
+        let link = Resource {
+            name: "pic.png".to_string(),
+            uri: Some("https://cdn.example.com/pic.png".to_string()),
+            ..Default::default()
+        };
+        let with_url = markdown_with_links("text", &[&link]);
+        assert_eq!(
+            with_url,
+            "text\nAttachments:\n- [pic.png](https://cdn.example.com/pic.png)"
         );
-        assert!(with_url.contains("https://cdn.example.com/pic.png"));
-        assert!(with_url.contains("blob.bin"));
     }
 
     #[test]
@@ -2527,25 +2570,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unmentioned_media_is_not_downloaded_and_local_send_is_explicit() {
+    async fn unmentioned_media_is_not_downloaded() {
         let state = Arc::new(MockApi::default());
         let channel = mock_channel(|_| {}, state.clone()).await;
         channel.set_resolved_bot_open_id(Some("ou_bot".into()));
         let event = serde_json::json!({"sender":{"sender_id":{"open_id":"ou_testuser123"}},"message":{"message_id":"om_no_mention","chat_id":"oc_same","chat_type":"group","message_type":"image","content":"{\"image_key\":\"img_x\"}"}});
         assert!(channel.parse_event_object(&event).await.is_none());
         assert!(state.requests.lock().unwrap().is_empty());
-        let error = channel
+    }
+
+    #[tokio::test]
+    async fn local_attachments_are_uploaded_after_the_text() {
+        let state = Arc::new(MockApi::default());
+        let channel = mock_channel(|_| {}, state.clone()).await;
+        let png = vec![
+            0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 0, b'I', b'H', b'D', b'R',
+        ];
+
+        channel
             .send(
-                &SendMessage::new("report", "oc_same").with_attachments(vec![Resource {
-                    name: "report.txt".into(),
-                    blob: Some(anda_core::ByteBufB64(b"report".to_vec())),
-                    ..Default::default()
-                }]),
+                &SendMessage::new("report", "oc_same")
+                    .in_thread(Some("om_root".into()))
+                    .with_attachments(vec![
+                        resource_from_bytes("chart".into(), png, "test"),
+                        Resource {
+                            name: "report.txt".into(),
+                            blob: Some(anda_core::ByteBufB64(b"report".to_vec())),
+                            ..Default::default()
+                        },
+                    ]),
             )
             .await
-            .unwrap_err();
-        assert!(error.to_string().contains("not supported"));
-        assert!(state.requests.lock().unwrap().is_empty());
+            .unwrap();
+
+        assert_eq!(state.recorded("im/v1/images").len(), 1);
+        assert_eq!(state.recorded("im/v1/files").len(), 1);
+        let sent = state.recorded("messages/om_root/reply");
+        let kinds: Vec<_> = sent.iter().map(|body| body["msg_type"].clone()).collect();
+        assert_eq!(kinds, ["interactive", "image", "file"]);
+        assert_eq!(sent[1]["content"], r#"{"image_key":"img_up"}"#);
+        assert_eq!(sent[2]["content"], r#"{"file_key":"file_up"}"#);
+        assert!(sent.iter().all(|body| body["reply_in_thread"] == true));
     }
 
     #[tokio::test]

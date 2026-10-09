@@ -151,7 +151,7 @@ channels:
 
 Cada fragmento y archivo se reintenta por separado. Un fallo posterior o al guardar el historial no vuelve a enviar las partes entregadas. Los fallos tras una entrega parcial se notifican, sin repetir la respuesta completa. Los tiempos de espera con resultado de entrega desconocido no se reintentan automáticamente.
 
-También se entregan respuestas que solo contienen archivos. Lark/Feishu envía enlaces HTTP(S); los archivos locales y adjuntos binarios devuelven un error explícito de función no compatible. Se admiten imágenes entrantes de usuarios y texto enriquecido directo o localizado.
+También se entregan respuestas que solo contienen archivos. Lark/Feishu enlaza los adjuntos HTTP(S) en la tarjeta y sube los archivos locales y adjuntos binarios como mensajes de imagen o de archivo (imágenes de hasta 10 MB, archivos de hasta 30 MB). Se admiten imágenes entrantes de usuarios y texto enriquecido directo o localizado. Cuando Anda rechaza un mensaje de un usuario de confianza (por ejemplo, `/goal` sin instrucción), el motivo se responde en el mismo chat; los usuarios externos no reciben detalles internos.
 
 El historial referencia los archivos guardados en el directorio `attachments` del espacio de trabajo del canal; inclúyalo en las copias de seguridad. WeChat reutiliza su cliente HTTP y migra los archivos antiguos de tokens a `context_tokens_v2.json`, guardando cada token y su fecha de actualización juntos.
 

@@ -12,20 +12,17 @@ use reqwest::{
 };
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OnceCell, mpsc};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 use super::delivery::{http_send_error, send_step};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    file_name_for_resource, is_http_url, is_transient_send_error, random_from_pool,
+    file_name_for_resource, is_http_url, local_resource_bytes, random_from_pool,
     resource_from_bytes, split_message_on_word_boundaries,
 };
-use crate::{
-    config::{self, normalize_identity},
-    util::file_uri::path_from_file_uri_or_path,
-};
+use crate::config::{self, normalize_identity};
 
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
 const DISCORD_MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
@@ -116,7 +113,7 @@ pub struct DiscordChannel {
     client: Client,
     workspace: Arc<ChannelWorkspace>,
     dedup: RecentEventDedup,
-    bot_user_id: Mutex<Option<String>>,
+    bot_user_id: OnceCell<String>,
     gateway_session: Mutex<GatewaySession>,
 }
 
@@ -143,7 +140,7 @@ impl DiscordChannel {
             client,
             workspace: Arc::new(ChannelWorkspace::default()),
             dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
-            bot_user_id: Mutex::new(None),
+            bot_user_id: OnceCell::new(),
             gateway_session: Mutex::new(GatewaySession::default()),
         }
     }
@@ -197,25 +194,17 @@ impl DiscordChannel {
     }
 
     async fn get_bot_user_id(&self) -> Option<String> {
-        {
-            let cache = self.bot_user_id.lock().await;
-            if let Some(user_id) = cache.as_ref() {
-                return Some(user_id.clone());
-            }
-        }
-
-        if let Some(user_id) = Self::bot_user_id_from_token(&self.bot_token) {
-            let mut cache = self.bot_user_id.lock().await;
-            *cache = Some(user_id.clone());
-            return Some(user_id);
-        }
-
-        match self.fetch_bot_user_id().await {
-            Ok(user_id) => {
-                let mut cache = self.bot_user_id.lock().await;
-                *cache = Some(user_id.clone());
-                Some(user_id)
-            }
+        let resolved = self
+            .bot_user_id
+            .get_or_try_init(|| async {
+                match Self::bot_user_id_from_token(&self.bot_token) {
+                    Some(user_id) => Ok(user_id),
+                    None => self.fetch_bot_user_id().await,
+                }
+            })
+            .await;
+        match resolved {
+            Ok(user_id) => Some(user_id.clone()),
             Err(err) => {
                 log::warn!("Discord failed to fetch bot user id: {err}");
                 None
@@ -435,56 +424,37 @@ impl DiscordChannel {
         })
     }
 
-    async fn send_typing_once(&self, channel_id: &str) -> Result<(), BoxError> {
-        let response = self
-            .authorized(
-                self.client
-                    .post(self.api_url(&format!("channels/{channel_id}/typing"))),
-            )
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            log::debug!(
-                "Discord typing indicator failed with status {}",
-                response.status()
-            );
-        }
-        Ok(())
-    }
-
-    fn try_add_ack_reaction_nonblocking(&self, channel_id: String, message_id: String) {
-        let client = self.client.clone();
-        let bot_token = self.bot_token.clone();
-        let url = discord_reaction_url(
-            &self.api_base,
-            &channel_id,
-            &message_id,
-            random_from_pool(DISCORD_ACK_REACTIONS),
-        );
-
+    /// Fires a best-effort REST call (ACK reaction, typing indicator)
+    /// without holding up inbound processing.
+    fn send_in_background(&self, request: reqwest::RequestBuilder, action: &'static str) {
+        let request = self.authorized(request);
         tokio::spawn(async move {
-            let response = match client
-                .put(url)
-                .header("Authorization", format!("Bot {bot_token}"))
-                .header("User-Agent", DISCORD_USER_AGENT)
-                .header("Content-Length", "0")
-                .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(err) => {
-                    log::debug!("Discord failed to add ACK reaction: {err}");
-                    return;
+            match request.send().await {
+                Ok(response) if !response.status().is_success() => {
+                    log::debug!("Discord {action} failed with status {}", response.status());
                 }
-            };
-
-            if !response.status().is_success() {
-                log::debug!(
-                    "Discord add ACK reaction failed with status {}",
-                    response.status()
-                );
+                Ok(_) => {}
+                Err(err) => log::debug!("Discord {action} failed: {err}"),
             }
         });
+    }
+
+    fn send_typing(&self, channel_id: &str) {
+        let url = self.api_url(&format!("channels/{channel_id}/typing"));
+        self.send_in_background(self.client.post(url), "typing indicator");
+    }
+
+    fn add_ack_reaction(&self, channel_id: &str, message_id: &str) {
+        let url = discord_reaction_url(
+            &self.api_base,
+            channel_id,
+            message_id,
+            random_from_pool(DISCORD_ACK_REACTIONS),
+        );
+        self.send_in_background(
+            self.client.put(url).header("Content-Length", "0"),
+            "ACK reaction",
+        );
     }
 
     async fn post_json_checked(&self, path: &str, body: &Value) -> Result<Value, BoxError> {
@@ -543,47 +513,26 @@ impl DiscordChannel {
         let mut remote_urls = Vec::new();
 
         for resource in resources {
-            if let Some(blob) = &resource.blob {
-                let bytes = blob.0.clone();
-                if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
-                    return Err(format!(
-                        "Discord resource '{}' exceeds {} bytes",
-                        resource.name, DISCORD_MAX_FILE_BYTES
-                    )
-                    .into());
-                }
-                uploads.push(DiscordUpload {
-                    file_name: file_name_for_resource(resource).to_string(),
-                    mime_type: resource.mime_type.clone(),
-                    bytes,
-                });
+            if resource.blob.is_none()
+                && let Some(uri) = resource.uri.as_deref().filter(|uri| is_http_url(uri))
+            {
+                remote_urls.push(uri.to_string());
                 continue;
             }
 
-            if let Some(uri) = resource.uri.as_deref() {
-                if is_http_url(uri) {
-                    remote_urls.push(uri.to_string());
-                    continue;
-                }
-
-                let path = path_from_file_uri_or_path(uri)?;
-                let bytes = tokio::fs::read(path).await?;
-                if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
-                    return Err(format!(
-                        "Discord resource '{}' exceeds {} bytes",
-                        resource.name, DISCORD_MAX_FILE_BYTES
-                    )
-                    .into());
-                }
-                uploads.push(DiscordUpload {
-                    file_name: file_name_for_resource(resource).to_string(),
-                    mime_type: resource.mime_type.clone(),
-                    bytes,
-                });
-                continue;
+            let bytes = local_resource_bytes(resource).await?;
+            if bytes.len() as u64 > DISCORD_MAX_FILE_BYTES {
+                return Err(format!(
+                    "Discord resource '{}' exceeds {} bytes",
+                    resource.name, DISCORD_MAX_FILE_BYTES
+                )
+                .into());
             }
-
-            return Err(format!("Discord resource '{}' has no uri or blob", resource.name).into());
+            uploads.push(DiscordUpload {
+                file_name: file_name_for_resource(resource).to_string(),
+                mime_type: resource.mime_type.clone(),
+                bytes,
+            });
         }
 
         Ok((uploads, remote_urls))
@@ -796,10 +745,6 @@ impl DiscordChannel {
 
 #[async_trait]
 impl Channel for DiscordChannel {
-    fn name(&self) -> &str {
-        "discord"
-    }
-
     fn username(&self) -> &str {
         &self.username
     }
@@ -822,10 +767,6 @@ impl Channel for DiscordChannel {
             .await
     }
 
-    fn should_retry_send(&self, error: &str) -> bool {
-        is_transient_send_error(error)
-    }
-
     async fn listen(
         &self,
         cancel_token: CancellationToken,
@@ -837,7 +778,7 @@ impl Channel for DiscordChannel {
         let process = async {
             while let Some(data) = incoming.recv().await {
                 if let Some(id) = data.get("id").and_then(Value::as_str)
-                    && self.dedup.is_duplicate(id).await
+                    && self.dedup.is_duplicate(id)
                 {
                     continue;
                 }
@@ -847,12 +788,9 @@ impl Channel for DiscordChannel {
                 if self.ack_reactions
                     && let Some(id) = data.get("id").and_then(Value::as_str)
                 {
-                    self.try_add_ack_reaction_nonblocking(
-                        message.reply_target.clone(),
-                        id.to_string(),
-                    );
+                    self.add_ack_reaction(&message.reply_target, id);
                 }
-                let _ = self.send_typing_once(&message.reply_target).await;
+                self.send_typing(&message.reply_target);
                 if tx.send(message).await.is_err() {
                     break;
                 }
@@ -991,16 +929,12 @@ fn encode_emoji_for_discord(emoji: &str) -> String {
     encoded
 }
 
-fn raw_discord_message_id(message_id: &str) -> &str {
-    message_id.strip_prefix("discord_").unwrap_or(message_id)
-}
-
 fn discord_reaction_url(api_base: &str, channel_id: &str, message_id: &str, emoji: &str) -> String {
     let encoded_emoji = encode_emoji_for_discord(emoji);
     format!(
         "{}/channels/{channel_id}/messages/{}/reactions/{encoded_emoji}/@me",
         api_base.trim_end_matches('/'),
-        raw_discord_message_id(message_id)
+        message_id
     )
 }
 
@@ -1027,7 +961,6 @@ mod tests {
     #[test]
     fn discord_channel_identity() {
         let channel = DiscordChannel::new(&test_config(), new_reqwest_client());
-        assert_eq!(channel.name(), "discord");
         assert_eq!(channel.username(), "anda-discord");
         assert_eq!(channel.id(), "discord:test");
     }
@@ -1094,12 +1027,7 @@ mod tests {
 
     #[test]
     fn encode_reaction_url_escapes_unicode_emoji() {
-        let url = discord_reaction_url(
-            config::DEFAULT_DISCORD_API_BASE,
-            "123",
-            "discord_456",
-            "\u{1F440}",
-        );
+        let url = discord_reaction_url(config::DEFAULT_DISCORD_API_BASE, "123", "456", "\u{1F440}");
         assert_eq!(
             url,
             "https://discord.com/api/v10/channels/123/messages/456/reactions/%F0%9F%91%80/@me"
@@ -1302,7 +1230,7 @@ mod tests {
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("has no uri or blob"));
+        assert!(err.to_string().contains("no blob or local file"));
     }
 
     #[tokio::test]
@@ -1479,9 +1407,6 @@ mod tests {
             "text\nhttps://a"
         );
         assert_eq!(with_inline_resource_urls("text", &[]), "text");
-
-        assert_eq!(raw_discord_message_id("discord_5"), "5");
-        assert_eq!(raw_discord_message_id("5"), "5");
 
         assert!(DISCORD_ACK_REACTIONS.contains(&random_from_pool(DISCORD_ACK_REACTIONS)));
         assert_eq!(encode_emoji_for_discord("custom:123"), "custom:123");

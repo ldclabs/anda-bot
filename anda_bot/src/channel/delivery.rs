@@ -7,7 +7,6 @@ pub(crate) struct SendFailure {
     message: String,
     pub retryable: bool,
     pub retry_after: Option<Duration>,
-    pub exhausted: bool,
 }
 
 impl fmt::Display for SendFailure {
@@ -22,7 +21,6 @@ pub(crate) fn transport_send_error(error: reqwest::Error, message: String) -> Bo
         message,
         retryable: error.is_connect(),
         retry_after: None,
-        exhausted: false,
     })
 }
 
@@ -48,7 +46,6 @@ pub(crate) fn http_send_error(
         message: format!("{status}: {body}"),
         retryable: status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error(),
         retry_after,
-        exhausted: false,
     })
 }
 
@@ -103,7 +100,6 @@ where
                         message,
                         retryable: retryable && *delivered == 0,
                         retry_after: None,
-                        exhausted: true,
                     }));
                 }
                 let delay = error
@@ -143,7 +139,6 @@ mod tests {
         assert_eq!(attempts, 6);
         assert_eq!(delivered, 1);
         assert!(!retryable_send_error(error.as_ref()));
-        assert!(error.downcast_ref::<SendFailure>().unwrap().exhausted);
     }
 
     #[tokio::test]

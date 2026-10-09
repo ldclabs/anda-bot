@@ -297,10 +297,6 @@ mod tests {
 
     #[async_trait]
     impl Channel for RecordingChannel {
-        fn name(&self) -> &str {
-            "test"
-        }
-
         fn username(&self) -> &str {
             "anda-bot"
         }

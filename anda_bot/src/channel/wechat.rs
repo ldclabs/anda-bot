@@ -20,12 +20,14 @@ use weixin_agent::{
 use super::{
     Channel, ChannelInitOptions, ChannelInitResult, ChannelMessage, ChannelWorkspace,
     EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage, apply_continuation_markers,
-    file_name_for_resource, is_http_url, is_transient_send_error, resource_from_bytes,
+    file_name_for_resource, is_http_url, resource_from_bytes,
 };
 use crate::{
     config::{self, normalize_identity, normalize_string},
     util::{
-        file_uri::path_from_file_uri_or_path, fs::sanitize_path_component, text::read_text_file,
+        file_uri::{file_uri_for_path, path_from_file_uri_or_path},
+        fs::sanitize_path_component,
+        text::read_text_file,
     },
 };
 
@@ -328,10 +330,6 @@ impl WechatChannel {
 
 #[async_trait]
 impl Channel for WechatChannel {
-    fn name(&self) -> &str {
-        "wechat"
-    }
-
     fn username(&self) -> &str {
         &self.username
     }
@@ -382,10 +380,6 @@ impl Channel for WechatChannel {
 
         let client = self.sending_client().await?;
         self.send_message_parts(&client, recipient, message).await
-    }
-
-    fn should_retry_send(&self, error: &str) -> bool {
-        is_transient_send_error(error) || is_wechat_context_token_error(error)
     }
 
     async fn listen(
@@ -440,7 +434,6 @@ impl MessageHandler for WechatMessageHandler {
         if self
             .dedup
             .is_duplicate(&server_event_id(ctx.server_message_id))
-            .await
         {
             return Ok(());
         }
@@ -459,9 +452,6 @@ impl MessageHandler for WechatMessageHandler {
             return Ok(());
         };
         message.external_user = (!trusted_user).then_some(true);
-        message
-            .extra
-            .insert("trusted_user".to_string(), trusted_user.into());
 
         if let Some(context_token) = ctx.context_token.as_deref() {
             self.context_tokens
@@ -513,8 +503,8 @@ async fn channel_message_from_context(
         .filter(|timestamp| *timestamp > 0)
         .unwrap_or_else(unix_ms);
 
-    let reply_target = wechat_reply_target(ctx);
-    let thread = wechat_thread(ctx);
+    let reply_target = wechat_reply_target_from(&ctx.from);
+    let thread = wechat_thread_from_session_id(ctx.session_id.as_deref());
     let mut extra = std::collections::BTreeMap::new();
     extra.insert("message_id".to_string(), ctx.message_id.clone().into());
     extra.insert("from".to_string(), ctx.from.clone().into());
@@ -549,14 +539,6 @@ fn server_event_id(server_message_id: Option<i64>) -> String {
         .unwrap_or_default()
 }
 
-fn wechat_reply_target(ctx: &MessageContext) -> String {
-    wechat_reply_target_from(&ctx.from)
-}
-
-fn wechat_thread(ctx: &MessageContext) -> Option<String> {
-    wechat_thread_from_session_id(ctx.session_id.as_deref())
-}
-
 fn wechat_reply_target_from(from: &str) -> String {
     from.trim().to_string()
 }
@@ -581,57 +563,54 @@ async fn download_media_resource(
     }
 
     let file_name = wechat_media_file_name(media, &ctx.message_id);
-    let temp_path = temp_media_path(workspace, &ctx.message_id, &file_name).await;
-    let bytes = match ctx.download_media(media, &temp_path).await {
-        Ok(path) => {
-            // Check the downloaded size on disk before pulling it into memory.
-            let file_size = tokio::fs::metadata(&path)
-                .await
-                .map(|meta| meta.len())
-                .unwrap_or(u64::MAX);
-            if file_size > WECHAT_MAX_FILE_DOWNLOAD_BYTES {
-                let _ = tokio::fs::remove_file(&path).await;
-                log::warn!(
-                    "WeChat skipping downloaded attachment larger than {} bytes: {}",
-                    WECHAT_MAX_FILE_DOWNLOAD_BYTES,
-                    file_size
-                );
-                return None;
-            }
-            let bytes = tokio::fs::read(&path).await.ok()?;
-            let _ = tokio::fs::remove_file(path).await;
-            bytes
-        }
+    // Download straight into the workspace so the file is written once; use a
+    // temporary file when there is no workspace.
+    let stored = workspace
+        .attachment_path(Some(&ctx.message_id), &file_name)
+        .await
+        .unwrap_or_else(|err| {
+            log::warn!("failed to prepare WeChat attachment path: {err}");
+            None
+        });
+    let dest = stored.clone().unwrap_or_else(|| {
+        std::env::temp_dir().join(format!(
+            "{}-{}",
+            rand::random::<u64>(),
+            sanitize_path_component(&file_name, "media.bin")
+        ))
+    });
+    let path = match ctx.download_media(media, &dest).await {
+        Ok(path) => path,
         Err(err) => {
             log::warn!("WeChat failed to download media: {err}");
             return None;
         }
     };
 
-    let mut resource = resource_from_bytes(file_name, bytes, "WeChat attachment");
-    workspace
-        .store_resource_lossy(&mut resource, Some(&ctx.message_id), "WeChat attachment")
-        .await;
-    Some(resource)
-}
-
-async fn temp_media_path(
-    workspace: &Arc<ChannelWorkspace>,
-    message_id: &str,
-    file_name: &str,
-) -> PathBuf {
-    let base = workspace.path().unwrap_or_else(std::env::temp_dir);
-    let dir = base.join("incoming");
-    if let Err(err) = tokio::fs::create_dir_all(&dir).await {
-        log::warn!("failed to create WeChat incoming media dir: {err}");
-        return std::env::temp_dir().join(sanitize_path_component(file_name, "media.bin"));
+    // Check the downloaded size on disk before pulling it into memory.
+    let file_size = tokio::fs::metadata(&path)
+        .await
+        .map(|meta| meta.len())
+        .unwrap_or(u64::MAX);
+    let bytes = if file_size > WECHAT_MAX_FILE_DOWNLOAD_BYTES {
+        log::warn!(
+            "WeChat skipping downloaded attachment larger than {} bytes: {}",
+            WECHAT_MAX_FILE_DOWNLOAD_BYTES,
+            file_size
+        );
+        None
+    } else {
+        tokio::fs::read(&path).await.ok()
+    };
+    if stored.is_none() || bytes.is_none() {
+        let _ = tokio::fs::remove_file(&path).await;
     }
 
-    dir.join(format!(
-        "{}-{}",
-        sanitize_path_component(message_id, "message"),
-        sanitize_path_component(file_name, "media.bin")
-    ))
+    let mut resource = resource_from_bytes(file_name, bytes?, "WeChat attachment");
+    if stored.is_some() {
+        resource.uri = file_uri_for_path(&path).ok();
+    }
+    Some(resource)
 }
 
 fn format_ref_message(title: Option<&str>, body: Option<&str>) -> String {
@@ -716,8 +695,8 @@ async fn save_sync_buf_to_workspace(workspace: &Arc<ChannelWorkspace>, sync_buf:
     }
 }
 
-fn context_token_is_stale(updated_at: Option<u64>) -> bool {
-    updated_at.is_some_and(|at| unix_ms().saturating_sub(at) > WECHAT_CONTEXT_TOKEN_MAX_AGE_MS)
+fn context_token_is_stale(updated_at: u64) -> bool {
+    unix_ms().saturating_sub(updated_at) > WECHAT_CONTEXT_TOKEN_MAX_AGE_MS
 }
 
 fn is_wechat_context_token_error(error: &str) -> bool {
@@ -780,20 +759,19 @@ mod tests {
         // `MessageContext::message_id` is a fresh SDK-side random id per parse,
         // so only `server_message_id` identifies a redelivered message.
         let dedup = RecentEventDedup::new(EVENT_DEDUP_WINDOW);
-        assert!(!dedup.is_duplicate(&server_event_id(Some(42))).await);
-        assert!(dedup.is_duplicate(&server_event_id(Some(42))).await);
-        assert!(!dedup.is_duplicate(&server_event_id(Some(43))).await);
+        assert!(!dedup.is_duplicate(&server_event_id(Some(42))));
+        assert!(dedup.is_duplicate(&server_event_id(Some(42))));
+        assert!(!dedup.is_duplicate(&server_event_id(Some(43))));
 
         // Without a server id nothing is suppressed.
         assert_eq!(server_event_id(None), "");
-        assert!(!dedup.is_duplicate(&server_event_id(None)).await);
-        assert!(!dedup.is_duplicate(&server_event_id(None)).await);
+        assert!(!dedup.is_duplicate(&server_event_id(None)));
+        assert!(!dedup.is_duplicate(&server_event_id(None)));
     }
 
     #[test]
     fn wechat_channel_identity() {
         let channel = WechatChannel::new(&test_config());
-        assert_eq!(channel.name(), "wechat");
         assert_eq!(channel.username(), "anda-wechat");
         assert_eq!(channel.id(), "wechat:test");
     }
@@ -901,11 +879,10 @@ mod tests {
 
     #[test]
     fn context_token_staleness_uses_max_age() {
-        assert!(!context_token_is_stale(None));
-        assert!(!context_token_is_stale(Some(unix_ms())));
-        assert!(context_token_is_stale(Some(
+        assert!(!context_token_is_stale(unix_ms()));
+        assert!(context_token_is_stale(
             unix_ms() - WECHAT_CONTEXT_TOKEN_MAX_AGE_MS - 1
-        )));
+        ));
     }
 
     #[tokio::test]
@@ -929,21 +906,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn temp_media_paths_are_sanitized_under_workspace() {
+    async fn attachment_paths_are_sanitized_under_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = workspace_at(&dir);
 
-        let path = temp_media_path(&workspace, "msg/1", "weird name!.bin").await;
-        assert!(path.starts_with(dir.path().join("incoming")));
+        let path = workspace
+            .attachment_path(Some("msg/1"), "weird name!.bin")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(path.starts_with(dir.path().join("attachments")));
         let file_name = path.file_name().unwrap().to_str().unwrap();
         assert!(!file_name.contains('/'));
         assert!(!file_name.contains('!'));
         assert!(!file_name.contains(' '));
 
-        // Without a workspace the temp dir is used.
-        let detached = Arc::new(ChannelWorkspace::default());
-        let path = temp_media_path(&detached, "msg", "name.bin").await;
-        assert!(path.starts_with(std::env::temp_dir()));
+        // Without a workspace there is no stored path.
+        let detached = ChannelWorkspace::default();
+        assert!(
+            detached
+                .attachment_path(Some("msg"), "name.bin")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1056,14 +1042,6 @@ mod tests {
     }
 
     #[test]
-    fn should_retry_send_matches_transient_errors() {
-        let channel = WechatChannel::new(&test_config());
-        assert!(channel.should_retry_send("connection reset"));
-        assert!(channel.should_retry_send("HTTP 503"));
-        assert!(!channel.should_retry_send("400 bad request"));
-    }
-
-    #[test]
     fn attachment_fallback_text_labels_by_tag() {
         let image = Resource {
             name: "pic.png".to_string(),
@@ -1095,9 +1073,8 @@ mod tests {
 
     #[test]
     fn context_token_is_stale_respects_max_age() {
-        assert!(!context_token_is_stale(None));
-        assert!(!context_token_is_stale(Some(unix_ms())));
-        assert!(context_token_is_stale(Some(1)));
+        assert!(!context_token_is_stale(unix_ms()));
+        assert!(context_token_is_stale(1));
     }
     #[tokio::test]
     async fn context_fallback_does_not_replay_prefix() {

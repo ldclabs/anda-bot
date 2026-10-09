@@ -6,7 +6,7 @@ use std::{
     sync::RwLock,
 };
 
-use crate::util::file_uri::file_uri_for_path;
+use crate::util::file_uri::{file_uri_for_path, path_from_file_uri_or_path};
 use crate::util::fs::sanitize_path_component;
 
 pub type InferType = infer2::Type;
@@ -28,24 +28,34 @@ impl ChannelWorkspace {
             .clone()
     }
 
+    /// A fresh path in the workspace `attachments` directory for a file of
+    /// `message_key`, or `None` when no workspace is set.
+    pub async fn attachment_path(
+        &self,
+        message_key: Option<&str>,
+        file_name: &str,
+    ) -> Result<Option<PathBuf>, BoxError> {
+        let Some(root) = self.path() else {
+            return Ok(None);
+        };
+        let dir = root.join("attachments");
+        tokio::fs::create_dir_all(&dir).await?;
+        let stored_name = stored_attachment_name(message_key, file_name);
+        Ok(Some(unique_attachment_path(&dir, &stored_name).await?))
+    }
+
     pub async fn store_resource(
         &self,
         resource: &mut Resource,
         message_key: Option<&str>,
     ) -> Result<Option<PathBuf>, BoxError> {
-        let Some(root) = self.path() else {
-            return Ok(None);
-        };
         let Some(blob) = resource.blob.as_ref() else {
             return Ok(None);
         };
-
-        let dir = root.join("attachments");
-        tokio::fs::create_dir_all(&dir).await?;
-
         let file_name = file_name_for_resource(resource);
-        let stored_name = stored_attachment_name(message_key, &file_name);
-        let path = unique_attachment_path(&dir, &stored_name).await?;
+        let Some(path) = self.attachment_path(message_key, &file_name).await? else {
+            return Ok(None);
+        };
         tokio::fs::write(&path, &blob.0).await?;
 
         resource.uri = Some(file_uri_for_path(&path)?);
@@ -101,6 +111,20 @@ pub(crate) fn history_resources(resources: &mut [Resource]) -> Vec<Resource> {
             }
         })
         .collect()
+}
+
+/// The bytes to upload for an outgoing resource: its inline blob, or the
+/// local file its uri points to.
+pub(crate) async fn local_resource_bytes(resource: &Resource) -> Result<Vec<u8>, BoxError> {
+    if let Some(blob) = &resource.blob {
+        return Ok(blob.0.clone());
+    }
+    match resource.uri.as_deref() {
+        Some(uri) if !is_http_url(uri) => {
+            Ok(tokio::fs::read(path_from_file_uri_or_path(uri)?).await?)
+        }
+        _ => Err(format!("resource '{}' has no blob or local file", resource.name).into()),
+    }
 }
 
 pub fn infer_from(file_name: &str, mime_type: Option<&str>) -> Option<InferType> {
@@ -361,6 +385,30 @@ mod tests {
             .store_resources_lossy(std::slice::from_mut(&mut lossy), None, "test attachment")
             .await;
         assert!(lossy.uri.is_some());
+    }
+
+    #[tokio::test]
+    async fn local_resource_bytes_reads_blob_then_local_file() {
+        let blob = resource_from_bytes("a.txt".into(), b"blob".to_vec(), "test");
+        assert_eq!(local_resource_bytes(&blob).await.unwrap(), b"blob");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("b.txt");
+        tokio::fs::write(&path, b"file").await.unwrap();
+        let file = Resource {
+            name: "b.txt".into(),
+            uri: Some(file_uri_for_path(&path).unwrap()),
+            ..Default::default()
+        };
+        assert_eq!(local_resource_bytes(&file).await.unwrap(), b"file");
+
+        let remote = Resource {
+            name: "c.txt".into(),
+            uri: Some("https://example.com/c.txt".into()),
+            ..Default::default()
+        };
+        let err = local_resource_bytes(&remote).await.unwrap_err();
+        assert!(err.to_string().contains("no blob or local file"));
     }
 
     #[tokio::test]

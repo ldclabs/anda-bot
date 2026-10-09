@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 const STATE_FILE: &str = "context_tokens_v2.json";
+// An unchanged token younger than this is not rewritten: every inbound
+// message repeats it, and its age only matters at the 2-hour staleness limit.
+const REFRESH_AFTER_MS: u64 = 10 * 60 * 1000;
 
 #[derive(Clone, Deserialize, Serialize)]
 struct Entry {
@@ -94,7 +97,7 @@ impl ContextTokens {
         }
         let entries = guard.as_mut().unwrap();
         let entry = entries.get(user.trim())?;
-        if context_token_is_stale(Some(entry.updated_at)) {
+        if context_token_is_stale(entry.updated_at) {
             entries.remove(user.trim());
             self.persist(entries).await;
             None
@@ -113,11 +116,17 @@ impl ContextTokens {
             *guard = Some(self.load().await);
         }
         let entries = guard.as_mut().unwrap();
+        let now = unix_ms();
+        if entries.get(user).is_some_and(|entry| {
+            entry.token == token && now.saturating_sub(entry.updated_at) < REFRESH_AFTER_MS
+        }) {
+            return;
+        }
         entries.insert(
             user.to_owned(),
             Entry {
                 token: token.to_owned(),
-                updated_at: unix_ms(),
+                updated_at: now,
             },
         );
         self.persist(entries).await;
@@ -171,6 +180,23 @@ mod tests {
         assert_eq!(reopened.get("bob").await, None);
         reopened.remove("alice", "new").await;
         assert_eq!(reopened.get("alice").await, None);
+    }
+
+    #[tokio::test]
+    async fn fresh_unchanged_token_is_not_rewritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = Arc::new(ChannelWorkspace::default());
+        workspace.set_path(dir.path().to_owned());
+        let store = ContextTokens::new(workspace);
+        let state_file = dir.path().join(STATE_FILE);
+
+        store.put("alice", "same").await;
+        tokio::fs::remove_file(&state_file).await.unwrap();
+        store.put("alice", "same").await;
+        assert!(!state_file.exists());
+
+        store.put("alice", "rotated").await;
+        assert!(state_file.exists());
     }
 
     #[tokio::test]

@@ -155,7 +155,7 @@ Use `list_im_channels` to discover recent recipients and threads. It scans the l
 
 Text chunks and attachments retry independently. Successfully delivered parts are not replayed when a later part fails, and a history-write failure does not resend a delivered message. A failure after partial delivery is reported rather than replaying the whole reply. Transport timeouts with an unknown delivery outcome are not automatically repeated.
 
-Replies containing only artifacts are delivered too. Lark/Feishu currently sends attachment HTTP(S) links; local files and binary attachments return an explicit unsupported error. Incoming user images and direct or localized rich-text messages are supported.
+Replies containing only artifacts are delivered too. Lark/Feishu links HTTP(S) attachments in the card and uploads local files and binary attachments as image or file messages (images up to 10 MB, files up to 30 MB). Incoming user images and direct or localized rich-text messages are supported. When Anda rejects a message from a trusted user (for example `/goal` without a prompt), the reason is sent back to the chat; external users get no internal details.
 
 Channel history references attachments already stored in the channel workspace; keep its `attachments` directory with database backups. WeChat reuses its HTTP client and migrates the legacy context-token files to `context_tokens_v2.json`, which stores each token and its update time together.
 

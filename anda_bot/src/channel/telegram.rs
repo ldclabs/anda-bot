@@ -7,19 +7,16 @@ use reqwest::{
 };
 use serde_json::Value;
 use std::{collections::HashMap, fmt::Write as _, path::PathBuf, sync::Arc, time::Duration};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{OnceCell, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::delivery::{http_send_error, send_step, transport_send_error};
 use super::{
     Channel, ChannelMessage, ChannelWorkspace, EVENT_DEDUP_WINDOW, RecentEventDedup, SendMessage,
-    apply_continuation_markers, file_name_for_resource, is_http_url, is_transient_send_error,
+    apply_continuation_markers, file_name_for_resource, is_http_url, local_resource_bytes,
     random_from_pool, resource_from_bytes, split_message_on_word_boundaries,
 };
-use crate::{
-    config::{self, normalize_identity},
-    util::file_uri::path_from_file_uri_or_path,
-};
+use crate::config::{self, normalize_identity};
 
 const TELEGRAM_MAX_MESSAGE_LENGTH: usize = 4096;
 const TELEGRAM_CONTINUATION_OVERHEAD: usize = 30;
@@ -86,7 +83,7 @@ pub struct TelegramChannel {
     client: Client,
     workspace: Arc<ChannelWorkspace>,
     dedup: RecentEventDedup,
-    bot_username: Mutex<Option<String>>,
+    bot_username: OnceCell<String>,
 }
 
 impl TelegramChannel {
@@ -110,7 +107,7 @@ impl TelegramChannel {
             client,
             workspace: Arc::new(ChannelWorkspace::default()),
             dedup: RecentEventDedup::new(EVENT_DEDUP_WINDOW),
-            bot_username: Mutex::new(None),
+            bot_username: OnceCell::new(),
         }
     }
 
@@ -348,19 +345,12 @@ impl TelegramChannel {
     }
 
     async fn get_bot_username(&self) -> Option<String> {
+        match self
+            .bot_username
+            .get_or_try_init(|| self.fetch_bot_username())
+            .await
         {
-            let cache = self.bot_username.lock().await;
-            if let Some(username) = cache.as_ref() {
-                return Some(username.clone());
-            }
-        }
-
-        match self.fetch_bot_username().await {
-            Ok(username) => {
-                let mut cache = self.bot_username.lock().await;
-                *cache = Some(username.clone());
-                Some(username)
-            }
+            Ok(username) => Some(username.clone()),
             Err(err) => {
                 log::warn!(
                     "Telegram failed to fetch bot username: {}",
@@ -423,9 +413,14 @@ impl TelegramChannel {
             .get("message_id")
             .and_then(Value::as_i64)
             .unwrap_or(0);
+        // Replies in ordinary supergroups also carry `message_thread_id`, but
+        // only forum topics accept it back when sending.
         let thread = message
-            .get("message_thread_id")
-            .and_then(Value::as_i64)
+            .get("is_topic_message")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            .then(|| message.get("message_thread_id").and_then(Value::as_i64))
+            .flatten()
             .map(|id| id.to_string());
         let reply_target = if let Some(thread) = &thread {
             format!("{chat_id}:{thread}")
@@ -684,55 +679,49 @@ impl TelegramChannel {
         Some((chat_id, message_id))
     }
 
-    fn try_add_ack_reaction_nonblocking(&self, chat_id: String, message_id: i64) {
-        let client = self.client.clone();
-        let url = self.api_url("setMessageReaction");
+    /// Fires a best-effort Bot API call (ACK reaction, typing indicator)
+    /// without holding up the poll loop.
+    fn post_in_background(&self, method: &'static str, body: Value) {
+        let request = self.client.post(self.api_url(method)).json(&body);
         let token = self.bot_token.clone();
-        let emoji = random_from_pool(TELEGRAM_ACK_REACTIONS).to_string();
+        tokio::spawn(async move {
+            match request.send().await {
+                Ok(response) if !response.status().is_success() => {
+                    log::debug!("Telegram {method} failed with status {}", response.status());
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    log::debug!(
+                        "Telegram {method} failed: {}",
+                        scrub_token(&err.to_string(), &token)
+                    );
+                }
+            }
+        });
+    }
+
+    fn add_ack_reaction(&self, chat_id: String, message_id: i64) {
         let body = serde_json::json!({
             "chat_id": chat_id,
             "message_id": message_id,
             "reaction": [{
                 "type": "emoji",
-                "emoji": emoji,
+                "emoji": random_from_pool(TELEGRAM_ACK_REACTIONS),
             }]
         });
-
-        tokio::spawn(async move {
-            let response = match client.post(url).json(&body).send().await {
-                Ok(response) => response,
-                Err(err) => {
-                    log::debug!(
-                        "Telegram failed to add ACK reaction: {}",
-                        scrub_token(&err.to_string(), &token)
-                    );
-                    return;
-                }
-            };
-
-            if !response.status().is_success() {
-                log::debug!(
-                    "Telegram add ACK reaction failed with status {}",
-                    response.status()
-                );
-            }
-        });
+        self.post_in_background("setMessageReaction", body);
     }
 
-    async fn send_chat_action(&self, recipient: &str) -> Result<(), BoxError> {
-        let (chat_id, thread_id) = Self::parse_reply_target(recipient);
+    fn send_chat_action(&self, recipient: &str, thread: Option<&str>) {
+        let (chat_id, legacy_thread) = Self::parse_reply_target(recipient);
         let mut body = serde_json::json!({
             "chat_id": chat_id,
             "action": "typing",
         });
-        if let Some(thread_id) = thread_id {
+        if let Some(thread_id) = thread.map(str::to_string).or(legacy_thread) {
             body["message_thread_id"] = Value::String(thread_id);
         }
-
-        let _ = self
-            .send_request(self.client.post(self.api_url("sendChatAction")).json(&body))
-            .await?;
-        Ok(())
+        self.post_in_background("sendChatAction", body);
     }
 
     async fn wait_or_cancel(cancel_token: &CancellationToken, delay: Duration) -> bool {
@@ -807,29 +796,15 @@ impl TelegramChannel {
         thread_id: Option<&str>,
         resource: &Resource,
     ) -> Result<(), BoxError> {
-        if let Some(uri) = resource.uri.as_deref() {
-            if is_http_url(uri) {
-                return self
-                    .send_resource_url(chat_id, thread_id, resource, uri)
-                    .await;
-            }
-
-            let path = path_from_file_uri_or_path(uri)?;
-            if path.exists() {
-                let bytes = tokio::fs::read(path).await?;
-                return self
-                    .send_resource_bytes(chat_id, thread_id, resource, bytes)
-                    .await;
-            }
-        }
-
-        if let Some(blob) = &resource.blob {
+        if let Some(uri) = resource.uri.as_deref().filter(|uri| is_http_url(uri)) {
             return self
-                .send_resource_bytes(chat_id, thread_id, resource, blob.0.clone())
+                .send_resource_url(chat_id, thread_id, resource, uri)
                 .await;
         }
 
-        Err(format!("Telegram resource '{}' has no uri or blob", resource.name).into())
+        let bytes = local_resource_bytes(resource).await?;
+        self.send_resource_bytes(chat_id, thread_id, resource, bytes)
+            .await
     }
 
     async fn send_resource_url(
@@ -1036,10 +1011,6 @@ impl TelegramChannel {
 
 #[async_trait]
 impl Channel for TelegramChannel {
-    fn name(&self) -> &str {
-        "telegram"
-    }
-
     fn username(&self) -> &str {
         &self.username
     }
@@ -1081,32 +1052,17 @@ impl Channel for TelegramChannel {
         Ok(())
     }
 
-    fn should_retry_send(&self, error: &str) -> bool {
-        is_transient_send_error(error)
-    }
-
     async fn listen(
         &self,
         cancel_token: CancellationToken,
         tx: mpsc::Sender<ChannelMessage>,
     ) -> Result<(), BoxError> {
         let mut offset: i64 = 0;
-        if self.mention_only {
-            let _ = self.get_bot_username().await;
-        }
-
         log::info!("Telegram channel {} listening for messages", self.id());
 
         loop {
             if cancel_token.is_cancelled() {
                 return Ok(());
-            }
-
-            if self.mention_only {
-                let missing_username = self.bot_username.lock().await.is_none();
-                if missing_username {
-                    let _ = self.get_bot_username().await;
-                }
             }
 
             let body = serde_json::json!({
@@ -1184,7 +1140,7 @@ impl Channel for TelegramChannel {
                     offset = update_id + 1;
                     // Long-poll rewinds after transport errors can replay
                     // updates the loop already handled.
-                    if self.dedup.is_duplicate(&update_id.to_string()).await {
+                    if self.dedup.is_duplicate(&update_id.to_string()) {
                         continue;
                     }
                 }
@@ -1200,10 +1156,9 @@ impl Channel for TelegramChannel {
                 if self.ack_reactions
                     && let Some((chat_id, message_id)) = Self::extract_update_message_target(update)
                 {
-                    self.try_add_ack_reaction_nonblocking(chat_id, message_id);
+                    self.add_ack_reaction(chat_id, message_id);
                 }
-
-                let _ = self.send_chat_action(&message.reply_target).await;
+                self.send_chat_action(&message.reply_target, message.thread.as_deref());
 
                 if tx.send(message).await.is_err() {
                     return Ok(());
@@ -1300,7 +1255,6 @@ mod tests {
     #[test]
     fn telegram_channel_identity() {
         let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
-        assert_eq!(channel.name(), "telegram");
         assert_eq!(channel.username(), "anda_bot");
         assert_eq!(channel.id(), "telegram:test");
     }
@@ -1340,6 +1294,35 @@ mod tests {
         assert!(channel.is_user_allowed("Alice"));
         assert!(channel.is_user_allowed("12345"));
         assert!(!channel.is_user_allowed("bob"));
+    }
+
+    #[tokio::test]
+    async fn only_forum_topic_messages_keep_their_thread() {
+        let mut cfg = test_config();
+        cfg.mention_only = false;
+        let channel = TelegramChannel::new(&cfg, new_reqwest_client());
+        let update = |is_topic: bool| {
+            serde_json::json!({
+                "message": {
+                    "message_id": 42,
+                    "message_thread_id": 7,
+                    "is_topic_message": is_topic,
+                    "text": "hello",
+                    "from": { "id": 12345, "username": "Alice" },
+                    "chat": { "id": -100555, "type": "supergroup" }
+                }
+            })
+        };
+
+        let topic = channel.parse_update_message(&update(true)).await.unwrap();
+        assert_eq!(topic.thread.as_deref(), Some("7"));
+        assert_eq!(topic.reply_target, "-100555:7");
+
+        // A reply in an ordinary supergroup carries a thread id too, but the
+        // Bot API rejects it when sending back.
+        let reply = channel.parse_update_message(&update(false)).await.unwrap();
+        assert_eq!(reply.thread, None);
+        assert_eq!(reply.reply_target, "-100555");
     }
 
     #[tokio::test]
@@ -1636,7 +1619,7 @@ mod tests {
             .await
             .map(|_| ())
             .unwrap_err();
-        assert!(err.to_string().contains("has no uri or blob"));
+        assert!(err.to_string().contains("no blob or local file"));
     }
 
     #[tokio::test]
@@ -1746,17 +1729,15 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // The poll acknowledged the update and sent a typing indicator.
-        assert!(!state.recorded("sendChatAction").is_empty());
-    }
-
-    #[test]
-    fn should_retry_send_matches_transient_errors() {
-        let channel = TelegramChannel::new(&test_config(), new_reqwest_client());
-        assert!(channel.should_retry_send("Connection reset by peer"));
-        assert!(channel.should_retry_send("HTTP 429 Too Many Requests"));
-        assert!(channel.should_retry_send("upstream 503"));
-        assert!(!channel.should_retry_send("400 Bad Request"));
+        // The poll acknowledged the update and sent a typing indicator in
+        // the background.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while state.recorded("sendChatAction").is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("typing indicator should be sent");
     }
 
     #[test]

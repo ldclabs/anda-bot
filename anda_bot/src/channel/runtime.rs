@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::attachments::history_resources;
-use super::delivery::{SendFailure, retryable_send_error};
+use super::delivery::retryable_send_error;
 use super::types::*;
 use crate::engine::{
     CompletionHook, PromptCommand, SessionRequestMeta, external_user_prompt_with_space,
@@ -36,9 +36,6 @@ type ChannelConversationMap = HashMap<(String, String, Option<String>), u64>;
 const CHANNEL_RECONNECT_BASE_DELAY: Duration = Duration::from_secs(2);
 const CHANNEL_RECONNECT_MAX_DELAY: Duration = Duration::from_secs(60);
 const CHANNEL_RECONNECT_RESET_AFTER: Duration = Duration::from_secs(300);
-const CHANNEL_SEND_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
-const CHANNEL_SEND_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
-const CHANNEL_SEND_RETRY_MAX_ATTEMPTS: u32 = 6;
 // Inbound messages are sharded by route onto this many workers so one slow
 // agent_run (e.g. session creation hitting the brain) cannot stall every
 // channel, while messages for the same chat stay ordered. The dispatcher
@@ -48,8 +45,9 @@ const CHANNEL_SEND_RETRY_MAX_ATTEMPTS: u32 = 6;
 // sized so that only takes effect when a shard is pathologically stuck.
 const INBOUND_WORKER_COUNT: usize = 4;
 const INBOUND_WORKER_QUEUE_SIZE: usize = 256;
-// Long-delay retries for agent replies whose immediate send retries were
-// exhausted, covering channel outages of a few minutes.
+// Long-delay retries for agent replies whose immediate per-part retries (see
+// `delivery::send_step`) were exhausted before anything was delivered,
+// covering channel outages of a few minutes.
 const REPLY_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(60),
     Duration::from_secs(300),
@@ -77,48 +75,15 @@ impl Default for ChannelReconnectPolicy {
     }
 }
 
-/// Computes an exponentially backed-off delay for the given 1-based `attempt`,
-/// doubling `base_delay` up to `max_shift` times and clamping to `max_delay`.
-fn exponential_backoff_delay(
-    base_delay: Duration,
-    max_delay: Duration,
-    attempt: u32,
-    max_shift: u32,
-) -> Duration {
-    let shift = attempt.saturating_sub(1).min(max_shift);
-    let factor = 1_u32 << shift;
-    base_delay
-        .checked_mul(factor)
-        .unwrap_or(max_delay)
-        .min(max_delay)
-}
-
 impl ChannelReconnectPolicy {
+    /// Doubles `base_delay` for each 1-based `attempt` (up to 32x), clamped
+    /// to `max_delay`.
     fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        exponential_backoff_delay(self.base_delay, self.max_delay, attempt, 5)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ChannelSendRetryPolicy {
-    base_delay: Duration,
-    max_delay: Duration,
-    max_attempts: u32,
-}
-
-impl Default for ChannelSendRetryPolicy {
-    fn default() -> Self {
-        Self {
-            base_delay: CHANNEL_SEND_RETRY_BASE_DELAY,
-            max_delay: CHANNEL_SEND_RETRY_MAX_DELAY,
-            max_attempts: CHANNEL_SEND_RETRY_MAX_ATTEMPTS,
-        }
-    }
-}
-
-impl ChannelSendRetryPolicy {
-    fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        exponential_backoff_delay(self.base_delay, self.max_delay, attempt, 4)
+        let factor = 1_u32 << attempt.saturating_sub(1).min(5);
+        self.base_delay
+            .checked_mul(factor)
+            .unwrap_or(self.max_delay)
+            .min(self.max_delay)
     }
 }
 
@@ -399,11 +364,8 @@ impl ChannelRuntime {
         }
     }
 
-    pub async fn serve(
-        self,
-        cancel_token: CancellationToken,
-    ) -> Result<JoinHandle<Result<(), BoxError>>, BoxError> {
-        Ok(tokio::spawn(async move {
+    pub fn serve(self, cancel_token: CancellationToken) -> JoinHandle<Result<(), BoxError>> {
+        tokio::spawn(async move {
             log::warn!(name = "channel"; "channel runtime started");
             let rx_token = cancel_token.child_token();
             let inner = self.inner.clone();
@@ -484,7 +446,7 @@ impl ChannelRuntime {
             let _ = futures::future::join_all(handles).await;
 
             Ok(())
-        }))
+        })
     }
 }
 
@@ -500,11 +462,7 @@ impl ChannelRuntimeInner {
         let _permit = match self.admission.enter() {
             Ok(permit) => permit,
             Err(reason) => {
-                let reply = SendMessage::new(reason.to_string(), message.reply_target.clone())
-                    .in_thread(message.thread.clone());
-                if let Err(error) = self.try_send(message.channel.clone(), reply, None).await {
-                    log::warn!("Could not deliver maintenance response: {error}");
-                }
+                self.reply_to(&message, reason.to_string()).await;
                 return;
             }
         };
@@ -585,36 +543,58 @@ impl ChannelRuntimeInner {
                         log::error!(name = "channel"; "failed to add message to collection: {err}");
                     }
                 }
-                match (new_command, output.conversation) {
-                    (Some(None), _) => {
-                        if let Some(channels_conversation) = self.clear_route_conversation(&route) {
-                            self.messages.set_extension_from::<ChannelConversationMap>(
-                                "channels_conversation".to_string(),
-                                channels_conversation,
-                            );
-                        }
-                    }
-                    (_, Some(conv_id)) => {
-                        if let Some(channels_conversation) = self.bind_conversation(route, conv_id)
-                        {
-                            self.messages.set_extension_from::<ChannelConversationMap>(
-                                "channels_conversation".to_string(),
-                                channels_conversation,
-                            );
-                        }
-                    }
-                    _ => {}
+                let channels_conversation = match (new_command, output.conversation) {
+                    (Some(None), _) => self.clear_route_conversation(&route),
+                    (_, Some(conv_id)) => self.bind_conversation(&route, conv_id),
+                    _ => None,
+                };
+                if let Some(channels_conversation) = channels_conversation {
+                    self.messages.set_extension_from::<ChannelConversationMap>(
+                        "channels_conversation".to_string(),
+                        channels_conversation,
+                    );
+                }
+                if let Err(err) = self.messages.flush(unix_ms()).await {
+                    log::error!(name = "channel"; "failed to flush channel history: {err}");
                 }
 
-                let _ = self.messages.flush(unix_ms()).await;
+                // Completion hooks only see outputs that belong to a
+                // conversation, so a reply produced inline without one (e.g.
+                // `/side` on a fresh route) is delivered here.
+                if output.conversation.is_none()
+                    && (!output.content.is_empty() || !output.artifacts.is_empty())
+                {
+                    let mut reply =
+                        completion_message(&RequestMeta::default(), &output, route, false);
+                    if let Err(err) = self.try_send(&message.channel, &mut reply, None).await {
+                        log::error!(name = "channel"; "failed to send reply to channel {}: {err}", message.channel);
+                    }
+                }
             }
             Err(err) => {
                 log::error!(name = "channel"; "failed to process message from channel {}: {err}", message.channel);
-                if self.admission.status().paused {
-                    let reply = SendMessage::new("Anda is preparing an update. This message was not accepted; please retry after maintenance.", message.reply_target.clone()).in_thread(message.thread.clone());
-                    let _ = self.try_send(message.channel.clone(), reply, None).await;
+                // Trusted users see why their message was rejected (e.g. a
+                // command missing its prompt); external users get no
+                // internal details.
+                let reply = if self.admission.status().paused {
+                    Some("Anda is preparing an update. This message was not accepted; please retry after maintenance.".to_string())
+                } else if !message.external_user.unwrap_or_default() {
+                    Some(err.to_string())
+                } else {
+                    None
+                };
+                if let Some(reply) = reply {
+                    self.reply_to(&message, reply).await;
                 }
             }
+        }
+    }
+
+    async fn reply_to(&self, message: &ChannelMessage, content: String) {
+        let mut reply = SendMessage::new(content, message.reply_target.clone())
+            .in_thread(message.thread.clone());
+        if let Err(err) = self.try_send(&message.channel, &mut reply, None).await {
+            log::warn!(name = "channel"; "could not reply to channel {}: {err}", message.channel);
         }
     }
 
@@ -623,17 +603,14 @@ impl ChannelRuntimeInner {
     fn spawn_reply_retry(
         self: &Arc<Self>,
         channel: String,
-        message: SendMessage,
+        mut message: SendMessage,
         conversation: Option<u64>,
     ) {
         let inner = self.clone();
         tokio::spawn(async move {
             for (attempt, delay) in REPLY_RETRY_DELAYS.into_iter().enumerate() {
                 tokio::time::sleep(delay).await;
-                match inner
-                    .try_send(channel.clone(), message.clone(), conversation)
-                    .await
-                {
+                match inner.try_send(&channel, &mut message, conversation).await {
                     Ok(()) => {
                         log::warn!(
                             name = "channel";
@@ -644,11 +621,7 @@ impl ChannelRuntimeInner {
                         return;
                     }
                     Err(err) => {
-                        if !inner
-                            .channels
-                            .get(&channel)
-                            .is_some_and(|chan| can_retry_delivery(chan, err.as_ref()))
-                        {
+                        if !retryable_send_error(err.as_ref()) {
                             log::error!(name = "channel"; "deferred reply stopped after permanent or partial delivery failure: {err}");
                             return;
                         }
@@ -672,7 +645,7 @@ impl ChannelRuntimeInner {
 
     fn bind_conversation(
         &self,
-        route: ChannelRoute,
+        route: &ChannelRoute,
         conv_id: u64,
     ) -> Option<ChannelConversationMap> {
         let key = route.key();
@@ -686,7 +659,7 @@ impl ChannelRuntimeInner {
         };
 
         let mut conversation_routes = self.conversation_routes.write();
-        conversation_routes.insert(conv_id, route);
+        conversation_routes.insert(conv_id, route.clone());
         prune_conversation_routes(&mut conversation_routes);
 
         Some(snapshot)
@@ -736,41 +709,44 @@ impl ChannelRuntimeInner {
         })
     }
 
+    /// Sends `message` (each channel retries its parts, see
+    /// `delivery::send_step`) and records it in the channel history. The
+    /// message is borrowed mutably only so history can reference attachments
+    /// without copying their blobs.
     async fn try_send(
         &self,
-        channel: String,
-        mut message: SendMessage,
+        channel: &str,
+        message: &mut SendMessage,
         conversation: Option<u64>,
     ) -> Result<(), BoxError> {
-        if let Some(chan) = self.channels.get(&channel) {
-            send_message_with_retry(&channel, chan, &message, ChannelSendRetryPolicy::default())
-                .await?;
+        let chan = self
+            .channels
+            .get(channel)
+            .ok_or_else(|| format!("channel {channel} not found"))?;
+        chan.send(message).await?;
 
-            let timestamp = unix_ms();
-            let recorded = self
-                .messages
-                .add_from(&ChannelMessage {
-                    sender: chan.username().to_string(),
-                    reply_target: message.recipient,
-                    content: message.content,
-                    channel,
-                    timestamp,
-                    thread: message.thread,
-                    attachments: history_resources(&mut message.attachments),
-                    conversation,
-                    ..Default::default()
-                })
-                .await;
-            if let Err(err) = recorded {
-                log::error!(name = "channel"; "message delivered but history write failed: {err}");
-            } else if let Err(err) = self.messages.flush(timestamp).await {
-                log::error!(name = "channel"; "message delivered but history flush failed: {err}");
-            }
-
-            Ok(())
-        } else {
-            Err(format!("channel {} not found", channel).into())
+        let timestamp = unix_ms();
+        let recorded = self
+            .messages
+            .add_from(&ChannelMessage {
+                sender: chan.username().to_string(),
+                reply_target: message.recipient.clone(),
+                content: message.content.clone(),
+                channel: channel.to_string(),
+                timestamp,
+                thread: message.thread.clone(),
+                attachments: history_resources(&mut message.attachments),
+                conversation,
+                ..Default::default()
+            })
+            .await;
+        if let Err(err) = recorded {
+            log::error!(name = "channel"; "message delivered but history write failed: {err}");
+        } else if let Err(err) = self.messages.flush(timestamp).await {
+            log::error!(name = "channel"; "message delivered but history flush failed: {err}");
         }
+
+        Ok(())
     }
 }
 
@@ -811,11 +787,11 @@ impl ChannelSender {
     pub async fn send(
         &self,
         channel: &str,
-        message: SendMessage,
+        mut message: SendMessage,
         conversation: Option<u64>,
     ) -> Result<(), BoxError> {
         self.inner
-            .try_send(channel.to_string(), message, conversation)
+            .try_send(channel, &mut message, conversation)
             .await
     }
 
@@ -896,8 +872,7 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
                 let Some(route) = self.route_from_meta(&meta) else {
                     return;
                 };
-                if let Some(channels_conversation) = self.bind_conversation(route.clone(), conv_id)
-                {
+                if let Some(channels_conversation) = self.bind_conversation(&route, conv_id) {
                     self.messages.set_extension_from::<ChannelConversationMap>(
                         "channels_conversation".to_string(),
                         channels_conversation,
@@ -911,18 +886,11 @@ impl CompletionHook for Arc<ChannelRuntimeInner> {
         };
 
         let channel = route.channel.clone();
-        let msg = completion_message(&meta, output, route, stale);
+        let mut msg = completion_message(&meta, output, route, stale);
 
-        if let Err(err) = self
-            .try_send(channel.clone(), msg.clone(), Some(conv_id))
-            .await
-        {
+        if let Err(err) = self.try_send(&channel, &mut msg, Some(conv_id)).await {
             log::error!(name = "channel"; "failed to send message to channel {}: {err}", channel);
-            if self
-                .channels
-                .get(&channel)
-                .is_some_and(|chan| can_retry_delivery(chan, err.as_ref()))
-            {
+            if retryable_send_error(err.as_ref()) {
                 self.spawn_reply_retry(channel, msg, Some(conv_id));
             }
         }
@@ -1056,32 +1024,22 @@ async fn serve_channel_with_reconnect(
     cancel_token: CancellationToken,
     policy: ChannelReconnectPolicy,
 ) {
+    let channel_id = channel.id();
     let mut attempt = 0_u32;
 
     loop {
-        if cancel_token.is_cancelled() {
-            log::warn!(name = "channel"; "channel {} listener stopped", channel.name());
-            return;
-        }
-
-        if tx.is_closed() {
-            log::warn!(name = "channel"; "channel {} listener stopped because receiver is closed", channel.name());
-            return;
-        }
-
         let started_at = Instant::now();
         let result = tokio::select! {
-            _ = cancel_token.cancelled() => return,
-            result = channel.listen(cancel_token.clone(), tx.clone()) => result,
+            _ = cancel_token.cancelled() => None,
+            result = channel.listen(cancel_token.clone(), tx.clone()) => Some(result),
         };
 
         if cancel_token.is_cancelled() {
-            log::warn!(name = "channel"; "channel {} listener stopped", channel.name());
+            log::warn!(name = "channel"; "channel {channel_id} listener stopped");
             return;
         }
-
         if tx.is_closed() {
-            log::warn!(name = "channel"; "channel {} listener stopped because receiver is closed", channel.name());
+            log::warn!(name = "channel"; "channel {channel_id} listener stopped because receiver is closed");
             return;
         }
 
@@ -1092,74 +1050,20 @@ async fn serve_channel_with_reconnect(
         let delay = policy.delay_for_attempt(attempt);
 
         match result {
-            Ok(()) => {
-                log::warn!(name = "channel"; "channel {} listener exited unexpectedly, reconnecting in {:?}", channel.name(), delay);
+            Some(Err(err)) => {
+                log::error!(name = "channel"; "channel {channel_id} failed with error: {err}; reconnecting in {delay:?}");
             }
-            Err(err) => {
-                log::error!(name = "channel"; "channel {} failed with error: {err}; reconnecting in {:?}", channel.name(), delay);
+            _ => {
+                log::warn!(name = "channel"; "channel {channel_id} listener exited unexpectedly, reconnecting in {delay:?}");
             }
         }
 
         tokio::select! {
             _ = cancel_token.cancelled() => {
-                log::warn!(name = "channel"; "channel {} reconnect loop cancelled", channel.name());
+                log::warn!(name = "channel"; "channel {channel_id} reconnect loop cancelled");
                 return;
             }
             _ = tokio::time::sleep(delay) => {}
-        }
-    }
-}
-
-fn can_retry_delivery(
-    channel: &Arc<dyn Channel>,
-    error: &(dyn std::error::Error + Send + Sync + 'static),
-) -> bool {
-    if error.is::<SendFailure>()
-        || error.is::<reqwest::Error>()
-        || error.is::<weixin_agent::Error>()
-    {
-        retryable_send_error(error)
-    } else {
-        channel.should_retry_send(&error.to_string())
-    }
-}
-
-async fn send_message_with_retry(
-    channel_key: &str,
-    channel: &Arc<dyn Channel>,
-    message: &SendMessage,
-    policy: ChannelSendRetryPolicy,
-) -> Result<(), BoxError> {
-    let mut attempt = 0_u32;
-
-    loop {
-        attempt = attempt.saturating_add(1);
-
-        match channel.send(message).await {
-            Ok(()) => return Ok(()),
-            Err(err) => {
-                let error_text = err.to_string();
-                let retryable = can_retry_delivery(channel, err.as_ref())
-                    && !err
-                        .downcast_ref::<SendFailure>()
-                        .is_some_and(|err| err.exhausted);
-
-                if !retryable || attempt >= policy.max_attempts {
-                    return Err(err);
-                }
-
-                let delay = policy.delay_for_attempt(attempt);
-                log::warn!(
-                    name = "channel";
-                    "retrying send to channel {} after transient error: {} (attempt {}/{}, in {:?})",
-                    channel_key,
-                    error_text,
-                    attempt,
-                    policy.max_attempts,
-                    delay,
-                );
-                tokio::time::sleep(delay).await;
-            }
         }
     }
 }
@@ -1176,11 +1080,8 @@ mod tests {
         id: String,
         username: String,
         fail_send: bool,
-        transient_send_failures: AsyncMutex<usize>,
-        retryable_send_errors: bool,
         fail_listen_times: usize,
         listen_attempts: AtomicUsize,
-        send_attempts: AtomicUsize,
         listen_ready: Notify,
         sent_messages: AsyncMutex<Vec<SendMessage>>,
     }
@@ -1191,24 +1092,11 @@ mod tests {
                 id: id.into(),
                 username: "anda-bot".to_string(),
                 fail_send,
-                transient_send_failures: AsyncMutex::new(0),
-                retryable_send_errors: false,
                 fail_listen_times: 0,
                 listen_attempts: AtomicUsize::new(0),
-                send_attempts: AtomicUsize::new(0),
                 listen_ready: Notify::new(),
                 sent_messages: AsyncMutex::new(Vec::new()),
             }
-        }
-
-        fn with_transient_send_failures(
-            mut self,
-            transient_send_failures: usize,
-            retryable_send_errors: bool,
-        ) -> Self {
-            self.transient_send_failures = AsyncMutex::new(transient_send_failures);
-            self.retryable_send_errors = retryable_send_errors;
-            self
         }
 
         fn with_listen_failures(mut self, fail_listen_times: usize) -> Self {
@@ -1224,10 +1112,6 @@ mod tests {
             self.listen_attempts.load(Ordering::SeqCst)
         }
 
-        fn send_attempts(&self) -> usize {
-            self.send_attempts.load(Ordering::SeqCst)
-        }
-
         async fn wait_until_listening(&self) {
             self.listen_ready.notified().await;
         }
@@ -1235,10 +1119,6 @@ mod tests {
 
     #[async_trait]
     impl Channel for TestChannel {
-        fn name(&self) -> &str {
-            "test"
-        }
-
         fn username(&self) -> &str {
             &self.username
         }
@@ -1248,24 +1128,12 @@ mod tests {
         }
 
         async fn send(&self, message: &SendMessage) -> Result<(), BoxError> {
-            self.send_attempts.fetch_add(1, Ordering::SeqCst);
-
             if self.fail_send {
                 return Err("send failed".into());
             }
 
-            let mut transient_send_failures = self.transient_send_failures.lock().await;
-            if *transient_send_failures > 0 {
-                *transient_send_failures -= 1;
-                return Err("transient send failed".into());
-            }
-
             self.sent_messages.lock().await.push(message.clone());
             Ok(())
-        }
-
-        fn should_retry_send(&self, error: &str) -> bool {
-            self.retryable_send_errors && error.contains("transient send failed")
         }
 
         async fn listen(
@@ -1466,7 +1334,7 @@ mod tests {
             thread: Some("thread-1".to_string()),
         };
 
-        let snapshot = runtime.inner.bind_conversation(route.clone(), 42).unwrap();
+        let snapshot = runtime.inner.bind_conversation(&route, 42).unwrap();
 
         assert_eq!(
             snapshot.get(&(
@@ -1502,8 +1370,8 @@ mod tests {
             thread: Some("thread-1".to_string()),
         };
 
-        runtime.inner.bind_conversation(route.clone(), 42).unwrap();
-        runtime.inner.bind_conversation(route.clone(), 99).unwrap();
+        runtime.inner.bind_conversation(&route, 42).unwrap();
+        runtime.inner.bind_conversation(&route, 99).unwrap();
 
         assert_eq!(
             runtime.inner.current_conversation_for_route(&route),
@@ -1522,7 +1390,7 @@ mod tests {
             thread: None,
         };
 
-        runtime.inner.bind_conversation(route.clone(), 42).unwrap();
+        runtime.inner.bind_conversation(&route, 42).unwrap();
         let snapshot = runtime.inner.clear_route_conversation(&route).unwrap();
 
         assert!(!snapshot.contains_key(&route.key()));
@@ -1767,29 +1635,130 @@ mod tests {
 
         let err = runtime
             .inner
-            .try_send(channel.id(), SendMessage::new("hello", "#anda"), Some(42))
+            .try_send(
+                &channel.id(),
+                &mut SendMessage::new("hello", "#anda"),
+                Some(42),
+            )
             .await
             .unwrap_err();
 
         assert!(err.to_string().contains("send failed"));
         assert!(channel.sent_messages().await.is_empty());
+        // A plain channel error is permanent: no deferred retry.
+        assert!(!retryable_send_error(err.as_ref()));
+    }
+
+    struct ScriptedAgent;
+
+    impl anda_core::Agent<AgentCtx> for ScriptedAgent {
+        fn name(&self) -> String {
+            "scripted_agent".to_string()
+        }
+
+        fn description(&self) -> String {
+            "Fails on request, otherwise answers inline".to_string()
+        }
+
+        async fn run(
+            &self,
+            _ctx: AgentCtx,
+            prompt: String,
+            _resources: Vec<anda_core::Resource>,
+        ) -> Result<AgentOutput, BoxError> {
+            if prompt.contains("fail") {
+                return Err("/goal requires a prompt".into());
+            }
+            // Like `/side` on a route without a conversation.
+            Ok(AgentOutput {
+                content: format!("side: {prompt}"),
+                ..Default::default()
+            })
+        }
+    }
+
+    async fn scripted_engine(runtime: &ChannelRuntime) -> Arc<Engine> {
+        use anda_engine::{
+            engine::AgentInfo,
+            management::{BaseManagement, Visibility},
+        };
+
+        let engine = Arc::new(
+            Engine::builder()
+                .with_info(AgentInfo {
+                    handle: "channel_test".to_string(),
+                    name: "Channel Test Engine".to_string(),
+                    description: "Test engine".to_string(),
+                    endpoint: "https://example.com/engine".to_string(),
+                    ..Default::default()
+                })
+                .with_management(Arc::new(BaseManagement {
+                    controller: Principal::management_canister(),
+                    managers: Default::default(),
+                    visibility: Visibility::Public,
+                }))
+                .register_agent(Arc::new(ScriptedAgent), None)
+                .unwrap()
+                .build("scripted_agent".to_string())
+                .await
+                .unwrap(),
+        );
+        runtime.inner.engine.bind(Arc::downgrade(&engine));
+        engine
     }
 
     #[tokio::test]
-    async fn try_send_retries_transient_send_failures() {
-        let channel = Arc::new(
-            TestChannel::new("test:retry-send", false).with_transient_send_failures(2, true),
-        );
+    async fn agent_errors_reach_trusted_users_only() {
+        let channel = Arc::new(TestChannel::new("test:errors", false));
         let runtime = test_runtime(channel.clone()).await;
+        let _engine = scripted_engine(&runtime).await;
+
+        for external_user in [None, Some(true)] {
+            runtime
+                .inner
+                .process_incoming_message(ChannelMessage {
+                    channel: channel.id(),
+                    sender: "alice".into(),
+                    reply_target: "room-1".into(),
+                    thread: Some("topic-1".into()),
+                    external_user,
+                    content: "please fail".into(),
+                    ..Default::default()
+                })
+                .await;
+        }
+
+        let sent = channel.sent_messages().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].content, "/goal requires a prompt");
+        assert_eq!(sent[0].recipient, "room-1");
+        assert_eq!(sent[0].thread.as_deref(), Some("topic-1"));
+    }
+
+    #[tokio::test]
+    async fn inline_output_without_conversation_is_delivered() {
+        let channel = Arc::new(TestChannel::new("test:inline", false));
+        let runtime = test_runtime(channel.clone()).await;
+        let _engine = scripted_engine(&runtime).await;
 
         runtime
             .inner
-            .try_send(channel.id(), SendMessage::new("hello", "#anda"), Some(42))
-            .await
-            .unwrap();
+            .process_incoming_message(ChannelMessage {
+                channel: channel.id(),
+                sender: "alice".into(),
+                reply_target: "room-2".into(),
+                thread: Some("topic-2".into()),
+                content: "/side hello".into(),
+                ..Default::default()
+            })
+            .await;
 
-        assert_eq!(channel.send_attempts(), 3);
-        assert_eq!(channel.sent_messages().await.len(), 1);
+        let sent = channel.sent_messages().await;
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].content.starts_with("side: "));
+        assert_eq!(sent[0].recipient, "room-2");
+        assert_eq!(sent[0].thread.as_deref(), Some("topic-2"));
+        assert!(runtime.inner.channels_conversation.read().is_empty());
     }
 
     #[tokio::test]
@@ -2007,7 +1976,7 @@ mod tests {
         let channel = Arc::new(TestChannel::new("test:artifact", false));
         let runtime = test_runtime(channel.clone()).await;
         runtime.inner.bind_conversation(
-            ChannelRoute {
+            &ChannelRoute {
                 channel: channel.id(),
                 reply_target: "alice".into(),
                 thread: Some("topic".into()),

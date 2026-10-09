@@ -456,9 +456,7 @@ impl Daemon {
         // Start channel listeners only after gateway::serve returned, which
         // guarantees the engine is built and bound: IM messages that arrive
         // before the engine is ready would be acked upstream and then dropped.
-        let channel_handle = channel_runtime
-            .serve(global_cancel_token.child_token())
-            .await?;
+        let channel_handle = channel_runtime.serve(global_cancel_token.child_token());
 
         // shutdown_signal only completes on an OS signal; joining it would
         // keep the process alive forever after an HTTP-triggered shutdown.
