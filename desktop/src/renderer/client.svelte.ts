@@ -183,6 +183,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.preferences = bootstrap.preferences
     this.platform = bootstrap.platform
     document.documentElement.dataset.platform = bootstrap.platform
+    document.documentElement.toggleAttribute('data-fullscreen', bootstrap.fullScreen)
     this.connection = bootstrap.daemon
     const setupStorage = await window.anda.storageGet([this.modelSetupStorageKey])
     this.modelSetupAcknowledged = setupStorage[this.modelSetupStorageKey] === true
@@ -225,6 +226,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         this.updateStatus = event.value as UpdateStatus
       } else if (event.type === 'preferences') {
         this.preferences = event.value as Preferences
+      } else if (event.type === 'fullscreen') {
+        document.documentElement.toggleAttribute('data-fullscreen', event.value === true)
       } else if (event.type === 'state') {
         this.eventRevision++
         for (const channel of this.channels.values()) channel.wakePolling()

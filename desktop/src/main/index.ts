@@ -404,7 +404,10 @@ function createWindow(): void {
   })
   const mainWindow = window
   let leavingFullScreenForClose = false
+  // Full screen hides the window buttons, so the renderer gives back their room.
+  mainWindow.on('enter-full-screen', () => emit({ type: 'fullscreen', value: true }))
   mainWindow.on('leave-full-screen', () => {
+    emit({ type: 'fullscreen', value: false })
     leavingFullScreenForClose = false
     if (!hideAfterFullScreen) return
     hideAfterFullScreen = false
@@ -560,7 +563,8 @@ async function bootstrap(): Promise<Bootstrap> {
     version: app.getVersion(),
     pending: store.state.pending,
     update: updater.status,
-    updateRequested
+    updateRequested,
+    fullScreen: window?.isFullScreen() ?? false
   }
 }
 

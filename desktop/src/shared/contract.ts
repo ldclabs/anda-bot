@@ -73,6 +73,7 @@ export interface Bootstrap {
   pending: PendingSubmission[]
   update: UpdateStatus | null
   updateRequested: boolean
+  fullScreen: boolean
 }
 export interface UpdateStatus {
   phase: 'running' | 'complete' | 'error'
@@ -98,6 +99,7 @@ export interface NativeEvent {
     | 'terminal'
     | 'browser'
     | 'preferences'
+    | 'fullscreen'
   value?: unknown
 }
 export interface DesktopBridge {

@@ -168,8 +168,9 @@ kbd {
   padding-inline-start: 4px;
   -webkit-app-region: drag;
 }
-/* macOS keeps its window buttons at the physical top-left. */
-:root[data-platform='darwin']:not([dir='rtl']) .sidebar-titlebar {
+/* macOS keeps its window buttons at the physical top-left, except in full
+   screen, which hides them. */
+:root[data-platform='darwin']:not([dir='rtl']):not([data-fullscreen]) .sidebar-titlebar {
   padding-inline-start: 72px;
 }
 .sidebar-search {
@@ -524,13 +525,13 @@ kbd {
   -webkit-app-region: no-drag;
 }
 /* With the sidebar collapsed the header starts under macOS's window buttons. */
-:root[data-platform='darwin'] .sidebar-collapsed .workspace-header {
+:root[data-platform='darwin']:not([data-fullscreen]) .sidebar-collapsed .workspace-header {
   padding-left: 78px;
 }
 /* macOS keeps its window buttons at the top-left when the app reads right to
    left, where the main column or an open side panel now begins. */
-:root[data-platform='darwin'][dir='rtl'] .workspace-header,
-:root[data-platform='darwin'][dir='rtl'] .resource-panel > header {
+:root[data-platform='darwin'][dir='rtl']:not([data-fullscreen]) .workspace-header,
+:root[data-platform='darwin'][dir='rtl']:not([data-fullscreen]) .resource-panel > header {
   padding-left: 92px;
 }
 /* Windows draws its caption buttons over the top-right corner. */
