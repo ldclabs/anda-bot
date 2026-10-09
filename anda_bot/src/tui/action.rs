@@ -151,19 +151,11 @@ impl TuiAction {
     }
 
     pub(super) fn display_title(&self) -> String {
-        if self.is_shell_approval()
-            && self
-                .title
-                .as_deref()
-                .is_none_or(|title| title == "Approve shell command")
-        {
-            return "Approve shell command".to_string();
+        match &self.title {
+            Some(title) => title.clone(),
+            None if self.is_shell_approval() => "Approve shell command".to_string(),
+            None => self.kind_label(),
         }
-
-        self.title
-            .clone()
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| self.kind_label())
     }
 
     /// Footer hint for a pending action.
@@ -290,29 +282,24 @@ impl TuiAction {
     }
 
     fn tool_label(&self) -> String {
-        if self.is_shell_approval() {
-            return "Shell command".to_string();
-        }
         self.tool
             .as_ref()
-            .and_then(|tool| tool.label.clone().or_else(|| Some(tool.name.clone())))
+            .map(|tool| tool.label.clone().unwrap_or_else(|| tool.name.clone()))
             .unwrap_or_else(|| "tool".to_string())
     }
 
     fn is_shell_approval(&self) -> bool {
-        let tool = self
-            .tool
-            .as_ref()
-            .map(|tool| tool.name.to_ascii_lowercase())
-            .unwrap_or_default();
-        self.kind.as_deref() == Some("shell_command") || tool == "shell" || tool.contains("shell")
+        self.kind.as_deref() == Some("shell_command")
+            || self
+                .tool
+                .as_ref()
+                .is_some_and(|tool| tool.name.to_ascii_lowercase().contains("shell"))
     }
 
     fn approve_label(&self) -> String {
         self.approval
             .as_ref()
             .and_then(|approval| approval.approve_label.clone())
-            .filter(|label| label != "Approve")
             .unwrap_or_else(|| "Approve".to_string())
     }
 
@@ -320,20 +307,7 @@ impl TuiAction {
         self.approval
             .as_ref()
             .and_then(|approval| approval.deny_label.clone())
-            .filter(|label| label != "Deny")
             .unwrap_or_else(|| "Deny".to_string())
-    }
-
-    fn status_label(&self) -> String {
-        match self.status.as_str() {
-            "pending" => "pending".to_string(),
-            "approved" => "approved".to_string(),
-            "denied" => "denied".to_string(),
-            "selected" => "selected".to_string(),
-            "expired" => "expired".to_string(),
-            other if !other.is_empty() => other.to_string(),
-            _ => "unknown".to_string(),
-        }
     }
 
     fn response_label(&self) -> Option<String> {
@@ -402,27 +376,27 @@ pub(super) fn action_state_snapshot(messages: &[Message]) -> Vec<TuiActionState>
         .collect()
 }
 
+/// A footer line with the `ACTION` badge and a hint truncated to `width`.
+pub(super) fn action_line(text: &str, width: usize) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("ACTION ", theme::accent_style()),
+        Span::styled(
+            truncate_visual(text, width.saturating_sub(7)),
+            theme::dim_style(),
+        ),
+    ])
+}
+
 pub(super) fn action_footer_line(
     action: &TuiAction,
     width: usize,
     hotkeys_live: bool,
 ) -> Option<Line<'static>> {
-    let text = action.footer_text(hotkeys_live)?;
-    Some(Line::from(vec![
-        Span::styled("ACTION ", theme::accent_style()),
-        Span::styled(
-            truncate_visual(&text, width.saturating_sub(7)),
-            theme::subtle_style(),
-        ),
-    ]))
+    Some(action_line(&action.footer_text(hotkeys_live)?, width))
 }
 
 pub(super) fn action_transcript_text(action: &TuiAction) -> String {
-    let mut lines = vec![format!(
-        "⚡ {} · {}",
-        action.display_title(),
-        action.status_label()
-    )];
+    let mut lines = vec![format!("⚡ {} · {}", action.display_title(), action.status)];
     if let Some(response) = action.response_label() {
         lines[0].push_str(" · ");
         lines[0].push_str(&response);

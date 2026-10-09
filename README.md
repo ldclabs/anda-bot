@@ -188,7 +188,7 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
-Input preserves spaces in text and code. Cursor movement and deletion treat combined emoji as one character. Status checks, conversation polling and Brain requests run in the background, so slow responses leave the UI responsive and Ctrl+C available. Opening the UI preserves existing terminal scrollback.
+Input preserves spaces in text and code. Cursor movement and deletion treat combined emoji as one character. Status checks, conversation polling and Brain requests run in the background, so slow responses leave the UI responsive and Ctrl+C available. Opening the UI preserves existing terminal scrollback. `/new` clears the screen and scrollback for the new conversation. Reconnecting keeps your draft, and replaces the transcript only when it restores an active conversation.
 
 ### Command Approvals
 

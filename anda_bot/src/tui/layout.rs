@@ -1,9 +1,9 @@
 use ratatui::layout::Rect;
 
 use super::{
-    App, STATUS_FOOTER_MAX_LINES,
+    App,
     input::{input_height, input_placeholder, input_viewport, split_input_area},
-    status::status_footer_lines,
+    status::{STATUS_FOOTER_MAX_LINES, status_footer_lines},
     widgets::Banner,
 };
 
@@ -28,15 +28,23 @@ pub(super) fn input_navigation_content_width(app: &App, area: Rect) -> u16 {
     let (_, _, viewport) = input_viewport(app, placeholder, prompt_area);
     viewport.content_width.max(1)
 }
+
 pub(super) fn dynamic_layout_heights(app: &App, area: Rect) -> (u16, u16) {
+    layout_heights(
+        app,
+        area,
+        status_footer_lines(app, area.width as usize).len(),
+    )
+}
+
+/// Splits `area` between the composer and a status footer of `footer_lines`.
+pub(super) fn layout_heights(app: &App, area: Rect, footer_lines: usize) -> (u16, u16) {
     if area.width == 0 || area.height == 0 {
         return (0, 0);
     }
 
     let input = input_height(app, area).min(area.height);
-    let status =
-        status_footer_height(app, area.width as usize).min(area.height.saturating_sub(input));
-
+    let status = status_footer_height(footer_lines).min(area.height - input);
     (input, status)
 }
 
@@ -44,49 +52,18 @@ pub(super) fn dynamic_layout_heights(app: &App, area: Rect) -> (u16, u16) {
 /// static panel and messages are written above the viewport once via
 /// `insert_before`, so they can naturally become shell scrollback.
 pub(super) fn dynamic_viewport_height(app: &App, term_w: u16, term_h: u16) -> u16 {
-    let term_h = term_h.max(1);
-    if term_w == 0 {
-        return term_h;
-    }
-
-    let full = Rect {
-        x: 0,
-        y: 0,
-        width: term_w,
-        height: term_h,
-    };
-    let input = input_height(app, full).min(term_h);
-    let status = status_footer_height(app, term_w as usize).min(term_h.saturating_sub(input));
-
-    (input + status).clamp(1, term_h)
+    let (input, status) = dynamic_layout_heights(app, Rect::new(0, 0, term_w, term_h.max(1)));
+    (input + status).max(1)
 }
 
-pub(super) fn status_panel_height(_app: &App, area: Rect) -> u16 {
-    if area.width == 0 || area.height == 0 {
-        return 0;
-    }
-
-    let desired = 1 + Banner::height();
-    desired.min(area.height)
+/// The banner plus its header line, written once into scrollback.
+pub(super) fn static_panel_height() -> u16 {
+    Banner::height() + 1
 }
 
-pub(super) fn static_panel_height(app: &App, width: u16) -> u16 {
-    status_panel_height(
-        app,
-        Rect {
-            x: 0,
-            y: 0,
-            width,
-            height: u16::MAX,
-        },
-    )
-}
-
-pub(super) fn status_footer_height(app: &App, width: usize) -> u16 {
-    status_footer_lines(app, width)
-        .len()
-        .clamp(1, STATUS_FOOTER_MAX_LINES)
-        .saturating_add(1) as u16
+/// Footer lines plus the divider row above them.
+pub(super) fn status_footer_height(footer_lines: usize) -> u16 {
+    footer_lines.clamp(1, STATUS_FOOTER_MAX_LINES) as u16 + 1
 }
 
 pub(super) fn status_footer_panel(area: Rect) -> Rect {

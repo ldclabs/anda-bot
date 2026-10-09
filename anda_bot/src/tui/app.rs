@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     auto_update::AutoUpdateState,
+    brain::AttentionPage,
     config::Config,
     daemon::{Daemon, LaunchState, process_exists},
     gateway,
@@ -15,7 +16,7 @@ use super::{
     action::{
         ACTION_RESPONSE_TIMEOUT, ActionApiOutput, TuiAction, TuiActionAnswer, TuiActionChoice,
         TuiActionChoiceDraft, TuiActionResponseRequest, TuiActionState, action_footer_line,
-        action_response_notice, action_state_snapshot, active_pending_action,
+        action_line, action_response_notice, action_state_snapshot, active_pending_action,
         apply_action_response_to_message_value, apply_action_response_to_messages,
     },
     input::{
@@ -23,10 +24,21 @@ use super::{
         input_newline_key, next_cursor, previous_cursor,
     },
     text::normalize_newlines,
+    transcript::NOTICE_ROLE,
 };
 
 type ActionResponseResult = Result<ActionApiOutput, String>;
 type StatusResult = Result<(Option<u32>, bool), String>;
+type MemoryResult = Result<MemoryReply, String>;
+
+const DAEMON_LOST_NOTICE: &str = "Daemon connection lost. Press Enter to reconnect.";
+
+/// Output of a `/memory` or `/brain` command.
+pub(super) enum MemoryReply {
+    Text(String),
+    /// An inbox page; its item numbers address `/memory answer`.
+    Inbox(AttentionPage),
+}
 
 #[derive(Default)]
 pub(super) struct SetupState {
@@ -59,16 +71,14 @@ pub(super) struct App {
     pub(super) pending_scrollback_purge: bool,
     pub(super) input_focused: bool,
     pub(super) pending_update_check: Option<oneshot::Receiver<Result<AutoUpdateState, String>>>,
-    pub(super) pending_memory: Option<oneshot::Receiver<Result<String, String>>>,
-    pub(super) pending_memory_inbox:
-        Option<oneshot::Receiver<Result<crate::brain::AttentionPage, String>>>,
-    pub(super) memory_inbox: Option<crate::brain::AttentionPage>,
+    pub(super) pending_memory: Option<oneshot::Receiver<MemoryResult>>,
+    pub(super) memory_inbox: Option<AttentionPage>,
     pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
     pub(super) choice_input: Option<TuiActionChoiceDraft>,
     pub(super) full_access: bool,
     pub(super) input_layouts: RefCell<InputLayouts>,
     pending_bootstrap: Option<oneshot::Receiver<Box<App>>>,
-    pending_status: Option<oneshot::Receiver<StatusResult>>,
+    pub(super) pending_status: Option<oneshot::Receiver<StatusResult>>,
     pending_chatgpt: Option<oneshot::Receiver<Result<(), String>>>,
     actions_key: (u64, usize),
     action_states: Vec<TuiActionState>,
@@ -102,7 +112,6 @@ impl App {
             input_focused: true,
             pending_update_check: None,
             pending_memory: None,
-            pending_memory_inbox: None,
             memory_inbox: None,
             pending_action_response: None,
             choice_input: None,
@@ -140,23 +149,6 @@ impl App {
         self.setup.is_ready() && self.daemon_running && self.pending_bootstrap.is_none()
     }
 
-    pub(super) fn rebind_client(&mut self) {
-        let client = self.client.rebased(self.runtime_cfg.base_url());
-        self.client = client.clone();
-        self.chat = gateway::ChatSession::new(client).with_full_access(self.full_access);
-        self.clear_input();
-        self.choice_input = None;
-        self.pending_action_response = None;
-        // An initial bind has no transcript to replace. In particular it must
-        // not purge the shell's scrollback before this TUI has written anything.
-        if self.flushed_message_count > 0 {
-            self.clear_message_view();
-        }
-        self.action_states.clear();
-        self.active_action = None;
-        self.actions_key = (self.chat.revision(), 0);
-    }
-
     pub(super) fn clear_message_view(&mut self) {
         self.flushed_message_count = 0;
         self.static_panel_flushed = false;
@@ -192,22 +184,23 @@ impl App {
             return;
         }
 
+        self.input_focused = true;
         self.insert_input_text(&normalize_newlines(&text));
     }
 
-    pub(super) async fn submit_input(&mut self) -> Result<(), BoxError> {
+    pub(super) fn submit_input(&mut self) {
         if self.chat.sending {
-            return Ok(());
+            return;
         }
 
         if self.choice_input.is_some() {
             self.submit_choice_input();
-            return Ok(());
+            return;
         }
 
         let text = self.input_buf.trim().to_string();
         if text.is_empty() {
-            return Ok(());
+            return;
         }
 
         // A stray keystroke puts text in the composer, which routes the
@@ -219,164 +212,17 @@ impl App {
         {
             self.clear_input();
             self.answer_action(&action, answer);
-            return Ok(());
+            return;
         }
 
         if text == "/reload" {
+            self.clear_input();
             self.start_bootstrap();
-            return Ok(());
+            return;
         }
 
-        if text == "/memory inbox" || text == "/memory next" {
-            let cursor = if text == "/memory next" {
-                self.memory_inbox
-                    .as_ref()
-                    .and_then(|page| page.next_cursor.clone())
-            } else {
-                None
-            };
-            if text == "/memory next" && cursor.is_none() {
-                self.notice = "No next inbox page / 没有下一页".into();
-                return Ok(());
-            }
-            if self.pending_memory_inbox.is_none() {
-                let client = self.client.clone();
-                let (tx, rx) = oneshot::channel();
-                tokio::spawn(async move {
-                    let result = client
-                        .brain()
-                        .attention(&crate::brain::AttentionQuery {
-                            cursor,
-                            limit: Some(20),
-                        })
-                        .await
-                        .map_err(|error| error.to_string());
-                    let _ = tx.send(result);
-                });
-                self.pending_memory_inbox = Some(rx);
-                self.notice = "Reading inbox / 正在读取待办".into();
-            }
-            self.clear_input();
-            return Ok(());
-        }
-        if let Some(answer) = text
-            .strip_prefix("/memory answer ")
-            .or_else(|| text.strip_prefix("/memory retry "))
-        {
-            let retry = text.starts_with("/memory retry ");
-            let Some((number, answer)) = (if retry {
-                Some((answer, ""))
-            } else {
-                answer.split_once(' ')
-            }) else {
-                self.notice = "/memory answer <number> <text>".into();
-                return Ok(());
-            };
-            let item = number
-                .parse::<usize>()
-                .ok()
-                .and_then(|n| n.checked_sub(1))
-                .and_then(|n| {
-                    self.memory_inbox
-                        .as_ref()
-                        .and_then(|page| page.items.get(n))
-                })
-                .cloned();
-            let Some(item) = item else {
-                self.notice =
-                    "Open /memory inbox and select a visible item number / 请先查看待办编号".into();
-                return Ok(());
-            };
-            if self.pending_memory.is_none() {
-                let client = self.client.clone();
-                let home = self.home.clone();
-                let text = answer.to_string();
-                let (tx, rx) = oneshot::channel();
-                tokio::spawn(async move {
-                    let result = if retry {
-                        crate::brain::outbox::retry(&client, &home, &item).await
-                    } else {
-                        crate::brain::outbox::reply(&client, &home, &item, text).await
-                    }
-                    .map(|receipt| format!("{}\n/memory inbox", receipt.status))
-                    .map_err(|error| error.to_string());
-                    let _ = tx.send(result);
-                });
-                self.pending_memory = Some(rx);
-                self.notice = "Sending answer / 正在提交回答".into();
-            }
-            self.clear_input();
-            return Ok(());
-        }
-
-        if text == "/brain" || text == "/memory" || text.starts_with("/memory ") {
-            self.clear_input();
-            if text == "/memory help" || text == "/memory guide" {
-                self.append_memory_output(crate::brain::product::MEMORY_GUIDE.into());
-            } else if text == "/brain"
-                || text == "/memory"
-                || text == "/memory status"
-                || text == "/memory activity"
-            {
-                if self.pending_memory.is_none() {
-                    let client = self.client.clone();
-                    let (tx, rx) = oneshot::channel();
-                    let conversation = self.chat.conversation.as_ref().map(|c| c._id.to_string());
-                    tokio::spawn(async move {
-                        if text == "/memory activity" {
-                            let result = match conversation {
-                                Some(conversation) => client
-                                    .memory_activity(&crate::brain::activity::ActivityQuery {
-                                        conversation: Some(conversation),
-                                        cursor: None,
-                                        limit: Some(20),
-                                    })
-                                    .await
-                                    .map(|p| p.render())
-                                    .map_err(|e| e.to_string()),
-                                None => Ok("No current conversation / 当前还没有对话记录".into()),
-                            };
-                            let _ = tx.send(result);
-                            return;
-                        }
-                        let _ = tx.send(
-                            client
-                                .memory_overview()
-                                .await
-                                .map(|v| v.render())
-                                .map_err(|e| e.to_string()),
-                        );
-                    });
-                    self.pending_memory = Some(rx);
-                    self.notice = "Checking memory… / 正在检查记忆…".into();
-                }
-            } else {
-                self.notice = "Use /memory, /memory status or /memory help".into();
-            }
-            return Ok(());
-        }
-
-        if text.starts_with("/brain ") {
-            if self.pending_memory.is_some() {
-                self.notice = "A memory request is already running.".into();
-                return Ok(());
-            }
-            let client = self.client.clone();
-            let (tx, rx) = oneshot::channel();
-            tokio::spawn(async move {
-                let result = tokio::time::timeout(
-                    ACTION_RESPONSE_TIMEOUT,
-                    Self::brain_command(client, &text),
-                )
-                .await
-                .map_err(|_| "Brain request timed out.".to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
-                let _ = tx.send(result);
-            });
-            self.pending_memory = Some(rx);
-            self.clear_input();
-            self.notice = "Reading Brain…".into();
-            return Ok(());
+        if self.submit_memory_command(&text) {
+            return;
         }
 
         let resets_display = gateway::is_new_conversation_command(&text);
@@ -387,8 +233,139 @@ impl App {
         if resets_display {
             self.clear_message_view();
         }
+    }
 
-        Ok(())
+    /// Runs `/memory` and `/brain` commands locally; false for other text.
+    /// The input stays when nothing starts, so it can be fixed or resent.
+    fn submit_memory_command(&mut self, text: &str) -> bool {
+        let is_command = |name: &str| {
+            text.strip_prefix(name)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+        };
+        if !is_command("/memory") && !is_command("/brain") {
+            return false;
+        }
+
+        if matches!(text, "/memory help" | "/memory guide") {
+            self.clear_input();
+            self.append_notice_message(crate::brain::product::MEMORY_GUIDE.into());
+            return true;
+        }
+        if self.pending_memory.is_some() {
+            self.notice = "A memory request is already running. / 记忆请求仍在进行".into();
+            return true;
+        }
+        match self.start_memory_request(text) {
+            Ok(notice) => {
+                self.clear_input();
+                self.notice = notice.into();
+            }
+            Err(hint) => self.notice = hint.into(),
+        }
+        true
+    }
+
+    /// Starts the request behind a memory command. Returns its progress
+    /// notice, or a hint when the command cannot run.
+    fn start_memory_request(&mut self, text: &str) -> Result<&'static str, &'static str> {
+        let client = self.client.clone();
+        let (notice, task) = if text.starts_with("/brain ") {
+            let text = text.to_string();
+            let task = spawn_task(async move {
+                tokio::time::timeout(ACTION_RESPONSE_TIMEOUT, Self::brain_command(client, &text))
+                    .await
+                    .map_err(|_| "Brain request timed out.".to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()))
+                    .map(MemoryReply::Text)
+            });
+            ("Reading Brain…", task)
+        } else if matches!(text, "/memory inbox" | "/memory next") {
+            let cursor = if text == "/memory next" {
+                let page = self.memory_inbox.as_ref();
+                Some(
+                    page.and_then(|page| page.next_cursor.clone())
+                        .ok_or("No next inbox page / 没有下一页")?,
+                )
+            } else {
+                None
+            };
+            // The numbers of a page that failed to load must not be answered.
+            self.memory_inbox = None;
+            let task = spawn_task(async move {
+                client
+                    .brain()
+                    .attention(&crate::brain::AttentionQuery {
+                        cursor,
+                        limit: Some(20),
+                    })
+                    .await
+                    .map(MemoryReply::Inbox)
+                    .map_err(|error| error.to_string())
+            });
+            ("Reading inbox / 正在读取待办", task)
+        } else if matches!(text, "/brain" | "/memory" | "/memory status") {
+            let task = spawn_task(async move {
+                client
+                    .memory_overview()
+                    .await
+                    .map(|overview| MemoryReply::Text(overview.render()))
+                    .map_err(|error| error.to_string())
+            });
+            ("Checking memory… / 正在检查记忆…", task)
+        } else if text == "/memory activity" {
+            let conversation = self
+                .chat
+                .conversation
+                .as_ref()
+                .map(|conversation| conversation._id.to_string())
+                .ok_or("No current conversation / 当前还没有对话记录")?;
+            let task = spawn_task(async move {
+                client
+                    .memory_activity(&crate::brain::activity::ActivityQuery {
+                        conversation: Some(conversation),
+                        cursor: None,
+                        limit: Some(20),
+                    })
+                    .await
+                    .map(|page| MemoryReply::Text(page.render()))
+                    .map_err(|error| error.to_string())
+            });
+            ("Checking memory… / 正在检查记忆…", task)
+        } else if let Some((retry, args)) = text
+            .strip_prefix("/memory answer ")
+            .map(|args| (false, args))
+            .or_else(|| text.strip_prefix("/memory retry ").map(|args| (true, args)))
+        {
+            let (number, answer) = if retry {
+                (args, "")
+            } else {
+                args.split_once(' ')
+                    .ok_or("/memory answer <number> <text>")?
+            };
+            let item = number
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| n.checked_sub(1))
+                .and_then(|n| self.memory_inbox.as_ref()?.items.get(n))
+                .cloned()
+                .ok_or("Open /memory inbox and select a visible item number / 请先查看待办编号")?;
+            let home = self.home.clone();
+            let answer = answer.to_string();
+            let task = spawn_task(async move {
+                if retry {
+                    crate::brain::outbox::retry(&client, &home, &item).await
+                } else {
+                    crate::brain::outbox::reply(&client, &home, &item, answer).await
+                }
+                .map(|receipt| MemoryReply::Text(format!("{}\n/memory inbox", receipt.status)))
+                .map_err(|error| error.to_string())
+            });
+            ("Sending answer / 正在提交回答", task)
+        } else {
+            return Err("Use /memory, /memory status or /memory help");
+        };
+        self.pending_memory = Some(task);
+        Ok(notice)
     }
 
     async fn brain_command(client: gateway::Client, text: &str) -> Result<String, BoxError> {
@@ -435,62 +412,25 @@ impl App {
         ))
     }
 
-    fn append_memory_output(&mut self, content: String) {
-        self.chat.messages.push(anda_core::Message {
-            role: "system".into(),
-            content: vec![content.into()],
-            ..Default::default()
-        });
+    fn append_notice_message(&mut self, content: String) {
+        self.chat.messages.push(notice_message(content));
         self.notice.clear();
     }
 
     pub(super) fn finish_pending_memory(&mut self) -> bool {
-        let Some(rx) = self.pending_memory.as_mut() else {
+        let Some(result) = take_result(&mut self.pending_memory) else {
             return false;
         };
-        match rx.try_recv() {
-            Ok(result) => {
-                self.pending_memory = None;
-                match result {
-                    Ok(content) => self.append_memory_output(content),
-                    Err(error) => self.notice = error,
-                }
-                true
+        match result {
+            Some(Ok(MemoryReply::Text(content))) => self.append_notice_message(content),
+            Some(Ok(MemoryReply::Inbox(page))) => {
+                self.append_notice_message(crate::brain::outbox::render(&page));
+                self.memory_inbox = Some(page);
             }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_memory = None;
-                self.notice = "Memory status request ended / 记忆状态查询已结束".into();
-                true
-            }
+            Some(Err(error)) => self.notice = error,
+            None => self.notice = "Memory request ended / 记忆请求已结束".into(),
         }
-    }
-
-    pub(super) fn finish_pending_memory_inbox(&mut self) -> bool {
-        let Some(receiver) = self.pending_memory_inbox.as_mut() else {
-            return false;
-        };
-        match receiver.try_recv() {
-            Ok(result) => {
-                self.pending_memory_inbox = None;
-                match result {
-                    Ok(page) => {
-                        self.append_memory_output(crate::brain::outbox::render(&page));
-                        self.memory_inbox = Some(page);
-                    }
-                    Err(error) => {
-                        self.memory_inbox = None;
-                        self.notice = error;
-                    }
-                }
-                true
-            }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_memory_inbox = None;
-                false
-            }
-        }
+        true
     }
 
     fn submit_choice_input(&mut self) {
@@ -525,52 +465,56 @@ impl App {
             self.client.clone(),
             self.full_access,
         ));
-        let (tx, rx) = oneshot::channel();
-        tokio::spawn(async move {
+        self.pending_bootstrap = Some(spawn_task(async move {
             connecting.bootstrap().await;
-            let _ = tx.send(connecting);
-        });
+            connecting
+        }));
         self.pending_status = None;
         self.pending_update_check = None;
         self.pending_memory = None;
-        self.pending_memory_inbox = None;
         self.memory_inbox = None;
         self.pending_action_response = None;
-        self.choice_input = None;
-        self.clear_input();
-        self.pending_bootstrap = Some(rx);
+        // A choice draft answers an action of the session being replaced;
+        // an ordinary draft survives the reconnect.
+        if self.choice_input.take().is_some() {
+            self.clear_input();
+        }
         self.notice = "Connecting to daemon… Ctrl+C quits.".into();
     }
 
     pub(super) fn finish_pending_bootstrap(&mut self) -> bool {
-        let Some(rx) = self.pending_bootstrap.as_mut() else {
+        let Some(result) = take_result(&mut self.pending_bootstrap) else {
             return false;
         };
-        match rx.try_recv() {
-            Ok(connected) => {
-                self.pending_bootstrap = None;
-                if self.flushed_message_count > 0 {
-                    self.clear_message_view();
-                }
-                self.runtime_cfg = connected.runtime_cfg;
-                self.client = connected.client;
-                self.setup = connected.setup;
-                self.chat = connected.chat;
-                self.pid = connected.pid;
-                self.daemon_running = connected.daemon_running;
-                self.notice = connected.notice;
-                self.pending_update_check = connected.pending_update_check;
-                self.actions_key = (u64::MAX, usize::MAX);
-                true
-            }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_bootstrap = None;
+        match result {
+            Some(connected) => self.install_connection(*connected),
+            None => {
                 self.notice = "Connection task ended. Press Enter to retry.".into();
                 self.daemon_running = false;
-                true
             }
         }
+        true
+    }
+
+    /// Adopts the session a finished `bootstrap` built. Only a restored
+    /// conversation replaces the written transcript; without one, new
+    /// messages continue below it.
+    pub(super) fn install_connection(&mut self, connected: App) {
+        if !connected.chat.messages.is_empty() && self.flushed_message_count > 0 {
+            self.clear_message_view();
+        }
+        self.flushed_message_count = 0;
+        self.action_states.clear();
+        self.active_action = None;
+        self.actions_key = (u64::MAX, usize::MAX);
+        self.runtime_cfg = connected.runtime_cfg;
+        self.client = connected.client;
+        self.setup = connected.setup;
+        self.chat = connected.chat;
+        self.pid = connected.pid;
+        self.daemon_running = connected.daemon_running;
+        self.notice = connected.notice;
+        self.pending_update_check = connected.pending_update_check;
     }
 
     pub(super) fn start_chatgpt_login(&mut self) {
@@ -657,25 +601,15 @@ impl App {
         });
     }
     pub(super) fn finish_pending_chatgpt(&mut self) -> bool {
-        let Some(rx) = self.pending_chatgpt.as_mut() else {
+        let Some(result) = take_result(&mut self.pending_chatgpt) else {
             return false;
         };
-        match rx.try_recv() {
-            Ok(result) => {
-                self.pending_chatgpt = None;
-                match result {
-                    Ok(()) => self.start_bootstrap(),
-                    Err(error) => self.notice = error,
-                };
-                true
-            }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_chatgpt = None;
-                self.notice = "ChatGPT sign-in ended; press Ctrl+G to retry.".into();
-                true
-            }
+        match result {
+            Some(Ok(())) => self.start_bootstrap(),
+            Some(Err(error)) => self.notice = error,
+            None => self.notice = "ChatGPT sign-in ended; press Ctrl+G to retry.".into(),
         }
+        true
     }
 
     pub(super) fn start_status_refresh(&mut self) {
@@ -684,61 +618,39 @@ impl App {
         }
         let daemon = self.runtime_daemon();
         let client = self.client.clone();
-        let (tx, rx) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = tx.send(
-                Self::fetch_status(daemon, client)
-                    .await
-                    .map_err(|error| error.to_string()),
-            );
-        });
-        self.pending_status = Some(rx);
+        self.pending_status = Some(spawn_task(async move {
+            Self::fetch_status(daemon, client)
+                .await
+                .map_err(|error| error.to_string())
+        }));
     }
 
     pub(super) fn finish_pending_status(&mut self) -> bool {
-        let Some(rx) = self.pending_status.as_mut() else {
+        let Some(Some(result)) = take_result(&mut self.pending_status) else {
             return false;
         };
-        match rx.try_recv() {
-            Ok(result) => {
-                self.pending_status = None;
-                match result {
-                    Ok((pid, running)) => {
-                        let changed = self.pid != pid || self.daemon_running != running;
-                        if self.daemon_running && !running {
-                            self.notice =
-                                "Daemon connection lost. Press Enter to reconnect.".into();
-                        }
-                        self.pid = pid;
-                        self.daemon_running = running;
-                        changed
-                    }
-                    Err(error) => {
-                        self.notice = format!("Status refresh failed: {error}");
-                        true
-                    }
+        match result {
+            Ok((pid, running)) => {
+                let changed = self.pid != pid || self.daemon_running != running;
+                if self.daemon_running && !running {
+                    self.notice = DAEMON_LOST_NOTICE.into();
+                } else if running && self.notice == DAEMON_LOST_NOTICE {
+                    self.notice.clear();
                 }
+                self.pid = pid;
+                self.daemon_running = running;
+                changed
             }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_status = None;
-                false
+            Err(error) => {
+                self.notice = format!("Status refresh failed: {error}");
+                true
             }
         }
     }
 
+    /// Connects a fresh `App` (see `start_bootstrap`): loads the config,
+    /// starts or reaches the daemon and restores the active conversation.
     pub(super) async fn bootstrap(&mut self) {
-        self.notice.clear();
-        self.pid = None;
-        self.daemon_running = false;
-        self.setup = SetupState::default();
-        self.pending_update_check = None;
-        self.pending_memory = None;
-        self.pending_memory_inbox = None;
-        self.memory_inbox = None;
-        self.pending_action_response = None;
-        self.choice_input = None;
-
         let daemon = self.runtime_daemon();
         let config_created = match daemon.ensure_config_file_exists().await {
             Ok(created) => created,
@@ -763,7 +675,9 @@ impl App {
             }
         };
         self.setup.issues = self.runtime_cfg.setup_issues();
-        self.rebind_client();
+        self.client = self.client.rebased(self.runtime_cfg.base_url());
+        self.chat =
+            gateway::ChatSession::new(self.client.clone()).with_full_access(self.full_access);
 
         if self.setup_required() {
             let missing = self.setup.issues.join(", ");
@@ -825,17 +739,10 @@ impl App {
 
         if self.chat_enabled() {
             self.start_auto_update_check();
-            match self.chat.restore_source_conversation().await {
-                // clear (not reset): the restore refetches the full history,
-                // which must replace the scrollback instead of piling on top.
-                Ok(true) if self.flushed_message_count > 0 => self.clear_message_view(),
-                Ok(true) => {}
-                Ok(false) => {}
-                Err(err) => {
-                    log::warn!("Failed to restore source conversation: {err}");
-                    if self.notice.is_empty() {
-                        self.notice = format!("Conversation restore failed: {err}");
-                    }
+            if let Err(err) = self.chat.restore_source_conversation().await {
+                log::warn!("Failed to restore source conversation: {err}");
+                if self.notice.is_empty() {
+                    self.notice = format!("Conversation restore failed: {err}");
                 }
             }
         }
@@ -846,59 +753,34 @@ impl App {
             return;
         }
         let client = self.client.clone();
-        let (tx, rx) = oneshot::channel();
-        tokio::spawn(async move {
-            let _ = tx.send(
-                client
-                    .auto_update_check()
-                    .await
-                    .map_err(|err| err.to_string()),
-            );
-        });
-        self.pending_update_check = Some(rx);
+        self.pending_update_check = Some(spawn_task(async move {
+            client
+                .auto_update_check()
+                .await
+                .map_err(|err| err.to_string())
+        }));
     }
 
     pub(super) fn finish_pending_update_check(&mut self) -> bool {
-        let Some(rx) = self.pending_update_check.as_mut() else {
-            return false;
-        };
-
-        match rx.try_recv() {
-            Ok(Ok(state)) => {
-                self.pending_update_check = None;
-                self.apply_update_state(state)
-            }
-            Ok(Err(err)) => {
-                self.pending_update_check = None;
+        match take_result(&mut self.pending_update_check) {
+            Some(Some(Ok(state))) => self.apply_update_state(state),
+            Some(Some(Err(err))) => {
                 log::warn!("auto update check failed: {err}");
                 false
             }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_update_check = None;
-                false
-            }
+            _ => false,
         }
     }
 
     pub(super) fn finish_pending_action_response(&mut self) -> bool {
-        let Some(rx) = self.pending_action_response.as_mut() else {
+        let Some(result) = take_result(&mut self.pending_action_response) else {
             return false;
         };
-
-        match rx.try_recv() {
-            Ok(result) => {
-                self.pending_action_response = None;
-                self.apply_action_response_result(result);
-                true
-            }
-            Err(oneshot::error::TryRecvError::Empty) => false,
-            Err(oneshot::error::TryRecvError::Closed) => {
-                self.pending_action_response = None;
-                self.notice = "Action response task cancelled.".to_string();
-                true
-            }
+        match result {
+            Some(result) => self.apply_action_response_result(result),
+            None => self.notice = "Action response task cancelled.".to_string(),
         }
+        true
     }
 
     fn apply_action_response_result(&mut self, result: ActionResponseResult) {
@@ -962,34 +844,30 @@ impl App {
         Ok((pid, client.status().await.is_ok()))
     }
 
-    pub(super) async fn handle_key(
-        &mut self,
-        key: KeyEvent,
-        input_content_width: u16,
-    ) -> Result<(), BoxError> {
+    pub(super) fn handle_key(&mut self, key: KeyEvent, input_content_width: u16) {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('g') if !self.chat.sending => {
                     self.start_chatgpt_login();
-                    return Ok(());
+                    return;
                 }
                 KeyCode::Char('c') => {
                     self.should_quit = true;
-                    return Ok(());
+                    return;
                 }
                 KeyCode::Char('u') if self.chat_enabled() && !self.action_response_pending() => {
                     self.clear_input();
-                    return Ok(());
+                    return;
                 }
                 KeyCode::Char('a') if self.chat_enabled() => {
                     self.input_cursor = 0;
                     self.input_preferred_col = None;
-                    return Ok(());
+                    return;
                 }
                 KeyCode::Char('e') if self.chat_enabled() => {
                     self.input_cursor = self.input_buf.chars().count();
                     self.input_preferred_col = None;
-                    return Ok(());
+                    return;
                 }
                 _ => {}
             }
@@ -999,7 +877,7 @@ impl App {
             if key.code == KeyCode::Enter {
                 self.start_bootstrap();
             }
-            return Ok(());
+            return;
         }
 
         if self.choice_input.is_some()
@@ -1010,29 +888,29 @@ impl App {
                 .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
         {
             self.cancel_choice_input();
-            return Ok(());
+            return;
         }
 
         if self.chat.sending {
-            return Ok(());
+            return;
         }
 
         if self.action_response_pending() {
-            return Ok(());
+            return;
         }
 
         if self.choice_input.is_none() && self.input_buf.is_empty() && self.handle_action_key(key) {
-            return Ok(());
+            return;
         }
 
         if !self.input_focused {
             if key.code == KeyCode::Esc {
                 self.notice.clear();
-                return Ok(());
+                return;
             }
             self.input_focused = true;
             if key.code == KeyCode::Enter {
-                return Ok(());
+                return;
             }
         }
 
@@ -1044,9 +922,7 @@ impl App {
             _ if input_newline_key(key) => {
                 self.insert_input_text("\n");
             }
-            KeyCode::Enter => {
-                self.submit_input().await?;
-            }
+            KeyCode::Enter => self.submit_input(),
             KeyCode::Backspace if self.input_cursor > 0 => {
                 let previous = previous_cursor(&self.input_buf, self.input_cursor);
                 let range = cursor_byte_index(&self.input_buf, previous)
@@ -1095,7 +971,6 @@ impl App {
             }
             _ => {}
         }
-        Ok(())
     }
 
     fn handle_action_key(&mut self, key: KeyEvent) -> bool {
@@ -1170,17 +1045,13 @@ impl App {
 
         let input = request.tool_input();
         let client = self.client.clone();
-        let (tx, rx) = oneshot::channel();
-        tokio::spawn(async move {
-            let result = client
+        self.pending_action_response = Some(spawn_task(async move {
+            client
                 .tool_call_with_timeout(&input, ACTION_RESPONSE_TIMEOUT)
                 .await
                 .map(|output| output.output)
-                .map_err(|err| err.to_string());
-            let _ = tx.send(result);
-        });
-
-        self.pending_action_response = Some(rx);
+                .map_err(|err| err.to_string())
+        }));
         self.notice = "Responding to action...".to_string();
     }
 
@@ -1221,38 +1092,36 @@ impl App {
             })
             .map(|state| format!("Action {} {}.", state.id, state.status))
             .collect();
+        // A choice draft for an action resolved elsewhere (expired, picked by
+        // default, answered from another client) can no longer be sent.
+        if let Some(draft) = &self.choice_input
+            && !self.action_response_pending()
+            && !states
+                .iter()
+                .any(|state| state.id == draft.action_id && state.status == "pending")
+        {
+            self.choice_input = None;
+            self.clear_input();
+        }
         self.active_action = active_pending_action(&self.chat.messages);
         self.action_states = states;
-        for receipt in receipts {
-            self.chat.messages.push(anda_core::Message {
-                role: "system".into(),
-                content: vec![receipt.into()],
-                ..Default::default()
-            });
-        }
+        self.chat
+            .messages
+            .extend(receipts.into_iter().map(notice_message));
         self.actions_key = (self.chat.revision(), self.chat.messages.len());
         true
     }
 
     pub(super) fn action_footer_line(&self, width: usize) -> Option<ratatui::text::Line<'static>> {
         if self.action_response_pending() {
-            return Some(ratatui::text::Line::from(vec![
-                ratatui::text::Span::styled("ACTION ", super::theme::accent_style()),
-                ratatui::text::Span::styled("responding...", super::theme::subtle_style()),
-            ]));
+            return Some(action_line("responding...", width));
         }
         if let Some(draft) = &self.choice_input {
             let text = format!(
                 "{} · Enter submit · Esc cancel",
                 draft.placeholder.as_deref().unwrap_or(&draft.label)
             );
-            return Some(ratatui::text::Line::from(vec![
-                ratatui::text::Span::styled("ACTION ", super::theme::accent_style()),
-                ratatui::text::Span::styled(
-                    super::text::truncate_visual(&text, width.saturating_sub(7)),
-                    super::theme::subtle_style(),
-                ),
-            ]));
+            return Some(action_line(&text, width));
         }
         if self.actions_key == (self.chat.revision(), self.chat.messages.len()) {
             return self
@@ -1277,4 +1146,35 @@ impl App {
         self.input_cursor = cursor;
         self.input_preferred_col = Some(preferred_col);
     }
+}
+
+fn notice_message(text: String) -> anda_core::Message {
+    anda_core::Message {
+        role: NOTICE_ROLE.into(),
+        content: vec![text.into()],
+        ..Default::default()
+    }
+}
+
+/// Runs `task` in the background; collect its output with `take_result`.
+fn spawn_task<T: Send + 'static>(
+    task: impl Future<Output = T> + Send + 'static,
+) -> oneshot::Receiver<T> {
+    let (tx, rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let _ = tx.send(task.await);
+    });
+    rx
+}
+
+/// `None` while the task runs. Once it ends, empties `slot` and returns its
+/// output, or `Some(None)` when the task died without one.
+fn take_result<T>(slot: &mut Option<oneshot::Receiver<T>>) -> Option<Option<T>> {
+    let output = match slot.as_mut()?.try_recv() {
+        Ok(output) => Some(output),
+        Err(oneshot::error::TryRecvError::Empty) => return None,
+        Err(oneshot::error::TryRecvError::Closed) => None,
+    };
+    *slot = None;
+    Some(output)
 }

@@ -3,10 +3,12 @@ use ratatui::text::{Line, Span};
 use crate::config::APP_VERSION;
 
 use super::{
-    App, STATUS_FOOTER_MAX_LINES,
+    App,
     text::{display_width, truncate_visual},
     theme,
 };
+
+pub(super) const STATUS_FOOTER_MAX_LINES: usize = 3;
 
 pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
@@ -38,7 +40,7 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
                         "Enter send  •  Shift+Enter/Ctrl+J newline  •  ↑/↓ move lines  •  Ctrl+U clear  •  Ctrl+C quit",
                         width.saturating_sub(2),
                     ),
-                    theme::subtle_style(),
+                    theme::dim_style(),
                 ),
             ]),
             Line::from(vec![
@@ -48,7 +50,7 @@ pub(super) fn status_footer_lines(app: &App, width: usize) -> Vec<Line<'static>>
                         "/new [message]  •  /memory  •  /goal message  •  /loop message  •  /skill skill-name message  •  /side message  •  /steer message  •  /stop task  •  /cancel session",
                         width.saturating_sub(2),
                     ),
-                    theme::subtle_style(),
+                    theme::dim_style(),
                 ),
             ]),
         ]);
@@ -104,13 +106,14 @@ pub(super) fn status_line(app: &App, width: usize) -> Line<'static> {
         Span::styled(prefix.clone(), style),
         Span::styled(
             truncate_visual(&text, width.saturating_sub(display_width(&prefix))),
-            theme::subtle_style(),
+            theme::dim_style(),
         ),
     ])
 }
-pub(super) fn panel_header_line(_app: &App) -> Line<'static> {
+
+pub(super) fn panel_header_line() -> Line<'static> {
     Line::from(vec![
-        Span::styled("Born of panda. Awakened as Anda. ", theme::subtle_style()),
+        Span::styled("Born of panda. Awakened as Anda. ", theme::dim_style()),
         Span::styled(format!(" ANDA.Bot v{APP_VERSION} "), theme::accent_style()),
     ])
 }

@@ -5,7 +5,7 @@ use anda_engine::memory::{Conversation, ConversationStatus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier},
     text::{Line, Span},
 };
@@ -14,31 +14,50 @@ use tokio::sync::oneshot;
 use crate::{auto_update::AutoUpdateState, config::Config, gateway};
 
 use super::{
-    INPUT_DIVIDER_LABEL, INPUT_DIVIDER_PADDED_HEIGHT, INPUT_DIVIDER_PREFIX,
-    SECONDARY_PART_MAX_LINES, THINKING_FRAMES, THINKING_LABEL,
     action::{
         action_state_snapshot, action_transcript_text, active_pending_action,
         apply_action_response_to_messages,
     },
     app::App,
     input::{
-        InputCursorDirection, build_input_viewport, build_prompt_lines, input_display_text,
+        INPUT_DIVIDER_LABEL, INPUT_DIVIDER_PADDED_HEIGHT, INPUT_DIVIDER_PREFIX,
+        InputCursorDirection, InputLayout, THINKING_FRAMES, THINKING_LABEL, build_input_viewport,
         input_height, input_newline_key, input_placeholder, input_prompt_prefix_width,
-        input_scroll_top, input_separator_line, input_separator_lines, move_cursor_vertically,
-        split_input_area,
+        input_scroll_top, input_separator_line, input_separator_lines, split_input_area,
     },
     layout::{
         centered_area, dynamic_layout_heights, dynamic_viewport_height, static_panel_height,
-        status_footer_height, status_footer_panel, status_panel_height,
+        status_footer_height, status_footer_panel,
     },
     render::render,
     status::{panel_header_line, status_footer_lines, status_line},
-    terminal::cleanup_inline_viewport,
+    terminal::{cleanup_inline_viewport, clear_for_reanchor},
     text::{display_width, normalize_newlines, truncate_visual},
     theme,
-    transcript::{chat_message_lines, chat_message_lines_for_message, thinking_lines},
+    transcript::{
+        NOTICE_ROLE, SECONDARY_PART_MAX_LINES, chat_message_lines_for_message,
+        chat_message_lines_for_messages,
+    },
     widgets::PackedLines,
 };
+
+fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    chat_message_lines_for_messages(&app.chat.messages, width)
+}
+
+fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'static>> {
+    build_input_viewport(app, placeholder, width as u16, u16::MAX).lines
+}
+
+fn move_cursor_vertically(
+    text: &str,
+    cursor: usize,
+    width: u16,
+    direction: InputCursorDirection,
+    preferred_col: Option<u16>,
+) -> (usize, u16) {
+    InputLayout::new(text, width).move_cursor(cursor, direction, preferred_col)
+}
 
 fn test_client() -> gateway::Client {
     gateway::Client::new("http://127.0.0.1:8042".to_string(), String::new())
@@ -55,14 +74,12 @@ async fn memory_guide_stays_local_and_status_returns_without_blocking_chat() {
     let mut app = ready_app();
     app.client = gateway::Client::new("http://127.0.0.1:0".into(), String::new());
     app.input_buf = "/memory help".into();
-    app.submit_input().await.unwrap();
+    app.submit_input();
     assert_eq!(app.chat.messages.len(), 1);
+    assert_eq!(app.chat.messages[0].role, NOTICE_ROLE);
     assert!(!app.chat.sending);
     app.input_buf = "/memory".into();
-    tokio::time::timeout(std::time::Duration::from_millis(100), app.submit_input())
-        .await
-        .unwrap()
-        .unwrap();
+    app.submit_input();
     assert!(app.pending_memory.is_some());
     assert!(!app.chat.sending);
 }
@@ -834,9 +851,7 @@ async fn stray_keystroke_keeps_a_pending_approval_answerable() {
     push_pending_shell_approval(&mut app);
 
     // A mistyped character lands in the composer, which routes y/n there too.
-    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40);
     assert_eq!(app.input_buf, "h");
     assert!(app.notice.contains("type y or n"));
 
@@ -851,9 +866,7 @@ async fn stray_keystroke_keeps_a_pending_approval_answerable() {
     );
 
     // Pressing y appends instead of approving, and the action is still pending.
-    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40);
     assert_eq!(app.input_buf, "hy");
     assert!(!app.action_response_pending());
     assert!(app.active_pending_action().is_some());
@@ -862,9 +875,7 @@ async fn stray_keystroke_keeps_a_pending_approval_answerable() {
     // without sending "yes" to the agent as a chat message.
     app.input_buf = "yes".to_string();
     app.input_cursor = 3;
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 40)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 40);
     assert!(app.input_buf.is_empty());
     assert!(app.action_response_pending());
     assert!(!app.chat.sending);
@@ -875,12 +886,8 @@ async fn clearing_the_composer_restores_approval_shortcuts() {
     let mut app = ready_app();
     push_pending_shell_approval(&mut app);
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40)
-        .await
-        .unwrap();
-    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 40)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE), 40);
+    app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL), 40);
     assert!(app.input_buf.is_empty());
     assert_eq!(
         line_text(
@@ -891,9 +898,7 @@ async fn clearing_the_composer_restores_approval_shortcuts() {
         "ACTION Approve shell command · y Approve · n Deny"
     );
 
-    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE), 40);
     assert!(app.input_buf.is_empty());
     assert!(app.action_response_pending());
 }
@@ -924,7 +929,7 @@ async fn typed_choice_digit_answers_a_pending_choice() {
 
     app.input_buf = "2".to_string();
     app.input_cursor = 1;
-    app.submit_input().await.unwrap();
+    app.submit_input();
 
     // Choice 2 needs text, so the composer switches to its draft rather than
     // sending "2" as a chat message.
@@ -942,7 +947,7 @@ async fn typed_choice_digit_answers_a_pending_choice() {
 fn status_footer_height_reserves_separator_row() {
     let app = ready_app();
 
-    assert_eq!(status_footer_height(&app, 80), 3);
+    assert_eq!(status_footer_height(status_footer_lines(&app, 80).len()), 3);
 }
 
 #[test]
@@ -974,37 +979,6 @@ fn status_footer_notice_preserves_spaces() {
         line_text(lines.first().expect("notice line")),
         "! 连 接 失 败，请 重 试。"
     );
-}
-
-#[test]
-fn thinking_lines_only_render_for_submitted_and_working() {
-    let mut app = ready_app();
-
-    assert!(thinking_lines(&app).is_empty());
-
-    app.chat.conversation = Some(Conversation {
-        status: ConversationStatus::Idle,
-        ..Default::default()
-    });
-    assert!(thinking_lines(&app).is_empty());
-
-    app.chat.conversation = Some(Conversation {
-        status: ConversationStatus::Submitted,
-        ..Default::default()
-    });
-    assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking ⠋");
-
-    app.chat.conversation = Some(Conversation {
-        status: ConversationStatus::Working,
-        ..Default::default()
-    });
-    assert_eq!(line_text(&thinking_lines(&app)[0]), "🐼 ❯ thinking ⠋");
-
-    app.chat.conversation = Some(Conversation {
-        status: ConversationStatus::Completed,
-        ..Default::default()
-    });
-    assert!(thinking_lines(&app).is_empty());
 }
 
 #[test]
@@ -1132,32 +1106,30 @@ async fn handle_key_edits_input_buffer() {
     let mut app = ready_app();
     let w = 40;
 
-    app.handle_key(key(KeyCode::Char('a')), w).await.unwrap();
-    app.handle_key(key(KeyCode::Char('b')), w).await.unwrap();
-    app.handle_key(key(KeyCode::Char('c')), w).await.unwrap();
+    app.handle_key(key(KeyCode::Char('a')), w);
+    app.handle_key(key(KeyCode::Char('b')), w);
+    app.handle_key(key(KeyCode::Char('c')), w);
     assert_eq!(app.input_buf, "abc");
 
-    app.handle_key(key(KeyCode::Left), w).await.unwrap();
+    app.handle_key(key(KeyCode::Left), w);
     assert_eq!(app.input_cursor, 2);
-    app.handle_key(key(KeyCode::Backspace), w).await.unwrap();
+    app.handle_key(key(KeyCode::Backspace), w);
     assert_eq!(app.input_buf, "ac");
-    app.handle_key(key(KeyCode::Delete), w).await.unwrap();
+    app.handle_key(key(KeyCode::Delete), w);
     assert_eq!(app.input_buf, "a");
 
-    app.handle_key(key(KeyCode::Right), w).await.unwrap();
-    app.handle_key(key(KeyCode::Home), w).await.unwrap();
+    app.handle_key(key(KeyCode::Right), w);
+    app.handle_key(key(KeyCode::Home), w);
     assert_eq!(app.input_cursor, 0);
-    app.handle_key(key(KeyCode::End), w).await.unwrap();
+    app.handle_key(key(KeyCode::End), w);
     assert_eq!(app.input_cursor, 1);
 
     // Up/Down cursor movement does not panic.
-    app.handle_key(key(KeyCode::Up), w).await.unwrap();
-    app.handle_key(key(KeyCode::Down), w).await.unwrap();
+    app.handle_key(key(KeyCode::Up), w);
+    app.handle_key(key(KeyCode::Down), w);
 
     // Shift+Enter inserts a newline.
-    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), w)
-        .await
-        .unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT), w);
     assert!(app.input_buf.contains('\n'));
 }
 
@@ -1166,14 +1138,14 @@ async fn handle_key_control_shortcuts() {
     let mut app = ready_app();
     app.insert_input_text("hello world");
 
-    app.handle_key(ctrl(KeyCode::Char('a')), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('a')), 40);
     assert_eq!(app.input_cursor, 0);
-    app.handle_key(ctrl(KeyCode::Char('e')), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('e')), 40);
     assert_eq!(app.input_cursor, app.input_buf.chars().count());
-    app.handle_key(ctrl(KeyCode::Char('u')), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('u')), 40);
     assert!(app.input_buf.is_empty());
 
-    app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('c')), 40);
     assert!(app.should_quit);
 }
 
@@ -1181,12 +1153,12 @@ async fn handle_key_control_shortcuts() {
 async fn handle_key_escape_toggles_input_focus() {
     let mut app = ready_app();
     app.notice = "something".to_string();
-    app.handle_key(key(KeyCode::Esc), 40).await.unwrap();
+    app.handle_key(key(KeyCode::Esc), 40);
     assert!(app.notice.is_empty());
     assert!(!app.input_focused);
 
     // With input unfocused, a non-esc key refocuses.
-    app.handle_key(key(KeyCode::Char('x')), 40).await.unwrap();
+    app.handle_key(key(KeyCode::Char('x')), 40);
     assert!(app.input_focused);
 }
 
@@ -1194,7 +1166,7 @@ async fn handle_key_escape_toggles_input_focus() {
 async fn handle_key_ignored_while_sending() {
     let mut app = ready_app();
     app.chat.sending = true;
-    app.handle_key(key(KeyCode::Char('z')), 40).await.unwrap();
+    app.handle_key(key(KeyCode::Char('z')), 40);
     assert!(app.input_buf.is_empty());
 }
 
@@ -1202,11 +1174,11 @@ async fn handle_key_ignored_while_sending() {
 async fn submit_input_handles_empty_and_text() {
     let mut app = ready_app();
     // Empty input does nothing.
-    app.submit_input().await.unwrap();
+    app.submit_input();
     assert!(!app.chat.sending);
 
     app.insert_input_text("hello there");
-    app.submit_input().await.unwrap();
+    app.submit_input();
     // The input buffer is cleared after submission.
     assert!(app.input_buf.is_empty());
 }
@@ -1322,17 +1294,13 @@ fn render_helpers_cover_state_variants() {
 
     assert!(!status_footer_lines(&ready, 80).is_empty());
     let _ = status_line(&ready, 80);
-    let _ = input_display_text(&ready);
     let _ = input_placeholder(&ready);
     let _ = build_prompt_lines(&ready, input_placeholder(&ready), 80);
-    let _ = panel_header_line(&ready);
+    let _ = panel_header_line();
     let _ = dynamic_layout_heights(&ready, area);
     let _ = dynamic_viewport_height(&ready, 80, 24);
-    let _ = status_panel_height(&ready, area);
-    let _ = static_panel_height(&ready, 80);
-    let _ = status_footer_height(&ready, 80);
+    let _ = static_panel_height();
     let _ = input_height(&ready, area);
-    let _ = thinking_lines(&ready);
 
     // Not-ready app (setup required) exercises the alternate branches.
     let mut setup = App::new(PathBuf::from("."), Config::default(), test_client(), false);
@@ -1405,19 +1373,19 @@ async fn composer_moves_and_deletes_whole_graphemes() {
         let mut app = ready_app();
         app.insert_input_text(glyph);
         if glyph == "中文" {
-            app.handle_key(key(KeyCode::Backspace), 40).await.unwrap();
+            app.handle_key(key(KeyCode::Backspace), 40);
             assert_eq!(app.input_buf, "中");
             continue;
         }
-        app.handle_key(key(KeyCode::Left), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Left), 40);
         assert_eq!(app.input_cursor, 0, "{glyph}");
-        app.handle_key(key(KeyCode::Right), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Right), 40);
         assert_eq!(app.input_cursor, glyph.chars().count());
-        app.handle_key(key(KeyCode::Backspace), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Backspace), 40);
         assert!(app.input_buf.is_empty());
         app.insert_input_text(&format!("{glyph}X"));
-        app.handle_key(key(KeyCode::Home), 40).await.unwrap();
-        app.handle_key(key(KeyCode::Delete), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Home), 40);
+        app.handle_key(key(KeyCode::Delete), 40);
         assert_eq!(app.input_buf, "X");
     }
 }
@@ -1521,14 +1489,14 @@ async fn choice_draft_survives_failure_and_clears_only_on_success() {
     app.insert_input_text("Detailed response with 项目 备份");
     let original = app.input_buf.clone();
     app.client = gateway::Client::new("http://127.0.0.1:0".into(), String::new());
-    app.submit_input().await.unwrap();
+    app.submit_input();
     assert!(app.action_response_pending());
     assert_eq!(app.input_buf, original);
     assert!(app.choice_input.is_some());
     let (tx, rx) = oneshot::channel();
     app.pending_action_response = Some(rx);
-    app.handle_key(ctrl(KeyCode::Char('u')), 40).await.unwrap();
-    app.handle_key(key(KeyCode::Esc), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('u')), 40);
+    app.handle_key(key(KeyCode::Esc), 40);
     assert_eq!(app.input_buf, original);
     tx.send(Err("unavailable".into())).unwrap();
     assert!(app.finish_pending_action_response());
@@ -1554,17 +1522,178 @@ async fn choice_draft_survives_failure_and_clears_only_on_success() {
     assert!(app.choice_input.is_none());
 }
 
+fn restored_app() -> App {
+    let mut app = ready_app();
+    push_text_message(&mut app, "assistant", "restored history");
+    app
+}
+
 #[test]
-fn initial_bind_preserves_scrollback_and_reload_replaces_written_history() {
+fn reconnect_replaces_written_history_only_with_a_restored_conversation() {
+    // Nothing written yet: a restore must not purge the shell's scrollback.
     let mut app = ready_app();
     app.static_panel_flushed = true;
-    app.rebind_client();
+    app.install_connection(restored_app());
     assert!(!app.pending_scrollback_purge);
     assert!(app.static_panel_flushed);
+    assert_eq!(app.chat.messages.len(), 1);
+
+    // Nothing restored: the written transcript stays and new lines follow it.
     app.flushed_message_count = 2;
-    app.rebind_client();
-    assert!(app.pending_scrollback_purge);
+    app.install_connection(ready_app());
+    assert!(!app.pending_scrollback_purge);
+    assert!(app.static_panel_flushed);
     assert_eq!(app.flushed_message_count, 0);
+
+    // A restored conversation replaces what was written.
+    app.flushed_message_count = 2;
+    app.install_connection(restored_app());
+    assert!(app.pending_scrollback_purge);
+    assert!(!app.static_panel_flushed);
+    assert_eq!(app.flushed_message_count, 0);
+}
+
+#[test]
+fn reanchor_keeps_scrollback_unless_the_transcript_is_purged() {
+    let mut output = Vec::new();
+    let cursor = clear_for_reanchor(&mut output, Position::new(0, 30), 20, false).unwrap();
+    // The cursor is clamped to a screen that shrank.
+    assert_eq!(cursor, Position::new(0, 19));
+    assert_eq!(String::from_utf8(output).unwrap(), "\u{1b}[31;1H\u{1b}[J");
+
+    // A purge also clears the visible tail of the old transcript, then
+    // restarts the viewport at the top.
+    let mut output = Vec::new();
+    let cursor = clear_for_reanchor(&mut output, Position::new(0, 30), 40, true).unwrap();
+    assert_eq!(cursor, Position::new(0, 0));
+    assert_eq!(
+        String::from_utf8(output).unwrap(),
+        "\u{1b}[1;1H\u{1b}[2J\u{1b}[3J"
+    );
+}
+
+#[test]
+fn local_notices_render_as_information_not_errors() {
+    let mut app = ready_app();
+    push_text_message(&mut app, NOTICE_ROLE, "Memory overview");
+
+    let lines = chat_message_lines(&app, 40);
+
+    assert_eq!(line_text(&lines[0]), "ℹ️ ❯ Memory overview");
+    assert_eq!(lines[0].spans[0].style, theme::accent_style());
+    assert_eq!(lines[0].spans[1].style, theme::body_style());
+}
+
+#[tokio::test]
+async fn reconnect_keeps_a_draft_but_drops_a_choice_answer() {
+    let home = tempfile::tempdir().unwrap();
+    let mut app = App::new(home.path().into(), Config::default(), test_client(), false);
+    app.insert_input_text("half-written message");
+    app.start_bootstrap();
+    assert_eq!(app.input_buf, "half-written message");
+
+    let mut app = App::new(home.path().into(), Config::default(), test_client(), false);
+    app.choice_input = Some(super::action::TuiActionChoiceDraft {
+        action_id: "choice".into(),
+        choice_id: "custom".into(),
+        label: "Custom".into(),
+        placeholder: None,
+        required: false,
+    });
+    app.insert_input_text("answer for the old session");
+    app.start_bootstrap();
+    assert!(app.choice_input.is_none());
+    assert!(app.input_buf.is_empty());
+}
+
+#[test]
+fn memory_commands_keep_the_input_when_nothing_starts() {
+    let mut app = ready_app();
+    let command = "/memory answer 1 a long considered answer";
+    app.insert_input_text(command);
+
+    // Another memory request is still running.
+    let (_tx, rx) = oneshot::channel();
+    app.pending_memory = Some(rx);
+    app.submit_input();
+    assert_eq!(app.input_buf, command);
+    assert!(app.notice.contains("already running"));
+
+    // No inbox page is open to resolve the item number.
+    app.pending_memory = None;
+    app.submit_input();
+    assert_eq!(app.input_buf, command);
+    assert!(app.notice.contains("/memory inbox"));
+    assert!(app.pending_memory.is_none());
+    assert!(!app.chat.sending);
+}
+
+#[test]
+fn daemon_recovery_clears_the_connection_lost_notice() {
+    let mut app = ready_app();
+    let (tx, rx) = oneshot::channel();
+    app.pending_status = Some(rx);
+    tx.send(Ok((None, false))).unwrap();
+    assert!(app.finish_pending_status());
+    assert!(app.notice.contains("connection lost"));
+
+    let (tx, rx) = oneshot::channel();
+    app.pending_status = Some(rx);
+    tx.send(Ok((None, true))).unwrap();
+    assert!(app.finish_pending_status());
+    assert!(app.notice.is_empty());
+}
+
+#[test]
+fn choice_draft_ends_when_its_action_is_resolved_elsewhere() {
+    let mut app = ready_app();
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.user_choice".to_string(),
+            payload: serde_json::json!({
+                "id": "act_choice",
+                "kind": "choice",
+                "choices": [{"id": "custom", "label": "Custom", "input": {}}],
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+    assert!(app.refresh_actions());
+    app.choice_input = Some(super::action::TuiActionChoiceDraft {
+        action_id: "act_choice".into(),
+        choice_id: "custom".into(),
+        label: "Custom".into(),
+        placeholder: None,
+        required: false,
+    });
+    app.insert_input_text("still typing");
+
+    app.chat.mark_changed();
+    assert!(app.refresh_actions());
+    assert!(app.choice_input.is_some());
+
+    // A poll shows the card expired before the answer was sent.
+    if let ContentPart::Action { payload, .. } = &mut app.chat.messages[0].content[0] {
+        payload["status"] = "expired".into();
+    }
+    app.chat.mark_changed();
+    assert!(app.refresh_actions());
+    assert!(app.choice_input.is_none());
+    assert!(app.input_buf.is_empty());
+}
+
+#[test]
+fn paste_refocuses_the_composer() {
+    let mut app = ready_app();
+    app.input_focused = false;
+    app.handle_paste("pasted".to_string());
+    assert!(app.input_focused);
+    assert_eq!(app.input_buf, "pasted");
 }
 
 #[test]
@@ -1592,6 +1721,7 @@ fn action_resolution_appends_one_receipt_and_unchanged_frames_do_no_work() {
         .map(line_text)
         .collect::<String>();
     assert!(text.contains("Action act_1 approved."));
+    assert_eq!(app.chat.messages.last().unwrap().role, NOTICE_ROLE);
     assert!(!app.refresh_actions());
     app.animation_tick += 1;
     app.insert_input_text("typing");
@@ -1629,14 +1759,14 @@ async fn stalled_http_requests_do_not_block_editing_or_quitting() {
         app.start_status_refresh();
         app.chat.start_poll(Some(7));
         app.insert_input_text("/brain status");
-        app.submit_input().await.unwrap();
+        app.submit_input();
         tokio::task::yield_now().await;
         assert!(!app.finish_pending_status());
         assert!(!app.chat.finish_pending_poll());
         assert!(!app.finish_pending_memory());
-        app.handle_key(key(KeyCode::Char('x')), 40).await.unwrap();
+        app.handle_key(key(KeyCode::Char('x')), 40);
         assert_eq!(app.input_buf, "x");
-        app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+        app.handle_key(ctrl(KeyCode::Char('c')), 40);
         assert!(app.should_quit);
     })
     .await
@@ -1649,10 +1779,11 @@ async fn reconnect_starts_in_background_and_quit_remains_available() {
     let mut app = App::new(home.path().into(), Config::default(), test_client(), false);
     app.daemon_running = true;
     app.insert_input_text("/reload");
-    app.submit_input().await.unwrap();
+    app.submit_input();
+    assert!(app.input_buf.is_empty());
     assert!(!app.chat_enabled());
     assert!(app.notice.contains("Connecting"));
     assert!(!app.pending_scrollback_purge);
-    app.handle_key(ctrl(KeyCode::Char('c')), 40).await.unwrap();
+    app.handle_key(ctrl(KeyCode::Char('c')), 40);
     assert!(app.should_quit);
 }

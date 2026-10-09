@@ -41,10 +41,6 @@ pub fn danger_style() -> Style {
     Style::default().fg(ERROR_RED).add_modifier(Modifier::BOLD)
 }
 
-pub fn subtle_style() -> Style {
-    Style::default().fg(BAMBOO_DIM)
-}
-
 pub fn footer_panel_style() -> Style {
     Style::default().bg(FOOTER_BG)
 }
@@ -82,7 +78,6 @@ mod tests {
         assert_eq!(success_style().fg, Some(BAMBOO_GREEN));
         assert_eq!(warn_style().fg, Some(WARN_AMBER));
         assert_eq!(danger_style().fg, Some(ERROR_RED));
-        assert_eq!(subtle_style().fg, Some(BAMBOO_DIM));
     }
 
     #[test]

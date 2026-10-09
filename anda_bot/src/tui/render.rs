@@ -10,22 +10,28 @@ use ratatui::{
 };
 
 use super::{
-    App, STATUS_MAX_WIDTH,
+    App,
     backend::TuiBackend,
     input::{
         input_placeholder, input_prompt_prefix_width, input_separator_lines, input_viewport,
         split_input_area,
     },
-    layout::{centered_area, dynamic_layout_heights, static_panel_height, status_footer_panel},
+    layout::{centered_area, layout_heights, static_panel_height, status_footer_panel},
     status::{panel_header_line, status_footer_lines},
     theme,
     transcript::chat_message_lines_for_messages,
     widgets::{Banner, PackedLines},
 };
 
+const STATUS_MAX_WIDTH: u16 = 92;
+/// Rows per `insert_before` call. Each call renders into a `rows x width`
+/// buffer, so a long restored history is written in slices.
+const INSERT_CHUNK_ROWS: usize = 256;
+
 pub(super) fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
-    let (input_height, status_height) = dynamic_layout_heights(app, area);
+    let footer = status_footer_lines(app, area.width as usize);
+    let (input_height, status_height) = layout_heights(app, area, footer.len());
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -35,16 +41,17 @@ pub(super) fn render(frame: &mut Frame, app: &App) {
         .split(area);
 
     render_input(frame, app, chunks[0]);
-    render_status_footer(frame, app, chunks[1]);
+    render_status_footer(frame, footer, chunks[1]);
 }
-fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
+
+fn render_static_panel_to_buffer(area: Rect, buf: &mut Buffer) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
     let area = centered_area(area, STATUS_MAX_WIDTH);
 
-    let header = panel_header_line(app);
+    let header = panel_header_line();
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -59,12 +66,12 @@ fn render_static_panel_to_buffer(app: &App, area: Rect, buf: &mut Buffer) {
         .render(sections[1], buf);
 }
 
-fn render_status_footer(frame: &mut Frame, app: &App, area: Rect) {
+fn render_status_footer(frame: &mut Frame, lines: Vec<Line<'static>>, area: Rect) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let panel = status_footer_panel(area);
+    // The block paints the panel background; text uses the CJK-safe widget.
     frame.render_widget(
         Block::default()
             .borders(Borders::TOP)
@@ -73,17 +80,11 @@ fn render_status_footer(frame: &mut Frame, app: &App, area: Rect) {
         area,
     );
 
-    if panel.width == 0 || panel.height == 0 {
+    let panel = status_footer_panel(area);
+    if panel.width == 0 || panel.height == 0 || lines.is_empty() {
         return;
     }
 
-    let lines = status_footer_lines(app, panel.width as usize);
-    if lines.is_empty() {
-        return;
-    }
-
-    // Paint the panel background, then draw text via the CJK-safe widget.
-    frame.render_widget(Block::default().style(theme::footer_panel_style()), panel);
     frame.render_widget(
         PackedLines::new(lines).style(theme::footer_text_style()),
         panel,
@@ -164,9 +165,8 @@ pub(super) fn flush_static_scrollback(
     }
 
     if !app.static_panel_flushed {
-        let height = static_panel_height(app, area.width);
-        terminal.insert_before(height, |buf| {
-            render_static_panel_to_buffer(app, buf.area, buf);
+        terminal.insert_before(static_panel_height(), |buf| {
+            render_static_panel_to_buffer(buf.area, buf);
         })?;
         app.static_panel_flushed = true;
     }
@@ -179,9 +179,7 @@ pub(super) fn flush_static_scrollback(
         &app.chat.messages[app.flushed_message_count..],
         area.width as usize,
     );
-    if !lines.is_empty() {
-        insert_lines_before(terminal, lines)?;
-    }
+    insert_lines_before(terminal, lines)?;
     app.flushed_message_count = app.chat.messages.len();
 
     Ok(())
@@ -191,15 +189,15 @@ fn insert_lines_before(
     terminal: &mut Terminal<TuiBackend<io::Stdout>>,
     lines: Vec<Line<'static>>,
 ) -> Result<(), BoxError> {
-    if lines.is_empty() {
-        return Ok(());
+    let mut lines = lines.into_iter().peekable();
+    while lines.peek().is_some() {
+        let chunk: Vec<_> = lines.by_ref().take(INSERT_CHUNK_ROWS).collect();
+        terminal.insert_before(chunk.len() as u16, |buf| {
+            PackedLines::new(chunk)
+                .style(theme::body_style())
+                .render(buf.area, buf);
+        })?;
     }
-
-    terminal.insert_before(lines.len() as u16, |buf| {
-        PackedLines::new(lines)
-            .style(theme::body_style())
-            .render(buf.area, buf);
-    })?;
 
     Ok(())
 }

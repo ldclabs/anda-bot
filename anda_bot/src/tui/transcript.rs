@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anda_core::{ContentPart, Message};
 use ratatui::{
     style::Style,
@@ -6,249 +8,131 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    SECONDARY_PART_MAX_LINES,
     action::{action_from_payload, action_transcript_text},
     markdown,
-    text::{display_width, line_is_blank, normalize_newlines},
+    text::{display_width, line_is_blank, normalize_newlines, truncate_visual},
     theme,
 };
 
-#[cfg(test)]
-use super::{App, input::input_separator_label};
-
-#[cfg(test)]
-pub(super) fn chat_message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
-    chat_message_lines_for_messages(&app.chat.messages, width)
-}
+pub(super) const SECONDARY_PART_MAX_LINES: usize = 3;
+/// Role of the entries the TUI writes itself (command output, action
+/// receipts). They are informational, unlike `system` errors.
+pub(super) const NOTICE_ROLE: &str = "notice";
+const INDENT: &str = "        ";
 
 pub(super) fn chat_message_lines_for_messages(
     messages: &[Message],
     width: usize,
 ) -> Vec<Line<'static>> {
-    let mut rendered_lines = Vec::new();
-    for msg in messages {
-        rendered_lines.extend(chat_message_lines_for_message(msg, width));
-    }
-    rendered_lines
+    messages
+        .iter()
+        .flat_map(|msg| chat_message_lines_for_message(msg, width))
+        .collect()
 }
 
 pub(super) fn chat_message_lines_for_message(msg: &Message, width: usize) -> Vec<Line<'static>> {
-    let mut rendered_lines: Vec<Line> = Vec::new();
-    let (prefix, prefix_style, body_style) = match msg.role.as_str() {
+    let (marker, marker_style, body_style) = match msg.role.as_str() {
         "user" => ("❯ ", theme::accent_style(), theme::body_style()),
         "assistant" => ("🐼 ❯ ", theme::success_style(), theme::body_style()),
+        NOTICE_ROLE => ("ℹ️ ❯ ", theme::accent_style(), theme::body_style()),
         "system" => ("⚠️ ❯ ", theme::danger_style(), theme::danger_style()),
         "tool" => ("🔧 ❯ ", theme::dim_style(), theme::dim_style()),
         _ => ("  ", theme::dim_style(), theme::body_style()),
     };
+    let marker_width = display_width(marker);
+    let mut out = MessageLines {
+        lines: Vec::new(),
+        marker,
+        marker_style,
+        indent: &INDENT[..marker_width.min(INDENT.len())],
+        width: width.saturating_sub(marker_width).max(1),
+    };
 
-    let prefix_width = display_width(prefix);
-    let continuation_prefix = " ".repeat(prefix_width);
-    let content_width = width.saturating_sub(prefix_width).max(1);
-    let mut first = true;
-    let mut prev_kind: Option<PartKind> = None;
-
+    // Text parts render as markdown; every other part is a dim excerpt, set
+    // apart from text by a blank line.
+    let mut prev_is_text = None;
     for part in &msg.content {
-        let kind = part_kind(part);
-        ensure_part_spacing(&mut rendered_lines, prev_kind, kind);
+        let is_text = matches!(part, ContentPart::Text { .. });
+        if prev_is_text.is_some_and(|prev| prev != is_text)
+            && !out.lines.last().is_some_and(line_is_blank)
+        {
+            out.lines.push(Line::from(""));
+        }
         match part {
-            ContentPart::Text { text } => {
-                push_markdown_block(
-                    &mut rendered_lines,
-                    text,
-                    &mut first,
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    body_style,
-                    content_width,
-                );
-            }
-            ContentPart::Reasoning { text } => {
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &format!("thinking: {text}"),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
-            }
-            ContentPart::ToolCall { name, args, .. } => {
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &format!("→ {name}({args})"),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
-            }
-            ContentPart::ToolOutput { name, output, .. } => {
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &format!("← {name}: {output}"),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
-            }
-            ContentPart::FileData {
-                file_uri,
-                mime_type,
-            } => {
-                let mime = mime_type.as_deref().unwrap_or("file");
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &format!("📎 [{mime}] {file_uri}"),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
-            }
-            ContentPart::InlineData { mime_type, .. } => {
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &format!("[inline {mime_type}]"),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
-            }
-            ContentPart::Action { name, payload, .. } => {
-                let text = action_from_payload(name, payload)
-                    .map(|action| action_transcript_text(&action))
-                    .unwrap_or_else(|| format!("⚡ {name}"));
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &text,
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    usize::MAX,
-                );
-            }
-            ContentPart::Any(json) => {
-                push_limited_block(
-                    &mut rendered_lines,
-                    &mut first,
-                    &json.to_string(),
-                    prefix,
-                    &continuation_prefix,
-                    prefix_style,
-                    theme::dim_style(),
-                    theme::dim_style(),
-                    content_width,
-                    SECONDARY_PART_MAX_LINES,
-                );
+            ContentPart::Text { text } => out.push_markdown(text, body_style),
+            part => {
+                let (text, max_lines) = secondary_part_text(part);
+                out.push_limited(&text, max_lines);
             }
         }
-        prev_kind = Some(kind);
+        prev_is_text = Some(is_text);
     }
 
-    if prev_kind.is_some() {
-        rendered_lines.push(Line::from(""));
+    if prev_is_text.is_some() {
+        out.lines.push(Line::from(""));
     }
-
-    rendered_lines
+    out.lines
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PartKind {
-    Normal,
-    Limited,
-}
-
-fn part_kind(part: &ContentPart) -> PartKind {
-    match part {
-        ContentPart::Text { .. } => PartKind::Normal,
-        _ => PartKind::Limited,
-    }
-}
-
-fn ensure_part_spacing(
-    rendered_lines: &mut Vec<Line<'static>>,
-    prev_kind: Option<PartKind>,
-    next_kind: PartKind,
-) {
-    let Some(prev_kind) = prev_kind else {
-        return;
+/// The excerpt shown for a non-text part and how many lines it may wrap to.
+fn secondary_part_text(part: &ContentPart) -> (Cow<'_, str>, usize) {
+    let text = match part {
+        ContentPart::Text { text } => Cow::Borrowed(text.as_str()),
+        ContentPart::Reasoning { text } => format!("thinking: {text}").into(),
+        ContentPart::ToolCall { name, args, .. } => format!("→ {name}({args})").into(),
+        ContentPart::ToolOutput { name, output, .. } => format!("← {name}: {output}").into(),
+        ContentPart::FileData {
+            file_uri,
+            mime_type,
+        } => format!("📎 [{}] {file_uri}", mime_type.as_deref().unwrap_or("file")).into(),
+        ContentPart::InlineData { mime_type, .. } => format!("[inline {mime_type}]").into(),
+        // Action cards stay complete: their details and choices are the
+        // only way to answer them from the terminal.
+        ContentPart::Action { name, payload, .. } => {
+            let text = action_from_payload(name, payload)
+                .map(|action| action_transcript_text(&action))
+                .unwrap_or_else(|| format!("⚡ {name}"));
+            return (text.into(), usize::MAX);
+        }
+        ContentPart::Any(json) => json.to_string().into(),
     };
-    if prev_kind == next_kind {
-        return;
-    }
-    if rendered_lines.last().is_some_and(line_is_blank) {
-        return;
-    }
-    rendered_lines.push(Line::from(""));
+    (text, SECONDARY_PART_MAX_LINES)
 }
 
-#[cfg(test)]
-pub(super) fn thinking_lines(app: &App) -> Vec<Line<'static>> {
-    if !app.chat.is_thinking() {
-        return Vec::new();
-    }
-
-    vec![Line::from(vec![
-        Span::styled("🐼 ❯ ", theme::success_style()),
-        Span::styled(
-            input_separator_label(app).into_owned(),
-            theme::subtle_style(),
-        ),
-    ])]
+/// Wrapped lines of one message: the role marker leads the first line and
+/// blank indentation of the same width leads the rest.
+struct MessageLines {
+    lines: Vec<Line<'static>>,
+    marker: &'static str,
+    marker_style: Style,
+    indent: &'static str,
+    width: usize,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn push_markdown_block(
-    rendered_lines: &mut Vec<Line<'static>>,
-    text: &str,
-    first: &mut bool,
-    prefix: &str,
-    continuation_prefix: &str,
-    first_prefix_style: Style,
-    continuation_prefix_style: Style,
-    body_style: Style,
-    content_width: usize,
-) {
-    for line in markdown::render(text) {
-        for body_line in wrap_styled_body_line(line, body_style, content_width) {
-            push_prefixed_body_line(
-                rendered_lines,
-                first,
-                prefix,
-                continuation_prefix,
-                first_prefix_style,
-                continuation_prefix_style,
-                body_line,
-            );
+impl MessageLines {
+    fn push(&mut self, body: Vec<Span<'static>>) {
+        let marker = if self.lines.is_empty() {
+            Span::styled(self.marker, self.marker_style)
+        } else {
+            Span::styled(self.indent, theme::dim_style())
+        };
+        let mut spans = Vec::with_capacity(body.len() + 1);
+        spans.push(marker);
+        spans.extend(body);
+        self.lines.push(Line::from(spans));
+    }
+
+    fn push_markdown(&mut self, text: &str, body_style: Style) {
+        for line in markdown::render(text) {
+            for body in wrap_styled_body_line(line, body_style, self.width) {
+                self.push(body);
+            }
+        }
+    }
+
+    fn push_limited(&mut self, text: &str, max_lines: usize) {
+        for chunk in limited_visual_lines(text, self.width, max_lines) {
+            self.push(vec![Span::styled(chunk, theme::dim_style())]);
         }
     }
 }
@@ -257,10 +141,9 @@ fn wrap_styled_body_line(
     line: Line<'static>,
     base_style: Style,
     width: usize,
-) -> Vec<Line<'static>> {
+) -> Vec<Vec<Span<'static>>> {
     let width = width.max(1);
     let line_style = base_style.patch(line.style);
-    let alignment = line.alignment;
     let mut wrapped = Vec::new();
     let mut current = Vec::new();
     let mut current_width = 0;
@@ -284,10 +167,7 @@ fn wrap_styled_body_line(
                 continue;
             }
             if current_width + grapheme_width > width && !current.is_empty() {
-                wrapped.push(body_line_from_spans(
-                    std::mem::take(&mut current),
-                    alignment,
-                ));
+                wrapped.push(std::mem::take(&mut current));
                 current_width = 0;
             }
 
@@ -297,19 +177,10 @@ fn wrap_styled_body_line(
     }
 
     if !current.is_empty() || wrapped.is_empty() {
-        wrapped.push(body_line_from_spans(current, alignment));
+        wrapped.push(current);
     }
 
     wrapped
-}
-
-fn body_line_from_spans(
-    spans: Vec<Span<'static>>,
-    alignment: Option<ratatui::layout::Alignment>,
-) -> Line<'static> {
-    let mut line = Line::from(spans);
-    line.alignment = alignment;
-    line
 }
 
 fn push_styled_grapheme(spans: &mut Vec<Span<'static>>, grapheme: &str, style: Style) {
@@ -321,66 +192,6 @@ fn push_styled_grapheme(spans: &mut Vec<Span<'static>>, grapheme: &str, style: S
     }
 
     spans.push(Span::styled(grapheme.to_string(), style));
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_prefixed_body_line(
-    rendered_lines: &mut Vec<Line<'static>>,
-    first: &mut bool,
-    prefix: &str,
-    continuation_prefix: &str,
-    first_prefix_style: Style,
-    continuation_prefix_style: Style,
-    body_line: Line<'static>,
-) {
-    let marker = if *first {
-        prefix.to_string()
-    } else {
-        continuation_prefix.to_string()
-    };
-    let marker_style = if *first {
-        first_prefix_style
-    } else {
-        continuation_prefix_style
-    };
-
-    let mut spans = Vec::with_capacity(body_line.spans.len() + 1);
-    spans.push(Span::styled(marker, marker_style));
-    spans.extend(body_line.spans);
-    rendered_lines.push(Line::from(spans));
-    *first = false;
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_limited_block(
-    rendered_lines: &mut Vec<Line<'static>>,
-    first: &mut bool,
-    text: &str,
-    prefix: &str,
-    continuation_prefix: &str,
-    first_prefix_style: Style,
-    continuation_prefix_style: Style,
-    body_style: Style,
-    content_width: usize,
-    max_lines: usize,
-) {
-    for chunk in limited_visual_lines(text, content_width, max_lines) {
-        let marker = if *first {
-            prefix.to_string()
-        } else {
-            continuation_prefix.to_string()
-        };
-        let marker_style = if *first {
-            first_prefix_style
-        } else {
-            continuation_prefix_style
-        };
-        rendered_lines.push(Line::from(vec![
-            Span::styled(marker, marker_style),
-            Span::styled(chunk, body_style),
-        ]));
-        *first = false;
-    }
 }
 
 fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<String> {
@@ -434,8 +245,8 @@ fn limited_visual_lines(text: &str, width: usize, max_lines: usize) -> Vec<Strin
         }
     }
 
-    if truncated {
-        append_ellipsis_to_last(&mut lines, width);
+    if truncated && let Some(last) = lines.last_mut() {
+        *last = truncate_visual(&format!("{last}..."), width);
     }
 
     lines
@@ -449,37 +260,4 @@ fn push_limited_line(lines: &mut Vec<String>, current: &mut String, max_lines: u
 
     lines.push(std::mem::take(current));
     true
-}
-
-fn append_ellipsis_to_last(lines: &mut Vec<String>, width: usize) {
-    if lines.is_empty() {
-        lines.push("...".to_string());
-        return;
-    }
-
-    let last = lines.last_mut().expect("line exists");
-    *last = truncate_with_ellipsis(last, width);
-}
-
-fn truncate_with_ellipsis(text: &str, width: usize) -> String {
-    let width = width.max(1);
-    if width <= 3 {
-        return ".".repeat(width);
-    }
-
-    let target_width = width - 3;
-    let mut truncated = String::new();
-    let mut current_width = 0;
-
-    for grapheme in UnicodeSegmentation::graphemes(text, true) {
-        let grapheme_width = display_width(grapheme);
-        if current_width + grapheme_width > target_width {
-            break;
-        }
-        truncated.push_str(grapheme);
-        current_width += grapheme_width;
-    }
-
-    truncated.push_str("...");
-    truncated
 }

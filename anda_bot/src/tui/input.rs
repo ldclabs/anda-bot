@@ -9,13 +9,23 @@ use ratatui::{
 };
 
 use super::{
-    App, INPUT_CONTINUATION_PREFIX, INPUT_DIVIDER_FLOW_SPEED, INPUT_DIVIDER_GLOW_RADIUS,
-    INPUT_DIVIDER_LABEL, INPUT_DIVIDER_PADDED_HEIGHT, INPUT_DIVIDER_PREFIX,
-    INPUT_DIVIDER_TRAIL_OFFSET, INPUT_PROMPT_PREFIX, INPUT_SCROLLBAR_WIDTH, MAX_INPUT_LINES,
-    THINKING_FRAMES, THINKING_LABEL,
+    App,
     text::{display_width, truncate_visual},
     theme,
 };
+
+const MAX_INPUT_LINES: u16 = 4;
+const INPUT_PROMPT_PREFIX: &str = "❯ ";
+const INPUT_CONTINUATION_PREFIX: &str = "  ";
+pub(super) const INPUT_DIVIDER_PREFIX: &str = "── ";
+pub(super) const INPUT_DIVIDER_LABEL: &str = "compose";
+pub(super) const THINKING_LABEL: &str = "thinking";
+pub(super) const INPUT_DIVIDER_PADDED_HEIGHT: u16 = 3;
+const INPUT_DIVIDER_FLOW_SPEED: f32 = 1.25;
+const INPUT_DIVIDER_GLOW_RADIUS: f32 = 15.0;
+const INPUT_DIVIDER_TRAIL_OFFSET: f32 = 9.0;
+const INPUT_SCROLLBAR_WIDTH: u16 = 1;
+pub(super) const THINKING_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 #[derive(Clone, Copy)]
 pub(super) enum InputCursorDirection {
@@ -53,23 +63,12 @@ pub(super) fn input_height(app: &App, area: Rect) -> u16 {
     .min(area.height)
 }
 
-#[cfg(test)]
-pub(super) fn input_display_text(app: &App) -> &str {
-    if app.chat_enabled() && !app.input_buf.is_empty() {
-        &app.input_buf
-    } else {
-        input_placeholder(app)
-    }
-}
-
 pub(super) fn input_placeholder(app: &App) -> &'static str {
     if app.setup_required() {
         "Press Ctrl+G to connect ChatGPT, or edit config.yaml and press Enter."
     } else if !app.daemon_running {
         "Waiting for a healthy local daemon. Press Enter to retry."
-    } else if app.choice_input.is_some() || app.chat.sending {
-        ""
-    } else if !app.input_focused {
+    } else if !app.input_focused && app.choice_input.is_none() && !app.chat.sending {
         "Press Enter or start typing to focus the input."
     } else {
         ""
@@ -95,12 +94,6 @@ fn prompt_line(text: String, first: bool, placeholder: bool) -> Line<'static> {
             },
         ),
     ])
-}
-
-#[cfg(test)]
-pub(super) fn build_prompt_lines(app: &App, placeholder: &str, width: usize) -> Vec<Line<'static>> {
-    let viewport = build_input_viewport(app, placeholder, width as u16, u16::MAX);
-    viewport.lines
 }
 
 pub(super) struct InputViewport {
@@ -478,7 +471,7 @@ pub(super) struct InputLayout {
 }
 
 impl InputLayout {
-    fn new(text: &str, width: u16) -> Self {
+    pub(super) fn new(text: &str, width: u16) -> Self {
         let width = width.max(1);
         let mut lines = vec![String::new()];
         let mut points = vec![InputCursorPoint {
@@ -591,17 +584,6 @@ pub(super) fn cached_input_layout(app: &App, width: u16) -> Ref<'_, InputLayout>
             .find(|layout| layout.width == width)
             .unwrap()
     })
-}
-
-#[cfg(test)]
-pub(super) fn move_cursor_vertically(
-    text: &str,
-    cursor: usize,
-    width: u16,
-    direction: InputCursorDirection,
-    preferred_col: Option<u16>,
-) -> (usize, u16) {
-    InputLayout::new(text, width).move_cursor(cursor, direction, preferred_col)
 }
 
 pub(super) fn previous_cursor(text: &str, cursor: usize) -> usize {
