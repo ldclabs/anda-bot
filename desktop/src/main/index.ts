@@ -630,6 +630,7 @@ async function setup(): Promise<void> {
   browser = new BrowserService(
     () => window,
     (value) => emit({ type: 'browser', value }),
+    (source) => emit({ type: 'browser-reveal', value: source }),
     (name) => daemon.registerBrowserSession(name),
     home
   )

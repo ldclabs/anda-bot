@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import { parseDocument } from 'yaml'
 import { testTone } from '../src/renderer/audio-test.ts'
@@ -963,6 +964,40 @@ try {
   )
   // Below 1150px the panel is a drawer over the header's Resources toggle, as
   // on 1024px-wide CI displays, so close it from the panel itself.
+  await page
+    .locator('.resource-panel > header')
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
+  // A page the agent opens brings up the chat's browser. A local page loads
+  // the assets beside it and nothing else from disk.
+  const localSite = join(directory, 'local-site')
+  await mkdir(join(localSite, 'assets'), { recursive: true })
+  await writeFile(
+    join(localSite, 'report.html'),
+    '<!doctype html><title>Local report</title><link rel="stylesheet" href="assets/report.css"><h1>Local report</h1>'
+  )
+  await writeFile(join(localSite, 'assets', 'report.css'), 'h1 { color: rgb(1, 2, 3) }')
+  await writeFile(join(localSite, 'notes.txt'), 'Not for the page')
+  await writeFile(join(directory, 'outside.css'), 'h1 { color: red }')
+  const localTab = await browserAction(browserSession, {
+    action: 'open_tab',
+    url: pathToFileURL(join(localSite, 'report.html')).href
+  })
+  await page
+    .locator('.resource-panel')
+    .getByRole('button', { name: 'Local report', exact: true })
+    .waitFor()
+  await page.screenshot({ path: join(screenshotDir, '11-browser-local-file.png') })
+  const localPage = await browserAction(browserSession, {
+    action: 'execute_javascript',
+    code: 'Promise.all(["notes.txt", "../outside.css"].map((url) => fetch(url).then((r) => r.status))).then((blocked) => ({ color: getComputedStyle(document.querySelector("h1")).color, blocked }))'
+  })
+  assert.deepEqual(localPage.result, { color: 'rgb(1, 2, 3)', blocked: [404, 404] })
+  await assert.rejects(
+    browserAction(browserSession, { action: 'open_tab', url: pathToFileURL(localSite).href }),
+    /not folders/
+  )
+  await browserAction(browserSession, { action: 'close_tab', tab_id: localTab.tab.id })
   await page
     .locator('.resource-panel > header')
     .getByRole('button', { name: 'Close', exact: true })

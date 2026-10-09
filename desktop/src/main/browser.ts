@@ -2,6 +2,7 @@ import {
   BrowserWindow,
   WebContentsView,
   session,
+  net,
   dialog,
   clipboard,
   shell,
@@ -9,7 +10,8 @@ import {
   type WebContents
 } from 'electron'
 import { createHash } from 'node:crypto'
-import { basename } from 'node:path'
+import { basename, dirname, extname, isAbsolute, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { realpath, stat } from 'node:fs/promises'
 import type { BrowserRequest, BrowserState, BrowserDownload } from '../shared/browser'
 import type {
@@ -40,6 +42,12 @@ export function browserUrl(raw: unknown): string {
     throw new Error('Only HTTP and HTTPS pages can be opened in this browser.')
   return url.href
 }
+/** Static assets a local page the agent opened may load from its own folder. */
+const PAGE_ASSETS = new Set(
+  'css js mjs png jpg jpeg gif webp avif svg ico bmp woff woff2 ttf otf mp3 mp4 m4a wav ogg webm'
+    .split(' ')
+    .map((extension) => `.${extension}`)
+)
 export class BrowserService {
   private contexts = new Map<string, Context>()
   private jobs = new Map<number, Promise<unknown>>()
@@ -47,13 +55,24 @@ export class BrowserService {
   private attached = new Set<WebContentsView>()
   private browsing = session.fromPartition('persist:anda-browser')
   private grants = new Set<string>()
+  /** Real paths of the local files the agent opened. */
+  private files = new Set<string>()
   private worlds = new Map<number, number>()
   constructor(
     private window: () => BrowserWindow | null,
     private emit: (state: BrowserState) => void,
+    /** Shows the chat's browser after its agent opens a tab in the foreground. */
+    private reveal: (source: string) => void,
     private register: (name: string) => Promise<void>,
     private profile: string
   ) {
+    // Electron lets any file:// page read every other local file. Here a page
+    // gets only the files the agent opened and the static assets beside them.
+    this.browsing.protocol.handle('file', async (request) => {
+      if (await this.fileAllowed(request.url).catch(() => false))
+        return net.fetch(request, { bypassCustomProtocolHandlers: true })
+      return new Response('Not found', { status: 404 })
+    })
     this.browsing.setPermissionCheckHandler(
       (wc, permission, origin, details) =>
         Boolean(wc && this.findContents(wc.id)) &&
@@ -150,6 +169,27 @@ export class BrowserService {
   private findContents(id: number): Context | undefined {
     return [...this.contexts.values()].find((c) => c.tabs.has(id))
   }
+  /** A web page, or a local file the agent may then load (see fileAllowed). */
+  private async agentUrl(raw: unknown): Promise<string> {
+    if (typeof raw !== 'string' || !/^file:/i.test(raw)) return browserUrl(raw)
+    const url = new URL(raw)
+    if (url.host) throw new Error('Only files on this computer can be opened in this browser.')
+    const path = await realpath(fileURLToPath(url))
+    if (!(await stat(path)).isFile()) throw new Error('This browser opens files, not folders.')
+    this.files.add(path)
+    return url.href
+  }
+  private async fileAllowed(raw: string): Promise<boolean> {
+    const url = new URL(raw)
+    if (url.host) return false
+    const path = await realpath(fileURLToPath(url))
+    if (this.files.has(path)) return true
+    if (!PAGE_ASSETS.has(extname(path).toLowerCase())) return false
+    return [...this.files].some((file) => {
+      const inner = relative(dirname(file), path)
+      return !isAbsolute(inner) && !inner.startsWith(`..${sep}`)
+    })
+  }
   private state(context: Context): BrowserState {
     return {
       source: context.source,
@@ -187,8 +227,8 @@ export class BrowserService {
         } else tab.view.setVisible(false)
       }
   }
+  /** `url` has passed browserUrl, or agentUrl for an agent's tab. */
   private newTab(context: Context, url = 'about:blank', active = true): Tab {
-    browserUrl(url)
     if ([...this.contexts.values()].reduce((n, c) => n + c.tabs.size, 0) >= 32)
       throw new Error('Close a browser tab before opening another.')
     const view = new WebContentsView({
@@ -444,12 +484,16 @@ export class BrowserService {
         tabs: this.state(context).tabs.map((t) => ({ ...t, active: t.id === context.active }))
       }
     if (action === 'launch_browser') {
-      if (args.url || !context.tabs.size)
-        this.newTab(context, browserUrl(args.url || 'about:blank'))
+      if (args.url || !context.tabs.size) {
+        this.newTab(context, await this.agentUrl(args.url || 'about:blank'))
+        this.reveal(context.source)
+      }
       return { launched: false, connected: true, session: context.session }
     }
     if (action === 'open_tab' || (action === 'navigate' && !context.active)) {
-      const tab = this.newTab(context, browserUrl(args.url || 'about:blank'), args.active !== false)
+      const foreground = args.active !== false
+      const tab = this.newTab(context, await this.agentUrl(args.url || 'about:blank'), foreground)
+      if (foreground) this.reveal(context.source)
       await this.waitLoaded(tab.view.webContents, args.timeout_ms)
       if (tab.error) throw new Error(tab.error)
       return { opened: true, tab: this.summary(tab.view.webContents) }
@@ -521,7 +565,7 @@ export class BrowserService {
     const tab = this.summary(wc)
     switch (args.action) {
       case 'navigate':
-        await wc.loadURL(browserUrl(args.url))
+        await wc.loadURL(await this.agentUrl(args.url))
         return { navigated: true, tab: this.summary(wc) }
       case 'reload':
         args.bypass_cache ? wc.reloadIgnoringCache() : wc.reload()

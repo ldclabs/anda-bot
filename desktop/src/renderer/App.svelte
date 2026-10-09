@@ -442,6 +442,15 @@
   }
   const stopMenu = window.anda.onEvent((event) => {
     if (event.type === 'menu') menuCommand(String(event.value))
+    // The agent opened a page in this chat's browser: show it.
+    else if (
+      event.type === 'browser-reveal' &&
+      client.view === 'chat' &&
+      event.value === client.activeSource
+    ) {
+      rightOpen = true
+      rightTab = 'browser'
+    }
   })
   onDestroy(() => {
     stopMenu()

@@ -98,6 +98,7 @@ export interface NativeEvent {
     | 'state'
     | 'terminal'
     | 'browser'
+    | 'browser-reveal'
     | 'preferences'
     | 'fullscreen'
   value?: unknown
