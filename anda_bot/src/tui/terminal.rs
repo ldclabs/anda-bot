@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io::{self, Write},
     time::{Duration, Instant},
 };
 
@@ -27,6 +27,7 @@ use super::{
     App,
     backend::TuiBackend,
     layout::{dynamic_viewport_height, input_navigation_content_width},
+    program_status::{ProgramStatusReporter, terminal_supported},
     render::{flush_static_scrollback, render},
 };
 
@@ -131,6 +132,7 @@ async fn run_app(
     let mut events = event::EventStream::new();
     let mut ticks = tokio::time::interval(Duration::from_millis(150));
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut program_status = terminal_supported().then(ProgramStatusReporter::default);
 
     loop {
         needs_render |= app.finish_pending_bootstrap();
@@ -179,6 +181,12 @@ async fn run_app(
             terminal.draw(|frame| render(frame, app))?;
             needs_render = false;
         }
+        if let Some(report) = program_status
+            .as_mut()
+            .and_then(|status| status.update(app))
+        {
+            write_raw(&report)?;
+        }
 
         if app.should_quit {
             break;
@@ -202,7 +210,13 @@ async fn run_app(
         // Coalesce buffered typing into one frame, without blocking a Tokio
         // worker or waiting for any HTTP request in the input path.
         while let Some(event) = next_event {
-            match event? {
+            let event = event?;
+            if matches!(event, Event::Key(_) | Event::Paste(_))
+                && let Some(status) = program_status.as_mut()
+            {
+                status.seen();
+            }
+            match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let width = if matches!(key.code, KeyCode::Up | KeyCode::Down) {
                         input_navigation_content_width(app, terminal.get_frame().area())
@@ -225,7 +239,20 @@ async fn run_app(
             next_event = events.next().now_or_never().flatten();
         }
     }
+    if let Some(report) = program_status
+        .as_mut()
+        .and_then(ProgramStatusReporter::clear)
+    {
+        write_raw(report)?;
+    }
     Ok(())
+}
+
+/// Writes a sequence ratatui does not know about between frames.
+fn write_raw(sequence: &str) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(sequence.as_bytes())?;
+    stdout.flush()
 }
 
 /// Recreates the inline viewport with a new height, at its current origin or,

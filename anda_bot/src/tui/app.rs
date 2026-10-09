@@ -149,6 +149,14 @@ impl App {
         self.setup.is_ready() && self.daemon_running && self.pending_bootstrap.is_none()
     }
 
+    pub(super) fn bootstrapping(&self) -> bool {
+        self.pending_bootstrap.is_some()
+    }
+
+    pub(super) fn chatgpt_login_pending(&self) -> bool {
+        self.pending_chatgpt.is_some()
+    }
+
     pub(super) fn clear_message_view(&mut self) {
         self.flushed_message_count = 0;
         self.static_panel_flushed = false;

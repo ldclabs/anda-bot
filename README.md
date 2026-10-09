@@ -188,7 +188,7 @@ When the terminal UI is running:
 - Use `/steer ...` to nudge an in-progress response.
 - Press Esc to show status, and Ctrl+C to quit.
 
-Input preserves spaces in text and code. Cursor movement and deletion treat combined emoji as one character. Status checks, conversation polling and Brain requests run in the background, so slow responses leave the UI responsive and Ctrl+C available. Opening the UI preserves existing terminal scrollback. `/new` clears the screen and scrollback for the new conversation. Reconnecting keeps your draft, and replaces the transcript only when it restores an active conversation.
+Input preserves spaces in text and code. Cursor movement and deletion treat combined emoji as one character. Status checks, conversation polling and Brain requests run in the background, so slow responses leave the UI responsive and Ctrl+C available. Opening the UI preserves existing terminal scrollback. `/new` clears the screen and scrollback for the new conversation. Reconnecting keeps your draft, and replaces the transcript only when it restores an active conversation. In a terminal that implements the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), the tab or session list shows whether Anda is working, waiting for your approval, answer or sign-in, done, or failed; other terminals ignore it.
 
 ### Command Approvals
 

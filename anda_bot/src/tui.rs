@@ -4,6 +4,7 @@ mod backend;
 mod input;
 mod layout;
 mod markdown;
+mod program_status;
 mod render;
 mod status;
 mod terminal;
