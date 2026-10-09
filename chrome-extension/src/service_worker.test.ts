@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  pageElementAttachmentMessageType,
   pageElementAttachmentRequestStorageKey,
   pageElementContextMenuId,
   pageElementDomMemoryKey,
@@ -258,7 +257,6 @@ describe('service worker page element context menu', () => {
         }
       })
     )
-    const request = chromeApi.__sessionState[pageElementAttachmentRequestStorageKey]
     expect(chromeApi.scripting.executeScript).toHaveBeenCalledTimes(2)
     expect(chromeApi.scripting.executeScript).toHaveBeenNthCalledWith(
       1,
@@ -280,10 +278,8 @@ describe('service worker page element context menu', () => {
         ]
       })
     )
-    expect(chromeApi.runtime.sendMessage).toHaveBeenCalledWith({
-      type: pageElementAttachmentMessageType,
-      pageElementRequest: request
-    })
+    // The panel picks the request up from session storage; nothing else carries it.
+    expect(chromeApi.runtime.sendMessage).not.toHaveBeenCalled()
   })
 })
 
@@ -496,5 +492,46 @@ describe('service worker lifecycle and routing', () => {
     chromeApi.__onTabUpdatedListeners[0](tab.id, { title: tab.title }, tab)
     await new Promise((resolve) => setTimeout(resolve, 300))
     expect(registrations()).toHaveLength(2)
+  })
+})
+
+describe('service worker reconnects', () => {
+  it('doubles the wait between attempts while the daemon is down', async () => {
+    vi.useFakeTimers()
+    try {
+      let sockets = 0
+      class RefusedWebSocket {
+        static OPEN = 1
+        readyState = 0
+        onopen: (() => void) | null = null
+        onclose: (() => void) | null = null
+        onerror: (() => void) | null = null
+        onmessage: ((event: { data: string }) => void) | null = null
+        constructor() {
+          sockets += 1
+          queueMicrotask(() => {
+            this.readyState = 3
+            this.onclose?.()
+          })
+        }
+        send() {}
+        close() {}
+      }
+      vi.stubGlobal('WebSocket', RefusedWebSocket)
+      await importServiceWorker(createChromeApi({ token: 'secret' }))
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sockets).toBe(1)
+      await vi.advanceTimersByTimeAsync(2_999)
+      expect(sockets).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sockets).toBe(2)
+      await vi.advanceTimersByTimeAsync(5_999)
+      expect(sockets).toBe(2)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sockets).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

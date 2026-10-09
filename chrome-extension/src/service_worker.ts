@@ -22,7 +22,6 @@ import {
 import { chromeTtsAvailable, speakWithChromeTts } from '$lib/service-worker/tts'
 import {
   isPageElementInfo,
-  pageElementAttachmentMessageType,
   pageElementAttachmentRequestStorageKey,
   pageElementContextMenuId,
   pageElementDomMemoryKey,
@@ -43,7 +42,10 @@ import type {
 } from '$lib/service-worker/types'
 
 const keepAliveIntervalMs = 20_000
+// A stopped daemon is retried with doubling waits up to the cap; an extension
+// page's RPC still connects at once through ensureSocket.
 const reconnectDelayMs = 3_000
+const maxReconnectDelayMs = 30_000
 const rpcTimeoutMs = 30 * 60 * 1000
 const pageElementCaptureMaxAgeMs = 5 * 60 * 1000
 
@@ -55,6 +57,7 @@ let socketKey = ''
 let opening: Promise<void> | null = null
 let openingReject: ((error: Error) => void) | null = null
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+let reconnectAttempts = 0
 let keepAliveTimer: ReturnType<typeof setInterval> | null = null
 let nextMessageId = 1
 let status = 'starting'
@@ -304,8 +307,7 @@ function extensionMessageLogSummary(message: ExtensionMessage): Record<string, u
     params: message.params,
     has_text: typeof message.text === 'string' ? message.text.length > 0 : undefined,
     language: message.language,
-    mime_type: message.mimeType,
-    has_page_element_request: Boolean(message.pageElementRequest)
+    mime_type: message.mimeType
   }
 }
 
@@ -390,16 +392,11 @@ async function handlePageElementContextMenuClick(
     element
   }
   await flashCapturedPageElement(info, tab, element)
+  // An open panel sees the write through storage.onChanged; a panel that is
+  // still opening reads it once it has initialized.
   await chromeApi.storage.session?.set({
     [pageElementAttachmentRequestStorageKey]: request
   })
-
-  await chromeApi.runtime
-    .sendMessage({
-      type: pageElementAttachmentMessageType,
-      pageElementRequest: request
-    })
-    .catch(() => ({ ok: false, error: 'side panel unavailable' }))
 }
 
 /**
@@ -688,6 +685,7 @@ async function ensureSocket(settings: SettingsState): Promise<void> {
       openingReject = null
       opening = null
       lastRegistration = ''
+      reconnectAttempts = 0
       status = 'connected'
       startKeepAlive()
       resolve()
@@ -758,12 +756,14 @@ function scheduleReconnect(settings: SettingsState): void {
   ) {
     return
   }
+  const delay = Math.min(maxReconnectDelayMs, reconnectDelayMs * 2 ** reconnectAttempts)
+  reconnectAttempts += 1
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null
     ensureSocket(settings)
       .then(() => registerBrowserSession(settings))
       .catch(() => scheduleReconnect(settings))
-  }, reconnectDelayMs)
+  }, delay)
 }
 
 function startKeepAlive(): void {

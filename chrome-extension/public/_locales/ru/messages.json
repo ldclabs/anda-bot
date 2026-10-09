@@ -221,6 +221,9 @@
   "removeAttachment": {
     "message": "Удалить вложение"
   },
+  "attachmentTooLarge": {
+    "message": "Файл $1 больше $2, его нельзя прикрепить."
+  },
   "switchToKeyboard": {
     "message": "Переключиться на клавиатуру"
   },
@@ -401,6 +404,21 @@
   "working": {
     "message": "Обработка"
   },
+  "statusConnecting": {
+    "message": "Подключение"
+  },
+  "statusCompleted": {
+    "message": "Завершено"
+  },
+  "statusCancelled": {
+    "message": "Отменено"
+  },
+  "statusFailed": {
+    "message": "Ошибка"
+  },
+  "statusUnavailable": {
+    "message": "Недоступно"
+  },
   "stopRecording": {
     "message": "Остановить запись"
   },
@@ -547,12 +565,6 @@
   },
   "configSectionUsersDetail": {
     "message": "Общие идентичности демона"
-  },
-  "configHeaderHint": {
-    "message": "Подключитесь к локальному демону Anda, чтобы загрузить конфигурацию."
-  },
-  "configLoad": {
-    "message": "Загрузить"
   },
   "configLoading": {
     "message": "Загрузка config.yaml"
@@ -712,12 +724,6 @@
   },
   "dashboardStudioCrumb": {
     "message": "Studio"
-  },
-  "dashboardSaveInConfig": {
-    "message": "Save"
-  },
-  "dashboardNoPendingSave": {
-    "message": "Config"
   },
   "bookmarksDashboardDescription": {
     "message": "Папки и сохраненные сообщения ассистента."
@@ -1568,6 +1574,21 @@
   "printMessage": {
     "message": "Распечатать сообщение"
   },
+  "roleUser": {
+    "message": "Пользователь"
+  },
+  "roleExternalUser": {
+    "message": "Внешний пользователь"
+  },
+  "roleSystem": {
+    "message": "Система"
+  },
+  "roleTool": {
+    "message": "Инструмент"
+  },
+  "roleAssistant": {
+    "message": "Ассистент"
+  },
   "configConnectionChanged": {
     "message": "Настройки подключения изменились. Перезагрузите конфигурацию перед сохранением."
   },
@@ -1708,5 +1729,14 @@
   },
   "chatgptModel": {
     "message": "Модель ChatGPT"
+  },
+  "chatgptUpdateDesktop": {
+    "message": "Обновите Anda Desktop, чтобы подключить ChatGPT."
+  },
+  "chatgptUpdateDaemon": {
+    "message": "Обновите daemon Anda, чтобы подключить ChatGPT."
+  },
+  "chatgptRequestFailed": {
+    "message": "Запрос к ChatGPT не выполнен ($1)."
   }
 }

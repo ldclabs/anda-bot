@@ -696,7 +696,6 @@
           class="management-page"
         >
           <ConfigApp
-            embedded
             onModelsChanged={async () => {
               await window.anda.connect()
               if (client.authorized) await client.refreshModelState()

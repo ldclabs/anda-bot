@@ -35,6 +35,12 @@ describe('ChatGPT account transport', () => {
       })
     )
   })
+  it('reports the status when the daemon answers without JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<html>Not Found</html>', { status: 404 })
+    )
+    await expect(chatgptRequest(settings, { method: 'accounts' })).rejects.toThrow('404')
+  })
   it('does not open arbitrary login destinations', async () => {
     await expect(openChatGptUrl('https://evil.invalid/')).rejects.toThrow('Unexpected')
     await expect(openChatGptUrl('javascript:alert(1)')).rejects.toThrow('Unexpected')

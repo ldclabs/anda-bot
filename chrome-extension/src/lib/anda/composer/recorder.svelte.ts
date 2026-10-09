@@ -244,11 +244,6 @@ export class VoiceRecorder {
     this.level = 0
   }
 
-  /** Releases the microphone and any timers. Call from the view's teardown. */
-  dispose(): void {
-    void this.cancel()
-  }
-
   #available(): { chromeSpeech: boolean; andaVoice: boolean } {
     const page = this.#options.page?.()
     return {

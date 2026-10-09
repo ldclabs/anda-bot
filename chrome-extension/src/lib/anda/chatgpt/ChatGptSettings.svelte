@@ -39,7 +39,9 @@
   async function refresh() {
     const result = await chatgptRequest<ChatGptAccounts>(settings, { method: 'accounts' })
     if (!Array.isArray(result.accounts))
-      throw new Error('Update the Anda daemon to connect ChatGPT')
+      throw new Error(
+        getMessage('chatgptUpdateDaemon') || 'Update the Anda daemon to connect ChatGPT'
+      )
     accounts = result
     if (!accounts.accounts.some((a) => a.id === profile))
       profile = accounts.active || accounts.accounts[0]?.id || ''

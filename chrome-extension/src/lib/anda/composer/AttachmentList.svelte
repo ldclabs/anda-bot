@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getMessage } from '$lib/i18n'
   import type { ChatAttachment } from '$lib/anda/client/types'
-  import { fileSizeLabel } from '$lib/anda/composer/attachments'
+  import { formatFileSize } from '$lib/utils/format'
   import { buttonClass } from '$lib/anda/ui'
   import { FileText, Paperclip, X } from '@lucide/svelte'
 
@@ -49,7 +49,7 @@
             </span>
             <span class="attachment-body">
               <span class="attachment-name">{attachment.name}</span>
-              <span class="attachment-meta">{fileSizeLabel(attachment.size || 0)}</span>
+              <span class="attachment-meta">{formatFileSize(attachment.size || 0)}</span>
             </span>
             <button
               type="button"

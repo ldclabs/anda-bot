@@ -221,6 +221,9 @@
   "removeAttachment": {
     "message": "إزالة المرفق"
   },
+  "attachmentTooLarge": {
+    "message": "حجم $1 أكبر من $2، ولا يمكن إرفاقه."
+  },
   "switchToKeyboard": {
     "message": "التبديل إلى لوحة المفاتيح"
   },
@@ -401,6 +404,21 @@
   "working": {
     "message": "جارٍ المعالجة"
   },
+  "statusConnecting": {
+    "message": "جارٍ الاتصال"
+  },
+  "statusCompleted": {
+    "message": "اكتمل"
+  },
+  "statusCancelled": {
+    "message": "أُلغي"
+  },
+  "statusFailed": {
+    "message": "فشل"
+  },
+  "statusUnavailable": {
+    "message": "غير متاح"
+  },
   "stopRecording": {
     "message": "إيقاف التسجيل"
   },
@@ -547,12 +565,6 @@
   },
   "configSectionUsersDetail": {
     "message": "هويات الخدمة المشتركة"
-  },
-  "configHeaderHint": {
-    "message": "اتصل بخدمة Anda المحلية لتحميل إعدادات التشغيل."
-  },
-  "configLoad": {
-    "message": "تحميل"
   },
   "configLoading": {
     "message": "جارٍ تحميل config.yaml"
@@ -712,12 +724,6 @@
   },
   "dashboardStudioCrumb": {
     "message": "Studio"
-  },
-  "dashboardSaveInConfig": {
-    "message": "Save"
-  },
-  "dashboardNoPendingSave": {
-    "message": "Config"
   },
   "bookmarksDashboardDescription": {
     "message": "المجلدات ورسائل المساعد المحفوظة."
@@ -1568,6 +1574,21 @@
   "printMessage": {
     "message": "طباعة الرسالة"
   },
+  "roleUser": {
+    "message": "المستخدم"
+  },
+  "roleExternalUser": {
+    "message": "مستخدم خارجي"
+  },
+  "roleSystem": {
+    "message": "النظام"
+  },
+  "roleTool": {
+    "message": "أداة"
+  },
+  "roleAssistant": {
+    "message": "المساعد"
+  },
   "configConnectionChanged": {
     "message": "تغيّرت إعدادات الاتصال. أعد تحميل الإعدادات قبل حفظها."
   },
@@ -1708,5 +1729,14 @@
   },
   "chatgptModel": {
     "message": "نموذج ChatGPT"
+  },
+  "chatgptUpdateDesktop": {
+    "message": "حدّث Anda Desktop لربط ChatGPT."
+  },
+  "chatgptUpdateDaemon": {
+    "message": "حدّث daemon الخاص بـ Anda لربط ChatGPT."
+  },
+  "chatgptRequestFailed": {
+    "message": "فشل طلب ChatGPT ($1)."
   }
 }

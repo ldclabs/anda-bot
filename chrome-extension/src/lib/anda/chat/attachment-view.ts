@@ -95,11 +95,3 @@ export function attachmentHasDownloadData(
 export function safeDownloadName(name: string): string {
   return name.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'attachment'
 }
-
-export { normalizeBase64, base64ToBytes } from '$lib/utils/base64'
-
-export function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(bytes.byteLength)
-  new Uint8Array(buffer).set(bytes)
-  return buffer
-}

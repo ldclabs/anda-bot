@@ -18,6 +18,7 @@
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import Modal from '$lib/anda/Modal.svelte'
   import { delay } from '$lib/utils/async'
+  import { defaultSettings } from '$lib/service-worker/settings'
   import {
     BrainCircuit,
     Check,
@@ -45,12 +46,7 @@
     setupGuideOpen = $bindable(false)
   }: { open?: boolean; setupGuideOpen?: boolean } = $props()
 
-  let draftSettings = $state<SettingsState>({
-    baseUrl: 'http://127.0.0.1:8042',
-    token: '',
-    submitKeyMode: 'enter',
-    appearanceTheme: 'system'
-  })
+  let draftSettings = $state<SettingsState>({ ...defaultSettings })
   let settingsDirty = $state(false)
   let savingSettings = $state(false)
   let testingConnection = $state(false)
@@ -140,10 +136,8 @@
       if (draftSettings.token.trim()) {
         setupGuideOpen = false
       }
+      // Saving already re-read the model list from the daemon.
       draftSettings = { ...andaClient.settings }
-      if (andaClient.settings.token) {
-        await refreshModels()
-      }
     } finally {
       savingSettings = false
     }
@@ -158,7 +152,6 @@
       await andaClient.testConnection(draftSettings)
       settingsDirty = false
       draftSettings = { ...andaClient.settings }
-      await refreshModels()
     } catch (_error) {
     } finally {
       testingConnection = false
@@ -173,7 +166,7 @@
     try {
       await Promise.all([
         andaClient.refreshModelState({ reload: true }),
-        delay(800) // Ensure the loading spinner is visible for at least 1.2 seconds to avoid flickering
+        delay(800) // Keep the spinner up for at least 0.8 s so a fast reply does not flicker
       ])
     } catch (_error) {
     } finally {
@@ -189,7 +182,7 @@
     try {
       await Promise.all([
         andaClient.setActiveModel(nextModel),
-        delay(800) // Ensure the loading spinner is visible for at least 1.2 seconds to avoid flickering
+        delay(800) // Keep the spinner up for at least 0.8 s so a fast reply does not flicker
       ])
     } catch (_error) {
     } finally {
@@ -199,7 +192,11 @@
 
   onMount(() => {
     draftSettings = { ...andaClient.settings }
-    refreshModels().catch(() => undefined)
+    // The client loads the model list on connect; `reload_models` (which
+    // rebuilds every model from config.yaml) stays behind the refresh button.
+    if (andaClient.settings.token && !andaClient.modelState.modelNames.length) {
+      andaClient.refreshModelState().catch(() => undefined)
+    }
   })
 </script>
 

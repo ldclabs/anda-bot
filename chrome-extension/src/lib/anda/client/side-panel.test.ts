@@ -451,6 +451,25 @@ describe('AndaSidePanelClient daemon changes', () => {
     client.destroy()
     expect(chromeApi.runtime.onMessage.removeListener).toHaveBeenCalledWith(listener)
   })
+
+  it('drops channels deleted elsewhere but keeps the one being shown', async () => {
+    const chromeApi = createChromeApi({ settings: { token: 'token' } })
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...client.settings, token: 'token' }
+    let states: Record<string, unknown> = { 'telegram:1': { c: 1 }, 'telegram:2': { c: 2 } }
+    vi.spyOn(client, 'toolCall').mockImplementation(
+      async () => ({ output: { result: states } }) as any
+    )
+
+    await client.refreshChannels()
+    client.activeChannel = client.channels.get('telegram:2') || null
+    states = {}
+    await client.refreshChannels()
+
+    expect(Array.from(client.channels.keys())).toEqual(['telegram:2'])
+  })
 })
 
 describe('AndaSidePanelClient.openWorkspaceChannel', () => {

@@ -221,6 +221,9 @@
   "removeAttachment": {
     "message": "Supprimer la pièce jointe"
   },
+  "attachmentTooLarge": {
+    "message": "$1 dépasse $2 et ne peut pas être joint."
+  },
   "switchToKeyboard": {
     "message": "Passer au clavier"
   },
@@ -401,6 +404,21 @@
   "working": {
     "message": "Traitement"
   },
+  "statusConnecting": {
+    "message": "Connexion"
+  },
+  "statusCompleted": {
+    "message": "Terminé"
+  },
+  "statusCancelled": {
+    "message": "Annulé"
+  },
+  "statusFailed": {
+    "message": "Échec"
+  },
+  "statusUnavailable": {
+    "message": "Indisponible"
+  },
   "stopRecording": {
     "message": "Arrêter l'enregistrement"
   },
@@ -547,12 +565,6 @@
   },
   "configSectionUsersDetail": {
     "message": "Identités partagées du démon"
-  },
-  "configHeaderHint": {
-    "message": "Connectez-vous au démon Anda local pour charger la configuration."
-  },
-  "configLoad": {
-    "message": "Charger"
   },
   "configLoading": {
     "message": "Chargement de config.yaml"
@@ -712,12 +724,6 @@
   },
   "dashboardStudioCrumb": {
     "message": "Studio"
-  },
-  "dashboardSaveInConfig": {
-    "message": "Save"
-  },
-  "dashboardNoPendingSave": {
-    "message": "Config"
   },
   "bookmarksDashboardDescription": {
     "message": "Dossiers et messages sauvegardés de l'assistant."
@@ -1568,6 +1574,21 @@
   "printMessage": {
     "message": "Imprimer le message"
   },
+  "roleUser": {
+    "message": "Utilisateur"
+  },
+  "roleExternalUser": {
+    "message": "Utilisateur externe"
+  },
+  "roleSystem": {
+    "message": "Système"
+  },
+  "roleTool": {
+    "message": "Outil"
+  },
+  "roleAssistant": {
+    "message": "Assistant"
+  },
   "configConnectionChanged": {
     "message": "La connexion a changé. Rechargez la configuration avant de l’enregistrer."
   },
@@ -1708,5 +1729,14 @@
   },
   "chatgptModel": {
     "message": "Modèle ChatGPT"
+  },
+  "chatgptUpdateDesktop": {
+    "message": "Mettez à jour Anda Desktop pour connecter ChatGPT."
+  },
+  "chatgptUpdateDaemon": {
+    "message": "Mettez à jour le daemon Anda pour connecter ChatGPT."
+  },
+  "chatgptRequestFailed": {
+    "message": "La requête ChatGPT a échoué ($1)."
   }
 }

@@ -12,9 +12,26 @@ import type { ChatMessage, ChatToolCall } from '../client/types'
  *   them.
  *
  * A fold keeps the id of its first message, which stays stable while the turn
- * grows. Source messages are never mutated; folded ones are copies.
+ * grows. Source messages are never mutated; folded ones are copies. The result
+ * is cached per source array, so callers must replace (not mutate) an array
+ * whose messages changed, and must not mutate what they get back.
  */
 export function displayMessages(messages: ChatMessage[]): ChatMessage[] {
+  let folded = foldedMessages.get(messages)
+  if (!folded) {
+    folded = foldMessages(messages)
+    foldedMessages.set(messages, folded)
+  }
+  return folded
+}
+
+// The transcript re-derives every loaded group on each poll that changes the
+// current one. Groups replace their message array when they change, so an
+// unchanged group hands back the same folded messages and its rows (with
+// their parsed tool calls) are not rendered again.
+const foldedMessages = new WeakMap<ChatMessage[], ChatMessage[]>()
+
+function foldMessages(messages: ChatMessage[]): ChatMessage[] {
   const output: ChatMessage[] = []
   const owned = new Set<number>()
   const pendingCalls: Array<{ index: number; tool: number; callId?: string; name: string }> = []

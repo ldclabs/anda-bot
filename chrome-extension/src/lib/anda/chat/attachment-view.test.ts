@@ -9,9 +9,6 @@ import {
   attachmentObjectUrl,
   attachmentResourceBlob,
   attachmentResourceId,
-  base64ToBytes,
-  bytesToArrayBuffer,
-  normalizeBase64,
   safeDownloadName,
   type AttachmentCaches
 } from './attachment-view'
@@ -147,27 +144,5 @@ describe('attachment labels', () => {
       )
     ).toBe('A web page')
     expect(attachmentDescription(attachment())).toBe('')
-  })
-})
-
-describe('base64 decoding', () => {
-  it('accepts data urls, url-safe alphabets, whitespace, and missing padding', () => {
-    expect(normalizeBase64('data:text/plain;base64,QUJD')).toBe('QUJD')
-    expect(normalizeBase64('QU\nJD')).toBe('QUJD')
-    expect(normalizeBase64('-_8')).toBe('+/8=')
-    expect(normalizeBase64('QUJDRA==')).toBe('QUJDRA==')
-  })
-
-  it('decodes the daemon b64: base64url form of resource blobs', () => {
-    expect(Array.from(base64ToBytes('b64:-_8='))).toEqual([251, 255])
-  })
-
-  it('decodes to bytes and to a standalone ArrayBuffer', () => {
-    const bytes = base64ToBytes('QUJD')
-    expect(Array.from(bytes)).toEqual([65, 66, 67])
-
-    const buffer = bytesToArrayBuffer(bytes)
-    expect(buffer.byteLength).toBe(3)
-    expect(Array.from(new Uint8Array(buffer))).toEqual([65, 66, 67])
   })
 })

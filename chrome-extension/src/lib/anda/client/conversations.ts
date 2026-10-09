@@ -376,14 +376,11 @@ function contentToMessageContent(
         actions: []
       }
     }
-    if (shouldHideTextPart(content, options)) {
-      return { text: '', thinkingText: '', tools: [], actions: [] }
-    }
     if (isSystemRuntimeText(content)) {
       return {
         text: '',
         thinkingText: '',
-        runtimeToolText: content.trim(),
+        runtimeToolText: options.hideSystemRuntimeText ? undefined : content.trim(),
         tools: [],
         actions: []
       }
@@ -408,11 +405,8 @@ function contentToMessageContent(
       }
       return
     }
-    if (shouldHideTextPart(text, options)) {
-      return
-    }
     if (isSystemRuntimeText(text)) {
-      runtimeToolParts.push(text.trim())
+      if (!options.hideSystemRuntimeText) runtimeToolParts.push(text.trim())
       return
     }
     const split = splitLegacyThoughtText(text)
@@ -641,18 +635,12 @@ function resourceFromContentPart(part: ContentPart): Resource | null {
 }
 
 function resourcesToAttachments(resources: Resource[]): ChatAttachment[] {
-  return resources
-    .map((resource, index) => resourceToAttachment(resource, index))
-    .filter((attachment): attachment is ChatAttachment => !!attachment)
+  return resources.map(resourceToAttachment)
 }
 
-function resourceToAttachment(resource: Resource, index: number): ChatAttachment | null {
+function resourceToAttachment(resource: Resource, index: number): ChatAttachment {
   const name =
     resource.name?.trim() || resource.uri?.trim() || `resource-${resource._id || index + 1}`
-  if (!name) {
-    return null
-  }
-
   return {
     id: resource._id ? `resource-${resource._id}` : `${name}-${resource.size || 0}-${index}`,
     name,
@@ -660,10 +648,6 @@ function resourceToAttachment(resource: Resource, index: number): ChatAttachment
     size: resource.size,
     resource
   }
-}
-
-function shouldHideTextPart(text: string, options: { hideSystemRuntimeText?: boolean }): boolean {
-  return Boolean(options.hideSystemRuntimeText && text.trimStart().startsWith('[$system:'))
 }
 
 function isSystemRuntimeText(text: string): boolean {

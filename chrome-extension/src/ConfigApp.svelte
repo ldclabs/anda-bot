@@ -9,16 +9,14 @@
   import {
     AlertCircle,
     Check,
-    FileCode2,
     LoaderCircle,
     Plus,
-    RefreshCw,
     Save,
     SlidersHorizontal,
     Trash2
   } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
-  import { DaemonConfigApi, loadConfigSettings, saveConfigSettings } from './lib/anda/config/api'
+  import { DaemonConfigApi, loadConfigSettings } from './lib/anda/config/api'
   import type { FieldSchema, JsonObject } from './lib/anda/config/schema'
   import {
     asObject,
@@ -54,10 +52,7 @@
 
   type SectionId = 'runtime' | 'models' | 'tts' | 'transcription' | 'channels' | 'users'
 
-  let {
-    embedded = false,
-    onModelsChanged
-  }: { embedded?: boolean; onModelsChanged?: () => void | Promise<void> } = $props()
+  let { onModelsChanged }: { onModelsChanged?: () => void | Promise<void> } = $props()
 
   const sections: { id: SectionId; label: string; detail: string }[] = [
     {
@@ -91,7 +86,6 @@
   let settings = $state<SettingsState>({ ...defaultSettings })
   let draft = $state<JsonObject>(normalizeConfigDraft({}))
   let source = $state('')
-  let configPath = $state('')
   let configRevision = $state<string | undefined>()
   let activeSection = $state<SectionId>('runtime')
   let loading = $state(true)
@@ -126,23 +120,9 @@
     const response = await new DaemonConfigApi(settings).load()
     draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
     source = response.content
-    configPath = response.path
     configRevision = response.revision
     dirty = false
     loading = false
-  }
-
-  async function reconnect() {
-    loading = true
-    errorMessage = ''
-    statusMessage = ''
-    try {
-      await saveConfigSettings(settings)
-      await loadConfig()
-    } catch (error) {
-      errorMessage = errorToMessage(error)
-      loading = false
-    }
   }
 
   async function selectSection(section: SectionId) {
@@ -159,7 +139,6 @@
     if (!dirty && version === editVersion) {
       draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
       source = response.content
-      configPath = response.path
       configRevision = response.revision
     }
     await onModelsChanged?.()
@@ -210,13 +189,6 @@
   function updateStringList(target: JsonObject, field: FieldSchema, event: Event) {
     setStringListValue(target, field.key, (event.currentTarget as HTMLTextAreaElement).value)
     markFormDirty()
-  }
-
-  function updateSettingsString(key: 'baseUrl' | 'token', event: Event) {
-    settings = {
-      ...settings,
-      [key]: (event.currentTarget as HTMLInputElement).value
-    }
   }
 
   function addObjectItem(target: JsonObject, key: string, value: JsonObject) {
@@ -280,7 +252,6 @@
     statusMessage = ''
     try {
       const response = await new DaemonConfigApi(settings).save(content, configRevision)
-      configPath = response.path
       configRevision = response.revision
       if (version === editVersion) {
         draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
@@ -303,12 +274,9 @@
   editableTarget: () => JsonObject = () => target
 )}
   <div data-slot="field" class={fieldClass('gap-1.5')}>
-    <label
-      class={fieldLabelClass('text-xs font-bold text-muted-foreground')}
-      for={`${field.key}-${field.label}`}
-    >
-      {field.label}
-    </label>
+    <!-- Controls are named by aria-label: the same key repeats across providers,
+         so there is no unique id for a <label for> to point at. -->
+    <span class={fieldLabelClass('text-xs font-bold text-muted-foreground')}>{field.label}</span>
 
     {#if field.kind === 'boolean'}
       <label
@@ -317,6 +285,7 @@
         <input
           type="checkbox"
           class="size-4 accent-foreground"
+          aria-label={field.label}
           checked={booleanValue(target, field.key)}
           onchange={(event) => updateBoolean(editableTarget(), field, event)}
         />
@@ -337,6 +306,7 @@
       <input
         class={inputClass('h-9 text-sm')}
         type="number"
+        aria-label={field.label}
         value={numberValue(target, field.key)}
         placeholder={field.nullable ? getMessage('configOptionalPlaceholder') : undefined}
         oninput={(event) => updateNumber(editableTarget(), field, event)}
@@ -345,11 +315,16 @@
       <textarea
         class={textareaClass('min-h-20 resize-y font-mono text-xs')}
         spellcheck={false}
+        aria-label={field.label}
         placeholder={getMessage('configOneItemPerLine')}
         value={stringListValue(target, field.key)}
         oninput={(event) => updateStringList(editableTarget(), field, event)}></textarea>
     {:else if field.kind === 'object'}
-      <div class="grid gap-3 rounded-md border bg-muted/20 p-3">
+      <div
+        role="group"
+        aria-label={field.label}
+        class="grid gap-3 rounded-md border bg-muted/20 p-3"
+      >
         {#each field.fields || [] as child}
           {@render fieldControl(getObject(target, field.key, field.initialValue), child, () =>
             ensureObject(editableTarget(), field.key, field.initialValue)
@@ -360,6 +335,7 @@
       <input
         class={inputClass('h-9 text-sm')}
         type={field.kind === 'secret' ? 'password' : 'text'}
+        aria-label={field.label}
         autocomplete="off"
         spellcheck={false}
         value={stringValue(target, field.key)}
@@ -402,70 +378,9 @@
   </div>
 {/snippet}
 
-<svelte:head>
-  <title>Anda config.yaml</title>
-</svelte:head>
-
-<div
-  class={embedded
-    ? 'flex h-full min-h-0 flex-col bg-background text-foreground'
-    : 'min-h-screen bg-background text-foreground'}
->
-  {#if !embedded}
-    <header class="border-b bg-muted/25">
-      <div
-        class="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between"
-      >
-        <div class="grid min-w-0 gap-1">
-          <div class="flex min-w-0 items-center gap-2">
-            <FileCode2 class="size-5 shrink-0 text-emerald-800" />
-            <h1 class="truncate text-lg font-bold">config.yaml</h1>
-          </div>
-          <p class="truncate text-xs text-muted-foreground">
-            {configPath || getMessage('configHeaderHint')}
-          </p>
-        </div>
-
-        <div class="grid gap-2 sm:grid-cols-[14rem_16rem_auto]">
-          <input
-            class={inputClass('h-8 text-xs')}
-            value={settings.baseUrl}
-            spellcheck={false}
-            aria-label={getMessage('gatewayUrl')}
-            oninput={(event) => updateSettingsString('baseUrl', event)}
-          />
-          <input
-            class={inputClass('h-8 text-xs')}
-            value={settings.token}
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            aria-label={getMessage('bearerToken')}
-            placeholder={getMessage('bearerToken')}
-            oninput={(event) => updateSettingsString('token', event)}
-          />
-          <button
-            type="button"
-            class={buttonClass('outline', 'sm', 'bg-background')}
-            onclick={reconnect}
-            disabled={loading}
-          >
-            {#if loading}
-              <LoaderCircle class="size-3.5 animate-spin" />
-            {:else}
-              <RefreshCw class="size-3.5" />
-            {/if}
-            {getMessage('configLoad')}
-          </button>
-        </div>
-      </div>
-    </header>
-  {/if}
-
+<div class="flex h-full min-h-0 flex-col bg-background text-foreground">
   <main
-    class={embedded
-      ? 'grid min-h-0 flex-1 content-start items-start gap-4 overflow-y-auto p-3 lg:grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:content-stretch xl:items-stretch xl:overflow-hidden'
-      : 'mx-auto grid max-w-7xl items-start gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[12rem_minmax(0,1fr)] xl:h-[calc(100vh-6rem)] xl:min-h-0 xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:items-stretch'}
+    class="grid min-h-0 flex-1 content-start items-start gap-4 overflow-y-auto p-3 lg:grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:content-stretch xl:items-stretch xl:overflow-hidden"
   >
     <aside class="min-w-0 lg:sticky lg:top-4 lg:self-start">
       <nav
@@ -758,6 +673,7 @@
         <textarea
           class="min-h-[34rem] w-full resize-y bg-transparent p-3 font-mono text-xs leading-relaxed outline-none"
           spellcheck={false}
+          aria-label={getMessage('configYamlSource')}
           value={source}
           oninput={markSourceDirty}></textarea>
       </div>

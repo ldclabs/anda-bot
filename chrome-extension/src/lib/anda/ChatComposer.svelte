@@ -56,6 +56,7 @@
     type PromptCommandSuggestion
   } from '$lib/anda/composer/prompt-commands'
   import PromptCommandPanel from '$lib/anda/composer/PromptCommandPanel.svelte'
+  import Modal from '$lib/anda/Modal.svelte'
   import { isMacPlatform, speechRecognitionSupported } from '$lib/anda/composer/voice'
   import { VoiceRecorder } from '$lib/anda/composer/recorder.svelte'
   import VoicePanel from '$lib/anda/composer/VoicePanel.svelte'
@@ -63,7 +64,6 @@
     alertClass,
     alertDescriptionClass,
     buttonClass,
-    inputClass,
     textareaClass,
     tooltipArrowClass,
     tooltipContentClass
@@ -200,6 +200,7 @@
   let promptSkillsLoadedAt = $state(0)
   let promptSkillsError = $state('')
   let approvalMenuOpen = $state(false)
+  let clearQuickPromptsOpen = $state(false)
   let approvalMenuElement: HTMLDivElement | null = $state(null)
   let lastIncomingAttachmentId = ''
   let lastIncomingDraftId = ''
@@ -302,8 +303,6 @@
       }, 800)
     }
   })
-
-  const composerWorking = $derived(workingPersisted)
 
   $effect(() => {
     if (!canUseVoice && inputMode === 'voice') {
@@ -415,6 +414,7 @@
   })
 
   onDestroy(() => {
+    clearTimeout(workingTimeout)
     document.removeEventListener('pointerdown', handleDocumentPointerDown)
     void recorder.cancel()
   })
@@ -530,14 +530,8 @@
   }
 
   async function clearQuickPrompts() {
-    if (!onClearQuickPrompts) {
-      return
-    }
-    const confirmMessage = getMessage('clearQuickPromptsConfirm') || 'Clear all quick inputs?'
-    if (!window.confirm(confirmMessage)) {
-      return
-    }
-    await onClearQuickPrompts()
+    clearQuickPromptsOpen = false
+    await onClearQuickPrompts?.()
   }
 
   async function selectApprovalMode(mode: ApprovalMode) {
@@ -770,22 +764,24 @@
     }
     attachmentError = ''
     preparingAttachments = true
-    try {
-      const nextAttachments: ChatAttachment[] = []
-      const filesArray = Array.from(fileList)
-      for (const file of filesArray) {
+    // A file that cannot be attached (too large, unreadable) is reported
+    // without dropping the others picked with it.
+    const nextAttachments: ChatAttachment[] = []
+    const errors: string[] = []
+    for (const file of Array.from(fileList)) {
+      try {
         nextAttachments.push(await fileToAttachment(file))
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error))
       }
-      const existingIds = new Set(attachments.map((attachment) => attachment.id))
-      attachments = [
-        ...attachments,
-        ...nextAttachments.filter((attachment) => !existingIds.has(attachment.id))
-      ]
-    } catch (error) {
-      attachmentError = error instanceof Error ? error.message : String(error)
-    } finally {
-      preparingAttachments = false
     }
+    const existingIds = new Set(attachments.map((attachment) => attachment.id))
+    attachments = [
+      ...attachments,
+      ...nextAttachments.filter((attachment) => !existingIds.has(attachment.id))
+    ]
+    attachmentError = errors.join('\n')
+    preparingAttachments = false
   }
 
   function removeAttachment(id: string) {
@@ -820,11 +816,15 @@
     bind:this={fileInputElement}
     type="file"
     multiple
-    class={inputClass('hidden')}
+    class="hidden"
     onchange={handleFileInput}
   />
 
-  <div class="composer-shell" class:composer-working={composerWorking} aria-busy={composerWorking}>
+  <div
+    class="composer-shell"
+    class:composer-working={workingPersisted}
+    aria-busy={workingPersisted}
+  >
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
     {#if attachmentError}
@@ -834,7 +834,7 @@
           'rounded-md border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800'
         )}
       >
-        <div class={alertDescriptionClass('text-xs text-amber-800')}>
+        <div class={alertDescriptionClass('text-xs whitespace-pre-line text-amber-800')}>
           {attachmentError}
         </div>
       </div>
@@ -901,7 +901,7 @@
               class={buttonClass('ghost', 'icon-xs', 'quick-prompts-clear composer-icon-button')}
               aria-label={getMessage('clearQuickPrompts')}
               title={getMessage('clearQuickPrompts')}
-              onclick={clearQuickPrompts}
+              onclick={() => (clearQuickPromptsOpen = true)}
             >
               <Trash2 class="size-3" />
             </button>
@@ -1120,6 +1120,31 @@
     </div>
   </div>
 </form>
+
+{#snippet clearQuickPromptsActions()}
+  <button
+    type="button"
+    class={buttonClass('outline', 'sm')}
+    onclick={() => (clearQuickPromptsOpen = false)}
+  >
+    {getMessage('cancel')}
+  </button>
+  <button type="button" class={buttonClass('destructive', 'sm')} onclick={clearQuickPrompts}>
+    {getMessage('clearQuickPrompts')}
+  </button>
+{/snippet}
+
+<Modal
+  alert
+  bind:open={clearQuickPromptsOpen}
+  title={getMessage('clearQuickPrompts')}
+  contentClass="min-h-0 sm:max-w-sm"
+  footer={clearQuickPromptsActions}
+>
+  <p class="text-sm leading-relaxed text-muted-foreground">
+    {getMessage('clearQuickPromptsConfirm')}
+  </p>
+</Modal>
 
 <style>
   /* One card: the text box on top, one toolbar row under it. */

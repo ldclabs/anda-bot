@@ -5,10 +5,11 @@ import MarkdownIt from 'markdown-it'
 import Prism from './prismjs'
 
 // 创建 MarkdownIt 实例
+// typographer 保持关闭：它会把 "(c)" 改成 ©、"+-" 改成 ±，破坏模型输出的 (a)(b)(c) 列表
 const md = new MarkdownIt({
   html: false,
   linkify: true,
-  typographer: true,
+  typographer: false,
   breaks: true
 })
 
@@ -428,59 +429,4 @@ export function renderMarkdown(markdown: string): string {
     console.error('Markdown rendering failed:', error)
     return `<pre>${md.utils.escapeHtml(markdown)}</pre>`
   }
-}
-
-/**
- * 获取 Markdown 文本的纯文本内容（去除格式）
- * @param markdown - Markdown 文本
- * @returns 纯文本内容
- */
-export function getPlainText(markdown: string): string {
-  try {
-    const html = md.render(markdown).trim()
-    if (typeof document === 'undefined') {
-      // 服务端渲染环境下的简单回退：去除 HTML 标签
-      return html.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ')
-    }
-    const div = document.createElement('div')
-    div.innerHTML = html
-    return div.textContent || div.innerText || ''
-  } catch (err) {
-    console.warn('getPlainText failed:', err)
-    return stripMarkdownLinePrefix(markdown)
-  }
-}
-
-/**
- * 获取 Markdown 文本的摘要
- * @param markdown - Markdown 文本
- * @param maxLength - 最大长度，默认 200
- * @returns 摘要文本
- */
-export function getMarkdownSummary(markdown: string, maxLength: number = 200): string {
-  const plainText = getPlainText(markdown)
-  if (plainText.length <= maxLength) return plainText
-
-  return plainText.substring(0, maxLength).trim() + '...'
-}
-
-export default {
-  renderMarkdown,
-  getPlainText,
-  getMarkdownSummary
-}
-
-function stripMarkdownLinePrefix(line: string): string {
-  let trimmed = line.trimStart()
-  while (trimmed.startsWith('>')) {
-    trimmed = trimmed.slice(1).trimStart()
-  }
-  while (trimmed.startsWith('#')) {
-    trimmed = trimmed.slice(1).trimStart()
-  }
-  if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('+ ')) {
-    return trimmed.slice(2).trimStart()
-  }
-  const orderedMatch = trimmed.match(/^\d+[.)、]\s*(.*)$/)
-  return orderedMatch ? orderedMatch[1] : trimmed
 }

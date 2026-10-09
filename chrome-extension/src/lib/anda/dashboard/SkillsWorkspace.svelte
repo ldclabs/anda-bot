@@ -11,6 +11,7 @@
   } from '$lib/anda/client/types'
   import { badgeClass, buttonClass, inputClass, textareaClass } from '$lib/anda/ui'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import Modal from '$lib/anda/Modal.svelte'
   import { openAndaSidePanel } from '$lib/anda/dashboard/side-panel'
   import { getMessage } from '$lib/i18n'
   import { escapeHtml } from '$lib/utils/format'
@@ -314,9 +315,12 @@
     })
   }
 
+  let deleteDialogOpen = $state(false)
+
   function deleteSelected() {
+    deleteDialogOpen = false
     const skill = selectedSkill
-    if (busyAction || !skill?.editable || !confirm(getMessage('skillDeleteConfirm'))) {
+    if (busyAction || !skill?.editable) {
       return
     }
     void run('delete', async () => {
@@ -675,7 +679,7 @@
               type="button"
               class={buttonClass('destructive', 'sm')}
               disabled={Boolean(busyAction)}
-              onclick={deleteSelected}
+              onclick={() => (deleteDialogOpen = true)}
             >
               {#if busyAction === 'delete'}
                 <LoaderCircle class="size-3.5 animate-spin" />
@@ -988,6 +992,29 @@
     </div>
   </section>
 </div>
+
+{#snippet deleteActions()}
+  <button
+    type="button"
+    class={buttonClass('outline', 'sm')}
+    onclick={() => (deleteDialogOpen = false)}
+  >
+    {getMessage('cancel')}
+  </button>
+  <button type="button" class={buttonClass('destructive', 'sm')} onclick={deleteSelected}>
+    {getMessage('deleteSkill')}
+  </button>
+{/snippet}
+
+<Modal
+  alert
+  bind:open={deleteDialogOpen}
+  title={getMessage('deleteSkill')}
+  contentClass="min-h-0 sm:max-w-sm"
+  footer={deleteActions}
+>
+  <p class="text-sm leading-relaxed text-muted-foreground">{getMessage('skillDeleteConfirm')}</p>
+</Modal>
 
 <style>
   .skill-file-code {

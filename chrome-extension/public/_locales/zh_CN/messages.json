@@ -221,6 +221,9 @@
   "removeAttachment": {
     "message": "移除附件"
   },
+  "attachmentTooLarge": {
+    "message": "$1 超过 $2，无法添加为附件。"
+  },
   "switchToKeyboard": {
     "message": "切换到键盘输入"
   },
@@ -401,6 +404,21 @@
   "working": {
     "message": "处理中"
   },
+  "statusConnecting": {
+    "message": "连接中"
+  },
+  "statusCompleted": {
+    "message": "已完成"
+  },
+  "statusCancelled": {
+    "message": "已取消"
+  },
+  "statusFailed": {
+    "message": "失败"
+  },
+  "statusUnavailable": {
+    "message": "不可用"
+  },
   "stopRecording": {
     "message": "停止录音"
   },
@@ -547,12 +565,6 @@
   },
   "configSectionUsersDetail": {
     "message": "共享守护进程的用户身份"
-  },
-  "configHeaderHint": {
-    "message": "连接本地 Anda 守护进程以加载运行时配置。"
-  },
-  "configLoad": {
-    "message": "加载"
   },
   "configLoading": {
     "message": "正在加载 config.yaml"
@@ -712,12 +724,6 @@
   },
   "dashboardStudioCrumb": {
     "message": "配置台"
-  },
-  "dashboardSaveInConfig": {
-    "message": "保存"
-  },
-  "dashboardNoPendingSave": {
-    "message": "配置"
   },
   "bookmarksDashboardDescription": {
     "message": "文件夹和已保存的智能体消息。"
@@ -1568,6 +1574,21 @@
   "printMessage": {
     "message": "打印消息"
   },
+  "roleUser": {
+    "message": "用户"
+  },
+  "roleExternalUser": {
+    "message": "外部用户"
+  },
+  "roleSystem": {
+    "message": "系统"
+  },
+  "roleTool": {
+    "message": "工具"
+  },
+  "roleAssistant": {
+    "message": "助手"
+  },
   "configConnectionChanged": {
     "message": "连接设置已更改，请重新加载配置后再保存。"
   },
@@ -1708,5 +1729,14 @@
   },
   "chatgptModel": {
     "message": "ChatGPT 模型"
+  },
+  "chatgptUpdateDesktop": {
+    "message": "请更新 Anda Desktop 以连接 ChatGPT。"
+  },
+  "chatgptUpdateDaemon": {
+    "message": "请更新 Anda 守护进程以连接 ChatGPT。"
+  },
+  "chatgptRequestFailed": {
+    "message": "ChatGPT 请求失败（$1）。"
   }
 }

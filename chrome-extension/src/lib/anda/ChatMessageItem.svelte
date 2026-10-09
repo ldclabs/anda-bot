@@ -46,8 +46,6 @@
     attachmentObjectUrl,
     attachmentResourceBlob,
     attachmentResourceId,
-    base64ToBytes,
-    bytesToArrayBuffer,
     safeDownloadName,
     type AttachmentCaches
   } from '$lib/anda/chat/attachment-view'
@@ -62,6 +60,7 @@
     type ToolDetailSection,
     type ToolKind
   } from '$lib/anda/chat/tool-view'
+  import { base64ToBytes } from '$lib/utils/base64'
   import { escapeHtml, formatFileSize, formatTimestamp } from '$lib/utils/format'
   import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
@@ -154,7 +153,7 @@
   const canToggleQuickPrompt = $derived(isUser && hasMainText && Boolean(onToggleQuickPrompt))
   const messageTimeLabel = $derived(formatTimestamp(message.timestamp))
   const externalUserSenderLabel = $derived(
-    message.externalUser?.sender || message.externalUser?.scope || 'External user'
+    message.externalUser?.sender || message.externalUser?.scope || getMessage('roleExternalUser')
   )
   const externalUserContextLabel = $derived(
     [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
@@ -223,18 +222,20 @@
     const printWindow = native?.printHtml ? null : window.open('', '_blank')
     if (!printWindow && !native?.printHtml) return
 
-    const roleLabel = isUser
-      ? 'User'
-      : isExternalUser
-        ? 'External user'
-        : isSystem
-          ? 'System'
-          : isTool
-            ? 'Tool'
-            : 'Assistant'
+    const roleLabel = getMessage(
+      isUser
+        ? 'roleUser'
+        : isExternalUser
+          ? 'roleExternalUser'
+          : isSystem
+            ? 'roleSystem'
+            : isTool
+              ? 'roleTool'
+              : 'roleAssistant'
+    )
     const attachmentsHtml = printableAttachmentHtml()
     const doc = printWindow?.document || document.implementation.createHTMLDocument('Print')
-    doc.title = `${escapeHtml(roleLabel)} message`
+    doc.title = roleLabel
 
     // 注入打印样式
     const style = doc.createElement('style')
@@ -254,7 +255,7 @@
     const container = doc.createElement('div')
     container.className = 'message-container'
     container.innerHTML = `
-      <div class="role">${roleLabel}</div>
+      <div class="role">${escapeHtml(roleLabel)}</div>
       <div class="content"></div>
       <div class="attachment"></div>
     `
@@ -398,7 +399,7 @@
 
     try {
       const url = URL.createObjectURL(
-        new Blob([bytesToArrayBuffer(base64ToBytes(blob))], {
+        new Blob([base64ToBytes(blob)], {
           type: attachmentMimeType(attachment) || 'application/octet-stream'
         })
       )

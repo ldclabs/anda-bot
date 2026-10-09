@@ -74,7 +74,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   /** Skill library verbs, and the `skills-changed` event views listen on. */
   readonly skills = new SkillsApi(this, () => {
     void this.chrome.storage.local
-      .set({ skillsRevision: crypto.randomUUID() })
+      .set({ [skillsRevisionStorageKey]: crypto.randomUUID() })
       .catch(() => undefined)
   })
   /** Bookmark verbs plus the star state the transcript renders. */
@@ -282,6 +282,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     }
 
     for (const source of sources) this.ensureChannel(source).setSourceState(states?.[source])
+    // A channel deleted from another window or Anda Desktop drops out of the
+    // list, unless it is the one being shown or is still sending here.
+    for (const [source, channel] of Array.from(this.channels)) {
+      if (!sources.has(source) && channel !== this.activeChannel && !channel.sending) {
+        channel.destroy()
+        this.channels.delete(source)
+      }
+    }
   }
 
   async switchChannel(source: string): Promise<void> {
@@ -423,9 +431,9 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
 
   async testConnection(settings: SettingsState): Promise<void> {
     try {
+      // Saving refreshes the model list along with the rest of the connection data.
       await this.saveSettings(settings, { quiet: true })
       await this.rpc('information', [])
-      await this.refreshModelState()
       this.updateStatus('connected', {
         kind: 'info',
         text: getMessage('connectionTestPassed')

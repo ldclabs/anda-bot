@@ -95,4 +95,19 @@ describe('displayMessages', () => {
     expect(shown[0]).toBe(source[0])
     expect(shown[1]).toBe(source[1])
   })
+
+  it('folds an unchanged message array once and refolds a replaced one', () => {
+    const source = [
+      message('m-1-0', { text: 'Run it.', tools: [{ callId: 'a', name: 'shell' }] }),
+      message('m-1-1', { role: 'tool', tools: [{ callId: 'a', name: 'shell', output: 'ok' }] })
+    ]
+
+    const first = displayMessages(source)
+    expect(displayMessages(source)).toBe(first)
+    expect(displayMessages(source)[0]).toBe(first[0])
+
+    const replaced = [...source, message('m-1-2', { text: 'Done.' })]
+    expect(displayMessages(replaced)).not.toBe(first)
+    expect(displayMessages(replaced).map((item) => item.id)).toEqual(['m-1-0', 'm-1-2'])
+  })
 })

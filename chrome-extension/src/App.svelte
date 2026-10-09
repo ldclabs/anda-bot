@@ -14,17 +14,9 @@
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   provideAndaClient(andaClient)
-  import {
-    type ApprovalMode,
-    type ChatAttachment,
-    type ChatMessage,
-    type MessageGroup,
-    type PageAudioResult,
-    type PromptSkill
-  } from '$lib/anda/client/types'
+  import { type ChatAttachment, type ChatMessage, type MessageGroup } from '$lib/anda/client/types'
   import {
     isPageElementAttachmentRequest,
-    pageElementAttachmentMessageType,
     pageElementAttachmentRequestStorageKey,
     pageElementInfoToAttachment,
     type PageElementAttachmentRequest
@@ -42,10 +34,12 @@
     promptDraftRequestStorageKey,
     type PromptDraftRequest
   } from '$lib/anda/prompt-draft'
+  import { statusLabel } from '$lib/anda/chat/status'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
   import { scrollIntoView } from '$lib/utils/document'
+  import { formatTimestamp } from '$lib/utils/format'
   import {
     Bot,
     ChevronDown,
@@ -122,7 +116,7 @@
   })
   $effect(() => applyAppearanceTheme(andaClient.settings.appearanceTheme))
 
-  let bookmarkConversationKey = $state('')
+  let bookmarkConversationKey = ''
   $effect(() => {
     const conversations = visibleMessageGroups
       .map((group) => group._id)
@@ -149,25 +143,7 @@
         )
       }
     }
-    const handleRuntimeMessage = (
-      message: unknown,
-      _sender: unknown,
-      sendResponse: (response?: unknown) => void
-    ) => {
-      const requestMessage =
-        message && typeof message === 'object'
-          ? (message as { type?: string; pageElementRequest?: unknown })
-          : null
-      if (requestMessage?.type !== pageElementAttachmentMessageType) {
-        return false
-      }
-      consumePageElementAttachmentRequest(requestMessage.pageElementRequest)
-      sendResponse({ ok: true })
-      return false
-    }
-
     chrome.storage.onChanged.addListener(handleStorageChange)
-    chrome.runtime.onMessage.addListener(handleRuntimeMessage)
     const handleSkillsChanged = () => {
       skillsRevision += 1
     }
@@ -205,24 +181,42 @@
 
     return () => {
       chrome.storage.onChanged.removeListener(handleStorageChange)
-      chrome.runtime.onMessage.removeListener(handleRuntimeMessage)
       andaClient.skills.removeEventListener('skills-changed', handleSkillsChanged)
       andaClient.destroy()
     }
   })
 
-  let prevLastMessageId = $state('')
-  const lastMessageId = $derived.by(() => {
+  const lastMessage = $derived.by(() => {
     const lastGroup = visibleMessageGroups[visibleMessageGroups.length - 1]
-    const lastMessage = lastGroup?.messages[lastGroup.messages.length - 1]
-    return lastMessage?.id || ''
+    return lastGroup?.messages[lastGroup.messages.length - 1]
   })
+  // A new last message is followed only when the reader has reached the end of
+  // the previous one, so reading further up is never yanked to the bottom. A
+  // prompt the user just sent, and a channel switch, are always followed.
+  let followed = { source: '', id: '' }
   $effect(() => {
-    if (lastMessageId && prevLastMessageId !== lastMessageId) {
-      prevLastMessageId = lastMessageId
-      scrollIntoView(lastMessageId, 'smooth', 'start')
+    const id = lastMessage?.id || ''
+    const source = activeSource || ''
+    if (!id || (id === followed.id && source === followed.source)) {
+      return
     }
+    const previous = followed
+    followed = { source, id }
+    if (source === previous.source && lastMessage?.role !== 'user' && !endInView(previous.id)) {
+      return
+    }
+    scrollIntoView(id, 'smooth', 'start')
   })
+
+  function endInView(messageId: string): boolean {
+    const element = messageId ? document.getElementById(messageId) : null
+    if (!element || !messagesElement) {
+      return true
+    }
+    return (
+      element.getBoundingClientRect().bottom <= messagesElement.getBoundingClientRect().bottom + 48
+    )
+  }
 
   $effect(() => {
     if (sideMessageCount > observedSideMessageCount) {
@@ -274,10 +268,6 @@
     if (sideMessagesElement) {
       sideMessagesElement.scrollTop = sideMessagesElement.scrollHeight
     }
-  }
-
-  async function switchChannel(source: string) {
-    await andaClient.switchChannel(source)
   }
 
   function consumeBookmarkJumpRequest(value: unknown) {
@@ -358,7 +348,7 @@
 
   async function jumpToBookmark(bookmark: MessageLocation) {
     if (bookmark.source && bookmark.source !== activeSource) {
-      await switchChannel(bookmark.source)
+      await andaClient.switchChannel(bookmark.source)
       if (andaClient.activeSource !== bookmark.source) {
         return
       }
@@ -424,29 +414,7 @@
     await andaClient.openWorkspaceChannel()
   }
 
-  async function deleteChannel(source: string) {
-    await andaClient.deleteChannel(source)
-  }
-
-  async function toggleQuickPrompt(text: string) {
-    await andaClient.quickPrompts.toggle(text)
-  }
-
-  async function useQuickPrompt(text: string) {
-    await andaClient.quickPrompts.use(text)
-  }
-
-  async function removeQuickPrompt(text: string) {
-    await andaClient.quickPrompts.remove(text)
-  }
-
-  async function clearQuickPrompts() {
-    await andaClient.quickPrompts.clear()
-  }
-
-  async function changeApprovalMode(mode: ApprovalMode) {
-    await andaClient.saveApprovalMode(mode)
-  }
+  const toggleQuickPrompt = (text: string) => andaClient.quickPrompts.toggle(text)
 
   async function sendPrompt(payload: ComposerSubmitPayload) {
     const command = parsePromptCommand(payload.text)
@@ -473,34 +441,6 @@
       settingsOpen = true
     }
     await andaClient.sendVoiceTurn(payload)
-  }
-
-  async function loadPromptSkills(): Promise<PromptSkill[]> {
-    return andaClient.skills.listPrompts()
-  }
-
-  async function startBrowserSpeechRecognition(language: string) {
-    await andaClient.voice.startSpeechRecognition(language)
-  }
-
-  async function stopBrowserSpeechRecognition() {
-    return andaClient.voice.stopSpeechRecognition()
-  }
-
-  async function cancelBrowserSpeechRecognition() {
-    await andaClient.voice.cancelSpeechRecognition()
-  }
-
-  async function startBrowserAudioCapture(mimeType?: string) {
-    await andaClient.voice.startAudioCapture(mimeType)
-  }
-
-  async function stopBrowserAudioCapture(): Promise<PageAudioResult> {
-    return andaClient.voice.stopAudioCapture()
-  }
-
-  async function cancelBrowserAudioCapture() {
-    await andaClient.voice.cancelAudioCapture()
   }
 
   function displayMessageGroups(sourceGroups: MessageGroup[]): MessageGroup[] {
@@ -530,19 +470,10 @@
 
   function groupLabel(group: MessageGroup): string {
     const time = group.createdAt || group.updatedAt || group.messages[0]?.timestamp
-    if (!time) {
-      return group.current ? getMessage('currentSession') : 'Conversation'
-    }
-    const date = new Date(time)
-    if (Number.isNaN(date.getTime())) {
-      return group.current ? getMessage('currentSession') : 'Conversation'
-    }
-    return date.toLocaleString([], {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    return (
+      formatTimestamp(time, 'dateTime') ||
+      (group.current ? getMessage('currentSession') : `#${group._id}`)
+    )
   }
 </script>
 
@@ -555,9 +486,9 @@
     {channels}
     {activeSource}
     {sending}
-    onSelect={switchChannel}
+    onSelect={(source) => andaClient.switchChannel(source)}
     onOpenFolder={openFolderChannel}
-    onDelete={deleteChannel}
+    onDelete={(source) => andaClient.deleteChannel(source)}
   />
 
   <div class="message-panel flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -576,7 +507,7 @@
           {:else}
             <Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
           {/if}
-          <span class="truncate">{status}</span>
+          <span class="truncate">{statusLabel(status)}</span>
         </span>
         {#if andaClient.systemMessage || activeSource}
           <p class="message-active-source truncate text-xs font-bold">
@@ -667,7 +598,7 @@
                     'message-group-status rounded-full px-1.5 text-[10px]'
                   )}
                 >
-                  {group.status}
+                  {statusLabel(group.status)}
                 </span>
                 <div
                   class={separatorClass('message-separator flex-1')}
@@ -757,25 +688,25 @@
         voiceAvailable={andaClient.voice.capabilities.transcription.length > 0}
         voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}
-        onApprovalModeChange={changeApprovalMode}
+        onApprovalModeChange={(mode) => andaClient.saveApprovalMode(mode)}
         submitKeyMode={andaClient.settings.submitKeyMode}
         onSend={sendPrompt}
         onStop={stopActiveTask}
         onVoiceSend={sendVoiceTurn}
-        onBrowserSpeechStart={startBrowserSpeechRecognition}
-        onBrowserSpeechStop={stopBrowserSpeechRecognition}
-        onBrowserSpeechCancel={cancelBrowserSpeechRecognition}
-        onBrowserAudioStart={startBrowserAudioCapture}
-        onBrowserAudioStop={stopBrowserAudioCapture}
-        onBrowserAudioCancel={cancelBrowserAudioCapture}
-        onLoadSkills={loadPromptSkills}
+        onBrowserSpeechStart={(language) => andaClient.voice.startSpeechRecognition(language)}
+        onBrowserSpeechStop={() => andaClient.voice.stopSpeechRecognition()}
+        onBrowserSpeechCancel={() => andaClient.voice.cancelSpeechRecognition()}
+        onBrowserAudioStart={(mimeType) => andaClient.voice.startAudioCapture(mimeType)}
+        onBrowserAudioStop={() => andaClient.voice.stopAudioCapture()}
+        onBrowserAudioCancel={() => andaClient.voice.cancelAudioCapture()}
+        onLoadSkills={() => andaClient.skills.listPrompts()}
         {skillsRevision}
         quickPrompts={andaClient.quickPrompts.items}
         incomingAttachment={pageElementComposerAttachment}
         incomingDraft={promptDraftRequest}
-        onUseQuickPrompt={(prompt) => useQuickPrompt(prompt.text)}
-        onRemoveQuickPrompt={(prompt) => removeQuickPrompt(prompt.text)}
-        onClearQuickPrompts={clearQuickPrompts}
+        onUseQuickPrompt={(prompt) => andaClient.quickPrompts.use(prompt.text)}
+        onRemoveQuickPrompt={(prompt) => andaClient.quickPrompts.remove(prompt.text)}
+        onClearQuickPrompts={() => andaClient.quickPrompts.clear()}
       />
     </footer>
   </div>

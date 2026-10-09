@@ -7,7 +7,6 @@ export const pageElementSerializerKey = '__andaSerializeLastRightClickedElement'
 export const pageElementDomMemoryKey = '__andaLastRightClickedDomElement'
 export const pageElementListenerKey = '__andaPageElementContentScriptContextMenuListener'
 export const pageElementAttachmentRequestStorageKey = 'andaPageElementAttachmentRequest'
-export const pageElementAttachmentMessageType = 'anda_page_element_attachment_request'
 
 const maxAttachmentTextChars = 100_000
 const maxSemanticAttributes = 12
@@ -180,7 +179,7 @@ function semanticElementAttributes(element: PageElementInfo, text: string): Reco
 function sanitizeFilePart(value: string): string {
   return value
     .trim()
-    .replace(/[^\w#.-]+/g, '-')
+    .replace(/[^\p{L}\p{N}_#.-]+/gu, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 80)

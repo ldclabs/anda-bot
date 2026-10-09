@@ -53,6 +53,25 @@ describe('pageElementInfoToAttachment', () => {
     expect(attachment.resource.metadata).not.toHaveProperty('tag_name')
     expect(attachment.name).toBe('page-content-Example-Post.json')
   })
+
+  it('keeps a non-Latin page title in the file name', () => {
+    const attachment = pageElementInfoToAttachment({
+      id: 'request-2',
+      createdAt: 1,
+      element: {
+        tagName: 'P',
+        innerText: '正文',
+        attributes: {},
+        xpath: '/p',
+        cssPath: 'p',
+        pageUrl: 'https://example.cn/a',
+        pageTitle: '财经 新闻：今日要点',
+        frameUrl: 'https://example.cn/a',
+        capturedAt: 1
+      }
+    })
+    expect(attachment.name).toBe('page-content-财经-新闻-今日要点.json')
+  })
 })
 
 function base64ToUtf8(value: string): string {

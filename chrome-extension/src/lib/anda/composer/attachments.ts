@@ -1,9 +1,23 @@
+import { getMessage } from '$lib/i18n'
+import { bytesToBase64 } from '$lib/utils/base64'
+import { formatFileSize } from '$lib/utils/format'
 import type { ChatAttachment, Resource } from '../client/types'
 
-export { formatFileSize as fileSizeLabel } from '$lib/utils/format'
-import { bytesToBase64 } from '$lib/utils/base64'
+/**
+ * The largest file a message can carry. The bytes travel base64-encoded in one
+ * WebSocket message (64 MiB at most) and the daemon reads media up to 10 MiB,
+ * so a bigger file is refused here with a reason instead of dropping the
+ * connection.
+ */
+export const maxAttachmentBytes = 20 * 1024 * 1024
 
 export async function fileToAttachment(file: File): Promise<ChatAttachment> {
+  if (file.size > maxAttachmentBytes) {
+    throw new Error(
+      getMessage('attachmentTooLarge', [file.name, formatFileSize(maxAttachmentBytes)]) ||
+        `${file.name} is larger than ${formatFileSize(maxAttachmentBytes)}.`
+    )
+  }
   const blob = bytesToBase64(new Uint8Array(await file.arrayBuffer()))
   const extension = file.name.includes('.') ? file.name.split('.').pop()?.toLowerCase() : ''
   const primaryType = file.type.includes('/') ? file.type.split('/')[0] : ''

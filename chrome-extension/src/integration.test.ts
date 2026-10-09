@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { parseConfigDraft, renderConfigYaml, removeArrayItem } from './lib/anda/config/schema'
 import { conversationToGroup, type NormalizedMessageCache } from './lib/anda/client/conversations'
-import { DaemonConfigApi, loadConfigSettings, saveConfigSettings } from './lib/anda/config/api'
+import { DaemonConfigApi, loadConfigSettings } from './lib/anda/config/api'
 import { renderMarkdown } from './lib/utils/markdown'
 import { rememberActiveTab } from './lib/service-worker/browser-tabs'
 import { handlePageAudioCapture } from './lib/service-worker/page-voice'
@@ -44,25 +44,6 @@ it('keeps the remaining YAML provider free of deleted fields', () => {
   removeArrayItem(draft.model as any, 'providers', 0)
   const output = parseConfigDraft(renderConfigYaml(draft, source))!
   expect((output.model as any).providers).toEqual([{ model: 'second' }])
-})
-
-it('preserves approval policy when saving daemon configuration', async () => {
-  const state: any = {
-    baseUrl: 'http://localhost:8042',
-    token: 'test',
-    approvalMode: 'request_approval'
-  }
-  vi.stubGlobal('chrome', {
-    storage: {
-      local: {
-        get: async (keys: string[]) =>
-          Object.fromEntries(keys.filter((k) => k in state).map((k) => [k, state[k]])),
-        set: async (items: any) => Object.assign(state, items)
-      }
-    }
-  })
-  await saveConfigSettings(await loadConfigSettings())
-  expect(state.approvalMode).toBe('request_approval')
 })
 
 it('escapes raw HTML and malformed math', () => {

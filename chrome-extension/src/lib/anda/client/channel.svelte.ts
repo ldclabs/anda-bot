@@ -83,17 +83,19 @@ export class Channel extends EventTarget {
   readonly source: string // client-side channel ID.
   // latest server-side session ID. A client-side channel will include one or more server-side sessions, and a conversation belongs to only one session.
   #session: string = $state('')
-  #sourceState: SourceState | undefined = $state()
+  // Daemon data is replaced, never mutated in place, so it is held raw: a deep
+  // proxy would wrap every message and tool output the transcript renders.
+  #sourceState: SourceState | undefined = $state.raw()
   #sourceStateAt = 0
   #messageCache: NormalizedMessageCache = new WeakMap()
   #restoreTimer: ReturnType<typeof setTimeout> | null = null
-  #conversation: Conversation | null = $state(null)
-  #messageGroups: MessageGroup[] = $state([])
-  #sideMessages: ChatMessage[] = $state([])
+  #conversation: Conversation | null = $state.raw(null)
+  #messageGroups: MessageGroup[] = $state.raw([])
+  #sideMessages: ChatMessage[] = $state.raw([])
   #sending: boolean = $state(false)
   #loadingPrevious: boolean = $state(false)
   #pollingConversation: number = $state(0)
-  #conversationAncestors: number[] = $state([])
+  #conversationAncestors: number[] = $state.raw([])
   #syncing: boolean = $state(false)
   #syncAt: number = 0
   #localMessageSeq: number = 0
@@ -167,7 +169,7 @@ export class Channel extends EventTarget {
   }
 
   get messageGroups(): MessageGroup[] {
-    return [...this.#messageGroups]
+    return this.#messageGroups
   }
 
   get sideMessages(): ChatMessage[] {
@@ -847,8 +849,11 @@ export class Channel extends EventTarget {
     const group = conversationToGroup(conversation, this.#messageCache)
     if (!group.messages.length) return false
     group.current = this.#conversation?._id === conversationId
-    const groups = this.#messageGroups.filter((existing) => existing._id !== conversationId)
-    if (group.current) groups.forEach((existing) => (existing.current = false))
+    const groups = this.#messageGroups
+      .filter((existing) => existing._id !== conversationId)
+      .map((existing) =>
+        group.current && existing.current ? { ...existing, current: false } : existing
+      )
     groups.push(group)
     groups.sort((a, b) => a._id - b._id)
     this.#messageGroups = groups
@@ -920,22 +925,15 @@ export class Channel extends EventTarget {
     preserveMessageTimestamps(group, existingGroup)
 
     const idx = this.#messageGroups.findIndex((existing) => existing._id >= conversation._id)
-    if (idx >= 0) {
-      this.#messageGroups.length = idx
-    }
-
     // Only the newest conversation is the current session: a chained child
     // leaves its parent group in place, which must give the flag up.
-    for (const existing of this.#messageGroups) {
-      if (existing.current) {
-        existing.current = false
-      }
-    }
+    const earlier = (idx >= 0 ? this.#messageGroups.slice(0, idx) : this.#messageGroups).map(
+      (existing) => (existing.current ? { ...existing, current: false } : existing)
+    )
 
     group.current = true
-    this.#messageGroups.push(group)
+    this.#messageGroups = submitGroup ? [...earlier, group, submitGroup] : [...earlier, group]
     if (submitGroup) {
-      this.#messageGroups.push(submitGroup)
       this.removeSubmittedMessage((msg) => group.messages.some((m) => sameMessageContent(m, msg)))
     }
     this.#conversationAncestors = this.#messageGroups[0]?.ancestors || []
@@ -1024,19 +1022,13 @@ export class Channel extends EventTarget {
       message.conversation || this.#conversation?._id || SubmitMessageConversationId
     const timestamp = Date.now()
     const id = this.nextLocalMessageId('m', conversationId, timestamp)
-    this.updateMessageGroupWith(conversationId, (group) => {
-      group.messages = [
+    this.updateMessageGroupWith(conversationId, (group) => ({
+      ...group,
+      messages: [
         ...group.messages,
-        {
-          ...message,
-          id,
-          conversation: group._id,
-          pending: true,
-          timestamp
-        }
+        { ...message, id, conversation: group._id, pending: true, timestamp }
       ]
-      return { ...group }
-    })
+    }))
     return id
   }
 
@@ -1070,17 +1062,16 @@ export class Channel extends EventTarget {
   }
 
   private removeSubmittedMessage(isSubmitted: (msg: ChatMessage) => boolean): void {
-    this.updateMessageGroupWith(SubmitMessageConversationId, (group) => {
-      group.messages = group.messages.filter((message) => !isSubmitted(message))
-      return { ...group }
-    })
+    this.updateMessageGroupWith(SubmitMessageConversationId, (group) => ({
+      ...group,
+      messages: group.messages.filter((message) => !isSubmitted(message))
+    }))
   }
 
   private updateMessageGroupWith(_id: number, fn: (group: MessageGroup) => MessageGroup) {
     const idx = this.#messageGroups.findIndex((group) => group._id === _id)
     if (idx >= 0) {
-      const updated = fn(this.#messageGroups[idx]!)
-      this.#messageGroups[idx] = updated
+      this.#messageGroups = this.#messageGroups.with(idx, fn(this.#messageGroups[idx]!))
     } else {
       const nowMs = Date.now()
       const group = fn({

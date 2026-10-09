@@ -22,6 +22,7 @@
   } from '@lucide/svelte'
   import { quadOut } from 'svelte/easing'
   import { fly } from 'svelte/transition'
+  import { statusLabel } from './chat/status'
   import type { Channel } from './client/channel.svelte'
   import Modal from './Modal.svelte'
 
@@ -195,7 +196,8 @@
       channel.source,
       channelTitle(channel.source),
       channelSubtitle(channel.source),
-      statusLabel(channel),
+      channelStatus(channel),
+      statusLabel(channelStatus(channel)),
       channel.conversationId ? `#${channel.conversationId}` : '',
       channel.conversationId || '',
       channel.messageCount > 0 ? String(channel.messageCount) : ''
@@ -204,7 +206,8 @@
       .toLowerCase()
   }
 
-  function statusLabel(channel: Channel): string {
+  /** The status code; `statusLabel` turns it into words. */
+  function channelStatus(channel: Channel): string {
     if (channel.sending) {
       return 'sending'
     }
@@ -212,7 +215,7 @@
   }
 
   function statusDotClass(channel: Channel): string {
-    const status = statusLabel(channel)
+    const status = channelStatus(channel)
     if (status === 'failed' || status.includes('failed')) {
       return 'bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.14)]'
     }
@@ -223,7 +226,7 @@
   }
 
   function statusIcon(channel: Channel): 'loader' | 'warning' | 'radio' {
-    const status = statusLabel(channel)
+    const status = channelStatus(channel)
     if (['sending', 'submitted', 'working', 'syncing'].includes(status)) {
       return 'loader'
     }
@@ -384,7 +387,7 @@
               expanded ? 'min-w-0 flex-1 gap-2 px-2 py-2' : 'size-full justify-center'
             }`}
             aria-current={active ? 'page' : undefined}
-            aria-label={`${channelTitle(channel.source)} ${statusLabel(channel)}`}
+            aria-label={`${channelTitle(channel.source)} ${statusLabel(channelStatus(channel))}`}
             title={`${channelTitle(channel.source)}\n${channel.source}`}
             onclick={() => selectChannel(channel.source)}
           >
@@ -435,7 +438,7 @@
                 <div
                   class="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground"
                 >
-                  <span class="shrink-0">{statusLabel(channel)}</span>
+                  <span class="shrink-0">{statusLabel(channelStatus(channel))}</span>
                   <span class="min-w-0 truncate text-muted-foreground opacity-70"
                     >{channelSubtitle(channel.source)}</span
                   >

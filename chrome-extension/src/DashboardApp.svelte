@@ -2,7 +2,8 @@
   const workspaceLoaders = {
     brain: () => import('$lib/anda/memory/MemoryWorkspace.svelte'),
     bookmarks: () => import('$lib/anda/dashboard/BookmarksWorkspace.svelte'),
-    skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte')
+    skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte'),
+    config: () => import('./ConfigApp.svelte')
   }
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
@@ -20,7 +21,6 @@
     PanelLeftClose,
     PanelLeftOpen,
     RefreshCw,
-    Save,
     Settings,
     WandSparkles
   } from '@lucide/svelte'
@@ -127,13 +127,6 @@
 
   function reloadPage() {
     window.location.reload()
-  }
-
-  function saveActionLabel(): string {
-    if (activeWorkspace === 'config') {
-      return getMessage('dashboardSaveInConfig')
-    }
-    return getMessage('dashboardNoPendingSave')
   }
 </script>
 
@@ -282,33 +275,18 @@
           <RefreshCw class="size-3.5" />
           {getMessage('refresh')}
         </button>
-        <button
-          type="button"
-          class={buttonClass(activeWorkspace === 'config' ? 'default' : 'outline', 'sm')}
-          onclick={() => selectWorkspace('config')}
-        >
-          <Save class="size-3.5" />
-          {saveActionLabel()}
-        </button>
       </div>
     </header>
 
     <main class="min-h-0 min-w-0 overflow-hidden bg-background">
       {#key connectionKey(andaClient.settings)}
-        {#if activeWorkspace === 'config'}
-          {#await import('./ConfigApp.svelte')}
-            <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
-          {:then module}<module.default embedded />
-          {:catch error}<p role="alert" class="p-4 text-destructive">{String(error)}</p>{/await}
-        {:else}
-          {#await workspaceLoaders[activeWorkspace]()}
-            <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
-          {:then module}
-            <module.default />
-          {:catch error}
-            <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
-          {/await}
-        {/if}
+        {#await workspaceLoaders[activeWorkspace]()}
+          <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
+        {:then module}
+          <module.default />
+        {:catch error}
+          <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
+        {/await}
       {/key}
     </main>
   </section>

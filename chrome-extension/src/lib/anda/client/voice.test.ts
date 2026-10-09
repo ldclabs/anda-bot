@@ -203,6 +203,12 @@ describe('prepareVoiceTtsText', () => {
     )
   })
 
+  it('reads the words of headings, lists, links and entities but not images', () => {
+    expect(
+      prepareVoiceTtsText('# Title\n- **bold** [link](https://x.y)\n1. a &amp; b ![chart](c.png)')
+    ).toBe('Title\nbold link\na & b')
+  })
+
   it('removes emoji and normalizes em dashes for speech', () => {
     expect(prepareVoiceTtsText('Hello🙂 — world')).toBe('Hello , world')
   })

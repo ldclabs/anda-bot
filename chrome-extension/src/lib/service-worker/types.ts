@@ -134,7 +134,6 @@ export type ExtensionMessage = {
   text?: string
   language?: string
   mimeType?: string
-  pageElementRequest?: unknown
 }
 
 export type ChromeMessageSender = {

@@ -77,10 +77,6 @@ export function formatUiMessage(message: string, substitutions?: string | string
   )
 }
 
-export function activeUiLanguage(): UiLanguage | '' {
-  return overrideLanguage
-}
-
 /** Loads the persisted language override; call before rendering UI text. */
 export async function initI18n(): Promise<void> {
   const api = chromeApi()

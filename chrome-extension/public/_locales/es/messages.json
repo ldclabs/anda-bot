@@ -221,6 +221,9 @@
   "removeAttachment": {
     "message": "Eliminar archivo adjunto"
   },
+  "attachmentTooLarge": {
+    "message": "$1 supera $2 y no se puede adjuntar."
+  },
   "switchToKeyboard": {
     "message": "Cambiar a entrada de teclado"
   },
@@ -401,6 +404,21 @@
   "working": {
     "message": "Trabajando"
   },
+  "statusConnecting": {
+    "message": "Conectando"
+  },
+  "statusCompleted": {
+    "message": "Completado"
+  },
+  "statusCancelled": {
+    "message": "Cancelado"
+  },
+  "statusFailed": {
+    "message": "Error"
+  },
+  "statusUnavailable": {
+    "message": "No disponible"
+  },
   "stopRecording": {
     "message": "Detener grabación"
   },
@@ -547,12 +565,6 @@
   },
   "configSectionUsersDetail": {
     "message": "Identidades compartidas del demonio"
-  },
-  "configHeaderHint": {
-    "message": "Conéctate al demonio local de Anda para cargar la configuración."
-  },
-  "configLoad": {
-    "message": "Cargar"
   },
   "configLoading": {
     "message": "Cargando config.yaml"
@@ -712,12 +724,6 @@
   },
   "dashboardStudioCrumb": {
     "message": "Studio"
-  },
-  "dashboardSaveInConfig": {
-    "message": "Save"
-  },
-  "dashboardNoPendingSave": {
-    "message": "Config"
   },
   "bookmarksDashboardDescription": {
     "message": "Carpetas y mensajes guardados del asistente."
@@ -1568,6 +1574,21 @@
   "printMessage": {
     "message": "Imprimir mensaje"
   },
+  "roleUser": {
+    "message": "Usuario"
+  },
+  "roleExternalUser": {
+    "message": "Usuario externo"
+  },
+  "roleSystem": {
+    "message": "Sistema"
+  },
+  "roleTool": {
+    "message": "Herramienta"
+  },
+  "roleAssistant": {
+    "message": "Asistente"
+  },
   "configConnectionChanged": {
     "message": "La conexión ha cambiado. Vuelva a cargar la configuración antes de guardarla."
   },
@@ -1708,5 +1729,14 @@
   },
   "chatgptModel": {
     "message": "Modelo de ChatGPT"
+  },
+  "chatgptUpdateDesktop": {
+    "message": "Actualiza Anda Desktop para conectar ChatGPT."
+  },
+  "chatgptUpdateDaemon": {
+    "message": "Actualiza el daemon de Anda para conectar ChatGPT."
+  },
+  "chatgptRequestFailed": {
+    "message": "La solicitud a ChatGPT falló ($1)."
   }
 }

@@ -96,10 +96,3 @@ export async function loadConfigSettings(): Promise<SettingsState> {
   if (native) return native.settings()
   return loadSettingsFromStorage(chrome.storage.local)
 }
-
-export async function saveConfigSettings(settings: SettingsState): Promise<void> {
-  const native = getClientPlatform()
-  if (native) return native.saveSettings(settings)
-  const normalized = normalizeSettings(settings)
-  await chrome.storage.local.set({ baseUrl: normalized.baseUrl, token: normalized.token })
-}

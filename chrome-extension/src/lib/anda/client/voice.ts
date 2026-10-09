@@ -4,7 +4,7 @@ import {
 } from '$lib/utils/base64'
 import { splitLegacyThoughtText } from './conversations'
 import { getMessage } from '$lib/i18n'
-import { getPlainText } from '$lib/utils/markdown'
+import MarkdownIt from 'markdown-it'
 import type { Resource, VoiceRecordingInput } from './types'
 
 export const voiceTtsChunkChars = 320
@@ -329,10 +329,32 @@ function audioMimeFromName(name: string): string | null {
   }
 }
 
+// Speech only needs the words, so this parser carries none of the chat
+// renderer's KaTeX or Prism plugins (which also kept them out of every bundle
+// that imports the client).
+const speechMarkdown = new MarkdownIt({ html: false, linkify: false, typographer: false })
+type Token = ReturnType<MarkdownIt['parse']>[number]
+
+/** The readable text of one markdown line: no markers, links, or images. */
+function markdownLineText(line: string): string {
+  const parts: string[] = []
+  const collect = (tokens: Token[]) => {
+    for (const token of tokens) {
+      if (token.type === 'image') continue
+      if (token.children) collect(token.children)
+      else if (['text', 'code_inline', 'code_block', 'fence'].includes(token.type))
+        parts.push(token.content)
+      else if (token.type === 'softbreak' || token.type === 'hardbreak') parts.push(' ')
+    }
+  }
+  collect(speechMarkdown.parse(line, {}))
+  return parts.join('')
+}
+
 export function prepareVoiceTtsText(text: string): string {
   return text
     .split(/\r?\n/)
-    .map(getPlainText)
+    .map(markdownLineText)
     .map((line) =>
       Array.from(line)
         .map(normalizeVoiceTtsCharacter)
