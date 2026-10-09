@@ -1,8 +1,7 @@
 //! Values under the current user's `...\CurrentVersion\Run` key.
 //!
-//! `anda autostart` registers the daemon here, and the retired `anda_launcher`
-//! removes its old entry. The launcher includes this file via `#[path]`, so it
-//! must stay free of crate-relative imports.
+//! `anda autostart` registers the daemon here, and `anda install` removes the
+//! retired tray launcher's old entry (`cli/launcher_retirement.rs`).
 
 use std::{ffi::OsStr, io, mem::size_of, os::windows::ffi::OsStrExt, ptr};
 

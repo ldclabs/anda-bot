@@ -1,6 +1,6 @@
 use anda_core::RequestMeta;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 /// Canonical `RequestMeta.extra` keys.
 ///
@@ -45,27 +45,20 @@ pub mod keys {
     pub const CRON_JOB_KIND: &str = "cron_job_kind";
 }
 
+/// Reads `key` from `meta.extra`, falling back to the legacy nested
+/// `{"extra": {...}}` shape. Deserializes straight from the stored value.
 pub fn request_meta_extra_as<T>(meta: &RequestMeta, key: &str) -> Option<T>
 where
     T: DeserializeOwned,
 {
-    extra_map_as(&meta.extra, key)
-}
-
-pub fn extra_map_as<T>(extra: &Map<String, Value>, key: &str) -> Option<T>
-where
-    T: DeserializeOwned,
-{
-    extra_map_value(extra, key).and_then(|value| serde_json::from_value(value.clone()).ok())
-}
-
-fn extra_map_value<'a>(extra: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
-    extra.get(key).or_else(|| {
+    let extra = &meta.extra;
+    let value = extra.get(key).or_else(|| {
         extra
             .get("extra")
             .and_then(Value::as_object)
-            .and_then(|extra| extra.get(key))
-    })
+            .and_then(|nested| nested.get(key))
+    })?;
+    T::deserialize(value).ok()
 }
 
 #[cfg(test)]

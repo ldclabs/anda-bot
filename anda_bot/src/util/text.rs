@@ -27,15 +27,6 @@ fn invalid_text_data(path: &Path) -> io::Error {
 }
 
 #[cfg(test)]
-fn decode_text_bytes_with_windows_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
-    anda_core::text_from_bytes_with_encoding(
-        bytes,
-        anda_core::windows_code_page_encoding(code_page),
-    )
-    .map(|text| text.into_owned())
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -44,16 +35,6 @@ mod tests {
         assert_eq!(
             decode_text_bytes("hello 中文".as_bytes()).as_deref(),
             Some("hello 中文")
-        );
-    }
-
-    #[test]
-    fn decodes_legacy_windows_text_with_core_helper() {
-        let gbk = [0xD6, 0xD0, 0xCE, 0xC4];
-
-        assert_eq!(
-            decode_text_bytes_with_windows_code_page(&gbk, 936).as_deref(),
-            Some("中文")
         );
     }
 

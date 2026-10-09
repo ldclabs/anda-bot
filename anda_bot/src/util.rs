@@ -1,6 +1,7 @@
 pub mod file_uri;
 pub mod fs;
 pub mod http_client;
+#[cfg(test)]
 pub mod json_schema;
 pub mod locale;
 pub mod number_or_string;

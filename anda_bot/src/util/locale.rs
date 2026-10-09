@@ -39,7 +39,7 @@ pub fn persisted_ui_language(home: &Path) -> Option<String> {
 
 /// Maps a tag normalized by [`normalize_tag`] to one of the six locales
 /// native strings are translated into.
-pub fn supported_locale(tag: &str) -> Option<&'static str> {
+fn supported_locale(tag: &str) -> Option<&'static str> {
     if tag.starts_with("chinese") {
         return Some("zh-Hans");
     }
@@ -59,7 +59,7 @@ pub fn supported_locale(tag: &str) -> Option<&'static str> {
 /// matching, or use [`first_match`], which does it for you. The list is empty
 /// when the platform exposes no preference and the environment is unset, so
 /// every caller needs a fallback language.
-pub fn system_locale_tags() -> Vec<String> {
+fn system_locale_tags() -> Vec<String> {
     let mut tags = platform_locale_tags();
     tags.extend(environment_locale_tags());
     tags
@@ -71,7 +71,7 @@ pub fn system_locale_tags() -> Vec<String> {
 /// lowercase, dash-separated tag with any encoding suffix and surrounding
 /// quotes removed: `"zh_CN.UTF-8"` arrives as `zh-cn`. Returns `None` when no
 /// tag is recognized; callers supply their own default language.
-pub fn first_match<T, I>(tags: I, map: impl Fn(&str) -> Option<T>) -> Option<T>
+fn first_match<T, I>(tags: I, map: impl Fn(&str) -> Option<T>) -> Option<T>
 where
     I: IntoIterator,
     I::Item: AsRef<str>,
@@ -85,7 +85,7 @@ where
 /// Trims whitespace and quotes (macOS `defaults read` emits quoted values),
 /// drops any `.UTF-8`-style encoding suffix, converts POSIX underscores to
 /// dashes, and lowercases: `"zh_CN.UTF-8"` becomes `zh-cn`.
-pub fn normalize_tag(tag: &str) -> String {
+fn normalize_tag(tag: &str) -> String {
     tag.trim()
         .trim_matches('"')
         .split('.')
@@ -139,19 +139,56 @@ fn macos_defaults_value(key: &str) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// The Windows display languages, then the regional format locale, mirroring
+/// `AppleLanguages` then `AppleLocale` on macOS. The regional format alone is
+/// not the UI language: an English Windows set to the China region would
+/// otherwise get Chinese dialogs.
 #[cfg(windows)]
 fn platform_locale_tags() -> Vec<String> {
-    let mut buffer = [0u16; 85];
-    let len = unsafe {
-        windows_sys::Win32::Globalization::GetUserDefaultLocaleName(
-            buffer.as_mut_ptr(),
-            buffer.len() as i32,
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+
+    let mut tags = windows_ui_languages();
+    // LOCALE_NAME_MAX_LENGTH; the returned length counts the trailing NUL.
+    let mut locale = [0u16; 85];
+    let len = unsafe { GetUserDefaultLocaleName(locale.as_mut_ptr(), locale.len() as i32) };
+    if len > 1 {
+        tags.push(String::from_utf16_lossy(&locale[..len as usize - 1]));
+    }
+    tags
+}
+
+/// The display languages in preference order (Settings > Time & language).
+#[cfg(windows)]
+fn windows_ui_languages() -> Vec<String> {
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+
+    // The first call only reports the length of a double-NUL-terminated list
+    // such as `zh-CN\0en-US\0\0`.
+    let mut count = 0;
+    let mut len = 0;
+    let status = unsafe {
+        GetUserPreferredUILanguages(
+            MUI_LANGUAGE_NAME,
+            &mut count,
+            std::ptr::null_mut(),
+            &mut len,
         )
     };
-    if len <= 1 {
+    if status == 0 {
         return Vec::new();
     }
-    vec![String::from_utf16_lossy(&buffer[..(len as usize - 1)])]
+    let mut buffer = vec![0u16; len as usize];
+    let status = unsafe {
+        GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, buffer.as_mut_ptr(), &mut len)
+    };
+    if status == 0 {
+        return Vec::new();
+    }
+    buffer
+        .split(|&ch| ch == 0)
+        .filter(|tag| !tag.is_empty())
+        .map(String::from_utf16_lossy)
+        .collect()
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]

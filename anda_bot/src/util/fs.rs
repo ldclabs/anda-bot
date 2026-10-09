@@ -2,38 +2,26 @@ use std::io;
 use std::path::Path;
 
 /// Tightens a secrets-bearing file (config.yaml, backups, …) to owner-only
-/// access. No-op when the file already has no group/other bits, so repeated
-/// calls on startup are cheap.
-#[cfg(unix)]
+/// access (0600).
 pub fn restrict_secret_file_permissions(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let metadata = std::fs::metadata(path)?;
-    let mut permissions = metadata.permissions();
-    if permissions.mode() & 0o077 != 0 {
-        permissions.set_mode(0o600);
-        std::fs::set_permissions(path, permissions)?;
-    }
-    Ok(())
-}
-
-/// Windows ACLs default to per-user profile protection under the home
-/// directory; there is no direct mode-bits equivalent to tighten.
-#[cfg(not(unix))]
-pub fn restrict_secret_file_permissions(_path: &Path) -> io::Result<()> {
-    Ok(())
+    restrict_to_owner(path, 0o600)
 }
 
 /// Tightens a secrets-bearing directory (mcp_credentials/, …) to owner-only
-/// access. No-op when the directory already has no group/other bits.
-#[cfg(unix)]
+/// access (0700).
 pub fn restrict_secret_dir_permissions(path: &Path) -> io::Result<()> {
+    restrict_to_owner(path, 0o700)
+}
+
+/// Sets `mode` when `path` has any group/other bits. No-op otherwise, so
+/// repeated calls on startup are cheap.
+#[cfg(unix)]
+fn restrict_to_owner(path: &Path, mode: u32) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let metadata = std::fs::metadata(path)?;
-    let mut permissions = metadata.permissions();
+    let mut permissions = std::fs::metadata(path)?.permissions();
     if permissions.mode() & 0o077 != 0 {
-        permissions.set_mode(0o700);
+        permissions.set_mode(mode);
         std::fs::set_permissions(path, permissions)?;
     }
     Ok(())
@@ -42,17 +30,19 @@ pub fn restrict_secret_dir_permissions(path: &Path) -> io::Result<()> {
 /// Windows ACLs default to per-user profile protection under the home
 /// directory; there is no direct mode-bits equivalent to tighten.
 #[cfg(not(unix))]
-pub fn restrict_secret_dir_permissions(_path: &Path) -> io::Result<()> {
+fn restrict_to_owner(_path: &Path, _mode: u32) -> io::Result<()> {
     Ok(())
 }
 
 /// Reduces an untrusted name (an IM attachment file name, a message id, a URL
 /// segment) to a single path component that is safe to join onto a directory.
 ///
-/// Keeps ASCII alphanumerics, `.`, `-` and `_`; every other character — path
-/// separators and `..` included — collapses into a single `_`. The result is
-/// capped at 96 characters and stripped of leading/trailing `.`, `-` and `_`,
-/// so a sanitized name is never `.` or `..`.
+/// Keeps alphanumerics in any script (so `报告.pdf` keeps its name and
+/// extension), `.`, `-` and `_`; every other character — path separators,
+/// `..`, spaces, control and formatting characters included — collapses into
+/// a single `_`. The result is capped at about 96 bytes (whole characters
+/// only) and stripped of leading/trailing `.`, `-` and `_`, so a sanitized
+/// name is never `.` or `..`.
 ///
 /// `fallback` is returned verbatim when nothing usable survives, so pass a
 /// literal. Passing `""` is the deliberate way to ask for "no usable
@@ -61,7 +51,7 @@ pub fn restrict_secret_dir_permissions(_path: &Path) -> io::Result<()> {
 pub fn sanitize_path_component(value: &str, fallback: &str) -> String {
     let mut sanitized = String::with_capacity(value.len().min(96));
     for ch in value.trim().chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+        if ch.is_alphanumeric() || matches!(ch, '.' | '-' | '_') {
             sanitized.push(ch);
         } else if !sanitized.ends_with('_') {
             sanitized.push('_');
@@ -95,7 +85,14 @@ mod path_component_tests {
         );
         assert_eq!(
             sanitize_path_component("../奇怪 文件?.png", "fallback"),
-            "png"
+            "奇怪_文件_.png"
+        );
+        assert_eq!(sanitize_path_component("报告.pdf", "fallback"), "报告.pdf");
+        assert_eq!(sanitize_path_component("a/../b", "fallback"), "a_.._b");
+        // A right-to-left override cannot disguise the extension.
+        assert_eq!(
+            sanitize_path_component("\u{202e}gpj.exe", "fallback"),
+            "gpj.exe"
         );
     }
 
@@ -117,6 +114,11 @@ mod path_component_tests {
         assert_eq!(
             sanitize_path_component(&"a".repeat(128), "fallback"),
             "a".repeat(96)
+        );
+        // Multi-byte characters are never split.
+        assert_eq!(
+            sanitize_path_component(&"文".repeat(64), "fallback"),
+            "文".repeat(32)
         );
     }
 }
@@ -145,6 +147,21 @@ mod tests {
         restrict_secret_file_permissions(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn restrict_secret_dir_permissions_removes_group_and_other_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("credentials");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        restrict_secret_dir_permissions(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
     }
 
     // The Windows no-op returns Ok(()) even for a missing path, so expecting

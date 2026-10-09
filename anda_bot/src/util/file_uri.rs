@@ -1,15 +1,21 @@
 use anda_core::BoxError;
 use std::{
     env,
+    fmt::Write,
     path::{Path, PathBuf},
 };
 
-#[allow(unused)]
 #[derive(Clone, Copy)]
 enum FileUriPlatform {
     Unix,
     Windows,
 }
+
+const LOCAL_PLATFORM: FileUriPlatform = if cfg!(windows) {
+    FileUriPlatform::Windows
+} else {
+    FileUriPlatform::Unix
+};
 
 pub fn is_file_uri(value: &str) -> bool {
     let trimmed = value.trim_start();
@@ -30,26 +36,13 @@ pub fn file_uri_for_path(path: &Path) -> Result<String, BoxError> {
     ))
 }
 
-pub fn file_uri_for_absolute_path_string(path: &str) -> String {
+fn file_uri_for_absolute_path_string(path: &str) -> String {
     let path = file_uri_path_from_absolute_path_string(path);
     format!("file://{}", percent_encode_uri_path(&path))
 }
 
 pub fn path_from_file_uri(uri: &str) -> Result<PathBuf, BoxError> {
-    #[cfg(windows)]
-    {
-        Ok(PathBuf::from(local_path_string_from_file_uri_for_platform(
-            uri,
-            FileUriPlatform::Windows,
-        )?))
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(PathBuf::from(local_path_string_from_file_uri_for_platform(
-            uri,
-            FileUriPlatform::Unix,
-        )?))
-    }
+    local_path_string_from_file_uri_for_platform(uri, LOCAL_PLATFORM).map(PathBuf::from)
 }
 
 pub fn path_from_file_uri_or_path(value: &str) -> Result<PathBuf, BoxError> {
@@ -65,7 +58,7 @@ pub fn user_path_string_for_path(path: &Path) -> String {
     user_path_string_from_local_path_string(&path.to_string_lossy())
 }
 
-pub fn user_path_string_from_local_path_string(path: &str) -> String {
+fn user_path_string_from_local_path_string(path: &str) -> String {
     if let Some(rest) = path
         .strip_prefix(r"\\?\UNC\")
         .or_else(|| path.strip_prefix(r"\\.\UNC\"))
@@ -82,32 +75,11 @@ pub fn user_path_string_from_local_path_string(path: &str) -> String {
 }
 
 fn file_uri_path_from_absolute_path_string(path: &str) -> String {
-    let mut path = strip_windows_verbatim_uri_path_prefix(&path.replace('\\', "/"));
-    if windows_drive_uri_path_needs_leading_slash(&path) {
+    let mut path = user_path_string_from_local_path_string(path).replace('\\', "/");
+    if starts_with_windows_drive_spec(&path) {
         path.insert(0, '/');
     }
     path
-}
-
-fn strip_windows_verbatim_uri_path_prefix(path: &str) -> String {
-    if let Some(rest) = path
-        .strip_prefix("//?/UNC/")
-        .or_else(|| path.strip_prefix("//./UNC/"))
-    {
-        return format!("//{rest}");
-    }
-    if let Some(rest) = path
-        .strip_prefix("//?/")
-        .or_else(|| path.strip_prefix("//./"))
-    {
-        return rest.to_string();
-    }
-    path.to_string()
-}
-
-fn windows_drive_uri_path_needs_leading_slash(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
 fn local_path_string_from_file_uri_for_platform(
@@ -170,7 +142,7 @@ fn windows_path_string_from_file_uri_parts(authority: &str, path: &str) -> Strin
     }
 
     let path = path.replace('/', "\\");
-    if path.starts_with(r"\\?\") || path.starts_with(r"\\.\") || path.starts_with(r"\\") {
+    if path.starts_with(r"\\") {
         return path;
     }
 
@@ -189,7 +161,9 @@ fn percent_encode_uri_path(path: &str) -> String {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
                 encoded.push(*byte as char)
             }
-            byte => encoded.push_str(&format!("%{byte:02X}")),
+            byte => {
+                let _ = write!(encoded, "%{byte:02X}");
+            }
         }
     }
     encoded

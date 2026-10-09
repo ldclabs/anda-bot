@@ -1,15 +1,12 @@
-#[cfg(test)]
-use serde_json::Value;
+//! Test-only check that tool parameter schemas fit OpenAI strict mode.
 
-#[cfg(test)]
+use serde_json::Value;
 use std::collections::BTreeSet;
 
-#[cfg(test)]
 pub fn assert_openai_strict_parameters(parameters: &Value) {
     assert_openai_strict_schema(parameters, "$parameters");
 }
 
-#[cfg(test)]
 fn assert_openai_strict_schema(schema: &Value, path: &str) {
     let Some(object) = schema.as_object() else {
         return;

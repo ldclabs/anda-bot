@@ -48,21 +48,22 @@ fn env_proxies() -> Vec<Proxy> {
         })
     }
 
+    let no_proxy = no_proxy_with_env();
     let mut proxies = Vec::new();
     if let Some(url) = env_var(["http_proxy", "HTTP_PROXY"])
         && let Ok(proxy) = Proxy::http(&url)
     {
-        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+        proxies.push(proxy.no_proxy(no_proxy.clone()));
     }
     if let Some(url) = env_var(["https_proxy", "HTTPS_PROXY"])
         && let Ok(proxy) = Proxy::https(&url)
     {
-        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+        proxies.push(proxy.no_proxy(no_proxy.clone()));
     }
     if let Some(url) = env_var(["all_proxy", "ALL_PROXY"])
         && let Ok(proxy) = Proxy::all(&url)
     {
-        proxies.push(proxy.no_proxy(no_proxy_with_env()));
+        proxies.push(proxy.no_proxy(no_proxy));
     }
     proxies
 }
@@ -78,6 +79,11 @@ pub fn new_reqwest_client() -> reqwest::Client {
     }
     builder.build().expect("failed to build reqwest client")
 }
+
+/// Upper bound on the error text quoted in an API error. Proxy and CDN error
+/// pages are HTML that can run to many KB, and the error reaches logs, the
+/// CLI and the model.
+const MAX_ERROR_MESSAGE_BYTES: usize = 1024;
 
 /// Check status before decoding a success payload. API errors may be JSON,
 /// plain text, or HTML (for example, a proxy's 502 response).
@@ -112,13 +118,19 @@ pub async fn check_http_response(
     } else {
         message
     };
-    Err(format!("{context} API error ({status}): {message}").into())
+    let end = message.floor_char_boundary(MAX_ERROR_MESSAGE_BYTES);
+    let ellipsis = if end < message.len() { "…" } else { "" };
+    Err(format!(
+        "{context} API error ({status}): {}{ellipsis}",
+        &message[..end]
+    )
+    .into())
 }
 
 /// Whether an IP address is a public (globally routable) unicast address.
 /// Used to reject model-controlled URLs that point at loopback, private,
 /// link-local (cloud metadata), CGN, or otherwise internal addresses.
-pub fn ip_is_public(ip: std::net::IpAddr) -> bool {
+fn ip_is_public(ip: std::net::IpAddr) -> bool {
     use std::net::IpAddr;
 
     match ip.to_canonical() {
@@ -178,36 +190,38 @@ impl PublicUrlPolicy {
     }
 }
 
-/// Resolve and validate a model-controlled HTTP target. The returned
-/// addresses are subsequently installed as reqwest DNS overrides, binding the
-/// actual connection to the exact addresses checked here instead of resolving
-/// the hostname a second time (which would permit DNS rebinding).
+/// Resolve and validate a model-controlled HTTP target. For a domain name it
+/// returns the name with its validated addresses, which are then installed as
+/// reqwest DNS overrides: the actual connection is bound to the exact
+/// addresses checked here instead of resolving the name a second time (which
+/// would permit DNS rebinding). An IP-literal host needs no pin and yields
+/// `None` once it passes.
 async fn resolve_public_http_target(
     url: &reqwest::Url,
     policy: PublicUrlPolicy,
-) -> Result<(String, Vec<SocketAddr>), BoxError> {
+) -> Result<Option<(String, Vec<SocketAddr>)>, BoxError> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(format!("unsupported public URL scheme: {}", url.scheme()).into());
     }
     let host = url
         .host_str()
         .ok_or_else(|| format!("URL has no host: {url}"))?;
-    let host = host
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_string();
     let port = url
         .port_or_known_default()
         .ok_or_else(|| format!("URL does not have a known or explicit port: {url}"))?;
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+    if let Ok(ip) = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+    {
         if !policy.permits(ip) {
             return Err(format!("URL {url} points at a private or internal address").into());
         }
-        return Ok((host, vec![SocketAddr::new(ip, port)]));
+        return Ok(None);
     }
 
     let mut resolved = Vec::new();
-    for addr in tokio::net::lookup_host((host.as_str(), port)).await? {
+    for addr in tokio::net::lookup_host((host, port)).await? {
         // Every resolved address must be public: a rebinding name that mixes
         // public and private records must not slip through.
         if !policy.permits(addr.ip()) {
@@ -220,25 +234,26 @@ async fn resolve_public_http_target(
     if resolved.is_empty() {
         return Err(format!("URL host does not resolve: {url}").into());
     }
-    Ok((host, resolved))
+    Ok(Some((host.to_string(), resolved)))
 }
 
 const MAX_PUBLIC_URL_REDIRECTS: usize = 5;
 
 fn pinned_public_http_client(
-    host: &str,
-    addresses: &[SocketAddr],
+    pin: Option<(String, Vec<SocketAddr>)>,
 ) -> Result<reqwest::Client, BoxError> {
     install_default_crypto_provider();
     // Model-controlled fetches intentionally bypass proxies: a proxy resolves
     // the target in its own network, which would break the guarantee that the
-    // connection uses the addresses validated above.
+    // connection uses the addresses validated above. reqwest sends no
+    // User-Agent by default, and some public hosts reject such requests.
     let mut builder = reqwest::Client::builder()
         .no_proxy()
+        .user_agent(anda_engine::APP_USER_AGENT)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(300));
-    if host.parse::<std::net::IpAddr>().is_err() {
-        builder = builder.resolve_to_addrs(host, addresses);
+    if let Some((domain, addresses)) = pin {
+        builder = builder.resolve_to_addrs(&domain, &addresses);
     }
     Ok(builder.build()?)
 }
@@ -252,8 +267,8 @@ pub async fn fetch_public_url(
     policy: PublicUrlPolicy,
 ) -> Result<reqwest::Response, BoxError> {
     for redirect_count in 0..=MAX_PUBLIC_URL_REDIRECTS {
-        let (host, addresses) = resolve_public_http_target(&url, policy).await?;
-        let client = pinned_public_http_client(&host, &addresses)?;
+        let pin = resolve_public_http_target(&url, policy).await?;
+        let client = pinned_public_http_client(pin)?;
         let response = client.get(url.clone()).send().await?;
         if !matches!(
             response.status(),
@@ -292,17 +307,14 @@ pub async fn read_limited_body(
     max_bytes: u64,
     context: &str,
 ) -> Result<Vec<u8>, BoxError> {
-    if let Some(content_length) = response.content_length()
+    let content_length = response.content_length();
+    if let Some(content_length) = content_length
         && content_length > max_bytes
     {
         return Err(format!("{context} exceeds {max_bytes} bytes: {content_length}").into());
     }
 
-    let capacity = response
-        .content_length()
-        .unwrap_or(0)
-        .min(max_bytes)
-        .min(1024 * 1024) as usize;
+    let capacity = content_length.unwrap_or(0).min(max_bytes).min(1024 * 1024) as usize;
     let mut body = Vec::with_capacity(capacity);
     while let Some(chunk) = response.chunk().await? {
         if body.len() as u64 + chunk.len() as u64 > max_bytes {
@@ -335,12 +347,14 @@ where
             reqwest::retry::for_host(AnyHost)
                 .max_retries_per_request(2)
                 .classify_fn(|req_rep| {
+                    // Only replay what cannot double-submit: a request that
+                    // never reached the server, or an idempotent one. Retrying
+                    // a POST after a timeout, a mid-response failure or a
+                    // 502/504 can double-submit it (agent prompts, IM
+                    // messages, memory formation), and these retries are
+                    // immediate. Those layers retry on their own, with
+                    // backoff and `Retry-After`.
                     if let Some(err) = req_rep.error() {
-                        // Only replay requests that never reached the server.
-                        // Retrying after a timeout or mid-response failure can
-                        // double-submit non-idempotent calls (agent prompts,
-                        // IM messages, memory formation); those layers have
-                        // their own idempotency-aware retries.
                         let connect_failed = err
                             .downcast_ref::<reqwest::Error>()
                             .is_some_and(reqwest::Error::is_connect);
@@ -358,7 +372,7 @@ where
                             | http::StatusCode::BAD_GATEWAY
                             | http::StatusCode::SERVICE_UNAVAILABLE
                             | http::StatusCode::GATEWAY_TIMEOUT,
-                        ) => req_rep.retryable(),
+                        ) if req_rep.method().is_idempotent() => req_rep.retryable(),
                         _ => req_rep.success(),
                     }
                 }),
@@ -440,7 +454,17 @@ mod tests {
 
         let app = Router::new()
             .route("/redirect", get(|| async { Redirect::temporary("/final") }))
-            .route("/final", get(|| async { "redirected body" }))
+            .route(
+                "/final",
+                get(|headers: http::HeaderMap| async move {
+                    let user_agent = headers
+                        .get(http::header::USER_AGENT)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    format!("redirected body for {user_agent}")
+                }),
+            )
             .route(
                 "/file-redirect",
                 get(|| async { Redirect::temporary("file:///etc/passwd") }),
@@ -454,7 +478,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(response.url().path(), "/final");
-        assert_eq!(response.text().await.unwrap(), "redirected body");
+        assert_eq!(
+            response.text().await.unwrap(),
+            format!("redirected body for {}", anda_engine::APP_USER_AGENT)
+        );
 
         let err = fetch_public_url(
             reqwest::Url::parse(&format!("{base_url}/file-redirect")).unwrap(),
@@ -506,19 +533,18 @@ mod tests {
 
         let attempts = Arc::new(AtomicUsize::new(0));
         let handler_attempts = attempts.clone();
-        let app = axum::Router::new().route(
-            "/flaky",
-            axum::routing::get(move || {
-                let attempts = handler_attempts.clone();
-                async move {
-                    if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                        (http::StatusCode::SERVICE_UNAVAILABLE, "warming up")
-                    } else {
-                        (http::StatusCode::OK, "ready")
-                    }
+        let flaky = move || {
+            let attempts = handler_attempts.clone();
+            async move {
+                if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    (http::StatusCode::SERVICE_UNAVAILABLE, "warming up")
+                } else {
+                    (http::StatusCode::OK, "ready")
                 }
-            }),
-        );
+            }
+        };
+        let app =
+            axum::Router::new().route("/flaky", axum::routing::get(flaky.clone()).post(flaky));
         let base_url = crate::test_support::spawn_http_mock(app).await;
 
         let client = build_http_client(None, |builder| builder).unwrap();
@@ -530,6 +556,17 @@ mod tests {
 
         assert_eq!(response.status(), http::StatusCode::OK);
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+        // A POST is left to its own layer's retries: it is sent once.
+        attempts.store(0, Ordering::SeqCst);
+        let response = client
+            .post(format!("{base_url}/flaky"))
+            .body("prompt")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -608,5 +645,20 @@ mod tests {
                 .to_string();
             assert!(err.contains("502") && err.contains(expected), "{err}");
         }
+
+        // A long error page is cut on a character boundary.
+        let page = format!("<html>{}</html>", "错".repeat(1000));
+        let app = Router::new().route(
+            "/",
+            get(move || async move { (http::StatusCode::BAD_GATEWAY, page) }),
+        );
+        let url = crate::test_support::spawn_http_mock(app).await;
+        let response = new_reqwest_client().get(url).send().await.unwrap();
+        let err = check_http_response(response, "Voice")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.ends_with("错…"), "{err}");
+        assert!(err.len() < MAX_ERROR_MESSAGE_BYTES + 64, "{}", err.len());
     }
 }
