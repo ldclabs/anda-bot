@@ -47,7 +47,7 @@ pub fn build_telegram_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
-    for (index, telegram_cfg) in cfg.iter().enumerate() {
+    for telegram_cfg in cfg {
         if telegram_cfg.is_empty() {
             continue;
         }
@@ -55,7 +55,7 @@ pub fn build_telegram_channels(
         if telegram_cfg.bot_token.trim().is_empty() {
             return Err(format!(
                 "Telegram channel '{}' requires bot_token",
-                telegram_cfg.label(index)
+                telegram_cfg.channel_id()
             )
             .into());
         }

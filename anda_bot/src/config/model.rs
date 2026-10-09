@@ -2,9 +2,7 @@ use anda_engine::model::{ModelConfig as EngineModelConfig, ModelEffort};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::util::text::read_text_file_sync;
-
-pub use crate::provider_env::CODEX_API_BASE;
+use crate::{provider_env::CODEX_API_BASE, util::text::read_text_file_sync};
 
 /// Local provider configuration keeps OAuth profile references separate from keys.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -63,6 +61,22 @@ impl ModelProvider {
             ModelAuth::Chatgpt { profile } => format!("chatgpt:{profile}:{}", self.model),
         }
     }
+    /// A copy whose empty API key is filled from the provider's well-known
+    /// environment variable.
+    pub fn with_env_api_key(&self) -> Self {
+        let mut provider = self.clone();
+        if matches!(provider.auth, ModelAuth::ApiKey)
+            && provider.api_key.trim().is_empty()
+            && let Some(api_key) = crate::provider_env::env_api_key(
+                &provider.family,
+                &provider.model,
+                &provider.api_base,
+            )
+        {
+            provider.api_key = api_key;
+        }
+        provider
+    }
 }
 impl From<EngineModelConfig> for ModelProvider {
     fn from(c: EngineModelConfig) -> Self {
@@ -82,7 +96,6 @@ impl From<EngineModelConfig> for ModelProvider {
         }
     }
 }
-type ModelConfig = ModelProvider;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelSettings {
@@ -90,71 +103,62 @@ pub struct ModelSettings {
     pub active: String,
 
     #[serde(default)]
-    pub providers: Vec<ModelConfig>,
+    pub providers: Vec<ModelProvider>,
 }
 
 impl ModelSettings {
+    /// Legacy compatibility: providers on the Codex endpoint without a key
+    /// borrow the access token from `~/.codex/auth.json`.
     pub fn try_load_codex_token(&mut self, home: &Path) {
-        for provider in &mut self.providers {
-            if matches!(provider.auth, ModelAuth::ApiKey)
-                && provider.api_key.trim().is_empty()
-                && Self::uses_codex_auth(provider)
-            {
-                let token_path = home.join(".codex/auth.json");
-                if let Ok(token_str) = read_text_file_sync(token_path)
-                    && let Ok(token) = serde_json::from_str::<CodexAuth>(&token_str)
-                    && !token.tokens.access_token.is_empty()
-                {
-                    log::warn!(
-                        "Legacy Codex credential compatibility is active. Run `anda auth login chatgpt` to connect an independent ChatGPT plan session."
-                    );
-                    provider.api_key = token.tokens.access_token;
-                }
-            }
+        let legacy: Vec<_> = self
+            .providers
+            .iter_mut()
+            .filter(|provider| {
+                matches!(provider.auth, ModelAuth::ApiKey)
+                    && provider.api_key.trim().is_empty()
+                    && provider.api_base.trim() == CODEX_API_BASE
+            })
+            .collect();
+        if legacy.is_empty() {
+            return;
+        }
+        let Some(access_token) = read_codex_access_token(home) else {
+            return;
+        };
+
+        log::warn!(
+            "Legacy Codex credential compatibility is active. Run `anda auth login chatgpt` to connect an independent ChatGPT plan session."
+        );
+        for provider in legacy {
+            provider.api_key = access_token.clone();
         }
     }
 
-    pub fn uses_codex_auth(provider: &ModelConfig) -> bool {
-        provider.api_base.trim() == CODEX_API_BASE
-    }
-
-    pub fn providers_with_env_api_keys(&self) -> Vec<ModelConfig> {
+    pub fn providers_with_env_api_keys(&self) -> Vec<ModelProvider> {
         self.providers
             .iter()
-            .map(provider_with_env_api_key)
+            .map(ModelProvider::with_env_api_key)
             .collect()
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct CodexAuth {
+#[derive(Default, Deserialize)]
+struct CodexAuth {
     #[serde(default)]
-    pub tokens: OAuthToken,
+    tokens: CodexTokens,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct OAuthToken {
+#[derive(Default, Deserialize)]
+struct CodexTokens {
     #[serde(default)]
-    pub id_token: String,
-    #[serde(default)]
-    pub access_token: String,
-    #[serde(default)]
-    pub refresh_token: String,
-    #[serde(default)]
-    pub account_id: String,
+    access_token: String,
 }
 
-fn provider_with_env_api_key(provider: &ModelConfig) -> ModelConfig {
-    let mut provider = provider.clone();
-    if matches!(provider.auth, ModelAuth::ApiKey)
-        && provider.api_key.trim().is_empty()
-        && let Some(api_key) =
-            crate::provider_env::env_api_key(&provider.family, &provider.model, &provider.api_base)
-    {
-        provider.api_key = api_key;
-    }
-
-    provider
+fn read_codex_access_token(home: &Path) -> Option<String> {
+    let content = read_text_file_sync(home.join(".codex/auth.json")).ok()?;
+    let auth: CodexAuth = serde_json::from_str(&content).ok()?;
+    let access_token = auth.tokens.access_token;
+    (!access_token.is_empty()).then_some(access_token)
 }
 
 #[cfg(test)]
@@ -230,7 +234,7 @@ mod tests {
 
         let settings = ModelSettings {
             active: "deepseek-v4-pro".to_string(),
-            providers: vec![ModelConfig {
+            providers: vec![ModelProvider {
                 family: "anthropic".to_string(),
                 model: "deepseek-v4-pro".to_string(),
                 api_base: "https://api.deepseek.com/anthropic".to_string(),
@@ -252,7 +256,7 @@ mod tests {
 
         let settings = ModelSettings {
             active: "deepseek-v4-pro".to_string(),
-            providers: vec![ModelConfig {
+            providers: vec![ModelProvider {
                 family: "anthropic".to_string(),
                 model: "deepseek-v4-pro".to_string(),
                 api_base: "https://api.deepseek.com/anthropic".to_string(),
@@ -273,7 +277,7 @@ mod tests {
 
         let settings = ModelSettings {
             active: "deepseek-v4-pro".to_string(),
-            providers: vec![ModelConfig {
+            providers: vec![ModelProvider {
                 family: "anthropic".to_string(),
                 model: "deepseek-v4-pro".to_string(),
                 api_base: "https://api.deepseek.com/anthropic".to_string(),
@@ -291,7 +295,7 @@ mod tests {
 
         let settings = ModelSettings {
             active: "gemini-flash-latest".to_string(),
-            providers: vec![ModelConfig {
+            providers: vec![ModelProvider {
                 family: "gemini".to_string(),
                 model: "gemini-flash-latest".to_string(),
                 api_base: "https://generativelanguage.googleapis.com/v1beta/models".to_string(),
@@ -318,19 +322,27 @@ mod tests {
 
         let mut settings = ModelSettings {
             active: "gpt-5.5".to_string(),
-            providers: vec![ModelConfig {
-                family: "openai".to_string(),
-                model: "gpt-5.5".to_string(),
-                api_base: CODEX_API_BASE.to_string(),
-                api_key: String::new(),
-                ..Default::default()
-            }],
+            providers: vec![
+                ModelProvider {
+                    family: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                    api_base: CODEX_API_BASE.to_string(),
+                    api_key: String::new(),
+                    ..Default::default()
+                },
+                ModelProvider {
+                    family: "openai".to_string(),
+                    model: "gpt-5.5".to_string(),
+                    api_base: "https://api.openai.com/v1".to_string(),
+                    ..Default::default()
+                },
+            ],
         };
 
         settings.try_load_codex_token(home.path());
 
         assert_eq!(settings.providers[0].api_key, "codex-token");
-        assert!(ModelSettings::uses_codex_auth(&settings.providers[0]));
+        assert!(settings.providers[1].api_key.is_empty());
     }
 
     #[test]

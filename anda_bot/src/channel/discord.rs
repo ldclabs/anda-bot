@@ -68,7 +68,7 @@ pub fn build_discord_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
-    for (index, discord_cfg) in cfg.iter().enumerate() {
+    for discord_cfg in cfg {
         if discord_cfg.is_empty() {
             continue;
         }
@@ -76,7 +76,7 @@ pub fn build_discord_channels(
         if discord_cfg.bot_token.trim().is_empty() {
             return Err(format!(
                 "Discord channel '{}' requires bot_token",
-                discord_cfg.label(index)
+                discord_cfg.channel_id()
             )
             .into());
         }

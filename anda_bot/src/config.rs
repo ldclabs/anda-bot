@@ -208,15 +208,17 @@ impl Config {
     pub fn setup_issues(&self) -> Vec<String> {
         let mut issues = Vec::new();
         let active = self.model.active.trim();
-        let model_providers = self.model.providers_with_env_api_keys();
 
         if active.is_empty() {
             issues.push("model.active".to_string());
-        } else if let Some(provider) = model_providers.iter().find(|m| m.selection_id() == active) {
-            let pos = model_providers
-                .iter()
-                .position(|m| m.selection_id() == active)
-                .unwrap();
+        } else if let Some((pos, provider)) = self
+            .model
+            .providers
+            .iter()
+            .enumerate()
+            .find(|(_, provider)| provider.selection_id() == active)
+        {
+            let provider = provider.with_env_api_key();
             let base = format!("model.providers[{pos}]");
             if provider.disabled {
                 issues.push(format!("{base}.disabled"));
@@ -264,18 +266,22 @@ impl Config {
             }
 
             let base = format!("users[{index}]");
-            if user.pubkey.trim().is_empty() || user.pubkey().is_err() {
+            if user.pubkey().is_err() {
                 issues.push(format!("{base}.pubkey"));
             }
 
+            // `default` and `owner` already name the local owner, so the user
+            // registry would reject them as duplicates at startup.
             if let Some(id) = user.id()
-                && !user_ids.insert(id)
+                && (id == DEFAULT_USER_ID || id == OWNER_USER_ID || !user_ids.insert(id))
             {
                 issues.push(format!("{base}.id"));
             }
         }
 
-        let mut seen_telegram_ids = BTreeSet::new();
+        // Keyed like `Channel::id()`, which the channel runtime requires to be
+        // unique; Lark and Feishu entries live in different namespaces.
+        let mut channel_ids = BTreeSet::new();
         for (index, telegram) in self.channels.telegram.iter().enumerate() {
             if telegram.is_empty() {
                 continue;
@@ -285,33 +291,28 @@ impl Config {
             if telegram.bot_token.trim().is_empty() {
                 issues.push(format!("{base}.bot_token"));
             }
-
-            let channel_id = telegram.channel_id();
-            if !channel_id.is_empty() && !seen_telegram_ids.insert(channel_id) {
+            if !channel_ids.insert(format!("telegram:{}", telegram.channel_id())) {
                 issues.push(format!("{base}.id"));
             }
-            if !self.is_valid_user_ref(telegram.user.as_deref(), &user_ids) {
+            if !is_valid_user_ref(telegram.user.as_deref(), &user_ids) {
                 issues.push(format!("{base}.user"));
             }
         }
 
-        let mut seen_wechat_ids = BTreeSet::new();
         for (index, wechat) in self.channels.wechat.iter().enumerate() {
             if wechat.is_empty() {
                 continue;
             }
 
             let base = format!("channels.wechat[{index}]");
-            let channel_id = wechat.channel_id();
-            if !channel_id.is_empty() && !seen_wechat_ids.insert(channel_id) {
+            if !channel_ids.insert(format!("wechat:{}", wechat.channel_id())) {
                 issues.push(format!("{base}.id"));
             }
-            if !self.is_valid_user_ref(wechat.user.as_deref(), &user_ids) {
+            if !is_valid_user_ref(wechat.user.as_deref(), &user_ids) {
                 issues.push(format!("{base}.user"));
             }
         }
 
-        let mut seen_discord_ids = BTreeSet::new();
         for (index, discord) in self.channels.discord.iter().enumerate() {
             if discord.is_empty() {
                 continue;
@@ -321,17 +322,14 @@ impl Config {
             if discord.bot_token.trim().is_empty() {
                 issues.push(format!("{base}.bot_token"));
             }
-
-            let channel_id = discord.channel_id();
-            if !channel_id.is_empty() && !seen_discord_ids.insert(channel_id) {
+            if !channel_ids.insert(format!("discord:{}", discord.channel_id())) {
                 issues.push(format!("{base}.id"));
             }
-            if !self.is_valid_user_ref(discord.user.as_deref(), &user_ids) {
+            if !is_valid_user_ref(discord.user.as_deref(), &user_ids) {
                 issues.push(format!("{base}.user"));
             }
         }
 
-        let mut seen_lark_ids = BTreeSet::new();
         for (index, lark) in self.channels.lark.iter().enumerate() {
             if lark.is_empty() {
                 continue;
@@ -354,29 +352,16 @@ impl Config {
             {
                 issues.push(format!("{base}.verification_token"));
             }
-
-            let channel_id = lark.channel_id();
-            if !channel_id.is_empty() && !seen_lark_ids.insert(channel_id) {
+            let channel_id = format!("{}:{}", lark.platform.channel_name(), lark.channel_id());
+            if !channel_ids.insert(channel_id) {
                 issues.push(format!("{base}.id"));
             }
-            if !self.is_valid_user_ref(lark.user.as_deref(), &user_ids) {
+            if !is_valid_user_ref(lark.user.as_deref(), &user_ids) {
                 issues.push(format!("{base}.user"));
             }
         }
 
         issues
-    }
-
-    fn is_valid_user_ref(&self, user_ref: Option<&str>, user_ids: &BTreeSet<String>) -> bool {
-        let Some(user_ref) = user_ref.and_then(normalize_string) else {
-            return true;
-        };
-
-        user_ref == DEFAULT_USER_ID
-            || user_ref == OWNER_USER_ID
-            || user_ids.contains(&user_ref)
-            || Principal::from_text(&user_ref).is_ok()
-            || UserSettings::pubkey_from_str(&user_ref).is_ok()
     }
 
     #[cfg(test)]
@@ -419,6 +404,18 @@ impl Config {
     }
 }
 
+fn is_valid_user_ref(user_ref: Option<&str>, user_ids: &BTreeSet<String>) -> bool {
+    let Some(user_ref) = user_ref.and_then(normalize_string) else {
+        return true;
+    };
+
+    user_ref == DEFAULT_USER_ID
+        || user_ref == OWNER_USER_ID
+        || user_ids.contains(&user_ref)
+        || Principal::from_text(&user_ref).is_ok()
+        || UserSettings::pubkey_from_str(&user_ref).is_ok()
+}
+
 fn default_gateway_addr() -> String {
     DEFAULT_GATEWAY_ADDR.to_string()
 }
@@ -454,7 +451,6 @@ pub fn normalize_identity(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ModelProvider as ModelConfig;
     use crate::util::http_client::new_reqwest_client;
 
     #[test]
@@ -508,7 +504,7 @@ channels:
         assert_eq!(config.https_proxy.as_deref(), Some("http://127.0.0.1:7890"));
         assert_eq!(config.workspaces, vec![PathBuf::from("/tmp/project")]);
         assert_eq!(config.model.active, "claude-sonnet-4-6");
-        let model: ModelConfig = config.model.providers[0].clone();
+        let model: ModelProvider = config.model.providers[0].clone();
 
         assert_eq!(model.family, "anthropic");
         assert_eq!(model.model, "claude-sonnet-4-6");
@@ -592,7 +588,7 @@ channels:
             vec!["model.providers: no deepseek-v4-pro"]
         );
 
-        config.model.providers.push(ModelConfig {
+        config.model.providers.push(ModelProvider {
             family: "anthropic".to_string(),
             model: "deepseek-v4-pro".to_string(),
             ..Default::default()
@@ -611,7 +607,7 @@ channels:
 
         let mut config = Config::default();
         config.model.active = "deepseek-v4-pro".to_string();
-        config.model.providers.push(ModelConfig {
+        config.model.providers.push(ModelProvider {
             family: "anthropic".to_string(),
             model: "deepseek-v4-pro".to_string(),
             api_base: "https://api.deepseek.com/anthropic".to_string(),
@@ -651,6 +647,56 @@ channels:
     }
 
     #[test]
+    fn setup_issues_agree_with_user_registry_and_channel_runtime_ids() {
+        let default_key = crate::identity::Ed25519Key::new([1; 32]);
+        let pubkey_of = |seed: u8| {
+            let key = crate::identity::Ed25519Key::new([seed; 32]);
+            ic_auth_types::ByteBufB64(key.pubkey().as_bytes().to_vec()).to_string()
+        };
+
+        let config = Config {
+            users: vec![
+                UserSettings {
+                    id: Some("owner".to_string()),
+                    pubkey: pubkey_of(7),
+                },
+                UserSettings {
+                    id: Some(" default ".to_string()),
+                    pubkey: pubkey_of(8),
+                },
+            ],
+            // Lark and Feishu channels run as `lark:work` and `feishu:work`.
+            channels: ChannelSettings {
+                lark: vec![
+                    LarkChannelSettings {
+                        id: Some("work".to_string()),
+                        app_id: "app".to_string(),
+                        app_secret: "secret".to_string(),
+                        ..Default::default()
+                    },
+                    LarkChannelSettings {
+                        id: Some("work".to_string()),
+                        platform: LarkPlatform::Feishu,
+                        app_id: "app".to_string(),
+                        app_secret: "secret".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let issues: Vec<_> = config
+            .setup_issues()
+            .into_iter()
+            .filter(|issue| !issue.starts_with("model."))
+            .collect();
+        assert_eq!(issues, vec!["users[0].id", "users[1].id"]);
+        assert!(config.user_registry(default_key.pubkey()).is_err());
+    }
+
+    #[test]
     fn setup_issues_flag_provider_state_users_and_channel_duplicates() {
         let _env = model::guard_model_api_key_env();
         let alice = crate::identity::Ed25519Key::new([7; 32]);
@@ -661,7 +707,7 @@ channels:
 
         let mut config = Config::default();
         config.model.active = "test-model".to_string();
-        config.model.providers.push(ModelConfig {
+        config.model.providers.push(ModelProvider {
             family: "  ".to_string(),
             model: "test-model".to_string(),
             disabled: true,
@@ -793,7 +839,7 @@ channels:
         let _env = model::guard_model_api_key_env();
         let mut config = Config::default();
         config.model.active = "test-model".to_string();
-        config.model.providers.push(ModelConfig {
+        config.model.providers.push(ModelProvider {
             family: "openai".to_string(),
             model: "test-model".to_string(),
             api_base: "https://api.example.test/v1".to_string(),

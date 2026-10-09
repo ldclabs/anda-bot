@@ -1,9 +1,6 @@
 use anda_core::{BoxError, Principal};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    str::FromStr,
-};
+use std::{collections::BTreeMap, str::FromStr};
 
 use super::{Config, normalize_optional, normalize_string};
 use crate::identity::Ed25519PubKey;
@@ -58,12 +55,9 @@ impl UserRegistry {
             aliases: BTreeMap::from([
                 (DEFAULT_USER_ID.to_string(), default_user),
                 (OWNER_USER_ID.to_string(), default_user),
-                (default_user.to_text(), default_user),
             ]),
-            pubkeys: Vec::new(),
+            pubkeys: vec![default_user_pubkey],
         };
-        let mut seen_pubkeys = BTreeSet::new();
-        registry.push_pubkey(default_user_pubkey, &mut seen_pubkeys);
 
         for (index, user) in cfg.users.iter().enumerate() {
             if user.is_empty() {
@@ -74,8 +68,7 @@ impl UserRegistry {
                 .pubkey()
                 .map_err(|err| format!("users[{index}].pubkey: {err}"))?;
             let principal = pubkey.id();
-            registry.push_pubkey(pubkey, &mut seen_pubkeys);
-            registry.aliases.insert(principal.to_text(), principal);
+            registry.push_pubkey(pubkey);
             if let Some(id) = user.id()
                 && registry.aliases.insert(id.clone(), principal).is_some()
             {
@@ -83,8 +76,15 @@ impl UserRegistry {
             }
         }
 
+        // A channel may name its user by id, principal or raw pubkey; a raw
+        // pubkey also makes that user a trusted key.
         for user_ref in cfg.channels.user_refs() {
-            registry.resolve_or_register(user_ref.as_str(), &mut seen_pubkeys)?;
+            if registry.aliases.contains_key(&user_ref) || Principal::from_text(&user_ref).is_ok() {
+                continue;
+            }
+            let pubkey = UserSettings::pubkey_from_str(&user_ref)
+                .map_err(|_| format!("unknown user '{user_ref}'"))?;
+            registry.push_pubkey(pubkey);
         }
 
         Ok(registry)
@@ -118,37 +118,8 @@ impl UserRegistry {
         Err(format!("unknown user '{user_ref}'").into())
     }
 
-    fn resolve_or_register(
-        &mut self,
-        user_ref: &str,
-        seen_pubkeys: &mut BTreeSet<Principal>,
-    ) -> Result<Principal, BoxError> {
-        let Some(user_ref) = normalize_string(user_ref) else {
-            return Ok(self.default_user);
-        };
-
-        if let Some(user) = self.aliases.get(&user_ref) {
-            return Ok(*user);
-        }
-
-        if let Ok(user) = Principal::from_text(&user_ref) {
-            self.aliases.insert(user_ref, user);
-            return Ok(user);
-        }
-
-        if let Ok(pubkey) = UserSettings::pubkey_from_str(&user_ref) {
-            let user = pubkey.id();
-            self.push_pubkey(pubkey, seen_pubkeys);
-            self.aliases.insert(user_ref, user);
-            self.aliases.insert(user.to_text(), user);
-            return Ok(user);
-        }
-
-        Err(format!("unknown user '{user_ref}'").into())
-    }
-
-    fn push_pubkey(&mut self, pubkey: Ed25519PubKey, seen_pubkeys: &mut BTreeSet<Principal>) {
-        if seen_pubkeys.insert(pubkey.id()) {
+    fn push_pubkey(&mut self, pubkey: Ed25519PubKey) {
+        if !self.pubkeys.iter().any(|known| known.id() == pubkey.id()) {
             self.pubkeys.push(pubkey);
         }
     }

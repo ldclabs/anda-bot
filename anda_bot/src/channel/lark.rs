@@ -156,7 +156,7 @@ pub fn build_lark_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
-    for (index, lark_cfg) in cfg.iter().enumerate() {
+    for lark_cfg in cfg {
         if lark_cfg.is_empty() {
             continue;
         }
@@ -164,7 +164,7 @@ pub fn build_lark_channels(
         if lark_cfg.app_id.trim().is_empty() || lark_cfg.app_secret.trim().is_empty() {
             return Err(format!(
                 "Lark channel '{}' requires app_id and app_secret",
-                lark_cfg.label(index)
+                lark_cfg.channel_id()
             )
             .into());
         }
@@ -172,7 +172,7 @@ pub fn build_lark_channels(
         if lark_cfg.receive_mode == config::LarkReceiveMode::Webhook && lark_cfg.port.is_none() {
             return Err(format!(
                 "Lark channel '{}' webhook mode requires port",
-                lark_cfg.label(index)
+                lark_cfg.channel_id()
             )
             .into());
         }
@@ -188,7 +188,7 @@ pub fn build_lark_channels(
         {
             return Err(format!(
                 "Lark channel '{}' webhook mode requires verification_token",
-                lark_cfg.label(index)
+                lark_cfg.channel_id()
             )
             .into());
         }

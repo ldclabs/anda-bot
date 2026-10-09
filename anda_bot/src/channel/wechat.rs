@@ -43,7 +43,7 @@ pub fn build_wechat_channels(
 ) -> Result<HashMap<String, Arc<dyn Channel>>, BoxError> {
     let mut channels = HashMap::new();
 
-    for (index, wechat_cfg) in cfg.iter().enumerate() {
+    for wechat_cfg in cfg {
         if wechat_cfg.is_empty() {
             continue;
         }
@@ -51,7 +51,7 @@ pub fn build_wechat_channels(
         if wechat_cfg.bot_token.trim().is_empty() {
             log::info!(
                 "WeChat channel '{}' has no bot_token; saved token or QR login will be used",
-                wechat_cfg.label(index)
+                wechat_cfg.channel_id()
             );
         }
 

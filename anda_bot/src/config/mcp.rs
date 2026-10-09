@@ -215,49 +215,40 @@ impl McpJsonServer {
             .as_deref()
             .and_then(normalize_string)
             .map(|value| value.to_ascii_lowercase());
-        let transport = match transport_type.as_deref() {
-            Some("stdio") => McpTransportSettings::Stdio(McpStdioSettings {
-                command: command.unwrap_or_default(),
-                args,
-                env,
-                cwd,
-            }),
-            Some("http") | Some("streamable_http") => {
-                McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-                    url: url.unwrap_or_default(),
-                    bearer_token,
-                    headers,
-                    oauth,
-                })
-            }
+        let is_set =
+            |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
+        let stdio = match transport_type.as_deref() {
+            Some("stdio") => true,
+            Some("http") | Some("streamable_http") => false,
             Some(other) => {
                 return Err(format!(
                     "mcp.json.{root}.{id}.type has unsupported transport {other:?}"
                 )
                 .into());
             }
+            None if is_set(&command) => true,
+            None if is_set(&url) => false,
             None => {
-                if command.as_deref().and_then(normalize_string).is_some() {
-                    McpTransportSettings::Stdio(McpStdioSettings {
-                        command: command.unwrap_or_default(),
-                        args,
-                        env,
-                        cwd,
-                    })
-                } else if url.as_deref().and_then(normalize_string).is_some() {
-                    McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-                        url: url.unwrap_or_default(),
-                        bearer_token,
-                        headers,
-                        oauth,
-                    })
-                } else {
-                    return Err(format!(
-                        "mcp.json.{root}.{id}.type is missing and transport cannot be inferred"
-                    )
-                    .into());
-                }
+                return Err(format!(
+                    "mcp.json.{root}.{id}.type is missing and transport cannot be inferred"
+                )
+                .into());
             }
+        };
+        let transport = if stdio {
+            McpTransportSettings::Stdio(McpStdioSettings {
+                command: command.unwrap_or_default(),
+                args,
+                env,
+                cwd,
+            })
+        } else {
+            McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: url.unwrap_or_default(),
+                bearer_token,
+                headers,
+                oauth,
+            })
         };
 
         Ok(McpServerSettings {
@@ -583,7 +574,7 @@ impl McpStreamableHttpSettings {
                         &format!("{base}.transport.headers.{key}"),
                     )?;
                     HeaderValue::from_str(&value)?;
-                    Ok((key.trim().to_string(), value))
+                    Ok((key.clone(), value))
                 })
                 .collect::<Result<_, BoxError>>()?,
             auth: self.oauth.as_ref().map(McpOAuthSettings::to_auth_config),
@@ -616,19 +607,14 @@ impl<'a> McpExpansionVars<'a> {
 
     fn get(&self, name: &str) -> Option<String> {
         match name {
-            "ANDA_HOME" => {
-                (!self.validate_only).then(|| self.home_dir.to_string_lossy().to_string())
-            }
+            // Validation runs before the paths are known.
+            "ANDA_HOME" | "ANDA_WORKSPACE" if self.validate_only => Some(String::new()),
+            "ANDA_HOME" => Some(self.home_dir.to_string_lossy().into_owned()),
             "ANDA_WORKSPACE" => self
                 .default_cwd
-                .filter(|_| !self.validate_only)
-                .map(|path| path.to_string_lossy().to_string()),
+                .map(|path| path.to_string_lossy().into_owned()),
             _ => std::env::var(name).ok(),
         }
-    }
-
-    fn is_known_builtin(&self, name: &str) -> bool {
-        self.validate_only && matches!(name, "ANDA_HOME" | "ANDA_WORKSPACE")
     }
 }
 
@@ -649,53 +635,31 @@ fn expand_config_string(
     field: &str,
 ) -> Result<String, BoxError> {
     let mut out = String::with_capacity(value.len());
-    let chars: Vec<char> = value.chars().collect();
-    let mut index = 0;
+    let mut rest = value;
 
-    while index < chars.len() {
-        if chars[index] != '$' {
-            out.push(chars[index]);
-            index += 1;
-            continue;
-        }
-
-        let Some(next) = chars.get(index + 1).copied() else {
+    while let Some(dollar) = rest.find('$') {
+        out.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 1..];
+        if let Some(braced) = after.strip_prefix('{') {
+            let end = braced
+                .find('}')
+                .ok_or_else(|| format!("{field} contains an unterminated environment reference"))?;
+            out.push_str(&expand_env_reference(&braced[..end], vars, field)?);
+            rest = &braced[end + 1..];
+        } else if after.starts_with(is_env_name_start) {
+            let end = after
+                .find(|c: char| !is_env_name_char(c))
+                .unwrap_or(after.len());
+            out.push_str(&expand_env_reference(&after[..end], vars, field)?);
+            rest = &after[end..];
+        } else {
+            // A lone `$` is literal.
             out.push('$');
-            index += 1;
-            continue;
-        };
-
-        if next == '{' {
-            let mut end = index + 2;
-            while end < chars.len() && chars[end] != '}' {
-                end += 1;
-            }
-            if end >= chars.len() {
-                return Err(
-                    format!("{field} contains an unterminated environment reference").into(),
-                );
-            }
-            let name = chars[index + 2..end].iter().collect::<String>();
-            out.push_str(&expand_env_reference(&name, vars, field)?);
-            index = end + 1;
-            continue;
+            rest = after;
         }
-
-        if !is_env_name_start(next) {
-            out.push('$');
-            index += 1;
-            continue;
-        }
-
-        let mut end = index + 2;
-        while end < chars.len() && is_env_name_char(chars[end]) {
-            end += 1;
-        }
-        let name = chars[index + 1..end].iter().collect::<String>();
-        out.push_str(&expand_env_reference(&name, vars, field)?);
-        index = end;
     }
 
+    out.push_str(rest);
     Ok(out)
 }
 
@@ -710,13 +674,8 @@ fn expand_env_reference(
     {
         return Err(format!("{field} contains an invalid environment reference").into());
     }
-    if let Some(value) = vars.get(name) {
-        return Ok(value);
-    }
-    if vars.is_known_builtin(name) {
-        return Ok(String::new());
-    }
-    Err(format!("{field} references missing environment variable {name}").into())
+    vars.get(name)
+        .ok_or_else(|| format!("{field} references missing environment variable {name}").into())
 }
 
 fn is_env_name_start(c: char) -> bool {
@@ -1073,6 +1032,29 @@ mod tests {
             _ => panic!("expected streamable HTTP transport"),
         }
         assert_eq!(servers[1].include, BTreeSet::from(["search".to_string()]));
+    }
+
+    #[test]
+    fn expand_config_string_keeps_literal_dollars() {
+        let _env = EnvGuard::new();
+        unsafe { std::env::set_var("ANDA_MCP_TEST_TOKEN", "t") };
+        let vars = McpExpansionVars::new(Path::new("/h"), None);
+        let expand = |value: &str| expand_config_string(value, &vars, "field");
+
+        assert_eq!(
+            expand("a$ é$1 $$ANDA_MCP_TEST_TOKEN-${ANDA_MCP_TEST_TOKEN}$").unwrap(),
+            "a$ é$1 $t-t$"
+        );
+        assert_eq!(expand("$ANDA_HOME/x").unwrap(), "/h/x");
+        assert!(expand("${ANDA_MCP_TEST_TOKEN").is_err());
+        assert!(expand("${}").is_err());
+        assert!(expand("$ANDA_WORKSPACE").is_err());
+
+        let validation = McpExpansionVars::validation();
+        assert_eq!(
+            expand_config_string("$ANDA_HOME:$ANDA_WORKSPACE", &validation, "field").unwrap(),
+            ":"
+        );
     }
 
     #[test]
