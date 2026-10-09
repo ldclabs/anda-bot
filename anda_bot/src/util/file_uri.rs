@@ -25,6 +25,12 @@ pub fn is_file_uri(value: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file://"))
 }
 
+/// Whether `value` is a URL rather than a local path. A Windows drive path
+/// such as `C:\Users\a.pdf` parses as a URL with the one-letter scheme `c`.
+pub fn is_url(value: &str) -> bool {
+    reqwest::Url::parse(value.trim()).is_ok_and(|url| url.scheme().len() > 1)
+}
+
 pub fn file_uri_for_path(path: &Path) -> Result<String, BoxError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -202,6 +208,17 @@ fn hex_value(byte: u8) -> Result<u8, BoxError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drive_paths_are_not_urls() {
+        assert!(is_url("https://example.com/a.pdf"));
+        assert!(is_url("file:///C:/Users/a.pdf"));
+        assert!(is_url("data:text/plain,hi"));
+        assert!(!is_url(r"C:\Users\a.pdf"));
+        assert!(!is_url("d:/reports/a.pdf"));
+        assert!(!is_url("/tmp/a.pdf"));
+        assert!(!is_url("docs/a.pdf"));
+    }
 
     #[test]
     fn unix_path_uses_file_uri_with_percent_encoding() {

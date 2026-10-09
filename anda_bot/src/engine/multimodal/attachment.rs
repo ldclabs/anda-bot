@@ -30,7 +30,7 @@ use super::{
     },
 };
 use crate::util::file_uri::{
-    file_uri_for_path, is_file_uri, path_from_file_uri, user_path_string_for_path,
+    file_uri_for_path, is_file_uri, is_url, path_from_file_uri, user_path_string_for_path,
 };
 use crate::util::fs::sanitize_path_component;
 
@@ -293,7 +293,7 @@ async fn local_attachment_file(
     if let Some(uri) = attachment
         .uri
         .as_deref()
-        .filter(|uri| is_file_uri(uri) || reqwest::Url::parse(uri).is_err())
+        .filter(|uri| is_file_uri(uri) || !is_url(uri))
     {
         if let Ok(path) = sources.resolve_path(meta, uri).await
             && tokio::fs::metadata(&path)
@@ -1051,6 +1051,12 @@ mod tests {
         let mut foreign = test_other_attachment("secret.key", None, vec![]);
         foreign.uri = Some(outside.to_string_lossy().into_owned());
         foreign.data = Some(b"secret".to_vec());
+        let local = local_attachment_file(&RequestMeta::default(), &sources, &mut foreign).await;
+        assert!(matches!(local, LocalFile::Temporary(_)));
+        assert_eq!(foreign.uri, None);
+        // A Windows drive path parses as a URL with a one-letter scheme; it is
+        // still a path, outside the workspaces here on every platform.
+        foreign.uri = Some(r"C:\outside\secret.key".to_string());
         let local = local_attachment_file(&RequestMeta::default(), &sources, &mut foreign).await;
         assert!(matches!(local, LocalFile::Temporary(_)));
         assert_eq!(foreign.uri, None);
