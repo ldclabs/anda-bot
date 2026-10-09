@@ -23,6 +23,9 @@ import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { GitService } from './git'
+import { readWorkspaceFile, resolveWorkspacePath } from './workspace-file'
+import { accelerator, type MenuAction } from '../shared/shortcuts'
+import type { WorkspaceFileRequest } from '../shared/workbench'
 import { TerminalService } from './terminal'
 import { BrowserService } from './browser'
 import { DesktopUpdater } from './updater'
@@ -94,7 +97,7 @@ let quitPrompt = false
 let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
 let rendererReady = false
-let pendingMenuAction: 'new-chat' | 'settings' | 'updates' | null = null
+let pendingMenuAction: MenuAction | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
 const firstReconnectDelay = 10_000
 let reconnectDelay = firstReconnectDelay
@@ -230,7 +233,7 @@ function runUpdate(action: () => Promise<string>): Promise<string> {
   // The updater publishes progress and retains the result for a loading renderer.
   return action().catch((error) => (error instanceof Error ? error.message : String(error)))
 }
-function menuAction(value: 'new-chat' | 'settings' | 'updates'): void {
+function menuAction(value: MenuAction): void {
   show()
   if (rendererReady) emit({ type: 'menu', value })
   else pendingMenuAction = value
@@ -495,6 +498,8 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'notifications',
     'launchAtLogin',
     'sidebarWidth',
+    'panelWidth',
+    'sidebarGroup',
     'chats',
     'projects',
     'activeSource',
@@ -514,6 +519,14 @@ function validatePreferences(patch: Partial<Preferences>): void {
       !(patch.sidebarWidth >= 120 && patch.sidebarWidth <= 800))
   )
     throw new Error('Invalid sidebar width')
+  if (
+    patch.panelWidth !== undefined &&
+    (typeof patch.panelWidth !== 'number' ||
+      !(patch.panelWidth === 0 || (patch.panelWidth >= 200 && patch.panelWidth <= 4000)))
+  )
+    throw new Error('Invalid panel width')
+  if (patch.sidebarGroup && !['none', 'date', 'project'].includes(patch.sidebarGroup))
+    throw new Error('Invalid sidebar grouping')
   if (
     patch.chats &&
     (!Array.isArray(patch.chats) ||
@@ -692,6 +705,16 @@ async function setup(): Promise<void> {
     }
     return git.request(request)
   })
+  handle('anda:workspace-file', async (request: WorkspaceFileRequest) => {
+    if (!request || typeof request !== 'object') throw new Error('Invalid file request')
+    const root = await authorizeWorkspace(request.workspace, store.state.preferences)
+    if (request.action === 'read') return readWorkspaceFile(root, request.path)
+    if (request.action === 'reveal') {
+      shell.showItemInFolder(request.path ? await resolveWorkspacePath(root, request.path) : root)
+      return null
+    }
+    throw new Error('Unsupported file request')
+  })
   handle('anda:bootstrap', bootstrap)
   handle('anda:ready', () => {
     rendererReady = true
@@ -854,30 +877,58 @@ async function setup(): Promise<void> {
   handle('anda:logs', showLogs)
   handle('anda:update', () => runUpdate(() => updater.check()))
   handle('anda:extension-token', copyExtensionToken)
+  const command = (
+    action: MenuAction,
+    label: string,
+    options: Electron.MenuItemConstructorOptions = {}
+  ): Electron.MenuItemConstructorOptions => ({
+    label,
+    accelerator: accelerator(action, process.platform),
+    click: () => menuAction(action),
+    ...options
+  })
   const menu: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {
       label: 'File',
       submenu: [
-        {
-          id: 'anda-new-chat',
-          label: 'New Chat',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => menuAction('new-chat')
-        },
-        {
-          id: 'anda-settings',
-          label: 'Settings',
-          accelerator: 'CmdOrCtrl+,',
-          click: () => menuAction('settings')
-        },
+        command('new-chat', 'New Chat', { id: 'anda-new-chat' }),
+        // The renderer owns ⌘K, which also reaches it from inside a terminal.
+        command('search', 'Search Chats', { registerAccelerator: false }),
+        command('settings', 'Settings', { id: 'anda-settings' }),
         { type: 'separator' },
         { role: 'close' },
         ...(process.platform !== 'darwin' ? [{ role: 'quit' as const }] : [])
       ]
     },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    {
+      label: 'View',
+      submenu: [
+        command('toggle-sidebar', 'Toggle Sidebar'),
+        { type: 'separator' },
+        command('panel:resources', 'Resources'),
+        command('panel:changes', 'Changes'),
+        command('panel:terminal', 'Terminal'),
+        command('panel:browser', 'Browser'),
+        command('find', 'Find in Panel'),
+        { type: 'separator' },
+        command('back', 'Back'),
+        command('forward', 'Forward'),
+        command('previous-chat', 'Previous Chat'),
+        command('next-chat', 'Next Chat'),
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
     { role: 'windowMenu' },
     {
       label: 'Help',

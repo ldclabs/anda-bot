@@ -5,6 +5,7 @@ const api: DesktopBridge = {
   chatgpt: (request) => ipcRenderer.invoke('anda:chatgpt', request),
   browser: (request) => ipcRenderer.invoke('anda:browser', request),
   git: (request) => ipcRenderer.invoke('anda:git', request),
+  workspaceFile: (request) => ipcRenderer.invoke('anda:workspace-file', request),
   terminal: (request) => ipcRenderer.invoke('anda:terminal', request),
   bootstrap: () => ipcRenderer.invoke('anda:bootstrap'),
   ready: () => ipcRenderer.invoke('anda:ready'),

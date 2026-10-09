@@ -10,9 +10,42 @@
     type TerminalSession,
     type TerminalEvent
   } from '../shared/workbench'
+  import { ChevronDown, ChevronUp, SquareTerminal, X } from '@lucide/svelte'
   import { label, type Label } from './labels'
-  let { workspace, language }: { workspace: string; language: string } = $props()
+  let { workspace, language, dark }: { workspace: string; language: string; dark: boolean } =
+    $props()
   const t = (key: Label) => label(language, key)
+  // The terminal follows the app theme; ANSI colours stay legible on both.
+  const themes = {
+    light: {
+      background: '#fcfcfb',
+      foreground: '#292926',
+      cursor: '#292926',
+      selectionBackground: '#d9d9d3',
+      black: '#292926',
+      red: '#b3412f',
+      green: '#3f7a3a',
+      yellow: '#8a6a12',
+      blue: '#2f5f9e',
+      magenta: '#8b4a8f',
+      cyan: '#2b7a7a',
+      white: '#9a9a94',
+      brightBlack: '#6f6f69',
+      brightRed: '#c9503c',
+      brightGreen: '#4c8f46',
+      brightYellow: '#9c7a17',
+      brightBlue: '#3a70b5',
+      brightMagenta: '#a05aa4',
+      brightCyan: '#358f8f',
+      brightWhite: '#b5b5ae'
+    },
+    dark: {
+      background: '#1b1b1a',
+      foreground: '#e8e8e2',
+      cursor: '#e8e7df',
+      selectionBackground: '#3a3a37'
+    }
+  }
   let host: HTMLDivElement
   let terminal: Terminal
   let fit: FitAddon
@@ -21,6 +54,8 @@
   let active = $state('')
   let error = $state('')
   let query = $state('')
+  let finding = $state(false)
+  let findInput = $state<HTMLInputElement | null>(null)
   let disposed = false
   // Showing a session replays its output, and xterm answers the terminal
   // queries in it (device attributes, cursor position, colors) again. Those
@@ -58,7 +93,16 @@
         })
         .catch(fail)
   }
-  async function create() {
+  /** ⌘F and the header's search button. */
+  export function toggleFind() {
+    finding = !finding
+    if (finding) queueMicrotask(() => findInput?.select())
+    else {
+      search.clearDecorations()
+      terminal?.focus()
+    }
+  }
+  export async function create() {
     error = ''
     try {
       const session = await window.anda.terminal<TerminalSession>({
@@ -93,7 +137,7 @@
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       cursorBlink: true,
       scrollback: 5000,
-      theme: { background: '#1d1e20', foreground: '#eeeeec', cursor: '#e8e7df' }
+      theme: dark ? themes.dark : themes.light
     })
     fit = new FitAddon()
     terminal.loadAddon(fit)
@@ -146,26 +190,49 @@
       terminal.dispose()
     }
   })
+  $effect(() => {
+    const theme = dark ? themes.dark : themes.light
+    if (terminal) terminal.options.theme = theme
+  })
 </script>
 
-<div class="terminal-panel">
-  <div class="workbench-toolbar">
-    <button onclick={create}>{t('newTerminal')}</button><input
-      aria-label={t('find')}
-      placeholder={t('find')}
-      bind:value={query}
-      onkeydown={(event) => {
-        if (event.key === 'Enter') search.findNext(query)
-      }}
-    />
-  </div>
-  <div class="workbench-tabs">
-    {#each sessions as session, i}<div class:active={active === session.id}>
-        <button onclick={() => select(session)}
-          >{i + 1} · {session.title}{session.exited !== undefined ? ' ◦' : ''}</button
-        ><button aria-label={t('close')} onclick={() => close(session.id)}>×</button>
-      </div>{/each}
-  </div>
+<div class="terminal-panel" class:dark>
+  {#if sessions.length}<div class="workbench-tabs terminal-tabs">
+      {#each sessions as session, i (session.id)}<div class:active={active === session.id}>
+          <button onclick={() => select(session)}
+            >{i + 1} · {session.title}{session.exited !== undefined ? ' ◦' : ''}</button
+          ><button aria-label={t('close')} onclick={() => close(session.id)}><X size={12} /></button
+          >
+        </div>{/each}
+    </div>{/if}
+  {#if finding}<div class="find-bar">
+      <input
+        bind:this={findInput}
+        aria-label={t('find')}
+        placeholder={t('find')}
+        bind:value={query}
+        onkeydown={(event) => {
+          if (event.key === 'Enter')
+            event.shiftKey ? search.findPrevious(query) : search.findNext(query)
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            toggleFind()
+          }
+        }}
+      /><button
+        class="icon-button"
+        aria-label={t('previous')}
+        onclick={() => search.findPrevious(query)}><ChevronUp size={14} /></button
+      ><button class="icon-button" aria-label={t('next')} onclick={() => search.findNext(query)}
+        ><ChevronDown size={14} /></button
+      ><button class="icon-button" aria-label={t('close')} onclick={toggleFind}
+        ><X size={14} /></button
+      >
+    </div>{/if}
   {#if error}<p class="workbench-error" role="alert">{error}</p>{/if}
-  <div class="terminal-surface" bind:this={host}></div>
+  <div class="terminal-surface" class:empty={!sessions.length} bind:this={host}></div>
+  {#if !sessions.length}<div class="terminal-empty">
+      <SquareTerminal size={22} />
+      <button class="primary" onclick={create}>{t('startTerminal')}</button>
+    </div>{/if}
 </div>

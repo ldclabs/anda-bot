@@ -1532,6 +1532,12 @@
   "toolNoResult": {
     "message": "Aún sin resultado"
   },
+  "toolCallsCount": {
+    "message": "$1 llamadas a herramientas"
+  },
+  "moreMessageActions": {
+    "message": "Más acciones"
+  },
   "saveAttachment": {
     "message": "Guardar $1"
   },

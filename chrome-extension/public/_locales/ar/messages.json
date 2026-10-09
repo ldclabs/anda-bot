@@ -1532,6 +1532,12 @@
   "toolNoResult": {
     "message": "لا توجد نتيجة بعد"
   },
+  "toolCallsCount": {
+    "message": "$1 استدعاءات أدوات"
+  },
+  "moreMessageActions": {
+    "message": "إجراءات أخرى"
+  },
   "saveAttachment": {
     "message": "حفظ $1"
   },

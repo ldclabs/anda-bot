@@ -27,7 +27,8 @@ import type {
   RpcOutput,
   SourceState,
   ToolInput,
-  ToolOutput
+  ToolOutput,
+  Usage
 } from './types'
 import { SubmitMessageConversationId } from './types'
 
@@ -146,6 +147,11 @@ export class Channel extends EventTarget {
       this.#sourceState?.status ||
       'ready'
     )
+  }
+
+  /** Token usage of the latest conversation, which the daemon totals over its requests. */
+  get usage(): Usage | undefined {
+    return this.#conversation?.usage
   }
 
   get conversationId(): number {

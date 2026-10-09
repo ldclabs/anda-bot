@@ -4,7 +4,13 @@ import { randomUUID, createHash } from 'node:crypto'
 import { mkdtemp, readFile, writeFile, mkdir, rename, rm, realpath, lstat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, isAbsolute, dirname } from 'node:path'
-import type { GitFile, GitRequest, GitSnapshot } from '../shared/workbench'
+import type {
+  GitBranchInfo,
+  GitFile,
+  GitLineStats,
+  GitRequest,
+  GitSnapshot
+} from '../shared/workbench'
 
 const execute = promisify(execFile)
 const MAX_OUTPUT = 8 * 1024 * 1024
@@ -50,6 +56,24 @@ export function parseStatus(raw: string): { head: string; branch: string; files:
     }
   }
   return status
+}
+
+/**
+ * Parses `git diff --numstat -z`. A rename reports its counts under the new
+ * path (`added\tdeleted\t\0old\0new\0`); a binary file counts `-`.
+ */
+export function parseNumstat(raw: string): Record<string, GitLineStats> {
+  const stats: Record<string, GitLineStats> = {}
+  const parts = raw.split('\0')
+  const count = (value: string) => (value === '-' ? null : Number(value) || 0)
+  for (let i = 0; i < parts.length; i++) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.*)$/s.exec(parts[i]!)
+    if (!match) continue
+    // An empty path field means the old and new paths follow as two entries.
+    const path = match[3] ? match[3] : parts[(i += 2)]
+    if (path) stats[path] = { additions: count(match[1]!), deletions: count(match[2]!) }
+  }
+  return stats
 }
 
 /** Fixed Git operations over user-selected repositories. Never interpolates a shell command. */
@@ -154,10 +178,26 @@ export class GitService {
       (await this.git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim()
     )
   }
+  /** The header's branch chip; any folder inside a repository has one. */
+  async branch(workspace: string): Promise<GitBranchInfo> {
+    const folder = await this.authorize(workspace)
+    try {
+      const inside = (await this.git(folder, ['rev-parse', '--is-inside-work-tree'])).trim()
+      if (inside !== 'true') return { repository: false, branch: '' }
+    } catch {
+      return { repository: false, branch: '' }
+    }
+    const branch = (await this.git(folder, ['branch', '--show-current']).catch(() => '')).trim()
+    return { repository: true, branch }
+  }
   async status(workspace: string): Promise<GitSnapshot> {
     const root = await this.root(workspace)
-    const [scan, branches, log, worktrees, registry, repository] = await Promise.all([
+    const [scan, numstat, branches, log, worktrees, registry, repository] = await Promise.all([
       this.scan(root),
+      // An unborn HEAD has nothing to compare against; its files are all new.
+      this.git(root, ['diff', '--numstat', '-z', '--no-ext-diff', '--no-textconv', 'HEAD']).catch(
+        () => ''
+      ),
       this.git(root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']),
       // An unborn HEAD has no log.
       this.git(root, ['log', '-30', '--format=%h%x00%s%x00']).catch(() => ''),
@@ -179,6 +219,7 @@ export class GitService {
       branch: scan.branch,
       revision: scan.revision,
       files: scan.files,
+      stats: parseNumstat(numstat),
       branches: branches.trim().split('\n').filter(Boolean),
       log: Array.from({ length: Math.floor(logs.length / 2) }, (_, i) => ({
         hash: logs[i * 2].trim(),
@@ -193,6 +234,7 @@ export class GitService {
   async request(request: GitRequest): Promise<unknown> {
     if (!request || typeof request.workspace !== 'string') throw new Error('Invalid Git request')
     if (request.action === 'status') return this.status(request.workspace)
+    if (request.action === 'branch') return this.branch(request.workspace)
     const root = await this.root(request.workspace)
     if (request.action === 'diff') {
       this.paths([request.path])

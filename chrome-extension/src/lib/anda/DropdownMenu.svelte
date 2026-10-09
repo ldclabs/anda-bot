@@ -12,13 +12,25 @@
    * The content panel caps its height and scrolls; pass `searchable` (with a
    * localized `searchPlaceholder`) for long vocabularies like Git branches —
    * the filter box is pinned above the scrolling item list.
+   *
+   * Action menus can give an item a second line (`description`), a rule above
+   * it (`separator`), its own check mark (`checked`, for a toggle among
+   * commands) and `tone: 'danger'` for a destructive command; `heading` puts
+   * a caption above the items.
    */
   import { cn } from '$lib/utils'
   import { Check, ChevronDown } from '@lucide/svelte'
   import { DropdownMenu } from 'bits-ui'
   import type { Snippet } from 'svelte'
 
-  type Item = { value: T; label: string }
+  type Item = {
+    value: T
+    label: string
+    description?: string
+    separator?: boolean
+    checked?: boolean
+    tone?: 'danger'
+  }
 
   let {
     items,
@@ -34,6 +46,7 @@
     align = 'start',
     sideOffset = 6,
     trigger,
+    heading,
     class: className
   }: {
     items: readonly Item[]
@@ -64,6 +77,7 @@
     /** Replaces the whole trigger content — **chevron included** — and takes
      * the select chrome off. It gets the selected item, if any. */
     trigger?: Snippet<[Item | undefined]>
+    heading?: string
     class?: string
   } = $props()
 
@@ -182,18 +196,40 @@
           />
         </div>
       {/if}
-      <div class="min-h-0 flex-1 overflow-y-auto {searchable ? 'pt-1' : ''}">
+      {#if heading}
+        <div
+          class="px-2 pt-1 pb-1.5 text-xs text-muted-foreground"
+          data-slot="dropdown-menu-heading"
+        >
+          {heading}
+        </div>
+      {/if}
+      <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto {searchable ? 'pt-1' : ''}">
         {#each filtered as item (item.value)}
-          {@const active = item.value === value}
+          {@const active = item.checked ?? item.value === value}
+          {#if item.separator}
+            <DropdownMenu.Separator class="my-1 h-px bg-border" />
+          {/if}
           <DropdownMenu.Item
             onSelect={() => pick(item.value)}
             aria-current={active || undefined}
+            data-tone={item.tone}
             class={cn(
               'flex cursor-default items-center justify-between gap-5 rounded-sm px-2 py-1.5 outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground',
-              active && 'font-medium'
+              active && 'font-medium',
+              item.tone === 'danger' && 'text-destructive data-highlighted:text-destructive'
             )}
           >
-            <span class="truncate">{item.label}</span>
+            {#if item.description}
+              <span class="grid min-w-0 flex-1">
+                <span class="truncate">{item.label}</span>
+                <span class="truncate text-xs font-normal text-muted-foreground"
+                  >{item.description}</span
+                >
+              </span>
+            {:else}
+              <span class="truncate">{item.label}</span>
+            {/if}
             {#if active}
               <Check class="size-4 shrink-0" aria-hidden="true" />
             {/if}

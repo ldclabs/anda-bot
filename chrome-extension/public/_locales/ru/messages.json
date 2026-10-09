@@ -1532,6 +1532,12 @@
   "toolNoResult": {
     "message": "Результата пока нет"
   },
+  "toolCallsCount": {
+    "message": "Вызовов инструментов: $1"
+  },
+  "moreMessageActions": {
+    "message": "Другие действия"
+  },
   "saveAttachment": {
     "message": "Сохранить $1"
   },

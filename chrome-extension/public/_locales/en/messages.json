@@ -1532,6 +1532,12 @@
   "toolNoResult": {
     "message": "No result yet"
   },
+  "toolCallsCount": {
+    "message": "$1 tool calls"
+  },
+  "moreMessageActions": {
+    "message": "More actions"
+  },
   "saveAttachment": {
     "message": "Save $1"
   },

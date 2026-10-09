@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Activity } from './memory/api'
   import ChatDetailRow from './ChatDetailRow.svelte'
+  import DropdownMenu from './DropdownMenu.svelte'
   import { memoryActivityLabel } from './memory/labels'
   import { getClientPlatform } from '$lib/anda/client/platform'
   import { useAndaClient } from '$lib/anda/client/context'
@@ -81,9 +82,11 @@
     FileText,
     Globe,
     Image,
+    Layers,
     Lightbulb,
     ListChecks,
     LoaderCircle,
+    MoreHorizontal,
     Plus,
     Printer,
     ShieldCheck,
@@ -96,12 +99,20 @@
     message,
     memoryActivity,
     quickPromptActive = false,
-    onToggleQuickPrompt
+    onToggleQuickPrompt,
+    compactActions = false,
+    groupTools = false
   }: {
     message: ChatMessage
     memoryActivity?: Activity
     quickPromptActive?: boolean
     onToggleQuickPrompt?: (text: string) => Promise<void> | void
+    /** Keeps copy and bookmark in the footer and moves rich-text copy and
+     * printing into a "More" menu (the desktop transcript, which also shows
+     * the footer only on hover). */
+    compactActions?: boolean
+    /** Folds two or more tool calls into one expandable summary row. */
+    groupTools?: boolean
   } = $props()
 
   let copied = $state(false)
@@ -141,6 +152,27 @@
   const tools = $derived(message.tools || [])
   // Runtime-injected notices arrive as tool messages that carry text, not calls.
   const notices = $derived(isTool && !tools.length ? runtimeNotices(thinkingText) : [])
+  const groupedTools = $derived(groupTools && tools.length > 1)
+  const toolStatuses = $derived(groupedTools ? tools.map(toolCallStatus) : [])
+  const toolGroupStatus = $derived(
+    toolStatuses.includes('error')
+      ? ('error' as const)
+      : toolStatuses.includes('running')
+        ? ('running' as const)
+        : ('ok' as const)
+  )
+  // While a call runs the summary names it; afterwards, the distinct tools used.
+  const toolGroupSummary = $derived.by(() => {
+    if (!groupedTools) return ''
+    const running = tools.findLastIndex((_, index) => toolStatuses[index] === 'running')
+    if (running >= 0) {
+      const tool = tools[running]!
+      const summary = toolCallSummary(tool)
+      return summary ? `${tool.name} · ${summary}` : tool.name
+    }
+    const names = [...new Set(tools.map((tool) => tool.name))]
+    return names.length > 4 ? `${names.slice(0, 4).join(', ')}, …` : names.join(', ')
+  })
   const hasCard = $derived(hasMainText || hasAttachments || hasActions)
   // Narration that led to tool calls: the turn's final answer carries the footer.
   const processStep = $derived(isProcessStep(message))
@@ -164,6 +196,17 @@
     'icon-xs',
     'chat-message-action size-5 rounded-sm'
   )
+  type MoreAction = 'copy-rich' | 'print'
+  const moreActions = $derived([
+    ...(mainText ? [{ value: 'copy-rich' as const, label: getMessage('copyRichText') }] : []),
+    ...(hasMainText || hasAttachments
+      ? [{ value: 'print' as const, label: getMessage('printMessage') }]
+      : [])
+  ] satisfies { value: MoreAction; label: string }[])
+  function runMoreAction(action: MoreAction) {
+    if (action === 'copy-rich') void copyRichMessage()
+    else printMessage()
+  }
 
   async function copyMessage() {
     if (!navigator.clipboard || !mainText) {
@@ -930,30 +973,45 @@
     </div>
   {/if}
 
+  {#snippet toolRows()}
+    {#each tools as tool, index (index)}
+      <ChatDetailRow
+        rowKey={`${message.id}:tool:${index}`}
+        icon={toolIcons[toolKind(tool.name)]}
+        name={tool.name}
+        summary={toolCallSummary(tool)}
+        mono
+        status={toolCallStatus(tool)}
+      >
+        <div class="grid min-w-0 gap-1.5">
+          {#each toolDetailSections(tool) as section, sectionIndex (sectionIndex)}
+            <div class="grid min-w-0 gap-0.5">
+              <div class="chat-tool-section-label text-[10px] font-semibold">
+                {toolSectionLabel(section)}
+              </div>
+              <pre
+                class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{section.text}</pre>
+            </div>
+          {/each}
+        </div>
+      </ChatDetailRow>
+    {/each}
+  {/snippet}
   {#if tools.length || notices.length}
     <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
-      {#each tools as tool, index (index)}
+      {#if groupedTools}
         <ChatDetailRow
-          rowKey={`${message.id}:tool:${index}`}
-          icon={toolIcons[toolKind(tool.name)]}
-          name={tool.name}
-          summary={toolCallSummary(tool)}
-          mono
-          status={toolCallStatus(tool)}
+          rowKey={`${message.id}:tools`}
+          icon={Layers}
+          name={getMessage('toolCallsCount', String(tools.length))}
+          summary={toolGroupSummary}
+          status={toolGroupStatus}
         >
-          <div class="grid min-w-0 gap-1.5">
-            {#each toolDetailSections(tool) as section, sectionIndex (sectionIndex)}
-              <div class="grid min-w-0 gap-0.5">
-                <div class="chat-tool-section-label text-[10px] font-semibold">
-                  {toolSectionLabel(section)}
-                </div>
-                <pre
-                  class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{section.text}</pre>
-              </div>
-            {/each}
-          </div>
+          <div class="grid min-w-0">{@render toolRows()}</div>
         </ChatDetailRow>
-      {/each}
+      {:else}
+        {@render toolRows()}
+      {/if}
       {#each notices as notice, index (index)}
         <ChatDetailRow
           rowKey={`${message.id}:notice:${index}`}
@@ -1009,7 +1067,7 @@
         </button>
       {/if}
       {#if !isUser}
-        {#if mainText}
+        {#if mainText && !compactActions}
           <button
             type="button"
             class={messageActionButtonClass}
@@ -1024,7 +1082,7 @@
             {/if}
           </button>
         {/if}
-        {#if hasMainText || hasAttachments}
+        {#if (hasMainText || hasAttachments) && !compactActions}
           <button
             type="button"
             class={messageActionButtonClass}
@@ -1052,6 +1110,17 @@
             {/if}
           </button>
         {/if}
+      {/if}
+      {#if compactActions && !isUser && moreActions.length}
+        <DropdownMenu
+          class="{messageActionButtonClass} justify-center"
+          items={moreActions}
+          onSelect={runMoreAction}
+          ariaLabel={getMessage('moreMessageActions')}
+          title={getMessage('moreMessageActions')}
+        >
+          {#snippet trigger()}<MoreHorizontal class="size-3.5" />{/snippet}
+        </DropdownMenu>
       {/if}
       {#if memoryActivity}
         <span

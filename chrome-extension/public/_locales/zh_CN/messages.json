@@ -1532,6 +1532,12 @@
   "toolNoResult": {
     "message": "尚无结果"
   },
+  "toolCallsCount": {
+    "message": "$1 次工具调用"
+  },
+  "moreMessageActions": {
+    "message": "更多操作"
+  },
   "saveAttachment": {
     "message": "保存 $1"
   },

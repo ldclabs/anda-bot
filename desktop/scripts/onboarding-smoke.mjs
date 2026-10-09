@@ -198,7 +198,7 @@ try {
   )
   await page.evaluate(() => window.anda.preferences({ language: 'zh_CN', theme: 'dark' }))
   await page.reload()
-  await page.locator('.sidebar-bottom').getByText('设置', { exact: true }).click()
+  await page.locator('.sidebar-bottom').getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('button', { name: '连接模型', exact: true }).click()
   await dialog()
     .getByRole('button', { name: /连接其他模型服务/ })

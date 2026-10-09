@@ -1,15 +1,18 @@
-import type { GitRequest, TerminalRequest } from './workbench'
+import type { GitRequest, TerminalRequest, WorkspaceFileRequest } from './workbench'
 import type { BrowserRequest, BrowserState } from './browser'
 import type { SubmissionReceipt } from './app-protocol'
 export type Theme = 'system' | 'light' | 'dark'
 export type ApprovalMode = 'request_approval' | 'on_risk' | 'full_access' | 'custom'
+export type SidebarGroup = 'none' | 'date' | 'project'
 export interface ChatEntry {
   source: string
   title: string
   workspace?: string
   pinned?: boolean
   archived?: boolean
+  /** Last activity: a sent prompt or a task that finished. */
   updatedAt: number
+  /** When the chat was last seen; a chat updated after it reads as unread. */
   readAt?: number
 }
 export interface ProjectEntry {
@@ -26,6 +29,9 @@ export interface Preferences {
   launchAtLogin: boolean
   /** Sidebar width in CSS pixels, set by dragging its edge. */
   sidebarWidth: number
+  /** Workbench panel width in CSS pixels; 0 keeps each panel's default. */
+  panelWidth: number
+  sidebarGroup: SidebarGroup
   chats: ChatEntry[]
   projects: ProjectEntry[]
   activeSource?: string
@@ -40,6 +46,8 @@ export const defaultPreferences: Preferences = {
   notifications: true,
   launchAtLogin: false,
   sidebarWidth: 242,
+  panelWidth: 0,
+  sidebarGroup: 'none',
   chats: [],
   projects: [],
   drafts: {}
@@ -98,6 +106,7 @@ export interface DesktopBridge {
   ): Promise<Result>
   browser(request: BrowserRequest): Promise<BrowserState>
   git<Result>(request: GitRequest): Promise<Result>
+  workspaceFile<Result>(request: WorkspaceFileRequest): Promise<Result>
   terminal<Result>(request: TerminalRequest): Promise<Result>
   bootstrap(): Promise<Bootstrap>
   ready(): Promise<void>

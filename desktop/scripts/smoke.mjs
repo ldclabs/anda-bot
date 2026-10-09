@@ -432,7 +432,7 @@ try {
   page.on('pageerror', pageError)
   await page.locator('.settings-page').waitFor({ timeout: 30_000 })
   await page
-    .locator('.settings-tabs')
+    .locator('.settings-nav')
     .getByRole('button', { name: 'Agent configuration', exact: true })
     .click()
   await page.getByRole('heading', { name: 'Runtime', exact: true }).waitFor()
@@ -463,13 +463,17 @@ try {
     await modelPanel.getByRole('button', { name: 'Use selected model', exact: true }).isDisabled(),
     true
   )
-  await page.getByRole('button', { name: /^Runtime/ }).click()
+  // The configuration's own section list, not the settings categories.
+  await page
+    .locator('.management-page')
+    .getByRole('button', { name: /^Runtime/ })
+    .click()
   assert.equal(await page.getByRole('region', { name: 'ChatGPT plan', exact: true }).count(), 0)
   await page.getByRole('button', { name: /^Models/ }).click()
   await page.getByRole('heading', { name: 'Models', exact: true }).waitFor()
   assert.equal(await profileInput.inputValue(), 'draft-profile')
 
-  await page.locator('.settings-tabs').getByRole('button', { name: 'General', exact: true }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: 'General', exact: true }).click()
 
   // Capture the actual tray menu on its next refresh, without a production test hook.
   await app.evaluate(({ Tray }) => {
@@ -562,10 +566,20 @@ try {
     assert.fail(`${button} did not write ${type} to the system clipboard`)
   }
   assert.equal((await copied('Copy message', 'text/plain')).replace(/\r\n/g, '\n'), assistantReply)
-  assert.match(
-    await copied('Copy rich text', 'text/html'),
-    /<strong[^>]*>No external model was called\.<\/strong>/
-  )
+  // Rich-text copy lives in the message's More menu.
+  await app.evaluate(({ clipboard }) => clipboard.clear())
+  await reply.hover()
+  await reply.getByRole('button', { name: 'More actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Copy rich text', exact: true }).click()
+  let richText = ''
+  for (let attempt = 0; attempt < 50 && !richText; attempt++) {
+    richText = await app.evaluate(async ({ clipboard }) => {
+      const item = (await clipboard.read()).find((item) => item.types.includes('text/html'))
+      return item ? (await item.getType('text/html')).text() : ''
+    })
+    if (!richText) await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  assert.match(richText, /<strong[^>]*>No external model was called\.<\/strong>/)
   await editor.fill('An unsent draft')
   await page.waitForTimeout(450)
   await page.locator('.sidebar-primary').getByText('New chat', { exact: true }).click()
@@ -596,11 +610,14 @@ try {
   await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(reloadExecutions, 1)
   assert.equal(await page.getByText('Side reply after renderer reload', { exact: true }).count(), 1)
-  await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
+  await page
+    .locator('.sidebar-bottom')
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click()
   await page.getByRole('heading', { name: 'General', exact: true }).waitFor()
   assert.equal(await page.getByRole('region', { name: 'ChatGPT plan', exact: true }).count(), 0)
   await page
-    .locator('.settings-tabs')
+    .locator('.settings-nav')
     .getByRole('button', { name: 'Agent configuration', exact: true })
     .click()
   await page.getByRole('heading', { name: 'Runtime', exact: true }).waitFor()
@@ -654,9 +671,9 @@ try {
   await chatgptCard.getByRole('button', { name: 'Sign out', exact: true }).click()
   await chatgptCard.getByRole('button', { name: 'Reconnect / enable plan', exact: true }).waitFor()
   assert.equal(chatgptConnected, false)
-  await page.locator('.settings-tabs').getByRole('button', { name: 'General', exact: true }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: 'General', exact: true }).click()
   await page.screenshot({ path: join(screenshotDir, '03-settings.png') })
-  await page.locator('.settings-tabs').getByRole('button', { name: 'Audio', exact: true }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: 'Audio', exact: true }).click()
   // The meter counts wall-clock time, but the recorder emits nothing until its
   // encoder has produced a first frame, which a loaded runner delays past the
   // meter's first tick. Stopping before that records zero bytes and the panel
@@ -686,7 +703,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.audio-panel audio')?.duration > 0)
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
   await page.screenshot({ path: join(screenshotDir, '11-audio.png') })
-  await page.locator('.settings-tabs').getByRole('button', { name: 'General', exact: true }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: 'General', exact: true }).click()
   await page.locator('.sidebar-navigation').getByText('Skills', { exact: true }).click()
   await page.waitForTimeout(500)
   await page.locator('.sidebar-navigation').getByText('Memory', { exact: true }).click()
@@ -709,19 +726,26 @@ try {
   // Projects are picked from a new chat's workspace button.
   await page.locator('.sidebar-primary').getByText('New chat', { exact: true }).click()
   await page.locator('.composer-context button').first().click()
+  await page.getByRole('menuitem', { name: 'Choose folder…', exact: true }).click()
   await page.waitForFunction(() =>
     document.querySelector('.composer-context')?.textContent.includes('smoke-project')
   )
   await page.locator('.composer-container textarea').fill('Approval check')
   await page.locator('.composer-container textarea').press('Enter')
-  await page.getByRole('button', { name: 'Approve', exact: true }).waitFor()
+  const dock = page.locator('.approval-dock')
+  await dock.getByRole('button', { name: 'Approve', exact: true }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '04-approval.png') })
-  await page.getByRole('button', { name: 'Approve', exact: true }).click()
+  // The docked approval answers its shortcut, even from the composer.
+  await page
+    .locator('.composer-container textarea')
+    .press(process.platform === 'darwin' ? 'Meta+Shift+Enter' : 'Control+Shift+Enter')
   await page.getByText(/Shell command approval.*Approved/).waitFor()
+  await dock.waitFor({ state: 'detached' })
+  assert.equal(await page.locator('.composer-container textarea').inputValue(), '')
   assert.equal(approvals, 1)
   assert.equal(lastWorkspace, project)
   // A chat's menu closes on a click elsewhere, and Rename keeps focus in its
-  // dialog after the menu finishes closing.
+  // inline field after the menu finishes closing.
   const approvalRow = page.locator('.chat-row').filter({ hasText: 'Approval check' })
   await approvalRow.hover()
   await approvalRow.getByRole('button', { name: 'Details' }).click()
@@ -733,8 +757,13 @@ try {
   await approvalRow.getByRole('button', { name: 'Details' }).click()
   await page.getByRole('menuitem', { name: 'Rename' }).click()
   await page.getByRole('menu').waitFor({ state: 'detached' })
-  assert.ok(await page.evaluate(() => document.activeElement?.closest('.rename-dialog') !== null))
+  await page.waitForTimeout(300)
+  assert.ok(
+    await page.evaluate(() => document.activeElement?.classList.contains('chat-rename') === true)
+  )
   await page.keyboard.press('Escape')
+  await page.locator('.chat-rename').waitFor({ state: 'detached' })
+  assert.equal(await approvalRow.locator('.chat-name').textContent(), 'Approval check')
   // Dragging the sidebar's edge resizes it and saves the width; a double-click restores it.
   const sidebarWidth = async () => (await page.locator('.sidebar').boundingBox()).width
   const startWidth = await sidebarWidth()
@@ -755,20 +784,15 @@ try {
     page,
     async () => (await window.anda.bootstrap()).preferences.sidebarWidth === 242
   )
-  await page.locator('.workspace-header').getByTitle('Resources').click()
-  await page
-    .locator('.resource-panel')
-    .getByRole('button', { name: 'Changes', exact: true })
-    .first()
-    .click()
+  const header = page.locator('.workspace-header')
+  await header.getByRole('button', { name: 'Resources', exact: true }).click()
+  await page.locator('.resource-panel .panel-title').getByText('Resources').waitFor()
+  await header.getByRole('button', { name: 'Changes', exact: true }).click()
   await page.getByText('smoke.txt', { exact: true }).waitFor()
   await page.getByText('smoke.txt', { exact: true }).click()
   await page.locator('.git-diff').getByText('A local Git fixture', { exact: false }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '08-git.png') })
-  await page
-    .locator('.resource-panel')
-    .getByRole('button', { name: 'Terminal', exact: true })
-    .click()
+  await header.getByRole('button', { name: 'Terminal', exact: true }).click()
   await page.getByRole('button', { name: 'New terminal', exact: true }).click()
   await page
     .locator('.terminal-panel .workbench-tabs')
@@ -851,11 +875,7 @@ try {
     ),
     []
   )
-  await page
-    .locator('.resource-panel')
-    .getByRole('button', { name: 'Changes', exact: true })
-    .first()
-    .click()
+  await header.getByRole('button', { name: 'Changes', exact: true }).click()
   await page.getByText('terminal.txt', { exact: true }).waitFor()
   await assert.rejects(
     page.evaluate((workspace) => window.anda.terminal({ action: 'list', workspace }), directory),
@@ -885,10 +905,7 @@ try {
       await browserAction(hiddenSession, { action: 'extract_text', tab_id: hiddenTab.tab.id })
     ).includes('Hidden browser input')
   )
-  await page
-    .locator('.resource-panel')
-    .getByRole('button', { name: 'Browser', exact: true })
-    .click()
+  await header.getByRole('button', { name: 'Browser', exact: true }).click()
   await page.getByRole('button', { name: 'New tab', exact: true }).last().click()
   const addressInput = page.getByRole('textbox', { name: 'Address', exact: true })
   await addressInput.fill(`http://127.0.0.1:${address.port}/browser-fixture`)
@@ -954,7 +971,14 @@ try {
     BrowserWindow.getAllWindows()[0].setBounds({ width: 900, height: 700 })
   )
   await page.screenshot({ path: join(screenshotDir, '05-narrow.png') })
-  await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
+  await page
+    .locator('.sidebar-bottom')
+    .getByRole('button', { name: 'Settings', exact: true })
+    .click()
+  await page
+    .locator('.settings-nav')
+    .getByRole('button', { name: 'Appearance', exact: true })
+    .click()
   await page.locator('.setting-row').getByRole('button', { name: 'Appearance' }).click()
   await page.getByRole('menuitem', { name: 'Dark' }).click()
   await page.waitForFunction(() => document.documentElement.classList.contains('dark'))
@@ -963,7 +987,8 @@ try {
   await page.getByRole('menuitem', { name: '简体中文' }).click()
   await page.getByText('最近', { exact: true }).waitFor({ timeout: 15_000 })
   await page.screenshot({ path: join(screenshotDir, '07-chinese.png') })
-  await page.locator('.sidebar-bottom').getByText('设置', { exact: true }).click()
+  await page.locator('.sidebar-bottom').getByRole('button', { name: '设置', exact: true }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: '运行时', exact: true }).click()
   await page.getByRole('button', { name: '检查更新', exact: true }).click()
   const chineseUpdate = page.getByRole('dialog', { name: '检查更新' })
   await chineseUpdate.getByText('更新失败', { exact: true }).waitFor()

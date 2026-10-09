@@ -101,7 +101,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   private receiptRecovery: Promise<void> = Promise.resolve()
   private activeSubmissions = new Set<string>()
   private speechEpoch = 0
-  private ephemeralWorkspace?: string
+  private ephemeralWorkspace = $state<string | undefined>()
   private draftTimer?: ReturnType<typeof setTimeout>
   private drafts = new Map<string, { text: string; attachments: ChatAttachment[] }>()
   getDraft(source: string): { text: string; attachments: ChatAttachment[] } {
@@ -341,28 +341,60 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         agentRun: (input) => this.submit(input),
         rpc: (method, params) => this.rpc(method, params),
         updateStatus: (status, message) => {
-          const previous = this.seenStatuses.get(source)
-          this.seenStatuses.set(source, status)
           if (this.activeSource === source) {
             this.status = status
             if (message) this.systemMessage = message
           }
-          if (
-            previous &&
-            ['working', 'submitted'].includes(previous) &&
-            ['completed', 'failed', 'idle'].includes(status)
-          ) {
-            void window.anda.notify(
-              source,
-              this.title(source),
-              status === 'failed' ? 'Task needs attention' : 'Anda has a new response'
-            )
-          }
+          this.trackStatus(source, status)
         }
       })
       this.channels.set(source, channel)
     }
     return channel
+  }
+  /**
+   * Notices a task finishing, whether a poll or a source-state refresh saw it:
+   * the chat moves up and reads as unread unless it is in front of the user.
+   */
+  private trackStatus(source: string, status: string): void {
+    // A client-side sync or send says nothing about the task itself.
+    if (status === 'syncing' || status === 'sending') return
+    const previous = this.seenStatuses.get(source)
+    this.seenStatuses.set(source, status)
+    if (
+      !previous ||
+      !['working', 'submitted'].includes(previous) ||
+      !['completed', 'failed', 'idle'].includes(status)
+    )
+      return
+    void window.anda.notify(
+      source,
+      this.title(source),
+      status === 'failed' ? 'Task needs attention' : 'Anda has a new response'
+    )
+    const entry = this.preferences.chats.find((c) => c.source === source)
+    if (!entry) return
+    const now = Date.now()
+    const seen = this.activeSource === source && this.view === 'chat' && !document.hidden
+    void this.updateChat(source, {
+      updatedAt: now,
+      readAt: seen ? now : (entry.readAt ?? entry.updatedAt)
+    }).catch((error) => this.fail(error))
+  }
+  /** Records that the user has seen a chat; only writes when it was unread. */
+  markRead(source: string): void {
+    const entry = this.preferences.chats.find((c) => c.source === source)
+    if (!entry || entry.readAt === undefined || entry.updatedAt <= entry.readAt) return
+    void this.updateChat(source, { readAt: Date.now() }).catch((error) => this.fail(error))
+  }
+  /** Whether the open chat has never been sent, so its folder can still change. */
+  get isNewChat(): boolean {
+    return !this.preferences.chats.some((c) => c.source === this.activeSource)
+  }
+  /** Points a chat that has not been sent yet at another folder, keeping its draft. */
+  setNewChatWorkspace(workspace: string | undefined): void {
+    if (this.isNewChat) this.ephemeralWorkspace = workspace
+    else this.newChat(workspace)
   }
   title(source: string): string {
     const title = this.preferences.chats.find((c) => c.source === source)?.title
@@ -416,27 +448,25 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     } = await this.toolCall<RpcOutput<SourceStateMap>>('conversations_api', {
       type: 'ListSourceState'
     })
-    const entries = [...this.preferences.chats]
-    let changed = false
+    const added: ChatEntry[] = []
     for (const [source, state] of Object.entries(states || {})) {
       const channel = this.ensureChannel(source)
       channel.setSourceState(state)
+      // Without live events a background chat is never polled; its state is all we see.
+      if (source !== this.activeSource) this.trackStatus(source, channel.status)
       if (
         this.connection.liveEvents &&
         source !== this.activeSource &&
         ['working', 'submitted'].includes(state.s || state.status || '')
       )
         void channel.syncChangedState().catch(() => {})
-      if (!entries.some((c) => c.source === source)) {
-        entries.push({
-          source,
-          title: this.title(source),
-          updatedAt: Date.now()
-        })
-        changed = true
+      if (!this.preferences.chats.some((c) => c.source === source)) {
+        const now = Date.now()
+        added.push({ source, title: this.title(source), updatedAt: now, readAt: now })
       }
     }
-    if (changed) await this.savePreferences({ chats: entries })
+    // Appended to the current list, which a task finishing above may have just updated.
+    if (added.length) await this.savePreferences({ chats: [...this.preferences.chats, ...added] })
   }
   async savePreferences(patch: Partial<Preferences>): Promise<void> {
     this.preferences = { ...this.preferences, ...patch }
@@ -461,7 +491,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
             source: channel.source,
             title: prompt.replace(/^\/new\s+/, '').slice(0, 70) || 'New chat',
             workspace: this.ephemeralWorkspace,
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            readAt: Date.now()
           }
         ],
         activeSource: channel.source
@@ -485,7 +516,11 @@ export class DesktopClient extends EventTarget implements DaemonApi {
           }
         }
       } else poll?.close()
-      await this.updateChat(channel.source, { updatedAt: Date.now() })
+      const now = Date.now()
+      await this.updateChat(channel.source, {
+        updatedAt: now,
+        ...(this.activeSource === channel.source && !document.hidden ? { readAt: now } : {})
+      })
     } catch (error) {
       this.fail(error)
       // Main has already pushed the unknown submission in a `submissions` event.

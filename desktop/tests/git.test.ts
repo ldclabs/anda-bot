@@ -5,7 +5,7 @@ import { join, sep } from 'node:path'
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
-import { GitService, parseStatus } from '../src/main/git'
+import { GitService, parseNumstat, parseStatus } from '../src/main/git'
 
 const run = promisify(execFile)
 const directories: string[] = []
@@ -235,4 +235,29 @@ it('rejects a write if HEAD moved to another branch at the same commit', async (
       revision: before.revision
     })
   ).rejects.toThrow('repository changed')
+})
+
+it('parses numstat counts, binary files and renames', () => {
+  expect(
+    parseNumstat('3\t1\tsrc/a.ts\0-\t-\timage.png\0' + '2\t0\t\0old name.ts\0new name.ts\0')
+  ).toEqual({
+    'src/a.ts': { additions: 3, deletions: 1 },
+    'image.png': { additions: null, deletions: null },
+    'new name.ts': { additions: 2, deletions: 0 }
+  })
+})
+
+it('reports tracked line counts and the branch of a folder inside the repository', async () => {
+  const { root, git, service } = await fixture()
+  await writeFile(join(root, 'a.txt'), 'one\ntwo\n')
+  await git(['add', 'a.txt'])
+  await git(['commit', '-m', 'init'])
+  await writeFile(join(root, 'a.txt'), 'one\nthree\nfour\n')
+  await mkdir(join(root, 'nested'))
+  const status = await service.status(root)
+  expect(status.stats['a.txt']).toEqual({ additions: 2, deletions: 1 })
+  expect(await service.branch(join(root, 'nested'))).toEqual({ repository: true, branch: 'main' })
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'anda-git-test-')))
+  directories.push(outside)
+  await expect(service.branch(outside)).rejects.toThrow('Not authorized')
 })
