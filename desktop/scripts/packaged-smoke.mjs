@@ -6,6 +6,16 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import assert from 'node:assert/strict'
 
+/** Polls `check` in the page until it returns a truthy value. waitForFunction
+ * cannot: it takes the promise of an async predicate as truthy at once. */
+async function waitForPage(page, check, arg) {
+  for (const deadline = Date.now() + 30_000; ;) {
+    if (await page.evaluate(check, arg)) return
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${check}`)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
 const bundle = resolve(process.argv[2])
 const expectedVersion = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8')
@@ -50,6 +60,7 @@ const server = createServer((_request, response) => {
 })
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 let application
+let passed = false
 try {
   application = await electron.launch({
     executablePath:
@@ -74,7 +85,8 @@ try {
     data:
       process.platform === 'win32' ? 'echo PACKAGED_^PTY_OK\r' : "printf 'PACKAGED_%s_OK\\n' PTY\r"
   })
-  await page.waitForFunction(
+  await waitForPage(
+    page,
     async (workspace) =>
       (await window.anda.terminal({ action: 'list', workspace }))[0]?.output.includes(
         'PACKAGED_PTY_OK'
@@ -91,7 +103,8 @@ try {
       window.anda.browser({ action: 'navigate', source: 'desktop:packaged-test', id, url }),
     { id: browser.active, url }
   )
-  await page.waitForFunction(
+  await waitForPage(
+    page,
     async ({ id, url }) => {
       const state = await window.anda.browser({ action: 'state', source: 'desktop:packaged-test' })
       const tab = state.tabs.find((tab) => tab.id === id)
@@ -110,10 +123,14 @@ try {
   assert.ok(boundary.text.includes('Packaged native view'))
   await mkdir(resolve('test-results'), { recursive: true })
   await page.screenshot({ path: resolve('test-results/12-packaged.png') })
+  passed = true
   console.log(
     'PASS: packaged application startup, final runtime digest, bundled skills, signed native PTY and isolated browser. Real daemon remained stopped and nothing was installed.'
   )
 } finally {
+  // A failed run can leave its terminal running, and quitting then waits on a
+  // native confirmation nobody answers. app.exit() quits without asking.
+  if (!passed) await application?.evaluate(({ app }) => app.exit(1)).catch(() => {})
   await application?.close()
   await new Promise((resolve) => server.close(resolve))
 }

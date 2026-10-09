@@ -14,6 +14,15 @@ import { testTone } from '../src/renderer/audio-test.ts'
 const directory = await mkdtemp(join(tmpdir(), 'anda-desktop-smoke-'))
 const screenshotDir = resolve('test-results')
 await mkdir(screenshotDir, { recursive: true })
+/** Polls `check` in the page until it returns a truthy value. waitForFunction
+ * cannot: it takes the promise of an async predicate as truthy at once. */
+async function waitForPage(page, check, arg) {
+  for (const deadline = Date.now() + 30_000; ;) {
+    if (await page.evaluate(check, arg)) return
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${check}`)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
 const usage = {
   input_tokens: 10,
   output_tokens: 20,
@@ -388,6 +397,7 @@ delete env.ELECTRON_RUN_AS_NODE
 let app
 let userClipboard
 let electronStderr = ''
+let failed = false
 try {
   app = await electron.launch({
     executablePath: electronPath,
@@ -568,22 +578,22 @@ try {
   await editor.fill('/side Recovery check')
   await editor.press('Enter')
   await page.getByText('Recovered side response', { exact: true }).waitFor({ timeout: 35000 })
-  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
+  await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(recoveryExecutions, 1)
   await editor.fill('/side Direct check')
   await editor.press('Enter')
   await page.getByText('Direct side reply', { exact: true }).waitFor()
-  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
+  await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(await page.getByText('Direct side reply', { exact: true }).count(), 1)
   await editor.fill('/side Reload check')
   await editor.press('Enter')
-  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 1)
+  await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 1)
   await page.reload()
   await page.getByText('No external model was called.', { exact: false }).first().waitFor()
   assert.ok(finishReloadReply)
   finishReloadReply()
   await page.getByText('Side reply after renderer reload', { exact: true }).waitFor()
-  await page.waitForFunction(async () => (await window.anda.bootstrap()).pending.length === 0)
+  await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(reloadExecutions, 1)
   assert.equal(await page.getByText('Side reply after renderer reload', { exact: true }).count(), 1)
   await page.locator('.sidebar-bottom').getByText('Settings', { exact: true }).click()
@@ -734,13 +744,15 @@ try {
   await page.mouse.move(edge.x + edge.width / 2 + 80, edge.y + edge.height / 2, { steps: 4 })
   await page.mouse.up()
   assert.ok(Math.abs((await sidebarWidth()) - (startWidth + 80)) <= 1)
-  await page.waitForFunction(
+  await waitForPage(
+    page,
     async (width) =>
       Math.abs((await window.anda.bootstrap()).preferences.sidebarWidth - width) <= 1,
     startWidth + 80
   )
   await page.locator('.sidebar-resizer').dblclick()
-  await page.waitForFunction(
+  await waitForPage(
+    page,
     async () => (await window.anda.bootstrap()).preferences.sidebarWidth === 242
   )
   await page.locator('.workspace-header').getByTitle('Resources').click()
@@ -762,33 +774,27 @@ try {
     .locator('.terminal-panel .workbench-tabs')
     .getByRole('button', { name: /1 ·/ })
     .waitFor()
-  await page.waitForFunction(
-    async (workspace) => (await window.anda.terminal({ action: 'list', workspace })).length === 1,
+  // The tab exists once the session does. Terminal output is read from the
+  // rendered rows: `list` resyncs a renderer and drops the output still on
+  // its way to it, so it is not polled while the panel is open.
+  const sessions = await page.evaluate(
+    (workspace) => window.anda.terminal({ action: 'list', workspace }),
     project
   )
-  const term = (
-    await page.evaluate((workspace) => window.anda.terminal({ action: 'list', workspace }), project)
-  )[0]
+  assert.equal(sessions.length, 1)
+  const term = sessions[0]
+  const rows = page.locator('.terminal-panel .xterm-rows')
   await page.evaluate(({ id, data }) => window.anda.terminal({ action: 'input', id, data }), {
     id: term.id,
     data: process.platform === 'win32' ? 'echo ANDA_^PTY_OK\r' : "printf 'ANDA_%s_OK\\n' PTY\r"
   })
-  await page.waitForFunction(
-    async (workspace) =>
-      (await window.anda.terminal({ action: 'list', workspace }))[0]?.output.includes(
-        'ANDA_PTY_OK'
-      ),
-    project
-  )
+  await rows.getByText('ANDA_PTY_OK').waitFor()
   await page.screenshot({ path: join(screenshotDir, '09-terminal.png') })
   if (process.platform !== 'win32') {
     // Switching back to a tab replays its output, and the terminal must not
     // answer the queries in it again into the shell. bash consumes the live
     // answer to a DA1 query, then reads everything up to a `Z` sent after the
-    // switch and dumps it, so a replayed answer shows up as `033`. The steps
-    // read the rendered rows: `list` resyncs a renderer and drops the output
-    // still on its way to it, the live query included.
-    const rows = page.locator('.terminal-panel .xterm-rows')
+    // switch and dumps it, so a replayed answer shows up as `033`.
     await page.evaluate(({ id, data }) => window.anda.terminal({ action: 'input', id, data }), {
       id: term.id,
       data:
@@ -1035,6 +1041,7 @@ try {
     'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
+  failed = true
   // Startup may fail before any window exists. Diagnostics must not replace
   // that original failure with a second firstWindow() timeout.
   console.error('Electron smoke test failed:', error)
@@ -1061,6 +1068,9 @@ try {
     await app
       .evaluate(({ clipboard }, text) => clipboard.writeText(text), userClipboard)
       .catch(() => {})
+  // A failed run can leave a terminal running, and quitting then waits on a
+  // native confirmation nobody answers. app.exit() quits without asking.
+  if (failed) await app?.evaluate(({ app }) => app.exit(1)).catch(() => {})
   await app?.close()
   for (const ws of wsServer.clients) ws.terminate()
   await new Promise((resolve) => wsServer.close(resolve))
