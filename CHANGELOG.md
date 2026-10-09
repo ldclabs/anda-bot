@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ChatGPT plan conversations reuse the prompt cache**: ChatGPT keys prompt-cache affinity on the `session-id` header, which the Codex CLI sends along with `prompt_cache_key`; Anda sent neither, so the rounds of one conversation landed on unrelated caches and most of an unchanged prefix was billed again (conversation #941 on `gpt-6.1-sol` read 27% of its input from the cache). Each request now carries a key derived from the instructions and the first input item, which stay fixed for a conversation, as both the header and `prompt_cache_key`.
+
 ## [0.13.5] — 2026-10-09
 
 ### Added

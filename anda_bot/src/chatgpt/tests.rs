@@ -441,8 +441,11 @@ async fn chatgpt_tool_roundtrip_replays_calls_without_repeating_history() {
     let mut service = service(home.path());
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    let base=crate::test_support::spawn_http_mock(Router::new().route("/responses",post(move |headers:axum::http::HeaderMap,Json(body):Json<serde_json::Value>|{let count=count.clone();async move{
+    let cache_keys = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_keys = cache_keys.clone();
+    let base=crate::test_support::spawn_http_mock(Router::new().route("/responses",post(move |headers:axum::http::HeaderMap,Json(body):Json<serde_json::Value>|{let count=count.clone();let seen_keys=seen_keys.clone();async move{
         assert_eq!(headers["authorization"],"Bearer access-1");assert_eq!(body["store"],false);assert_eq!(body["stream"],true);assert!(body.get("max_output_tokens").is_none());
+        let key=body["prompt_cache_key"].as_str().unwrap().to_string();assert_eq!(headers["session-id"],key.as_str());seen_keys.lock().unwrap().push(key);
         let output=if count.fetch_add(1,Ordering::SeqCst)==0{serde_json::json!([{"type":"function_call","namespace":"anda","name":"read_file","call_id":"call_one","arguments":"{}"}])}else{
             let input=body["input"].as_array().unwrap();assert_eq!(input.iter().filter(|v|v["type"]=="function_call").count(),1);assert_eq!(input.iter().filter(|v|v["type"]=="function_call_output").count(),1);assert!(input.iter().any(|v|v["call_id"]=="call_one"));
             serde_json::json!([{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}])
@@ -493,4 +496,8 @@ async fn chatgpt_tool_roundtrip_replays_calls_without_repeating_history() {
     assert_eq!(second.content, "Done");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(second.raw_history.len(), 2);
+    // Both rounds of the conversation route to the same prompt cache.
+    let cache_keys = cache_keys.lock().unwrap();
+    assert_eq!(cache_keys.len(), 2);
+    assert_eq!(cache_keys[0], cache_keys[1]);
 }

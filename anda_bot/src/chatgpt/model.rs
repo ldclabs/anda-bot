@@ -5,6 +5,7 @@ use anda_engine::model::{CompletionFeaturesDyn, Model, ModelError, openai::types
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
@@ -62,10 +63,18 @@ impl CompletionFeaturesDyn for ChatGPTCompleter {
             let mut auth_retried = false;
             let mut retries = 0;
             loop {
+                let mut post = service
+                    .http
+                    .post(format!("{}/responses", service.endpoints.api))
+                    .bearer_auth(token.as_str())
+                    .header("Accept", "text/event-stream")
+                    .header("Accept-Encoding", "identity");
+                if let Some(session) = &body.additional_parameters.prompt_cache_key {
+                    post = post.header("session-id", session);
+                }
                 let response = tokio::select! {
                     _=cancel.cancelled()=>return Err("ChatGPT account was signed out".into()),
-                    response=service.http.post(format!("{}/responses",service.endpoints.api)).bearer_auth(token.as_str())
-                        .header("Accept","text/event-stream").header("Accept-Encoding","identity").json(&body).send()=>response.map_err(|e|e.without_url())?,
+                    response=post.json(&body).send()=>response.map_err(|e|e.without_url())?,
                 };
                 if response.status().is_success() {
                     let mut response = read_stream(response, &cancel).await?;
@@ -351,11 +360,39 @@ fn build_request(
             wire::ToolChoice::auto()
         });
     }
+    body.additional_parameters.prompt_cache_key = prompt_cache_key(&body);
     let history = body.input[skip..]
         .iter()
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()?;
     Ok((body, history, chat))
+}
+
+/// ChatGPT keys prompt-cache affinity on the `session-id` header, and the Codex
+/// CLI sends its session id there and as `prompt_cache_key`. Without them, the
+/// rounds of one conversation land on unrelated caches and most of a stable
+/// prefix is billed again. The instructions and the first input item stay fixed
+/// for a conversation, so their digest keeps every round on one cache. It is
+/// shaped as a UUID, as the Codex CLI's header is.
+fn prompt_cache_key(body: &wire::CompletionRequest) -> Option<String> {
+    let first = serde_json::to_vec(body.input.first()?).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(body.instructions.as_deref().unwrap_or_default());
+    hasher.update([0]);
+    hasher.update(first);
+    let mut bytes: [u8; 16] = hasher.finalize()[..16].try_into().ok()?;
+    // Version 8 (custom) with the RFC 9562 variant.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = crate::cli::updater::hex_lower(&bytes);
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
 }
 
 async fn read_stream(
