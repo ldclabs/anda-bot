@@ -124,13 +124,35 @@ mod tests {
         assert!(err.contains("was not found on PATH"), "got: {err}");
     }
 
+    /// Writes an `edge-tts` stand-in that runs `script`, and launches it once
+    /// so the test's own launch cannot fail or stall for reasons of its own.
     #[cfg(unix)]
     fn fake_cli(script: &str) -> (tempfile::TempDir, EdgeTtsProvider) {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("edge-tts");
-        std::fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\n[ \"$1\" = --warm-up ] && exit 0\n{script}\n"),
+        )
+        .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // On Linux, a process another test forks while the script is open for
+        // writing keeps that handle until it execs, and launching the script
+        // meanwhile fails with ETXTBSY; once a launch succeeds, no writer is
+        // left. On macOS, a new executable's first launch can exceed a test's
+        // timeout while the system assesses it.
+        let mut busy = 0;
+        loop {
+            match std::process::Command::new(&path).arg("--warm-up").status() {
+                Ok(status) => break assert!(status.success(), "warm-up failed: {status}"),
+                Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy && busy < 100 => {
+                    busy += 1;
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("failed to launch {}: {err}", path.display()),
+            }
+        }
         let provider = EdgeTtsProvider {
             binary_path: path.to_str().unwrap().into(),
             voice: "test-voice".into(),
@@ -165,19 +187,7 @@ printf 'MP3DATA'
     #[tokio::test]
     async fn timeout_and_cancellation_terminate_child() {
         for cancel in [false, true] {
-            let (dir, provider) = fake_cli(
-                "[ \"$1\" = --warm-up ] && exit 0\nprintf '%s' \"$$\" > \"$0.pid\"\nexec sleep 5",
-            );
-            // A new executable's first launch can exceed the 1s budget (macOS
-            // assesses it), killing the child before it records its pid.
-            assert!(
-                tokio::process::Command::new(&provider.binary_path)
-                    .arg("--warm-up")
-                    .status()
-                    .await
-                    .unwrap()
-                    .success()
-            );
+            let (dir, provider) = fake_cli("printf '%s' \"$$\" > \"$0.pid\"\nexec sleep 5");
             let task = tokio::spawn(async move {
                 provider
                     .synthesize_with_timeout("hi", Duration::from_secs(1))

@@ -2691,11 +2691,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_server_is_retried_and_its_reason_kept() {
+        // Answers 404 at once. A refused connection would be retried as
+        // transient, and Windows spends ~2s on every refused attempt, so the
+        // background retry would outlast the wait below.
+        let base_url = crate::test_support::spawn_http_mock(axum::Router::new()).await;
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         write_config(
             home,
-            r#"{"mcpServers":{"down":{"url":"http://127.0.0.1:9/mcp"}}}"#,
+            &json!({ "mcpServers": { "down": { "url": format!("{base_url}/mcp") } } }).to_string(),
         )
         .await;
         let manager = McpManager::for_test(home).await;
