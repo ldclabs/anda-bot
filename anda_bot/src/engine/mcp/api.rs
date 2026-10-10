@@ -21,11 +21,17 @@ use axum::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use super::{McpChange, McpError, McpManager, manager::SignIn, state::McpSource};
+use super::{
+    McpChange, McpError, McpManager,
+    import::{McpImportContext, McpImportRequest, McpImportSource},
+    manager::SignIn,
+    registry::{self, McpRegistryQuery},
+    state::{McpOrigin, McpSource},
+};
 use crate::{
-    config::{McpApproval, McpSecretValues, McpServerSettings, McpSettings},
+    config::{McpApproval, McpSecretValues, McpServerOptions, McpServerSettings, McpSettings},
     engine::memory_api::error,
     runtime_admission::Admission,
     util::tool_response::ToolResponse,
@@ -40,6 +46,9 @@ pub(crate) struct McpApiState {
     pub owner: Principal,
     pub admission: Arc<Admission>,
     pub manager: McpManager,
+    /// The daemon's outbound client, for the MCP Registry.
+    pub http: reqwest::Client,
+    pub registry_url: String,
 }
 
 /// The HTTP body: one method and its parameters.
@@ -63,12 +72,37 @@ enum McpRequest {
     Apply {
         change: McpChange,
         expected_revision: Option<String>,
+        origin: McpOrigin,
     },
     Reconnect(Option<String>),
     SignIn(SignIn),
     SignOut(String),
     Reload,
     Secrets,
+    ImportScan(ImportScanParams),
+    Import(McpImportRequest),
+    RegistrySearch(McpRegistryQuery),
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportScanParams {
+    /// The clients to read; empty reads them all.
+    #[serde(default)]
+    sources: Vec<McpImportSource>,
+    /// Project directories to read beyond the daemon's own workspace.
+    #[serde(default)]
+    workspaces: Vec<PathBuf>,
+}
+
+/// Where an added server came from, as the apps may say: by hand, or from
+/// the MCP Registry.
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AddSource {
+    #[default]
+    Manual,
+    Registry,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +151,11 @@ enum ChangeParams {
         server: Value,
         #[serde(default = "default_true")]
         persist: bool,
+        #[serde(default)]
+        source: AddSource,
+        /// The Registry name and version it was installed from.
+        #[serde(default)]
+        source_ref: Option<String>,
     },
     Update {
         server: Value,
@@ -156,6 +195,11 @@ enum ChangeParams {
     SetSecret {
         name: String,
         value: Option<String>,
+    },
+    /// Replaces the advanced settings; a field left out takes its default.
+    SetOptions {
+        id: String,
+        options: McpServerOptions,
     },
 }
 
@@ -204,11 +248,26 @@ impl McpRequest {
                     change,
                     expected_revision,
                 } = params_of(method, params)?;
+                let mut origin = McpOrigin::from(McpSource::Manual);
                 let change = match change {
-                    ChangeParams::Add { server, persist } => McpChange::Add {
-                        server: parse_server(server)?,
+                    ChangeParams::Add {
+                        server,
                         persist,
-                    },
+                        source,
+                        source_ref,
+                    } => {
+                        if let AddSource::Registry = source {
+                            origin = McpOrigin {
+                                source: McpSource::Registry,
+                                reference: source_ref
+                                    .map(|reference| reference.trim().chars().take(256).collect()),
+                            };
+                        }
+                        McpChange::Add {
+                            server: parse_server(server)?,
+                            persist,
+                        }
+                    }
                     ChangeParams::Update { server } => McpChange::Update {
                         server: parse_server(server)?,
                     },
@@ -235,10 +294,14 @@ impl McpRequest {
                         McpChange::MarkReviewed { id, tools }
                     }
                     ChangeParams::SetSecret { name, value } => McpChange::SetSecret { name, value },
+                    ChangeParams::SetOptions { id, options } => {
+                        McpChange::SetOptions { id, options }
+                    }
                 };
                 Self::Apply {
                     change,
                     expected_revision,
+                    origin,
                 }
             }
             "mcp_reconnect" => {
@@ -259,6 +322,17 @@ impl McpRequest {
                 no_params(method, &params)?;
                 Self::Secrets
             }
+            "mcp_import_scan" => Self::ImportScan(if params.is_null() {
+                ImportScanParams::default()
+            } else {
+                params_of(method, params)?
+            }),
+            "mcp_import" => Self::Import(params_of(method, params)?),
+            "mcp_registry_search" => Self::RegistrySearch(if params.is_null() {
+                McpRegistryQuery::default()
+            } else {
+                params_of(method, params)?
+            }),
             _ => {
                 return Err(error(
                     "unsupported_capability",
@@ -274,7 +348,12 @@ pub(crate) fn is_write_method(method: &str) -> bool {
     method.starts_with("mcp_")
         && !matches!(
             method,
-            "mcp_list" | "mcp_get" | "mcp_tool_diff" | "mcp_secrets"
+            "mcp_list"
+                | "mcp_get"
+                | "mcp_tool_diff"
+                | "mcp_secrets"
+                | "mcp_import_scan"
+                | "mcp_registry_search"
         )
 }
 
@@ -330,9 +409,10 @@ impl McpApiState {
             McpRequest::Apply {
                 change,
                 expected_revision,
+                origin,
             } => respond(
                 manager
-                    .apply(change, expected_revision.as_deref(), McpSource::Manual)
+                    .apply(change, expected_revision.as_deref(), origin)
                     .await,
             ),
             McpRequest::Reconnect(id) => respond(manager.reconnect(id.as_deref()).await),
@@ -346,7 +426,25 @@ impl McpApiState {
             ),
             McpRequest::Reload => respond(manager.reload().await),
             McpRequest::Secrets => ok(manager.secrets()),
+            McpRequest::ImportScan(params) => match self.import_context(params.workspaces) {
+                Ok(ctx) => ok(manager.import_scan(&ctx, &params.sources).await),
+                Err(err) => respond::<()>(Err(err)),
+            },
+            McpRequest::Import(request) => match self.import_context(request.workspaces.clone()) {
+                Ok(ctx) => respond(manager.import(&ctx, request).await),
+                Err(err) => respond::<()>(Err(err)),
+            },
+            McpRequest::RegistrySearch(query) => {
+                respond(registry::search(&self.http, &self.registry_url, &query).await)
+            }
         }
+    }
+
+    /// The current user's directories, with the workspaces asked for and the
+    /// daemon's own.
+    fn import_context(&self, mut workspaces: Vec<PathBuf>) -> Result<McpImportContext, BoxError> {
+        workspaces.extend(self.manager.default_cwd().map(PathBuf::from));
+        McpImportContext::detect(workspaces)
     }
 }
 
@@ -458,6 +556,8 @@ mod tests {
             owner: owner.id(),
             admission: Arc::new(Admission::default()),
             manager: McpManager::for_test(home).await,
+            http: reqwest::Client::builder().no_proxy().build().unwrap(),
+            registry_url: "http://127.0.0.1:9".to_string(),
         }
     }
 
@@ -577,7 +677,7 @@ mod tests {
                 "invalid_request",
             ),
             (
-                "mcp_import_scan",
+                "mcp_events_list",
                 json!({}),
                 StatusCode::BAD_REQUEST,
                 "unsupported_capability",
@@ -721,9 +821,80 @@ mod tests {
         assert_eq!(body["result"], json!([]));
     }
 
+    #[tokio::test]
+    async fn options_registry_installs_and_searches_go_through_the_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let (owner, other) = (Ed25519Key::new([103; 32]), Ed25519Key::new([104; 32]));
+        let mut state = state(dir.path(), &owner, &other).await;
+        let registry = axum::Router::new().route(
+            "/v0.1/servers",
+            axum::routing::get(|| async {
+                Json(json!({ "servers": [{ "server": { "name": "io.github.example/docs" } }] }))
+            }),
+        );
+        state.registry_url = crate::test_support::spawn_http_mock(registry).await;
+        let owner = || headers(&owner);
+
+        let add = json!({ "change": {
+            "op": "add",
+            "server": { "id": "docs", "type": "http", "url": "http://127.0.0.1:9/mcp", "enabled": false },
+            "source": "registry",
+            "source_ref": "io.github.example/docs@1.0.0"
+        } });
+        let (status, body) = call(&state, owner(), "mcp_apply", add).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let options = json!({ "change": {
+            "op": "set_options",
+            "id": "docs",
+            "options": { "timeouts": { "call_secs": 120 }, "concurrency": "parallel" }
+        } });
+        let (status, body) = call(&state, owner(), "mcp_apply", options).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, body) = call(&state, owner(), "mcp_get", json!({ "id": "docs" })).await;
+        assert_eq!(body["result"]["source"], "registry");
+        assert_eq!(body["result"]["source_ref"], "io.github.example/docs@1.0.0");
+        assert_eq!(
+            body["result"]["options"],
+            json!({ "concurrency": "parallel", "timeouts": { "call_secs": 120 } })
+        );
+
+        let (status, body) = call(
+            &state,
+            owner(),
+            "mcp_registry_search",
+            json!([{ "query": "docs" }]),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["result"]["servers"][0]["name"],
+            "io.github.example/docs"
+        );
+
+        for (method, params) in [
+            (
+                "mcp_apply",
+                json!({ "change": { "op": "set_options", "id": "docs", "options": { "retries": 3 } } }),
+            ),
+            ("mcp_import_scan", json!({ "sources": ["netscape"] })),
+            ("mcp_import", json!({})),
+        ] {
+            let (status, body) = call(&state, owner(), method, params).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(body["error"]["code"], "invalid_request");
+        }
+    }
+
     #[test]
     fn only_reads_skip_admission() {
-        for method in ["mcp_list", "mcp_get", "mcp_tool_diff", "mcp_secrets"] {
+        for method in [
+            "mcp_list",
+            "mcp_get",
+            "mcp_tool_diff",
+            "mcp_secrets",
+            "mcp_import_scan",
+            "mcp_registry_search",
+        ] {
             assert!(!is_write_method(method));
         }
         for method in [
@@ -733,6 +904,7 @@ mod tests {
             "mcp_sign_in",
             "mcp_sign_out",
             "mcp_reload",
+            "mcp_import",
         ] {
             assert!(is_write_method(method));
         }

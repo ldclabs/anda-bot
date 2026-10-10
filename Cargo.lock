@@ -216,6 +216,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
+ "toml",
  "tower-http 0.7.1",
  "ts-rs",
  "unicode-segmentation",

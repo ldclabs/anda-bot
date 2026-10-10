@@ -113,13 +113,17 @@ daemon runs as a login service. Such a service does not see variables exported
 in your shell profile, so a `${VAR}` reference needs the variable in the
 daemon's own environment.
 
-Three optional per-server fields tune how Anda talks to the endpoint:
+Optional per-server fields tune how Anda talks to the endpoint and runs the server:
 
 | Field | Purpose |
 | --- | --- |
 | `startup` | When Anda discovers the server's tools. `background` (default) connects after the daemon is up; `eager` waits for discovery before the daemon reports ready. Either way an unreachable server is skipped, never fatal. |
 | `lifecycle` | How the protocol revision is negotiated. `auto` (default) probes the stateless `server/discover` lifecycle and falls back to the legacy `initialize` handshake. Use `discover` to require the newer one, or `initialize` to pin a server that mishandles unknown methods. |
 | `tasks` | Opts into the tasks extension, so a long-running tool can hand back a task Anda polls to completion instead of holding its response open. Takes `{"max_wait_secs": <seconds>}`, default `300`. Omit it and the server must answer every call inline. |
+| `timeouts` | Deadlines in seconds, each between 1 and 86400: `setup_secs` to connect (default 90), `list_secs` to list the tools (30), `request_secs` for one request (180) and `call_secs` for a whole tool call (600). |
+| `concurrency` | Which of the server's tools may run at the same time: `serial` (default), `read_only_parallel` for tools the server marks read-only, or `parallel`. |
+| `limits` | `{"output_text_bytes": <bytes>}`: the text the agent gets from one result, between 256 and 1048576 (default 32768). |
+| `inherit_env` | Local servers only. `true` (default) gives the process the daemon's whole environment; `false` gives it only the platform's essentials (`PATH`, `HOME`, `TMPDIR` and the like) and its own `env`, so no other secret in the daemon's environment reaches it. |
 
 ```json
 {
@@ -132,7 +136,8 @@ Three optional per-server fields tune how Anda talks to the endpoint:
     "long-running": {
       "type": "http",
       "url": "https://batch.example.com/mcp",
-      "tasks": { "max_wait_secs": 900 }
+      "tasks": { "max_wait_secs": 900 },
+      "timeouts": { "call_secs": 1200 }
     }
   }
 }
@@ -143,8 +148,8 @@ The agent can also add a server at runtime with `add_mcp_server`. Set
 server into `~/.anda/mcp.json` for future restarts. Its server fields mirror one
 `mcp.json` entry: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
 `enabled`, `include`, and `exclude`, plus the tool-only `id` and `persist`
-fields. `startup`, `lifecycle` and `tasks` are operator knobs, so they are set by
-editing `mcp.json` rather than through the tool. `manage_mcp_server` lets the
+fields. The settings in the table above are yours to set, in `mcp.json`, on the
+MCP page or with `anda mcp options`, not through the tool. `manage_mcp_server` lets the
 agent list the servers with their status and last error and reconnect one;
 enabling, disabling, removing or signing out of a server asks for your approval
 first.
@@ -166,6 +171,9 @@ anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in; --no-br
 anda mcp tool github delete_repository --hide         # keep one tool from the agent
 anda mcp secret set DOCS_TOKEN                        # also: secret list, secret unset
 anda mcp disable context7                             # also: enable, remove, reconnect, logout, reload
+anda mcp options github --call-timeout 900            # advanced settings; `default` clears one
+anda mcp import --dry-run                             # servers set up in other apps
+anda mcp import github notes=work-notes --from cursor # import them; no names imports every new one
 ```
 
 With the daemon running, every command goes through it, so a change applies at
@@ -174,7 +182,7 @@ the connection does not use (a field Anda does not read, say) keeps running.
 Failed servers are retried in the background, backing off from 30 seconds to 30
 minutes, and the reason is kept for `list`. Without the daemon, `add`,
 `add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users`,
-`secret` and `logout` edit the files directly and take effect when the daemon starts. `list` also shows entries that
+`secret`, `options`, `import` and `logout` edit the files directly and take effect when the daemon starts. `list` also shows entries that
 were skipped and why, and `--json` prints any result as JSON.
 
 Edits keep the fields Anda does not read, your `${VAR}` references, and the root
@@ -193,9 +201,60 @@ server's hints, and what changed since you reviewed it; sign-in; the secrets it
 uses; and its entry, with secrets hidden. Add takes a URL with headers, a
 command with environment variables, or configuration pasted from another app.
 It shows the full command line before anything runs, tests the connection, and
-by default stores the header and environment values as secrets, leaving only
+by default stores header values, tokens and keys as secrets, leaving only
 `${secret:...}` references in `mcp.json`. A server that asks for OAuth opens its
-sign-in page in your browser.
+sign-in page in your browser. The Add menu also imports servers from other apps
+and browses the MCP Registry (both below), and the Configuration tab edits the
+advanced settings.
+
+In Anda Desktop, a link of the form
+`anda://mcp/install?name=<id>&config=<base64url JSON>` opens the Add dialog with
+that configuration and a warning to check what it runs. Nothing is saved until
+you add it, and a link cannot change an existing server.
+
+### Importing from other apps
+
+`anda mcp import` and Import from other apps on the MCP page read the MCP
+settings of Claude Desktop, Claude Code (`~/.claude.json`), Cursor, VS Code (and
+GitHub Copilot's CLI, `~/.copilot/mcp-config.json`), Windsurf and Codex
+(`~/.codex/config.toml`), and the project files (`.mcp.json`,
+`.cursor/mcp.json`, `.vscode/mcp.json`) of the projects Claude Code knows and of
+the current directory (for the CLI) or the daemon's workspace. These files are
+only read, never changed.
+
+```bash
+anda mcp import --dry-run                    # what each server would become
+anda mcp import                              # every server new to Anda
+anda mcp import github notes=work-notes      # the ones named; NAME=ID renames
+anda mcp import --from cursor --keep-plaintext
+```
+
+Each server is shown with what importing it does: new, renamed when its name is
+taken by another server, already in Anda, the same server as one listed
+earlier, or one that cannot be imported (an SSE server, say) and why. On the way
+in, an entry is translated into Anda's form: VS Code's `${env:NAME}`,
+`${userHome}` and `${workspaceFolder}` are filled in, and Windsurf's
+`serverUrl`, Copilot's tool lists and Codex's tables are read. Header values,
+tokens and keys move to secrets unless you pass `--keep-plaintext`. A VS Code
+`${input:...}` and an environment variable the daemon does not have become
+secrets to set: the CLI and the page ask for them, and a server whose secret is
+not set yet waits for it. Imported local servers get `"inherit_env": false`.
+What does not carry over, such as an `envFile` or a list of auto-approved tools,
+is listed with the server.
+
+### The MCP Registry
+
+Browse the MCP Registry on the MCP page searches the official
+[MCP Registry](https://registry.modelcontextprotocol.io). The daemon makes the
+request, with its own proxy settings. A server published with a remote endpoint
+installs as that endpoint by default, since it runs nothing on your computer;
+you can choose one of its npm, PyPI, OCI (Docker) or NuGet packages instead,
+which runs as a local command with `"inherit_env": false`. The install form asks
+for the URL variables, headers, environment variables and arguments the server
+declares; a value marked secret goes to the secret store. You can test the
+server before installing it. The Registry shows only that a server was
+published, not that it is safe: its tools still ask before they run until you
+allow them.
 
 ### Secrets
 

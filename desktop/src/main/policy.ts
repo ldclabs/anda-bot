@@ -129,7 +129,10 @@ const mcpMethods = new Set([
   'mcp_reconnect',
   'mcp_sign_in',
   'mcp_sign_out',
-  'mcp_reload'
+  'mcp_reload',
+  'mcp_import_scan',
+  'mcp_import',
+  'mcp_registry_search'
 ])
 
 export function validateRpc(method: unknown, params: unknown): asserts params is unknown[] {
@@ -186,6 +189,39 @@ export function navigationSource(raw: string): string | null {
       return null
     const source = url.searchParams.get('source')
     return source && source.length <= 2048 ? source : null
+  } catch {
+    return null
+  }
+}
+/** A server offered by `anda://mcp/install?name=<id>&config=<base64url JSON>`. */
+export interface McpInstallLink {
+  name: string
+  /** The decoded configuration, as pretty JSON for the add dialog. */
+  config: string
+}
+/**
+ * Reads an MCP install link. The renderer opens it in the add dialog, where the owner checks
+ * and saves it: a link never installs anything by itself. Bounded, and the configuration must
+ * be a JSON object.
+ */
+export function mcpInstallLink(raw: string): McpInstallLink | null {
+  try {
+    const url = new URL(raw)
+    if (
+      url.protocol !== 'anda:' ||
+      url.hostname !== 'mcp' ||
+      url.pathname !== '/install' ||
+      url.username ||
+      url.password
+    )
+      return null
+    const name = (url.searchParams.get('name') || '').trim()
+    const encoded = url.searchParams.get('config') || ''
+    if (name.length > 128 || !encoded || encoded.length > 32 * 1024) return null
+    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
+    const config: unknown = JSON.parse(Buffer.from(base64, 'base64').toString('utf8'))
+    if (!config || typeof config !== 'object' || Array.isArray(config)) return null
+    return { name, config: JSON.stringify(config, null, 2) }
   } catch {
     return null
   }

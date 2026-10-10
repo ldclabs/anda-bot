@@ -65,6 +65,7 @@ rust-i18n = { workspace = true }
 rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio-util = { workspace = true }
+toml = { workspace = true }
 zeroize = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }

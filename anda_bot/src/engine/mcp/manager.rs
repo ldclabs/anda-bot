@@ -39,21 +39,28 @@ use tokio::{sync::Mutex, time::timeout};
 use super::{
     McpError,
     config_store::{self, McpConfigFile, McpFileEdit},
+    import::{
+        self, McpImportContext, McpImportRequest, McpImportScan, McpImportSource, McpImportTarget,
+        McpKnownServer,
+    },
     oauth::{McpOAuthFlows, configure_authorization, default_server_id_from_url, open_in_browser},
     review::{self, McpReview, McpToolDiff},
     secrets::{
         MCP_SECRETS_FILE_NAME, McpSecretStore, McpSecretView, orphaned_secrets, secret_views,
         secrets_in_use,
     },
-    state::{MCP_STATE_FILE_NAME, McpErrorRecord, McpInstructionsPin, McpSource, McpStateStore},
+    state::{
+        MCP_STATE_FILE_NAME, McpErrorRecord, McpInstructionsPin, McpOrigin, McpSource,
+        McpStateStore,
+    },
     view::{
         LiveState, McpServerDetail, McpSnapshot, McpStatus, McpToolView, ServerMeta, ViewSource,
         tool_view,
     },
 };
 use crate::config::{
-    McpApproval, McpOAuthSettings, McpSecretValues, McpServerSettings, McpSettings,
-    McpStreamableHttpSettings, McpTransportSettings, normalize_string,
+    McpApproval, McpOAuthSettings, McpSecretValues, McpServerOptions, McpServerSettings,
+    McpSettings, McpStreamableHttpSettings, McpTransportSettings, normalize_string,
 };
 
 /// How often the supervisor checks the servers.
@@ -132,6 +139,12 @@ pub(crate) enum McpChange {
         name: String,
         value: Option<String>,
     },
+    /// Replaces the advanced settings: startup, protocol negotiation,
+    /// concurrency, timeouts, limits, environment and tasks.
+    SetOptions {
+        id: String,
+        options: McpServerOptions,
+    },
 }
 
 /// What the call gate applies to one tool.
@@ -148,6 +161,9 @@ pub(crate) struct McpReceipt {
     pub revision: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub added: Vec<String>,
+    /// Servers written to mcp.json by an import.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub imported: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub removed: Vec<String>,
     /// Servers restarted because their connection settings changed.
@@ -386,8 +402,9 @@ impl McpManager {
         &self,
         change: McpChange,
         expected_revision: Option<&str>,
-        source: McpSource,
+        origin: impl Into<McpOrigin>,
     ) -> Result<McpReceipt, BoxError> {
+        let origin = origin.into();
         let _ops = self.inner.ops.lock().await;
         match change {
             McpChange::Add { server, persist } => {
@@ -412,7 +429,7 @@ impl McpManager {
                     );
                     self.reconcile_locked(true).await
                 };
-                self.record_added(&server.id, source).await;
+                self.record_added(&server.id, &origin).await;
                 Ok(receipt)
             }
             McpChange::Update { server } => {
@@ -603,7 +620,154 @@ impl McpManager {
                     })
                 }
             }
+            McpChange::SetOptions { id, options } => {
+                let with_options = |mut server: McpServerSettings| {
+                    server
+                        .set_options(options.clone())
+                        .map_err(|err| McpError::invalid(err.to_string()))?;
+                    check_settings(&server)?;
+                    Ok::<_, BoxError>(server)
+                };
+                if self.declared_in_file(&id) {
+                    let declared = {
+                        let view = self.inner.view.read();
+                        let declared = || {
+                            view.file
+                                .settings
+                                .servers
+                                .iter()
+                                .filter(|server| server.id.trim() == id)
+                        };
+                        declared()
+                            .find(|server| !server.disabled)
+                            .or_else(|| declared().next())
+                            .cloned()
+                    };
+                    let server = declared.ok_or_else(|| {
+                        McpError::invalid(format!(
+                            "MCP server {id} in mcp.json has errors; fix them before changing its settings"
+                        ))
+                    })?;
+                    with_options(server)?;
+                    self.commit_locked(expected_revision, McpFileEdit::SetOptions(&id, &options))
+                        .await
+                } else {
+                    let server = self
+                        .inner
+                        .view
+                        .read()
+                        .runtime
+                        .get(&id)
+                        .map(|server| server.settings.clone())
+                        .ok_or_else(|| McpError::not_found(&id))?;
+                    let server = with_options(server)?;
+                    let config = self.build(&server)?;
+                    self.inner.view.write().runtime.insert(
+                        id,
+                        RuntimeServer {
+                            settings: server,
+                            config,
+                        },
+                    );
+                    Ok(self.reconcile_locked(true).await)
+                }
+            }
         }
+    }
+
+    /// Reads the other MCP clients' configuration and shows what importing
+    /// each server would do. Reads files only.
+    pub async fn import_scan(
+        &self,
+        ctx: &McpImportContext,
+        sources: &[McpImportSource],
+    ) -> McpImportScan {
+        let known = self.known_servers();
+        let secrets = self.inner.secrets.names().into_keys().collect();
+        let has_env = |name: &str| std::env::var_os(name).is_some();
+        let target = McpImportTarget {
+            known: &known,
+            secrets: &secrets,
+            has_env: &has_env,
+        };
+        import::scan(ctx, sources, &target).await
+    }
+
+    /// Imports servers from a fresh scan into mcp.json, with the secrets
+    /// they bring: their moved plaintext, and the values given for the ones
+    /// they need.
+    pub async fn import(
+        &self,
+        ctx: &McpImportContext,
+        request: McpImportRequest,
+    ) -> Result<McpReceipt, BoxError> {
+        let _ops = self.inner.ops.lock().await;
+        let scan = self.import_scan(ctx, &[]).await;
+        let plan = import::plan(
+            &scan,
+            &request.items,
+            &request.secrets,
+            request.store_secrets,
+            |id| self.is_declared(id),
+            &self.inner.secrets.names().into_keys().collect(),
+        )?;
+        for (server, _) in &plan.servers {
+            self.check_new(server).await?;
+        }
+        let servers: Vec<McpServerSettings> = plan
+            .servers
+            .iter()
+            .map(|(server, _)| server.clone())
+            .collect();
+        let mut receipt = import::store_and_write(
+            &plan,
+            &self.inner.secrets,
+            self.commit_locked(
+                request.expected_revision.as_deref(),
+                McpFileEdit::AddAll(&servers),
+            ),
+        )
+        .await?;
+        for (server, path) in &plan.servers {
+            let origin = McpOrigin {
+                source: McpSource::Import,
+                reference: Some(path.clone()),
+            };
+            self.record_added(&server.id, &origin).await;
+        }
+        receipt.imported = servers.into_iter().map(|server| server.id).collect();
+        Ok(receipt)
+    }
+
+    /// Where stdio servers run when their entry sets no `cwd`.
+    pub fn default_cwd(&self) -> Option<&std::path::Path> {
+        self.inner.default_cwd.as_deref()
+    }
+
+    /// Every server Anda has, with what it runs, for an import to compare.
+    fn known_servers(&self) -> Vec<McpKnownServer> {
+        let view = self.inner.view.read();
+        let mut known: Vec<McpKnownServer> = view
+            .file
+            .settings
+            .servers
+            .iter()
+            .chain(view.runtime.values().map(|server| &server.settings))
+            .map(McpKnownServer::of)
+            .collect();
+        // Entries skipped as invalid still own their ids.
+        known.extend(
+            view.file
+                .settings
+                .diagnostics
+                .iter()
+                .filter_map(|diagnostic| diagnostic.server_id.as_deref())
+                .map(|id| McpKnownServer {
+                    id: id.trim().to_string(),
+                    endpoint: None,
+                }),
+        );
+        known
     }
 
     /// Every secret that is set or referenced, with the servers that use it.
@@ -1062,7 +1226,7 @@ impl McpManager {
                 },
             );
         }
-        self.record_added(&id, source).await;
+        self.record_added(&id, &source.into()).await;
         if !persist {
             return Ok(false);
         }
@@ -1754,14 +1918,8 @@ impl McpManager {
         }
     }
 
-    async fn record_added(&self, id: &str, source: McpSource) {
-        let now = unix_ms();
-        if self.inner.state.update(id, |state| {
-            state.source = source;
-            state.added_at = Some(now);
-        }) {
-            self.inner.state.save().await;
-        }
+    async fn record_added(&self, id: &str, origin: &McpOrigin) {
+        self.inner.state.record_added(id, origin).await;
     }
 
     async fn live_state(&self) -> LiveState {
@@ -3120,5 +3278,178 @@ mod tests {
         assert_eq!(retry_delay_ms(2), 60_000);
         assert_eq!(retry_delay_ms(7), RETRY_MAX_MS);
         assert_eq!(retry_delay_ms(u32::MAX), RETRY_MAX_MS);
+    }
+
+    #[tokio::test]
+    async fn importing_writes_the_entries_their_secrets_and_where_they_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let fixture = import::tests::fixture().await;
+        let manager = McpManager::for_test(home).await;
+        let scan = manager.import_scan(&fixture.ctx, &[]).await;
+        let key = |source, name: &str| {
+            scan.candidates
+                .iter()
+                .find(|candidate| candidate.source == source && candidate.name == name)
+                .unwrap()
+                .key
+                .clone()
+        };
+        let pick = |source, name: &str| import::McpImportPick {
+            key: key(source, name),
+            id: None,
+        };
+        let request = McpImportRequest {
+            items: vec![
+                pick(McpImportSource::Vscode, "search"),
+                pick(McpImportSource::Windsurf, "wiki"),
+            ],
+            secrets: McpSecretValues::from([("SEARCH_KEY".into(), "key-1".into())]),
+            store_secrets: true,
+            workspaces: Vec::new(),
+            expected_revision: None,
+        };
+        let receipt = manager.import(&fixture.ctx, request).await.unwrap();
+        assert_eq!(receipt.imported, ["search", "wiki"]);
+
+        let config = read_config(home).await;
+        let search = &config["mcpServers"]["search"];
+        assert_eq!(search["inherit_env"], false);
+        assert_eq!(
+            search["env"],
+            json!({
+                "API_KEY": "${secret:SEARCH_KEY}",
+                "MODE": "fast",
+                "SEARCH_TOKEN": "${secret:SEARCH_SEARCH_TOKEN}"
+            })
+        );
+        assert_eq!(config["mcpServers"]["wiki"]["enabled"], false);
+        let values = manager.inner.secrets.values();
+        assert_eq!(
+            (
+                values["SEARCH_KEY"].as_str(),
+                values["SEARCH_SEARCH_TOKEN"].as_str()
+            ),
+            ("key-1", "tok-plain")
+        );
+        let wiki = manager.server("wiki").await.unwrap().server;
+        assert_eq!(wiki.source, McpSource::Import);
+        assert!(wiki.source_ref.unwrap().ends_with("mcp_config.json"));
+
+        // Imported once, it is there already.
+        let scan = manager.import_scan(&fixture.ctx, &[]).await;
+        let again = scan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "wiki")
+            .unwrap();
+        assert_eq!(again.status, import::McpImportStatus::Exists);
+
+        // A write that fails takes the new secrets back.
+        let remote = scan
+            .candidates
+            .iter()
+            .find(|candidate| candidate.name == "remote")
+            .unwrap();
+        let request = McpImportRequest {
+            items: vec![import::McpImportPick {
+                key: remote.key.clone(),
+                id: None,
+            }],
+            secrets: McpSecretValues::from([("REMOTE_TOKEN".into(), "tok".into())]),
+            store_secrets: true,
+            workspaces: Vec::new(),
+            expected_revision: Some("stale".into()),
+        };
+        let err = manager.import(&fixture.ctx, request).await.unwrap_err();
+        assert!(err.to_string().contains("changed since"), "{err}");
+        assert!(!manager.inner.secrets.values().contains_key("REMOTE_TOKEN"));
+    }
+
+    #[tokio::test]
+    async fn advanced_settings_are_checked_written_and_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        write_config(
+            home,
+            r#"{"mcpServers":{
+  "docs": { "url": "http://127.0.0.1:9/mcp", "enabled": false, "timeouts": { "elicitation_secs": 5, "custom": 1 } },
+  "tool": { "command": "anda-mcp-test-missing", "enabled": false }
+}}"#,
+        )
+        .await;
+        let manager = McpManager::for_test(home).await;
+        let options: McpServerOptions = serde_json::from_value(json!({
+            "startup": "eager",
+            "concurrency": "read_only_parallel",
+            "timeouts": { "call_secs": 900 },
+            "limits": { "output_text_bytes": 65536 },
+            "tasks": { "max_wait_secs": 120 }
+        }))
+        .unwrap();
+        manager
+            .apply(
+                McpChange::SetOptions {
+                    id: "docs".into(),
+                    options,
+                },
+                None,
+                McpSource::Manual,
+            )
+            .await
+            .unwrap();
+        let config = read_config(home).await;
+        let docs = &config["mcpServers"]["docs"];
+        assert_eq!(docs["startup"], "eager");
+        assert_eq!(docs["concurrency"], "read_only_parallel");
+        // What Anda does not read stays.
+        assert_eq!(docs["timeouts"], json!({ "call_secs": 900, "custom": 1 }));
+        assert_eq!(docs["limits"], json!({ "output_text_bytes": 65536 }));
+        assert_eq!(docs["tasks"], json!({ "max_wait_secs": 120 }));
+        let view = manager.server("docs").await.unwrap().server;
+        let shown = view.options.unwrap();
+        assert_eq!(shown.timeouts.call_secs, Some(900));
+        assert_eq!(view.startup, McpStartup::Eager);
+
+        let set = |id: &str, options: Value| {
+            let options: McpServerOptions = serde_json::from_value(options).unwrap();
+            manager.apply(
+                McpChange::SetOptions {
+                    id: id.into(),
+                    options,
+                },
+                None,
+                McpSource::Manual,
+            )
+        };
+        set("tool", json!({ "inherit_env": false })).await.unwrap();
+        assert_eq!(
+            read_config(home).await["mcpServers"]["tool"]["inherit_env"],
+            false
+        );
+        for (id, options, message) in [
+            ("docs", json!({ "inherit_env": false }), "only for local"),
+            (
+                "docs",
+                json!({ "timeouts": { "call_secs": 0 } }),
+                "timeouts.call_secs",
+            ),
+            (
+                "docs",
+                json!({ "limits": { "output_text_bytes": 10 } }),
+                "limits.output_text_bytes",
+            ),
+            ("missing", json!({}), "not configured"),
+        ] {
+            let err = set(id, options).await.unwrap_err();
+            assert!(err.to_string().contains(message), "{err}");
+        }
+        // Clearing them leaves the entry as it was before.
+        set("docs", json!({})).await.unwrap();
+        let docs = &read_config(home).await["mcpServers"]["docs"];
+        assert_eq!(
+            docs,
+            &json!({ "url": "http://127.0.0.1:9/mcp", "enabled": false, "timeouts": { "custom": 1 } })
+        );
     }
 }

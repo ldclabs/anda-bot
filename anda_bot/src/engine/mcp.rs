@@ -20,10 +20,12 @@ mod api;
 pub(crate) mod config_store;
 mod credentials;
 mod gate;
+pub(crate) mod import;
 mod manager;
 mod model_tools;
 mod oauth;
 mod redact;
+mod registry;
 mod review;
 mod secrets;
 mod state;
@@ -37,9 +39,11 @@ pub(crate) use gate::McpGate;
 pub(crate) use manager::{McpChange, McpManager, McpManagerConfig};
 pub(crate) use model_tools::{ManageMcpServerTool, McpConnectTool, McpServerTool};
 pub(crate) use oauth::{CALLBACK_PATH, mcp_oauth_callback, open_in_browser};
+pub(crate) use registry::MCP_REGISTRY_URL;
 pub(crate) use secrets::{
     MCP_SECRETS_FILE_NAME, McpSecretStore, orphaned_secrets, secret_views, secrets_in_use,
 };
+pub(crate) use state::{MCP_STATE_FILE_NAME, McpOrigin, McpSource, McpStateStore};
 pub(crate) use view::{McpServerView, offline_snapshot};
 
 /// A request the caller can correct, with a stable code for the API.

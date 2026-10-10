@@ -3,7 +3,14 @@ import type {
   Json,
   McpChange,
   McpEntry,
+  McpImportRequest,
+  McpImportScan,
+  McpImportSource,
   McpReceipt,
+  McpRegistryInput,
+  McpRegistryPackage,
+  McpRegistryPage,
+  McpRegistryServer,
   McpSecretView,
   McpServerDetail,
   McpSignIn,
@@ -96,6 +103,23 @@ export class McpApi extends EventTarget {
     this.notifyChanged()
   }
 
+  /** Reads the other MCP clients' configuration on this computer; nothing is changed. */
+  importScan(sources: McpImportSource[] = [], workspaces: string[] = []): Promise<McpImportScan> {
+    return this.#call('mcp_import_scan', { sources, workspaces })
+  }
+
+  /** Imports servers a scan found, by their keys; the daemon reads their files again. */
+  async import(request: McpImportRequest): Promise<McpReceipt> {
+    const receipt = await this.#call<McpReceipt>('mcp_import', { ...request })
+    this.notifyChanged()
+    return receipt
+  }
+
+  /** One page of the MCP Registry's servers, searched by name. */
+  registrySearch(query: string, cursor?: string): Promise<McpRegistryPage> {
+    return this.#call('mcp_registry_search', cursor ? { query, cursor } : { query })
+  }
+
   /** Applies mcp.json as it is on disk. */
   async reload(): Promise<McpReceipt> {
     const receipt = await this.#call<McpReceipt>('mcp_reload')
@@ -119,6 +143,16 @@ export class McpApi extends EventTarget {
   }
 }
 
+/** The clients an import reads; product names read the same in every language. */
+export const IMPORT_SOURCE_LABELS: Record<McpImportSource, string> = {
+  claude_desktop: 'Claude Desktop',
+  claude_code: 'Claude Code',
+  cursor: 'Cursor',
+  vscode: 'VS Code',
+  windsurf: 'Windsurf',
+  codex: 'Codex'
+}
+
 export function emptySnapshot(): McpSnapshot {
   return {
     config_path: '',
@@ -138,7 +172,8 @@ export interface ParsedMcpConfig {
 /**
  * Reads configuration pasted from another MCP client: a whole file
  * (`mcpServers` as Claude, Cursor and Anda write it, or VS Code's
- * `servers`), or a single entry, which takes `fallbackId`.
+ * `servers`), or a single entry, which takes `fallbackId`. Other clients'
+ * spellings become Anda's: see {@link fromOtherClient}.
  */
 export function parseMcpConfig(text: string, fallbackId = ''): ParsedMcpConfig {
   let root: unknown
@@ -156,18 +191,59 @@ export function parseMcpConfig(text: string, fallbackId = ''): ParsedMcpConfig {
     if (!isObject(entries)) continue
     for (const [id, entry] of Object.entries(entries)) {
       if (isObject(entry) && id.trim()) {
-        servers.push({ ...entry, id: id.trim() } as McpEntry)
+        servers.push(fromOtherClient({ ...entry, id: id.trim() } as McpEntry))
       }
     }
   }
   if (servers.length) {
     return { servers }
   }
-  if (typeof root.command === 'string' || typeof root.url === 'string') {
+  if (
+    typeof root.command === 'string' ||
+    typeof root.url === 'string' ||
+    typeof root.serverUrl === 'string'
+  ) {
     const id = (typeof root.id === 'string' && root.id.trim()) || fallbackId.trim()
-    return id ? { servers: [{ ...root, id } as McpEntry] } : { servers: [], error: 'needs_id' }
+    return id
+      ? { servers: [fromOtherClient({ ...root, id } as McpEntry)] }
+      : { servers: [], error: 'needs_id' }
   }
   return { servers: [], error: 'no_servers' }
+}
+
+/**
+ * An entry as another client writes it, in Anda's spelling: Windsurf's
+ * `serverUrl` is `url`, Copilot's `local` type is `stdio`, VS Code's
+ * `${env:NAME}` is `${NAME}` and its `${input:id}` a secret to set,
+ * `${secret:ID}`. The daemon's import translates the same way.
+ */
+export function fromOtherClient(entry: McpEntry): McpEntry {
+  const next: McpEntry = { ...entry }
+  if (typeof next.serverUrl === 'string' && next.url === undefined) {
+    next.url = next.serverUrl
+    delete next.serverUrl
+  }
+  if (next.type === 'local') next.type = 'stdio'
+  if (next.type === 'streamableHttp') next.type = 'http'
+  const text = (value: Json): Json =>
+    typeof value === 'string'
+      ? value
+          .replace(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)(:-[^}]*)?\}/g, '${$1$2}')
+          .replace(/\$\{input:([^}]+)\}/g, (_, id: string) => `\${secret:${secretName(id)}}`)
+      : value
+  for (const key of ['command', 'url', 'cwd', 'bearer_token']) {
+    if (typeof next[key] === 'string') next[key] = text(next[key] as Json)
+  }
+  if (Array.isArray(next.args)) next.args = next.args.map(text)
+  for (const key of ['env', 'headers']) {
+    const values = next[key]
+    if (isObject(values)) {
+      next[key] = Object.fromEntries(
+        Object.entries(values).map(([name, value]) => [name, text(value as Json)])
+      )
+    }
+  }
+  return next
 }
 
 /** An entry for a remote server; `headers` holds one `Name: value` per line. */
@@ -250,11 +326,13 @@ export function secretReferences(value: string): string[] {
 }
 
 /**
- * Moves the plaintext credentials of an entry (header and env values, and a
- * bearer token) into secrets: each value becomes `${secret:<ID>_<KEY>}` and
- * the returned `secrets` hold the values to store. A value that only
- * references variables or secrets is left as it is, and `taken` names are
- * not reused.
+ * Moves the plaintext credentials of an entry into secrets: each value
+ * becomes `${secret:<ID>_<KEY>}` and the returned `secrets` hold the values
+ * to store. Credentials are header values, the bearer token, and env values
+ * whose names say they are keys or tokens (or URLs with a password); other
+ * env values, such as paths, stay readable. A value that refers to a
+ * variable or secret stays too: its secret would hold the reference, which
+ * is never expanded. `taken` names are not reused.
  */
 export function moveCredentialsToSecrets(
   entry: McpEntry,
@@ -266,8 +344,8 @@ export function moveCredentialsToSecrets(
   const secrets: Record<string, string> = {}
   const next: McpEntry = { ...entry }
   const prefix = secretName(entry.id)
-  const convert = (key: string, value: Json): Json => {
-    if (typeof value !== 'string' || !value.trim() || onlyReferences(value)) return value
+  const convert = (key: string, value: Json, credential: boolean): Json => {
+    if (typeof value !== 'string' || !credential || !isPlaintext(value)) return value
     let name = secretName(`${prefix}_${key}`)
     for (let n = 2; name in secrets || taken.has(name); n += 1) {
       name = secretName(`${prefix}_${key}_${n}`)
@@ -279,14 +357,59 @@ export function moveCredentialsToSecrets(
     const values = entry[field]
     if (isObject(values)) {
       next[field] = Object.fromEntries(
-        Object.entries(values).map(([key, value]) => [key, convert(key, value as Json)])
+        Object.entries(values).map(([key, value]) => [
+          key,
+          convert(
+            key,
+            value as Json,
+            field === 'headers' || isCredential(key, typeof value === 'string' ? value : '')
+          )
+        ])
       )
     }
   }
   if (typeof entry.bearer_token === 'string') {
-    next.bearer_token = convert('TOKEN', entry.bearer_token)
+    next.bearer_token = convert('TOKEN', entry.bearer_token, true)
   }
   return { entry: next, secrets }
+}
+
+/** Whether an environment variable holds a credential, as the daemon's import decides it. */
+export function isCredential(name: string, value: string): boolean {
+  const words = name.toLowerCase().split(/[_.-]/)
+  if (words.some((word) => CREDENTIAL_WORDS.has(word))) return true
+  try {
+    return Boolean(new URL(value).password)
+  } catch {
+    return false
+  }
+}
+
+const CREDENTIAL_WORDS = new Set([
+  'token',
+  'tokens',
+  'secret',
+  'secrets',
+  'password',
+  'passwd',
+  'pwd',
+  'pass',
+  'credential',
+  'credentials',
+  'key',
+  'keys',
+  'apikey',
+  'auth',
+  'authorization',
+  'bearer',
+  'cookie',
+  'pat',
+  'jwt'
+])
+
+/** A non-empty value that refers to no variable or secret. */
+function isPlaintext(value: string): boolean {
+  return Boolean(value.trim()) && !/\$(\{|[A-Za-z_])/.test(value)
 }
 
 /** A secret name built from free text: letters, digits and `_`, upper case. */
@@ -296,10 +419,6 @@ export function secretName(text: string): string {
     .replace(/[^A-Z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '')
   return /^[A-Z_]/.test(name) ? name : `_${name}`
-}
-
-function onlyReferences(value: string): boolean {
-  return /^(\$\{[^}]+\}|\$[A-Za-z_][A-Za-z0-9_]*)+$/.test(value.trim())
 }
 
 function genericHost(label: string): boolean {
@@ -319,4 +438,280 @@ function keyValueLines(text: string, separator: string): Record<string, string> 
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+/**
+ * One way to install a Registry server: one of its remote endpoints, or one
+ * of its packages run on this computer. `unsupported` says why a choice
+ * cannot be installed here.
+ */
+export interface RegistryChoice {
+  kind: 'remote' | 'package'
+  index: number
+  /** The registry type, or `remote`. */
+  type: string
+  /** The URL or package name. */
+  target: string
+  unsupported?: 'sse' | 'transport' | 'package'
+  fields: RegistryField[]
+}
+
+/** A value the install form asks for. */
+export interface RegistryField {
+  key: string
+  /** The header, variable, environment variable or argument it fills. */
+  name: string
+  description?: string
+  required: boolean
+  secret: boolean
+  default?: string
+  choices?: string[]
+}
+
+type Slot = { input: McpRegistryInput; name: string; key: string }
+
+/** The ways a Registry server can be installed, remotes first: they run nothing here. */
+export function registryChoices(server: McpRegistryServer): RegistryChoice[] {
+  const remotes = (server.remotes || []).map((remote, index): RegistryChoice => {
+    const unsupported =
+      remote.type === 'sse' ? 'sse' : remote.type === 'streamable-http' ? undefined : 'transport'
+    const fields = [
+      ...templateFields(remote.url, remote.variables, 'url', false, true),
+      ...(remote.headers || []).flatMap((header) =>
+        inputFields({ input: header, name: header.name || '', key: `header:${header.name}` })
+      )
+    ]
+    return { kind: 'remote', index, type: 'remote', target: remote.url, unsupported, fields }
+  })
+  const packages = (server.packages || []).map((pkg, index): RegistryChoice => {
+    const unsupported = !PACKAGE_RUNNERS[pkg.registryType]
+      ? 'package'
+      : (pkg.transport?.type || 'stdio') !== 'stdio'
+        ? 'transport'
+        : undefined
+    const fields = packageSlots(pkg).flatMap(inputFields)
+    return {
+      kind: 'package',
+      index,
+      type: pkg.registryType,
+      target: pkg.identifier,
+      unsupported,
+      fields
+    }
+  })
+  return [...remotes, ...packages]
+}
+
+/** The choice installed unless the owner picks another: the first remote, else the first package. */
+export function defaultRegistryChoice(choices: RegistryChoice[]): RegistryChoice | undefined {
+  return choices.find((choice) => !choice.unsupported)
+}
+
+/** A short id for a Registry server: the meaningful part of its name. */
+export function registryServerId(name: string): string {
+  const [namespace = '', path = ''] = name.split('/', 2)
+  const part = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/^mcp[-_](?:server[-_])?|[-_]mcp(?:[-_]server)?$|[-_]server$/g, '')
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^[-_]+|[-_]+$/g, '')
+  const id = part(path)
+  if (id && !['mcp', 'server'].includes(id)) return id
+  const labels = namespace
+    .split('.')
+    .filter((label) => !['com', 'io', 'ai', 'org', 'net', 'dev', 'github'].includes(label))
+  return part(labels[labels.length - 1] || '') || 'mcp'
+}
+
+/**
+ * The mcp.json entry for a Registry server, and the secrets to store with
+ * it: what the owner typed for a secret field goes to the secret store, and
+ * the entry refers to it as `${secret:<ID>_<NAME>}`, avoiding the `taken`
+ * names. A local server runs without the daemon's whole environment.
+ * `missing` names required fields left empty, and then nothing is built.
+ */
+export function registryEntry(
+  server: McpRegistryServer,
+  choice: RegistryChoice,
+  id: string,
+  values: Record<string, string>,
+  taken: ReadonlySet<string> = new Set()
+): { entry?: McpEntry; secrets: Record<string, string>; missing: string[] } {
+  const secrets: Record<string, string> = {}
+  const missing: string[] = []
+  const prefix = secretName(id)
+  const fields = new Map(choice.fields.map((field) => [field.key, field]))
+  /** The text a field fills in: its value, or a reference to its secret. */
+  const fill = (key: string): string => {
+    const field = fields.get(key)
+    if (!field) return ''
+    const value = (values[key] ?? '').trim() || field.default || ''
+    if (!value) {
+      if (field.required) missing.push(field.name)
+      return ''
+    }
+    if (!field.secret) return value
+    let name = secretName(`${prefix}_${field.name}`)
+    for (let n = 2; taken.has(name) || (name in secrets && secrets[name] !== value); n += 1) {
+      name = secretName(`${prefix}_${field.name}_${n}`)
+    }
+    secrets[name] = value
+    return `\${secret:${name}}`
+  }
+  /** An input's text: its fixed value with its placeholders filled, or the field for it. */
+  const text = (slot: Slot): string => {
+    const value = slot.input.value
+    if (value === undefined) return fill(slot.key)
+    return value.replace(PLACEHOLDER, (_, variable: string) => fill(`${slot.key}:${variable}`))
+  }
+
+  let entry: McpEntry
+  if (choice.kind === 'remote') {
+    const remote = (server.remotes || [])[choice.index]
+    const url = remote.url.replace(PLACEHOLDER, (_, variable: string) => fill(`url:${variable}`))
+    entry = { id, type: 'http', url }
+    const headers: Record<string, string> = {}
+    for (const header of remote.headers || []) {
+      if (!header.name) continue
+      const value = text({ input: header, name: header.name, key: `header:${header.name}` })
+      if (value) headers[header.name] = value
+    }
+    if (Object.keys(headers).length) entry.headers = headers
+  } else {
+    const pkg = (server.packages || [])[choice.index]
+    const runner = PACKAGE_RUNNERS[pkg.registryType]
+    const slots = packageSlots(pkg)
+    const env: Record<string, string> = {}
+    const argsOf = (group: 'runtime' | 'package') =>
+      slots
+        .filter((slot) => slot.key.startsWith(`arg:${group}:`))
+        .flatMap((slot) => {
+          const value = text(slot)
+          if (!value) return []
+          if (slot.input.type !== 'named' || !slot.input.name) return [value]
+          const flag = slot.input.name.startsWith('-') ? slot.input.name : `--${slot.input.name}`
+          if (slot.input.format === 'boolean') return value === 'true' ? [flag] : []
+          return [flag, value]
+        })
+    for (const slot of slots.filter((slot) => slot.key.startsWith('env:'))) {
+      const value = text(slot)
+      if (value) env[slot.name] = value
+    }
+    const { command, args } = runner(pkg, argsOf('runtime'), argsOf('package'), Object.keys(env))
+    entry = { id, command, args, inherit_env: false }
+    if (Object.keys(env).length) entry.env = env
+  }
+  return missing.length ? { secrets: {}, missing } : { entry, secrets, missing }
+}
+
+const PLACEHOLDER = /\{([A-Za-z0-9_.-]+)\}/g
+
+/** The inputs of a package, keyed as its form fields are. */
+function packageSlots(pkg: McpRegistryPackage): Slot[] {
+  const args = (group: 'runtime' | 'package', inputs: McpRegistryInput[] = []) =>
+    inputs.map((input, index) => ({
+      input,
+      name: input.name || input.valueHint || `${group} argument ${index + 1}`,
+      key: `arg:${group}:${index}`
+    }))
+  return [
+    ...args('runtime', pkg.runtimeArguments),
+    ...args('package', pkg.packageArguments),
+    ...(pkg.environmentVariables || []).map((input) => ({
+      input,
+      name: input.name || '',
+      key: `env:${input.name}`
+    }))
+  ]
+}
+
+/** The fields an input needs: one for itself, or one per placeholder in its fixed value. */
+function inputFields(slot: Slot): RegistryField[] {
+  const { input } = slot
+  if (input.value !== undefined) {
+    return templateFields(
+      input.value,
+      input.variables,
+      slot.key,
+      Boolean(input.isSecret),
+      Boolean(input.isRequired)
+    )
+  }
+  return [
+    {
+      key: slot.key,
+      name: slot.name,
+      description: input.description,
+      required: Boolean(input.isRequired),
+      secret: Boolean(input.isSecret),
+      default: input.default,
+      choices: input.choices
+    }
+  ]
+}
+
+function templateFields(
+  template: string,
+  variables: Record<string, McpRegistryInput> | undefined,
+  key: string,
+  secret: boolean,
+  required: boolean
+): RegistryField[] {
+  const names = [...new Set([...template.matchAll(PLACEHOLDER)].map((match) => match[1]))]
+  return names.map((name) => {
+    const variable = variables?.[name]
+    return {
+      key: `${key}:${name}`,
+      name,
+      description: variable?.description,
+      required: variable ? Boolean(variable.isRequired) || !variable.default : required,
+      secret: variable ? Boolean(variable.isSecret) : secret,
+      default: variable?.default,
+      choices: variable?.choices
+    }
+  })
+}
+
+type Runner = (
+  pkg: McpRegistryPackage,
+  runtimeArgs: string[],
+  packageArgs: string[],
+  env: string[]
+) => { command: string; args: string[] }
+
+/** How each kind of package runs. MCPB bundles and the rest are installed by hand. */
+const PACKAGE_RUNNERS: Record<string, Runner> = {
+  npm: (pkg, runtimeArgs, packageArgs) => {
+    const command = pkg.runtimeHint || 'npx'
+    const spec = pkg.version ? `${pkg.identifier}@${pkg.version}` : pkg.identifier
+    return {
+      command,
+      args: [...(command === 'npx' ? ['-y'] : []), ...runtimeArgs, spec, ...packageArgs]
+    }
+  },
+  pypi: (pkg, runtimeArgs, packageArgs) => {
+    const command = pkg.runtimeHint || 'uvx'
+    const spec =
+      pkg.version && pkg.version !== 'latest' ? `${pkg.identifier}==${pkg.version}` : pkg.identifier
+    return { command, args: [...runtimeArgs, spec, ...packageArgs] }
+  },
+  oci: (pkg, runtimeArgs, packageArgs, env) => {
+    const tagged = /:[^/]+$/.test(pkg.identifier) || !pkg.version
+    const image = tagged ? pkg.identifier : `${pkg.identifier}:${pkg.version}`
+    // The container sees only the variables passed on with -e.
+    const passed = env.flatMap((name) => ['-e', name])
+    return {
+      command: 'docker',
+      args: ['run', '-i', '--rm', ...passed, ...runtimeArgs, image, ...packageArgs]
+    }
+  },
+  nuget: (pkg, runtimeArgs, packageArgs) => {
+    const command = pkg.runtimeHint || 'dnx'
+    const spec = pkg.version ? `${pkg.identifier}@${pkg.version}` : pkg.identifier
+    return {
+      command,
+      args: [...runtimeArgs, spec, '--yes', ...(packageArgs.length ? ['--', ...packageArgs] : [])]
+    }
+  }
 }

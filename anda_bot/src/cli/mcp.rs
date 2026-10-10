@@ -9,15 +9,25 @@ use anda_core::BoxError;
 use anda_engine::extension::mcp::McpCredentialStore;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    io::IsTerminal,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tokio::sync::Mutex;
 
 use crate::{
-    config::{McpApproval, McpSettings},
+    config::{McpApproval, McpServerOptions, McpSettings},
     daemon::Daemon,
     engine::mcp::{
-        FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME, MCP_SECRETS_FILE_NAME, McpSecretStore,
+        FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME, MCP_SECRETS_FILE_NAME,
+        MCP_STATE_FILE_NAME, McpOrigin, McpSecretStore, McpSource, McpStateStore,
         config_store::{self, McpConfigFile, McpFileEdit},
+        import::{
+            self, McpImportContext, McpImportRequest, McpImportScan, McpImportSource,
+            McpImportTarget, McpKnownServer,
+        },
         offline_snapshot, open_in_browser, orphaned_secrets, secret_views, secrets_in_use,
     },
     gateway,
@@ -157,8 +167,204 @@ enum McpSubcommand {
         #[command(subcommand)]
         action: SecretAction,
     },
+    /// Show a server's advanced settings, or change them. A flag given
+    /// `default` clears that setting.
+    ///
+    ///   anda mcp options github --call-timeout 900 --concurrency read-only-parallel
+    ///   anda mcp options context7 --inherit-env off
+    #[command(verbatim_doc_comment)]
+    Options {
+        id: String,
+        #[command(flatten)]
+        flags: OptionFlags,
+    },
+    /// Import servers from Claude Desktop, Claude Code, Cursor, VS Code,
+    /// Windsurf or Codex. Their files are only read. Plaintext tokens move to
+    /// secrets, and local servers run without the daemon's whole environment.
+    ///
+    ///   anda mcp import --dry-run                what each server would become
+    ///   anda mcp import                          every server new to Anda
+    ///   anda mcp import github notes=work-notes --from cursor
+    #[command(verbatim_doc_comment)]
+    Import {
+        /// Servers to import, by their name there; `NAME=ID` imports one
+        /// under another id. Default: every server new to Anda.
+        servers: Vec<String>,
+        /// Read only this client. Repeatable.
+        #[arg(long = "from", value_enum)]
+        sources: Vec<McpImportSource>,
+        /// A project directory to read besides the current one. Repeatable.
+        #[arg(long = "workspace", value_name = "DIR")]
+        workspaces: Vec<PathBuf>,
+        /// Show what would be imported, without importing it.
+        #[arg(long)]
+        dry_run: bool,
+        /// Leave plaintext tokens in mcp.json instead of moving them to secrets.
+        #[arg(long)]
+        keep_plaintext: bool,
+    },
     /// Apply mcp.json after editing it by hand.
     Reload,
+}
+
+/// The settings `anda mcp options` changes; each takes `default` to clear it.
+#[derive(Args, Default)]
+struct OptionFlags {
+    /// When the server's tools are discovered: background (default) or eager.
+    #[arg(long, value_name = "MODE")]
+    startup: Option<String>,
+    /// How the protocol is negotiated: auto (default), discover or initialize.
+    #[arg(long, value_name = "MODE")]
+    lifecycle: Option<String>,
+    /// Which tools may run at once: serial (default), read-only-parallel or parallel.
+    #[arg(long, value_name = "MODE")]
+    concurrency: Option<String>,
+    /// Seconds to connect (default 90).
+    #[arg(long, value_name = "SECS")]
+    setup_timeout: Option<String>,
+    /// Seconds to list the tools (default 30).
+    #[arg(long, value_name = "SECS")]
+    list_timeout: Option<String>,
+    /// Seconds for one request within a call (default 180).
+    #[arg(long, value_name = "SECS")]
+    request_timeout: Option<String>,
+    /// Seconds for a whole tool call (default 600).
+    #[arg(long, value_name = "SECS")]
+    call_timeout: Option<String>,
+    /// Bytes of text the agent gets from one result (default 32768).
+    #[arg(long, value_name = "BYTES")]
+    output_limit: Option<String>,
+    /// A local server's environment: on (default) gives it the daemon's
+    /// whole environment, off only the essentials and its own env.
+    #[arg(long, value_name = "on|off")]
+    inherit_env: Option<String>,
+    /// Long-running tasks: off (default), on, or the longest wait in seconds.
+    #[arg(long, value_name = "on|off|SECS")]
+    tasks: Option<String>,
+}
+
+impl OptionFlags {
+    fn is_empty(&self) -> bool {
+        [
+            &self.startup,
+            &self.lifecycle,
+            &self.concurrency,
+            &self.setup_timeout,
+            &self.list_timeout,
+            &self.request_timeout,
+            &self.call_timeout,
+            &self.output_limit,
+            &self.inherit_env,
+            &self.tasks,
+        ]
+        .iter()
+        .all(|flag| flag.is_none())
+    }
+
+    /// Applies the flags to `options`, the server's settings as the API
+    /// shows them.
+    fn apply(&self, options: &mut Value) -> Result<McpServerOptions, BoxError> {
+        fn set(options: &mut Value, path: &[&str], value: Option<Value>) {
+            let (last, parents) = path.split_last().expect("a path");
+            let mut object = options;
+            for key in parents {
+                if !object[*key].is_object() {
+                    object[*key] = json!({});
+                }
+                object = &mut object[*key];
+            }
+            match value {
+                Some(value) => object[*last] = value,
+                None => {
+                    if let Some(map) = object.as_object_mut() {
+                        map.remove(*last);
+                    }
+                }
+            }
+        }
+        let number = |flag: &str, value: &str| -> Result<Value, BoxError> {
+            value
+                .parse::<u64>()
+                .map(|n| json!(n))
+                .map_err(|_| format!("--{flag} takes a number or `default`, not {value:?}").into())
+        };
+        if !options.is_object() {
+            *options = json!({});
+        }
+        for (key, value) in [
+            ("startup", &self.startup),
+            ("lifecycle", &self.lifecycle),
+            ("concurrency", &self.concurrency),
+        ] {
+            if let Some(value) = value {
+                let value = value.trim().to_ascii_lowercase().replace('-', "_");
+                set(options, &[key], (value != "default").then(|| json!(value)));
+            }
+        }
+        for (flag, path, value) in [
+            (
+                "setup-timeout",
+                ["timeouts", "setup_secs"],
+                &self.setup_timeout,
+            ),
+            (
+                "list-timeout",
+                ["timeouts", "list_secs"],
+                &self.list_timeout,
+            ),
+            (
+                "request-timeout",
+                ["timeouts", "request_secs"],
+                &self.request_timeout,
+            ),
+            (
+                "call-timeout",
+                ["timeouts", "call_secs"],
+                &self.call_timeout,
+            ),
+            (
+                "output-limit",
+                ["limits", "output_text_bytes"],
+                &self.output_limit,
+            ),
+        ] {
+            if let Some(value) = value.as_deref().map(str::trim) {
+                let value = match value {
+                    "default" => None,
+                    value => Some(number(flag, value)?),
+                };
+                set(options, &path, value);
+            }
+        }
+        if let Some(value) = self.inherit_env.as_deref() {
+            let value = match value.trim() {
+                "on" | "true" => Some(json!(true)),
+                "off" | "false" => Some(json!(false)),
+                "default" => None,
+                other => {
+                    return Err(
+                        format!("--inherit-env takes on, off or default, not {other:?}").into(),
+                    );
+                }
+            };
+            set(options, &["inherit_env"], value);
+        }
+        if let Some(value) = self.tasks.as_deref() {
+            let value = match value.trim() {
+                "off" | "default" => None,
+                "on" => Some(json!({})),
+                secs => Some(json!({ "max_wait_secs": number("tasks", secs)? })),
+            };
+            set(options, &["tasks"], value);
+        }
+        for key in ["timeouts", "limits"] {
+            if options[key].as_object().is_some_and(Map::is_empty) {
+                options.as_object_mut().map(|map| map.remove(key));
+            }
+        }
+        serde_json::from_value(options.clone())
+            .map_err(|err| format!("invalid settings: {err}").into())
+    }
 }
 
 #[derive(Subcommand)]
@@ -436,6 +642,27 @@ pub async fn run(
             }
         }
         McpSubcommand::Secret { action } => secret(daemon, live, json, action).await?,
+        McpSubcommand::Options { id, flags } => options(daemon, live, json, id, flags).await?,
+        McpSubcommand::Import {
+            servers,
+            sources,
+            workspaces,
+            dry_run,
+            keep_plaintext,
+        } => {
+            let cwd = std::env::current_dir()?;
+            let mut workspaces: Vec<PathBuf> =
+                workspaces.into_iter().map(|dir| cwd.join(dir)).collect();
+            workspaces.push(cwd);
+            let flags = ImportFlags {
+                servers,
+                sources,
+                workspaces,
+                dry_run,
+                keep_plaintext,
+            };
+            import_servers(daemon, live, json, flags).await?;
+        }
         McpSubcommand::Reload => {
             let Some(client) = live else {
                 return Err(
@@ -480,6 +707,279 @@ async fn add(
         println!("Note: {}", issues.join("; "));
     }
     Ok(())
+}
+
+async fn options(
+    daemon: &Daemon,
+    live: Option<&gateway::Client>,
+    json: bool,
+    id: String,
+    flags: OptionFlags,
+) -> Result<(), BoxError> {
+    let detail = match live {
+        Some(client) => client.mcp("mcp_get", json!({ "id": id })).await?,
+        None => offline_server(&daemon.home, &id).await?,
+    };
+    let Some(current) = detail.get("options") else {
+        return Err(format!("MCP server {id} has errors in mcp.json; fix them first").into());
+    };
+    if flags.is_empty() {
+        if json {
+            return print_json(current);
+        }
+        print_options(&id, text(&detail, "transport"), current);
+        return Ok(());
+    }
+    let mut next = current.clone();
+    let options = flags.apply(&mut next)?;
+    let done = format!("Saved the settings of {id}.");
+    if let Some(client) = live {
+        let change = json!({ "op": "set_options", "id": id, "options": next });
+        return report(json, &apply(client, change).await?, &done);
+    }
+    // Checked as the daemon would, against the entry as it is now.
+    let path = McpSettings::file_path(&daemon.home);
+    let file = McpConfigFile::read(&path).await?;
+    let mut server = McpSettings::from_file_contents(&path, file.text())
+        .servers
+        .into_iter()
+        .find(|server| server.id.trim() == id)
+        .ok_or_else(|| format!("MCP server {id} is not configured"))?;
+    server.set_options(options.clone())?;
+    let issues = server.setup_issues();
+    if !issues.is_empty() {
+        return Err(format!("invalid settings: {}", issues.join("; ")).into());
+    }
+    edit_offline(&daemon.home, McpFileEdit::SetOptions(&id, &options)).await?;
+    report_offline(json, &done)
+}
+
+struct ImportFlags {
+    servers: Vec<String>,
+    sources: Vec<McpImportSource>,
+    workspaces: Vec<PathBuf>,
+    dry_run: bool,
+    keep_plaintext: bool,
+}
+
+async fn import_servers(
+    daemon: &Daemon,
+    live: Option<&gateway::Client>,
+    json: bool,
+    flags: ImportFlags,
+) -> Result<(), BoxError> {
+    let ctx = McpImportContext::detect(flags.workspaces.clone())?;
+    let scan = match live {
+        Some(client) => {
+            let params = json!({ "sources": flags.sources, "workspaces": flags.workspaces });
+            client.mcp("mcp_import_scan", params).await?
+        }
+        None => json!(offline_import_scan(&daemon.home, &ctx, &flags.sources).await?),
+    };
+    let picks = select_candidates(&scan, &flags.servers)?;
+    if flags.dry_run || picks.is_empty() {
+        if json {
+            return print_json(&scan);
+        }
+        print_import_scan(&scan);
+        if !flags.dry_run {
+            println!("Nothing new to import.");
+        }
+        return Ok(());
+    }
+
+    // Secrets the servers need: asked for here, or left to set later.
+    let mut needed = BTreeMap::new();
+    for (candidate, _) in &picks {
+        for secret in candidate["needs_secrets"].as_array().into_iter().flatten() {
+            needed.insert(
+                text(secret, "name").to_string(),
+                text(secret, "description").to_string(),
+            );
+        }
+    }
+    let mut values = BTreeMap::new();
+    if !json && std::io::stdin().is_terminal() {
+        for (name, description) in &needed {
+            let value = read_secret(&format!("{name} ({description}); Enter to set it later: "))?;
+            if !value.trim().is_empty() {
+                values.insert(name.clone(), value);
+            }
+        }
+    }
+    let items: Vec<Value> = picks
+        .iter()
+        .map(|(candidate, id)| json!({ "key": candidate["key"], "id": id }))
+        .collect();
+    let request = json!({
+        "items": items,
+        "secrets": values,
+        "store_secrets": !flags.keep_plaintext,
+        "workspaces": flags.workspaces,
+    });
+    let receipt = match live {
+        Some(client) => client.mcp("mcp_import", request).await?,
+        None => offline_import(&daemon.home, &ctx, serde_json::from_value(request)?).await?,
+    };
+    if json {
+        return print_json(&receipt);
+    }
+    let imported: Vec<&str> = receipt["imported"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    println!("Imported {}.", imported.join(", "));
+    let later: Vec<&String> = needed
+        .keys()
+        .filter(|name| !values.contains_key(*name))
+        .collect();
+    for name in later {
+        println!("Set the secret {name} before its server can start: anda mcp secret set {name}");
+    }
+    if live.is_none() {
+        println!("The daemon is not running; this takes effect when it starts.");
+    }
+    Ok(())
+}
+
+/// The candidates to import, with the ids asked for: those named, as
+/// `NAME` or `NAME=ID`, or every one new to Anda.
+fn select_candidates(
+    scan: &Value,
+    selectors: &[String],
+) -> Result<Vec<(Value, Option<String>)>, BoxError> {
+    let candidates = scan["candidates"].as_array().cloned().unwrap_or_default();
+    if selectors.is_empty() {
+        return Ok(candidates
+            .into_iter()
+            .filter(|candidate| matches!(text(candidate, "status"), "new" | "renamed"))
+            .map(|candidate| (candidate, None))
+            .collect());
+    }
+    let mut picks = Vec::new();
+    for selector in selectors {
+        let (name, id) = match selector.split_once('=') {
+            Some((name, id)) => (name.trim(), Some(id.trim().to_string())),
+            None => (selector.trim(), None),
+        };
+        let named: Vec<&Value> = candidates
+            .iter()
+            .filter(|candidate| text(candidate, "name") == name || text(candidate, "key") == name)
+            .collect();
+        let usable: Vec<&Value> = named
+            .iter()
+            .copied()
+            .filter(|candidate| !matches!(text(candidate, "status"), "invalid" | "exists"))
+            .collect();
+        match (usable.as_slice(), named.first()) {
+            ([candidate], _) => picks.push(((*candidate).clone(), id)),
+            ([], None) => {
+                return Err(format!(
+                    "no server named {name} was found; see `anda mcp import --dry-run`"
+                )
+                .into());
+            }
+            ([], Some(candidate)) => {
+                let reason = match text(candidate, "status") {
+                    "exists" => format!(
+                        "it is configured already as {}",
+                        text(candidate, "existing_id")
+                    ),
+                    _ => text(candidate, "error").to_string(),
+                };
+                return Err(format!("{name} cannot be imported: {reason}").into());
+            }
+            (several, _) => {
+                let sources: Vec<&str> = several
+                    .iter()
+                    .map(|candidate| text(candidate, "source"))
+                    .collect();
+                return Err(format!(
+                    "{name} is in {}; pick one with --from, or use its key from `anda mcp import --dry-run --json`",
+                    sources.join(", ")
+                )
+                .into());
+            }
+        }
+    }
+    Ok(picks)
+}
+
+/// A scan without the daemon: Anda's servers come from mcp.json, and
+/// variables are checked against this shell's environment.
+async fn offline_import_scan(
+    home: &Path,
+    ctx: &McpImportContext,
+    sources: &[McpImportSource],
+) -> Result<McpImportScan, BoxError> {
+    let path = McpSettings::file_path(home);
+    let file = McpConfigFile::read(&path).await?;
+    let settings = McpSettings::from_file_contents(&path, file.text());
+    let mut known: Vec<McpKnownServer> = settings.servers.iter().map(McpKnownServer::of).collect();
+    known.extend(
+        settings
+            .diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.server_id.as_deref())
+            .map(|id| McpKnownServer {
+                id: id.trim().to_string(),
+                endpoint: None,
+            }),
+    );
+    let secrets = secret_store(home).await.names().into_keys().collect();
+    let has_env = |name: &str| std::env::var_os(name).is_some();
+    let target = McpImportTarget {
+        known: &known,
+        secrets: &secrets,
+        has_env: &has_env,
+    };
+    Ok(import::scan(ctx, sources, &target).await)
+}
+
+/// An import without the daemon, straight into the files.
+async fn offline_import(
+    home: &Path,
+    ctx: &McpImportContext,
+    request: McpImportRequest,
+) -> Result<Value, BoxError> {
+    let scan = offline_import_scan(home, ctx, &[]).await?;
+    let path = McpSettings::file_path(home);
+    let file = McpConfigFile::read(&path).await?;
+    let declared = McpSettings::from_file_contents(&path, file.text());
+    let store = secret_store(home).await;
+    let plan = import::plan(
+        &scan,
+        &request.items,
+        &request.secrets,
+        request.store_secrets,
+        |id| declared.declares(id),
+        &store.names().into_keys().collect(),
+    )?;
+    let servers: Vec<_> = plan
+        .servers
+        .iter()
+        .map(|(server, _)| server.clone())
+        .collect();
+    import::store_and_write(
+        &plan,
+        &store,
+        edit_offline(home, McpFileEdit::AddAll(&servers)),
+    )
+    .await?;
+    let state = McpStateStore::open(home.join(MCP_STATE_FILE_NAME)).await;
+    for (server, path) in &plan.servers {
+        let origin = McpOrigin {
+            source: McpSource::Import,
+            reference: Some(path.clone()),
+        };
+        state.record_added(&server.id, &origin).await;
+    }
+    Ok(json!({
+        "applied": false,
+        "imported": servers.iter().map(|server| server.id.as_str()).collect::<Vec<_>>(),
+    }))
 }
 
 async fn secret(
@@ -926,6 +1426,9 @@ fn print_detail(detail: &Value) {
         text(detail, "startup"),
         text(detail, "auth"),
     );
+    if let Some(reference) = detail["source_ref"].as_str() {
+        println!("  from: {reference}");
+    }
     println!(
         "  approval: {} · external IM users: {}",
         text(detail, "approval"),
@@ -1002,6 +1505,109 @@ fn print_tools(detail: &Value) {
     }
 }
 
+fn print_options(id: &str, transport: &str, options: &Value) {
+    let or_default = |value: &Value, default: &str| match value {
+        Value::Null => format!("{default} (default)"),
+        Value::String(text) => text.replace('_', "-"),
+        other => other.to_string(),
+    };
+    println!("{id}");
+    println!(
+        "  startup:      {}",
+        or_default(&options["startup"], "background")
+    );
+    println!(
+        "  lifecycle:    {}",
+        or_default(&options["lifecycle"], "auto")
+    );
+    println!(
+        "  concurrency:  {}",
+        or_default(&options["concurrency"], "serial")
+    );
+    let timeouts = &options["timeouts"];
+    println!(
+        "  timeouts:     setup {}s, list {}s, request {}s, call {}s",
+        timeouts["setup_secs"].as_u64().unwrap_or(90),
+        timeouts["list_secs"].as_u64().unwrap_or(30),
+        timeouts["request_secs"].as_u64().unwrap_or(180),
+        timeouts["call_secs"].as_u64().unwrap_or(600),
+    );
+    println!(
+        "  output limit: {} bytes",
+        options["limits"]["output_text_bytes"]
+            .as_u64()
+            .unwrap_or(32 * 1024)
+    );
+    if transport == "stdio" {
+        let inherit = match options["inherit_env"].as_bool() {
+            None => "on (default): the daemon's whole environment",
+            Some(true) => "on: the daemon's whole environment",
+            Some(false) => "off: only the essentials and its own env",
+        };
+        println!("  inherit env:  {inherit}");
+    }
+    match options["tasks"]["max_wait_secs"].as_u64() {
+        _ if options["tasks"].is_null() => println!("  tasks:        off (default)"),
+        Some(secs) => println!("  tasks:        on, waiting up to {secs}s"),
+        None => println!("  tasks:        on"),
+    }
+}
+
+fn print_import_scan(scan: &Value) {
+    let candidates = scan["candidates"].as_array().cloned().unwrap_or_default();
+    let files = scan["files"].as_array().cloned().unwrap_or_default();
+    if files.is_empty() {
+        println!("No MCP configuration from other clients was found.");
+        return;
+    }
+    for file in &files {
+        let path = text(file, "path");
+        let source = serde_json::from_value::<McpImportSource>(file["source"].clone())
+            .map(McpImportSource::label)
+            .unwrap_or("Another client");
+        println!("{source}  {path}");
+        if let Some(error) = file["error"].as_str() {
+            println!("  ! could not be read: {error}");
+            continue;
+        }
+        // Each file is read once, so its path says which servers are its.
+        for candidate in candidates
+            .iter()
+            .filter(|candidate| text(candidate, "path") == path)
+        {
+            let name = text(candidate, "name");
+            let status = match text(candidate, "status") {
+                "new" => "new".to_string(),
+                "renamed" => format!("as {}", text(candidate, "id")),
+                "exists" => format!("already in Anda as {}", text(candidate, "existing_id")),
+                "duplicate" => match candidate["existing_id"].as_str() {
+                    Some(id) => format!("same server as {id} in Anda"),
+                    None => "same server as one above".to_string(),
+                },
+                _ => "cannot be imported".to_string(),
+            };
+            println!("  {name:<20} {status:<28} {}", text(candidate, "summary"));
+            if let Some(error) = candidate["error"].as_str() {
+                println!("    ! {error}");
+            }
+            let moved = candidate["plaintext"].as_array().map_or(0, Vec::len);
+            if moved > 0 {
+                println!("    {moved} plaintext value(s) move to secrets");
+            }
+            for secret in candidate["needs_secrets"].as_array().into_iter().flatten() {
+                println!(
+                    "    needs the secret {} ({})",
+                    text(secret, "name"),
+                    text(secret, "description")
+                );
+            }
+            for warning in candidate["warnings"].as_array().into_iter().flatten() {
+                println!("    note: {}", warning.as_str().unwrap_or_default());
+            }
+        }
+    }
+}
+
 fn print_diff(diff: &Value) {
     let (id, tool) = (text(diff, "server_id"), text(diff, "tool"));
     match text(diff, "review") {
@@ -1072,6 +1678,136 @@ mod tests {
         ] {
             assert!(entry_from_flags(url, Vec::new(), Vec::new(), None, false, command).is_err());
         }
+    }
+
+    #[test]
+    fn option_flags_set_and_clear_settings() {
+        let flags = OptionFlags {
+            call_timeout: Some("900".into()),
+            concurrency: Some("read-only-parallel".into()),
+            startup: Some("default".into()),
+            tasks: Some("120".into()),
+            inherit_env: Some("off".into()),
+            ..Default::default()
+        };
+        let mut options = json!({ "startup": "eager", "timeouts": { "setup_secs": 10 } });
+        let parsed = flags.apply(&mut options).unwrap();
+        assert_eq!(
+            options,
+            json!({
+                "timeouts": { "setup_secs": 10, "call_secs": 900 },
+                "concurrency": "read_only_parallel",
+                "inherit_env": false,
+                "tasks": { "max_wait_secs": 120 }
+            })
+        );
+        assert_eq!(parsed.timeouts.call_secs, Some(900));
+
+        let clear = OptionFlags {
+            setup_timeout: Some("default".into()),
+            call_timeout: Some("default".into()),
+            tasks: Some("off".into()),
+            ..Default::default()
+        };
+        clear.apply(&mut options).unwrap();
+        assert!(options.get("timeouts").is_none() && options.get("tasks").is_none());
+
+        for flags in [
+            OptionFlags {
+                call_timeout: Some("soon".into()),
+                ..Default::default()
+            },
+            OptionFlags {
+                concurrency: Some("many".into()),
+                ..Default::default()
+            },
+            OptionFlags {
+                inherit_env: Some("maybe".into()),
+                ..Default::default()
+            },
+        ] {
+            assert!(flags.apply(&mut json!({})).is_err());
+        }
+    }
+
+    #[test]
+    fn import_picks_the_new_servers_or_the_ones_named() {
+        let scan = json!({ "candidates": [
+            { "key": "a#github", "source": "claude_desktop", "name": "github", "status": "new" },
+            { "key": "b#github", "source": "cursor", "name": "github", "status": "duplicate" },
+            { "key": "b#notes", "source": "cursor", "name": "notes", "status": "renamed", "id": "notes-cursor" },
+            { "key": "c#linear", "source": "claude_code", "name": "linear", "status": "exists", "existing_id": "linear" },
+            { "key": "c#events", "source": "claude_code", "name": "events", "status": "invalid", "error": "it uses the SSE transport" }
+        ]});
+        let keys = |picks: Vec<(Value, Option<String>)>| {
+            picks
+                .into_iter()
+                .map(|(candidate, id)| (text(&candidate, "key").to_string(), id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys(select_candidates(&scan, &[]).unwrap()),
+            [
+                ("a#github".to_string(), None),
+                ("b#notes".to_string(), None)
+            ]
+        );
+        assert_eq!(
+            keys(select_candidates(&scan, &["notes=work".into(), "b#github".into()]).unwrap()),
+            [
+                ("b#notes".to_string(), Some("work".to_string())),
+                ("b#github".to_string(), None)
+            ]
+        );
+        for (selector, message) in [
+            ("github", "pick one with --from"),
+            ("linear", "configured already as linear"),
+            ("events", "SSE"),
+            ("nope", "no server named nope"),
+        ] {
+            let err = select_candidates(&scan, &[selector.into()]).unwrap_err();
+            assert!(err.to_string().contains(message), "{err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn offline_import_writes_mcp_json_secrets_and_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let fixture = crate::engine::mcp::import::tests::fixture().await;
+        let scan = json!(offline_import_scan(home, &fixture.ctx, &[]).await.unwrap());
+        let picks = select_candidates(&scan, &["search".into(), "wiki=docs-wiki".into()]).unwrap();
+        let items: Vec<Value> = picks
+            .iter()
+            .map(|(candidate, id)| json!({ "key": candidate["key"], "id": id }))
+            .collect();
+        let request =
+            serde_json::from_value(json!({ "items": items, "secrets": { "SEARCH_KEY": "key-1" } }))
+                .unwrap();
+        let receipt = offline_import(home, &fixture.ctx, request).await.unwrap();
+        assert_eq!(receipt["imported"], json!(["search", "docs-wiki"]));
+
+        let config: Value = serde_json::from_str(
+            &tokio::fs::read_to_string(McpSettings::file_path(home))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(config["mcpServers"]["search"]["inherit_env"], false);
+        assert_eq!(
+            config["mcpServers"]["docs-wiki"]["url"],
+            "https://wiki.example/mcp"
+        );
+        let values = secret_store(home).await.values();
+        assert_eq!(
+            (
+                values["SEARCH_KEY"].as_str(),
+                values["SEARCH_SEARCH_TOKEN"].as_str()
+            ),
+            ("key-1", "tok-plain")
+        );
+        let state = McpStateStore::open(home.join(MCP_STATE_FILE_NAME)).await;
+        assert_eq!(state.get("docs-wiki").source, McpSource::Import);
     }
 
     #[tokio::test]

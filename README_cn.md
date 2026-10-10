@@ -334,6 +334,14 @@ stdio 服务默认在第一个 Anda workspace 中启动。`${secret:NAME}` 展�
 `PATH`，即使 daemon 作为登录服务运行也能找到 `npx` 和 `uvx`；登录服务看不到
 shell 配置文件中导出的变量。
 
+条目还可以调整服务的运行方式：`timeouts`，单位为秒（`setup_secs` 默认 90、
+`list_secs` 30、`request_secs` 180、`call_secs` 600）；`concurrency`（默认
+`serial`，可选 `read_only_parallel` 或 `parallel`）；`limits.output_text_bytes`
+（智能体从一次结果中得到的文本，默认 32768）；`lifecycle`、`tasks`，以及本地服务的
+`inherit_env`。本地服务默认获得 daemon 的全部环境变量；设为 `"inherit_env": false`
+后，只获得平台必需的变量（`PATH`、`HOME` 等）和它自己的 `env`。可以在 MCP 页面或用
+`anda mcp options` 修改。
+
 在终端中用 `anda mcp` 管理服务：
 
 ```bash
@@ -345,12 +353,31 @@ anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth 登录
 anda mcp tool github delete_repository --hide         # 不让智能体使用某个工具
 anda mcp secret set MCP_REMOTE_TOKEN                  # 另有 secret list、secret unset
 anda mcp disable context7                             # 另有 enable、remove、reconnect、logout
+anda mcp options github --call-timeout 900            # 高级设置；用 `default` 清除某项
+anda mcp import --dry-run                             # 其他应用里配置的服务
+anda mcp import github notes=work-notes --from cursor # 导入它们；不写名称则导入全部新服务
 ```
 
 Anda Desktop 和扩展仪表盘（`#mcp`）提供 MCP 页面，功能与 CLI 相同：每个服务的状态、
 最近错误和说明，工具及其审批策略和审查后的变化，登录，密钥（只写：保存后不再显示），
-以及“添加”对话框。添加时可以填 URL、命令，或粘贴其他应用的 JSON，先测试连接，并把
-其中的令牌存为密钥。
+高级设置，以及“添加”菜单：填 URL、命令，或粘贴其他应用的 JSON，保存前先测试连接，
+并把其中的令牌存为密钥；从其他应用导入；浏览官方 MCP Registry。在 Anda Desktop 中，
+`anda://mcp/install?name=<id>&config=<base64url JSON>` 链接会打开“添加”对话框，
+填入该配置并提示你先检查；在你点击添加之前不会保存任何内容。
+
+`anda mcp import` 和页面上的导入会读取 Claude Desktop、Claude Code（`~/.claude.json`）、
+Cursor、VS Code（以及 GitHub Copilot 的 CLI）、Windsurf 和 Codex（`~/.codex/config.toml`）
+的 MCP 设置，以及 Claude Code 记录的项目、当前目录或 daemon 工作区中的项目文件（`.mcp.json`、
+`.cursor/mcp.json`、`.vscode/mcp.json`）。这些文件只会被读取。
+每个服务都会显示导入后的结果：名称已被占用的会换一个名称导入，Anda 已经在运行的会被
+略过。导入时，请求头的值、令牌和密钥会转存为密钥（`--keep-plaintext` 则保留在
+`mcp.json` 中）；VS Code 的输入项和 daemon 没有的环境变量会变成待设置的密钥，导入时会
+询问它们的值；本地服务会设为 `"inherit_env": false`。
+
+MCP Registry 由 daemon 搜索，使用 daemon 的代理设置。安装服务时默认写入它的远程端点，
+因为这不会在你的电脑上运行任何程序；也可以选择它的 npm、PyPI、OCI（Docker）或 NuGet
+包，作为本地命令运行，且不获得 daemon 的全部环境变量。你为密钥字段填写的值会存入密钥库。
+Registry 只说明服务已经发布，并不代表它安全：在你放行之前，它的工具运行前仍会先询问。
 
 daemon 运行时，修改立即生效，连接失败的服务会在后台重试；daemon 未运行时，命令
 只修改 `mcp.json`，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因。修改

@@ -341,6 +341,15 @@ ready. Stdio servers get the same extended `PATH` as the shell tool, so `npx` an
 `uvx` are found even when the daemon runs as a login service, which does not see
 variables exported in your shell profile.
 
+An entry can also tune how its server runs: `timeouts` in seconds (`setup_secs`
+90, `list_secs` 30, `request_secs` 180, `call_secs` 600), `concurrency`
+(`serial`, the default, `read_only_parallel` or `parallel`),
+`limits.output_text_bytes` (the text the agent gets from one result, 32768 by
+default), `lifecycle`, `tasks`, and for a local server `inherit_env`. A local
+server gets the daemon's whole environment unless `"inherit_env": false`, which
+leaves it only the platform's essentials (`PATH`, `HOME` and the like) and its
+own `env`. Change them on the MCP page or with `anda mcp options`.
+
 Manage servers from the terminal with `anda mcp`:
 
 ```bash
@@ -352,14 +361,39 @@ anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in
 anda mcp tool github delete_repository --hide         # keep one tool from the agent
 anda mcp secret set MCP_REMOTE_TOKEN                  # also: secret list, secret unset
 anda mcp disable context7                             # also: enable, remove, reconnect, logout
+anda mcp options github --call-timeout 900            # advanced settings; `default` clears one
+anda mcp import --dry-run                             # servers set up in other apps
+anda mcp import github notes=work-notes --from cursor # import them; no names imports every new one
 ```
 
 Anda Desktop and the extension dashboard (`#mcp`) have an MCP page with the same
 controls: each server's status, last error and instructions, its tools with
 their approval policy and what changed since review, sign-in, secrets (write
-only: a value is never shown again), and an Add dialog that takes a URL, a
-command, or JSON pasted from another app, tests it, and stores the tokens in it
-as secrets.
+only: a value is never shown again), advanced settings, and an Add menu: a URL,
+a command, or JSON pasted from another app, tested before it is saved, with its
+tokens stored as secrets; an import from other apps; and the official MCP
+Registry. In Anda Desktop, an `anda://mcp/install?name=<id>&config=<base64url
+JSON>` link opens the Add dialog with that configuration and a warning to check
+it; nothing is saved until you add it.
+
+`anda mcp import` and the page's import read the MCP settings of Claude Desktop,
+Claude Code (`~/.claude.json`), Cursor, VS Code (and GitHub Copilot's CLI),
+Windsurf and Codex (`~/.codex/config.toml`), and the project files (`.mcp.json`,
+`.cursor/mcp.json`, `.vscode/mcp.json`) of the projects Claude Code knows and of
+the current directory or the daemon's workspace. Their files are only read. Each server is shown
+with what importing it does: a name that is taken is imported under another, and
+one Anda already runs is left out. On the way in, header values, tokens and keys
+move to secrets (`--keep-plaintext` keeps them in `mcp.json`); VS Code inputs and
+environment variables the daemon does not have become secrets to set, which the
+import asks for; and local servers get `"inherit_env": false`.
+
+The MCP Registry is searched through the daemon, with its proxy settings.
+Installing a server writes its remote endpoint by default, since that runs
+nothing on your computer, or one of its npm, PyPI, OCI (Docker) or NuGet
+packages as a local command without the daemon's whole environment; what you
+enter for a secret field goes to the secret store. The Registry shows only that
+a server was published, not that it is safe: its tools still ask before they
+run until you allow them.
 
 With the daemon running, a change applies at once and failed servers are retried
 in the background; without it, the command edits `mcp.json` and the change

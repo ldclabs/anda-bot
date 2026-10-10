@@ -2253,7 +2253,7 @@
     "message": "Хранить токены как секреты"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "Значения заголовков и окружения попадают в хранилище секретов, а в mcp.json остаётся только ссылка."
+    "message": "Значения заголовков, токены и ключи уходят в хранилище секретов, а в mcp.json остаётся только ссылка."
   },
   "mcpJsonInvalid": {
     "message": "Это не корректный JSON."
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "Добавлено: $1."
+  },
+  "mcpAddByHandDetail": {
+    "message": "Удалённый URL, локальная команда или вставленный JSON"
+  },
+  "mcpFromLink": {
+    "message": "Этот сервер пришёл по ссылке. Проверьте, к чему он подключается или что запускает, прежде чем тестировать или добавлять его."
+  },
+  "mcpImportTitle": {
+    "message": "Импорт из других приложений"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude, Cursor, VS Code, Windsurf и Codex"
+  },
+  "mcpImportDescription": {
+    "message": "MCP-серверы, настроенные в других приложениях на этом компьютере. Их файлы только читаются и никогда не изменяются."
+  },
+  "mcpImportNone": {
+    "message": "Настройки MCP других приложений на этом компьютере не найдены."
+  },
+  "mcpImportUnreadable": {
+    "message": "Не удалось прочитать: $1"
+  },
+  "mcpImportProject": {
+    "message": "Проект $1"
+  },
+  "mcpImportPick": {
+    "message": "Импортировать $1"
+  },
+  "mcpImportNew": {
+    "message": "Новый"
+  },
+  "mcpImportRenamed": {
+    "message": "Имя занято: будет импортирован как $1"
+  },
+  "mcpImportExists": {
+    "message": "Уже добавлен как $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "Тот же сервер, что и $1"
+  },
+  "mcpImportDuplicate": {
+    "message": "Тот же сервер, что и один из перечисленных выше"
+  },
+  "mcpImportInvalid": {
+    "message": "Импорт невозможен"
+  },
+  "mcpImportAs": {
+    "message": "Импортировать как"
+  },
+  "mcpImportPlaintext": {
+    "message": "Будут сохранены как секреты: $1"
+  },
+  "mcpImportSecrets": {
+    "message": "Секреты, нужные этим серверам"
+  },
+  "mcpImportSecretLater": {
+    "message": "Задайте сейчас или позже в разделе «Секреты»"
+  },
+  "mcpImportIsolated": {
+    "message": "Импортированные локальные серверы получают только необходимое из окружения демона и собственный env."
+  },
+  "mcpImportAction": {
+    "message": "Импортировать: $1"
+  },
+  "mcpImported": {
+    "message": "Импортировано: $1."
+  },
+  "mcpRegistryBrowse": {
+    "message": "Открыть MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "Серверы, опубликованные в официальном реестре"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "Серверы, опубликованные в официальном MCP Registry."
+  },
+  "mcpRegistrySearch": {
+    "message": "Поиск в Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "Подходящих серверов нет."
+  },
+  "mcpRegistryLoadMore": {
+    "message": "Показать ещё"
+  },
+  "mcpRegistryTrust": {
+    "message": "Registry показывает только то, что сервер опубликован, а не то, что он безопасен. Перед установкой проверьте, кто его публикует. Пока вы не разрешите его инструменты, они будут спрашивать перед запуском."
+  },
+  "mcpRegistryVersion": {
+    "message": "Версия $1"
+  },
+  "mcpRegistrySource": {
+    "message": "Исходный код"
+  },
+  "mcpRegistryWebsite": {
+    "message": "Сайт"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "Способ запуска"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "Удалённый · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "Локальный пакет $1 · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "Он использует транспорт SSE, который Anda не поддерживает."
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "Он работает как локальный веб-сервер, который Anda не умеет запускать."
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "Anda не умеет запускать такие пакеты. Установите его сами, затем добавьте его команду."
+  },
+  "mcpRegistryNothing": {
+    "message": "Anda не может запустить этот сервер ни одним из опубликованных способов."
+  },
+  "mcpRegistryRequired": {
+    "message": "Обязательно"
+  },
+  "mcpRegistrySecretField": {
+    "message": "Сохраняется как секрет"
+  },
+  "mcpRegistryMissing": {
+    "message": "Заполните: $1"
+  },
+  "mcpRegistryBack": {
+    "message": "Назад"
+  },
+  "mcpRegistryInstall": {
+    "message": "Установить"
+  },
+  "mcpSourceImport": {
+    "message": "Импортирован из другого приложения"
+  },
+  "mcpSourceRegistry": {
+    "message": "Из MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "Дополнительные настройки"
+  },
+  "mcpOptionsHelp": {
+    "message": "Сохраняются в записи этого сервера в mcp.json. Изменение, затрагивающее подключение, переподключает сервер."
+  },
+  "mcpOptionsUnavailable": {
+    "message": "Исправьте запись этого сервера в mcp.json, чтобы менять его дополнительные настройки."
+  },
+  "mcpOptionStartup": {
+    "message": "Поиск инструментов"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "После запуска демона (по умолчанию)"
+  },
+  "mcpOptionStartupEager": {
+    "message": "До готовности демона"
+  },
+  "mcpOptionLifecycle": {
+    "message": "Протокол"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "Определять (по умолчанию)"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "Только discovery"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "Старое рукопожатие"
+  },
+  "mcpOptionConcurrency": {
+    "message": "Инструменты одновременно"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "По одному (по умолчанию)"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "Только читающие вместе"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "Все вместе"
+  },
+  "mcpOptionTimeouts": {
+    "message": "Тайм-ауты, в секундах"
+  },
+  "mcpOptionSetup": {
+    "message": "Подключение"
+  },
+  "mcpOptionList": {
+    "message": "Список инструментов"
+  },
+  "mcpOptionRequest": {
+    "message": "Один запрос"
+  },
+  "mcpOptionCall": {
+    "message": "Весь вызов"
+  },
+  "mcpOptionOutput": {
+    "message": "Текст результата, в байтах"
+  },
+  "mcpOptionEnv": {
+    "message": "Окружение"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "Всё окружение демона (по умолчанию)"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "Только необходимое и его env"
+  },
+  "mcpOptionTasks": {
+    "message": "Долгие задачи"
+  },
+  "mcpOptionTasksOff": {
+    "message": "Выключены (по умолчанию)"
+  },
+  "mcpOptionTasksOn": {
+    "message": "Включены"
+  },
+  "mcpOptionTasksWait": {
+    "message": "Наибольшее ожидание, в секундах"
+  },
+  "mcpOptionsNumbers": {
+    "message": "Укажите целые числа или оставьте поле пустым для значения по умолчанию."
+  },
+  "mcpOptionsDefaults": {
+    "message": "По умолчанию"
+  },
+  "mcpOptionsSave": {
+    "message": "Сохранить настройки"
+  },
+  "mcpOptionsSaved": {
+    "message": "Настройки сохранены."
   }
 }

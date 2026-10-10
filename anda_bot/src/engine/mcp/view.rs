@@ -18,7 +18,9 @@ use super::{
     review::{self, McpReview},
     state::{MCP_STATE_FILE_NAME, McpErrorRecord, McpSource, McpStateStore, McpUsage},
 };
-use crate::config::{McpApproval, McpServerSettings, McpSettings, McpTransportSettings};
+use crate::config::{
+    McpApproval, McpServerOptions, McpServerSettings, McpSettings, McpTransportSettings,
+};
 
 /// A server's state as one word.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -68,6 +70,10 @@ pub(crate) struct McpServerView {
     pub persisted: bool,
     pub startup: McpStartup,
     pub source: McpSource,
+    /// The file an imported server came from, or the Registry entry of an
+    /// installed one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
     pub status: McpStatus,
     /// The approval policy of tools that have none of their own.
     pub approval: McpApproval,
@@ -91,6 +97,9 @@ pub(crate) struct McpServerView {
     pub usage: McpUsage,
     /// The mcp.json entry, redacted.
     pub settings: Value,
+    /// The advanced settings, for an entry that parses.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<McpServerOptions>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -410,6 +419,7 @@ impl ViewSource<'_> {
                 .and_then(|server| server.startup)
                 .unwrap_or(McpStartup::Background),
             source: state.source,
+            source_ref: state.source_ref.clone(),
             status,
             approval: settings
                 .and_then(|server| server.approval.default)
@@ -442,6 +452,7 @@ impl ViewSource<'_> {
             instructions_changed,
             usage: state.usage,
             settings: entry,
+            options: settings.map(McpServerSettings::options),
         }
     }
 
@@ -464,6 +475,7 @@ impl ViewSource<'_> {
             persisted: false,
             startup: McpStartup::Background,
             source: state.source,
+            source_ref: state.source_ref.clone(),
             status: McpStatus::NeedsAuth,
             approval: McpApproval::default(),
             allow_external_users: false,
@@ -480,6 +492,7 @@ impl ViewSource<'_> {
             instructions_changed: false,
             usage: state.usage,
             settings: json!({ "type": "http", "url": summary }),
+            options: None,
         }
     }
 }
@@ -522,7 +535,7 @@ fn live_status(status: McpServerStatus) -> McpStatus {
 }
 
 /// Transport, redacted summary and auth kind of a parsed entry.
-fn describe(transport: &McpTransportSettings) -> (&'static str, String, &'static str) {
+pub(super) fn describe(transport: &McpTransportSettings) -> (&'static str, String, &'static str) {
     match transport {
         McpTransportSettings::Stdio(stdio) => {
             ("stdio", command_line(&stdio.command, &stdio.args), "none")

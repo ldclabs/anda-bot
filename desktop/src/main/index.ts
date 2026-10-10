@@ -37,8 +37,10 @@ import {
   appPermissionAllowed,
   authorizeWorkspace,
   externalUrl,
+  mcpInstallLink,
   navigationSource,
-  rendererAssetPath
+  rendererAssetPath,
+  type McpInstallLink
 } from './policy'
 import { label, type Label } from '../renderer/labels'
 
@@ -96,6 +98,7 @@ let updater: DesktopUpdater
 let quitPrompt = false
 let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
+let pendingInstall: McpInstallLink | null = null
 let rendererReady = false
 let pendingMenuAction: MenuAction | null = null
 let reconnectTimer: NodeJS.Timeout | undefined
@@ -260,6 +263,14 @@ function show(): void {
   window?.focus()
 }
 function navigate(raw: string): void {
+  const install = mcpInstallLink(raw)
+  if (install) {
+    // The MCP page opens it in its add dialog once the renderer listens.
+    if (app.isReady()) show()
+    if (app.isReady() && rendererReady) emit({ type: 'mcp-install', value: install })
+    else pendingInstall = install
+    return
+  }
   const source = navigationSource(raw)
   if (!source) return
   pendingNavigation = source
@@ -735,6 +746,10 @@ async function setup(): Promise<void> {
     if (pendingMenuAction) {
       emit({ type: 'menu', value: pendingMenuAction })
       pendingMenuAction = null
+    }
+    if (pendingInstall) {
+      emit({ type: 'mcp-install', value: pendingInstall })
+      pendingInstall = null
     }
   })
   handle('anda:connect', () => connectNow())

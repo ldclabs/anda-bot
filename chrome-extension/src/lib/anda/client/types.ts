@@ -609,7 +609,9 @@ export interface McpServerView {
   /** In mcp.json; otherwise added for the running daemon only. */
   persisted: boolean
   startup: 'background' | 'eager'
-  source: 'file' | 'manual' | 'model'
+  source: 'file' | 'manual' | 'model' | 'import' | 'registry'
+  /** The file an imported server came from, or the Registry entry of an installed one. */
+  source_ref?: string
   status: McpStatus
   /** The policy of tools that have none of their own. */
   approval: McpApproval
@@ -623,6 +625,26 @@ export interface McpServerView {
   instructions_changed?: boolean
   usage?: McpUsage
   settings: Record<string, Json>
+  /** The advanced settings, for an entry that parses. */
+  options?: McpServerOptions
+}
+
+/** A server's advanced settings; each one left out takes its default. */
+export interface McpServerOptions {
+  startup?: 'background' | 'eager'
+  lifecycle?: 'auto' | 'discover' | 'initialize'
+  concurrency?: 'serial' | 'read_only_parallel' | 'parallel'
+  timeouts?: {
+    setup_secs?: number
+    list_secs?: number
+    request_secs?: number
+    call_secs?: number
+    elicitation_secs?: number
+  }
+  limits?: { output_text_bytes?: number }
+  /** Local servers only: the daemon's whole environment, or only the essentials and `env`. */
+  inherit_env?: boolean
+  tasks?: { max_wait_secs?: number }
 }
 
 export interface McpToolView {
@@ -662,6 +684,7 @@ export interface McpSnapshot {
 export interface McpReceipt {
   revision: string
   added?: string[]
+  imported?: string[]
   removed?: string[]
   rebuilt?: string[]
   connected?: string[]
@@ -698,7 +721,14 @@ export interface McpSecretView {
 export type McpEntry = { id: string } & Record<string, Json>
 
 export type McpChange =
-  | { op: 'add'; server: McpEntry; persist?: boolean }
+  | {
+      op: 'add'
+      server: McpEntry
+      persist?: boolean
+      /** `registry` with the Registry name and version it was installed from. */
+      source?: 'manual' | 'registry'
+      source_ref?: string
+    }
   | { op: 'update'; server: McpEntry }
   | { op: 'remove'; id: string; keep_credentials?: boolean }
   | { op: 'set_enabled'; id: string; enabled: boolean }
@@ -707,6 +737,113 @@ export type McpChange =
   | { op: 'set_external_users'; id: string; allowed: boolean }
   | { op: 'mark_reviewed'; id: string; tools?: string[] }
   | { op: 'set_secret'; name: string; value: string | null }
+  | { op: 'set_options'; id: string; options: McpServerOptions }
+
+/** A client whose MCP configuration can be imported. */
+export type McpImportSource =
+  'claude_desktop' | 'claude_code' | 'cursor' | 'vscode' | 'windsurf' | 'codex'
+
+/** What importing a server would do; see the daemon's `McpImportStatus`. */
+export type McpImportStatus = 'new' | 'renamed' | 'exists' | 'duplicate' | 'invalid'
+
+/** A server found in another client's configuration, redacted. */
+export interface McpImportCandidate {
+  key: string
+  source: McpImportSource
+  path: string
+  project?: string
+  /** Its name in that file. */
+  name: string
+  /** The id it is imported as. */
+  id: string
+  status: McpImportStatus
+  existing_id?: string
+  duplicate_of?: string
+  transport: 'stdio' | 'http' | 'unknown'
+  summary: string
+  enabled: boolean
+  settings: Record<string, Json>
+  /** Fields whose plaintext values would move to secrets. */
+  plaintext?: string[]
+  /** Secrets it references that are not set yet. */
+  needs_secrets?: { name: string; description: string }[]
+  warnings?: string[]
+  error?: string
+}
+
+export interface McpImportScan {
+  files: {
+    source: McpImportSource
+    path: string
+    project?: string
+    servers: number
+    error?: string
+  }[]
+  candidates: McpImportCandidate[]
+}
+
+export interface McpImportRequest {
+  items: { key: string; id?: string }[]
+  /** Values for the secrets the servers need. */
+  secrets?: Record<string, string>
+  /** Move plaintext tokens to secrets (the default). */
+  store_secrets?: boolean
+  workspaces?: string[]
+  expected_revision?: string
+}
+
+/** An input of a Registry `server.json`: a header, an environment variable or an argument. */
+export interface McpRegistryInput {
+  name?: string
+  type?: 'positional' | 'named'
+  description?: string
+  value?: string
+  default?: string
+  choices?: string[]
+  format?: string
+  valueHint?: string
+  isRequired?: boolean
+  isSecret?: boolean
+  isRepeated?: boolean
+  variables?: Record<string, McpRegistryInput>
+}
+
+export interface McpRegistryRemote {
+  type: string
+  url: string
+  headers?: McpRegistryInput[]
+  variables?: Record<string, McpRegistryInput>
+}
+
+export interface McpRegistryPackage {
+  registryType: string
+  registryBaseUrl?: string
+  identifier: string
+  version?: string
+  runtimeHint?: string
+  fileSha256?: string
+  transport?: { type: string; url?: string }
+  runtimeArguments?: McpRegistryInput[]
+  packageArguments?: McpRegistryInput[]
+  environmentVariables?: McpRegistryInput[]
+}
+
+/** A server as the MCP Registry publishes it (`server.json`). */
+export interface McpRegistryServer {
+  name: string
+  title?: string
+  description?: string
+  version?: string
+  websiteUrl?: string
+  repository?: { url?: string; source?: string; subfolder?: string }
+  remotes?: McpRegistryRemote[]
+  packages?: McpRegistryPackage[]
+}
+
+export interface McpRegistryPage {
+  servers: McpRegistryServer[]
+  next_cursor?: string
+}
 
 export interface McpSignIn {
   status: 'connected' | 'authorization_required'

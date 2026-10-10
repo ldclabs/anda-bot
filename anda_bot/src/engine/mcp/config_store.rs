@@ -15,7 +15,10 @@ use tokio::sync::Mutex;
 
 use super::McpError;
 use crate::{
-    config::{McpApproval, McpOAuthSettings, McpServerSettings, McpSettings, McpTransportSettings},
+    config::{
+        McpApproval, McpOAuthSettings, McpServerOptions, McpServerSettings, McpSettings,
+        McpTimeoutSettings, McpTransportSettings,
+    },
     engine::{backup_daemon_config, daemon_config_revision, write_daemon_config_atomically},
     util::text::read_text_file,
 };
@@ -44,6 +47,10 @@ const ENTRY_FIELDS: &[&str] = &[
     "tasks",
     "approval",
     "allow_external_users",
+    "inherit_env",
+    "timeouts",
+    "concurrency",
+    "limits",
 ];
 
 /// Fields of an entry in the older list form.
@@ -58,6 +65,9 @@ const LIST_ENTRY_FIELDS: &[&str] = &[
     "tasks",
     "approval",
     "allow_external_users",
+    "timeouts",
+    "concurrency",
+    "limits",
 ];
 
 /// mcp.json as it was read.
@@ -106,6 +116,9 @@ impl McpConfigFile {
 pub(crate) enum McpFileEdit<'a> {
     /// Adds a server; refused when the id is already declared.
     Add(&'a McpServerSettings),
+    /// Adds servers together; refused when any of their ids is declared, or
+    /// used twice among them.
+    AddAll(&'a [McpServerSettings]),
     /// Replaces the fields Anda reads of an existing entry.
     Replace(&'a McpServerSettings),
     /// Removes every entry declaring the id.
@@ -127,6 +140,9 @@ pub(crate) enum McpFileEdit<'a> {
         approval: Option<McpApproval>,
     },
     SetExternalUsers(&'a str, bool),
+    /// Replaces the advanced settings, keeping what Anda does not read
+    /// inside `timeouts` and `limits`.
+    SetOptions(&'a str, &'a McpServerOptions),
 }
 
 /// Reads mcp.json, applies `edit`, and writes the result atomically, backing
@@ -172,15 +188,8 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
     }
 
     match edit {
-        McpFileEdit::Add(server) => {
-            if McpSettings::from_json_contents(content)?.declares(&server.id) {
-                return Err(McpError::already_exists(format!(
-                    "MCP server {} already exists in mcp.json",
-                    server.id
-                )));
-            }
-            add_entry(&mut root, server)?;
-        }
+        McpFileEdit::Add(server) => add_entries(&mut root, content, std::slice::from_ref(server))?,
+        McpFileEdit::AddAll(servers) => add_entries(&mut root, content, servers)?,
         McpFileEdit::Replace(server) => {
             let (entry, form) = entry_mut(&mut root, &server.id)?;
             let mut next = match form {
@@ -292,11 +301,79 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
                 entry.remove("allow_external_users");
             }
         }
+        McpFileEdit::SetOptions(id, options) => {
+            let (entry, form) = entry_mut(&mut root, id)?;
+            for (key, value) in [
+                ("startup", options.startup.map(|v| json!(v))),
+                ("lifecycle", options.lifecycle.map(|v| json!(v))),
+                ("concurrency", options.concurrency.map(|v| json!(v))),
+                ("tasks", options.tasks.as_ref().map(|v| json!(v))),
+            ] {
+                set_or_remove_value(entry, key, value);
+            }
+            let timeouts = &options.timeouts;
+            merge_fields(
+                entry,
+                "timeouts",
+                McpTimeoutSettings::FIELDS.iter().zip([
+                    timeouts.setup_secs,
+                    timeouts.list_secs,
+                    timeouts.request_secs,
+                    timeouts.call_secs,
+                    timeouts.elicitation_secs,
+                ]),
+            );
+            merge_fields(
+                entry,
+                "limits",
+                [(&"output_text_bytes", options.limits.output_text_bytes)].into_iter(),
+            );
+            // The older list form nests the transport fields.
+            let transport = match (form, entry.get_mut("transport")) {
+                (Form::List, Some(Value::Object(transport))) => transport,
+                _ => entry,
+            };
+            set_or_remove_value(
+                transport,
+                "inherit_env",
+                options.inherit_env.map(|v| json!(v)),
+            );
+        }
     }
 
     let mut content = serde_json::to_string_pretty(&root)?;
     content.push('\n');
     Ok(content)
+}
+
+fn set_or_remove_value(object: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    match value {
+        Some(value) => {
+            object.insert(key.to_string(), value);
+        }
+        None => {
+            object.remove(key);
+        }
+    }
+}
+
+/// Sets or removes the named fields of the object at `key`, keeping its
+/// other fields, and drops the object once it is empty.
+fn merge_fields<'k, T: serde::Serialize>(
+    entry: &mut Map<String, Value>,
+    key: &str,
+    fields: impl Iterator<Item = (&'k &'k str, Option<T>)>,
+) {
+    let mut object = match entry.remove(key) {
+        Some(Value::Object(object)) => object,
+        _ => Map::new(),
+    };
+    for (field, value) in fields {
+        set_or_remove_value(&mut object, field, value.map(|v| json!(v)));
+    }
+    if !object.is_empty() {
+        entry.insert(key.to_string(), Value::Object(object));
+    }
 }
 
 fn set_or_remove(object: &mut Map<String, Value>, key: &str, approval: Option<McpApproval>) {
@@ -373,6 +450,9 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
             if let Some(cwd) = &stdio.cwd {
                 object.insert("cwd".into(), json!(cwd));
             }
+            if let Some(inherit_env) = stdio.inherit_env {
+                object.insert("inherit_env".into(), json!(inherit_env));
+            }
         }
         McpTransportSettings::StreamableHttp(http) => {
             object.insert("type".into(), json!("http"));
@@ -419,6 +499,15 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
     if server.allow_external_users {
         object.insert("allow_external_users".into(), json!(true));
     }
+    if !server.timeouts.is_empty() {
+        object.insert("timeouts".into(), json!(server.timeouts));
+    }
+    if let Some(concurrency) = server.concurrency {
+        object.insert("concurrency".into(), json!(concurrency));
+    }
+    if !server.limits.is_empty() {
+        object.insert("limits".into(), json!(server.limits));
+    }
     object
 }
 
@@ -435,6 +524,28 @@ fn list_entry_json(server: &McpServerSettings) -> Result<Map<String, Value>, Box
         Value::Object(object) => Ok(object),
         _ => Err("MCP server settings must serialize to an object".into()),
     }
+}
+
+/// Adds `servers` after checking that none of their ids is taken.
+fn add_entries(
+    root: &mut Value,
+    content: &str,
+    servers: &[McpServerSettings],
+) -> Result<(), BoxError> {
+    let declared = McpSettings::from_json_contents(content)?;
+    let mut ids = BTreeSet::new();
+    for server in servers {
+        if declared.declares(&server.id) || !ids.insert(server.id.as_str()) {
+            return Err(McpError::already_exists(format!(
+                "MCP server {} already exists in mcp.json",
+                server.id
+            )));
+        }
+    }
+    for server in servers {
+        add_entry(root, server)?;
+    }
+    Ok(())
 }
 
 fn add_entry(root: &mut Value, server: &McpServerSettings) -> Result<(), BoxError> {
@@ -579,6 +690,70 @@ mod tests {
     }
 
     #[test]
+    fn options_edit_their_fields_and_keep_the_rest() {
+        let content = r#"{"mcpServers":{"docs":{"url":"https://x.test/mcp","startup":"eager","limits":{"schema_bytes":1}}},
+            "servers":[{"id":"tool","transport":{"type":"stdio","command":"t"}}]}"#;
+        let options: McpServerOptions = serde_json::from_value(json!({
+            "lifecycle": "initialize",
+            "concurrency": "parallel",
+            "timeouts": { "setup_secs": 10, "request_secs": 20 },
+            "limits": { "output_text_bytes": 4096 }
+        }))
+        .unwrap();
+        let json = edited(content, McpFileEdit::SetOptions("docs", &options));
+        assert_eq!(
+            json["mcpServers"]["docs"],
+            json!({
+                "url": "https://x.test/mcp",
+                "lifecycle": "initialize",
+                "concurrency": "parallel",
+                "timeouts": { "setup_secs": 10, "request_secs": 20 },
+                "limits": { "schema_bytes": 1, "output_text_bytes": 4096 }
+            })
+        );
+        // The older list form keeps the environment with its transport.
+        let options: McpServerOptions =
+            serde_json::from_value(json!({ "inherit_env": false })).unwrap();
+        let json = edited(content, McpFileEdit::SetOptions("tool", &options));
+        assert_eq!(json["servers"][0]["transport"]["inherit_env"], false);
+        let settings = McpSettings::from_json_contents(&json.to_string()).unwrap();
+        assert_eq!(settings.servers[1].options().inherit_env, Some(false));
+    }
+
+    #[test]
+    fn adding_several_refuses_any_taken_or_repeated_id() {
+        let content = r#"{"mcpServers":{"docs":{"url":"https://x.test/mcp"}}}"#;
+        let added = edited(
+            content,
+            McpFileEdit::AddAll(&[
+                http("a", "https://a.test/mcp"),
+                http("b", "https://b.test/mcp"),
+            ]),
+        );
+        assert_eq!(
+            added["mcpServers"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["docs", "a", "b"]
+        );
+        for servers in [
+            vec![
+                http("a", "https://a.test/mcp"),
+                http("docs", "https://d.test/mcp"),
+            ],
+            vec![
+                http("a", "https://a.test/mcp"),
+                http("a", "https://b.test/mcp"),
+            ],
+        ] {
+            let err = apply_edit(content, McpFileEdit::AddAll(&servers)).unwrap_err();
+            assert!(err.to_string().contains("already exists"), "{err}");
+        }
+    }
+
+    #[test]
     fn add_refuses_an_id_a_skipped_entry_owns_and_a_non_object_root() {
         let broken = r#"{"mcpServers":{"github":{"command":"gh","lifecycle":"handshake"}}}"#;
         let err = apply_edit(
@@ -604,10 +779,11 @@ mod tests {
             .approval
             .tools
             .insert("search".into(), McpApproval::Allow);
+        server.timeouts.setup_secs = Some(30);
         let json = edited(content, McpFileEdit::Replace(&server));
         let entry = &json["mcpServers"]["docs"];
         assert_eq!(entry["url"], "https://new.test/mcp");
-        assert_eq!(entry["timeouts"]["call_secs"], 600);
+        assert_eq!(entry["timeouts"], json!({ "setup_secs": 30 }));
         assert_eq!(entry["description"], "Docs");
         // The policy is a field Anda reads, so it is the one replaced with.
         assert_eq!(entry["approval"], json!({ "tools": { "search": "allow" } }));

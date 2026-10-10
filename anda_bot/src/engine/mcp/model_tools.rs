@@ -163,6 +163,9 @@ fn server_settings(args: AddMcpServerArgs) -> Result<McpServerSettings, BoxError
         // The agent cannot choose how its own calls are approved.
         approval: Default::default(),
         allow_external_users: false,
+        timeouts: Default::default(),
+        concurrency: None,
+        limits: Default::default(),
     };
     let issues = server.setup_issues();
     if !issues.is_empty() {
@@ -336,6 +339,7 @@ fn stdio_transport(
         args,
         env: normalize_string_map("env", env)?,
         cwd: cwd.and_then(|cwd| normalize_string(&cwd)),
+        inherit_env: None,
     }))
 }
 

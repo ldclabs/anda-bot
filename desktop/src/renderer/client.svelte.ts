@@ -68,6 +68,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   activeChannel = $state<Channel | null>(null)
   modelState = $state<ModelState>({ activeModel: null, modelNames: [] })
   view = $state('chat')
+  /** A server an `anda://mcp/install` link offered, waiting for the MCP page to show it. */
+  mcpInstall = $state<{ name: string; config: string } | null>(null)
   jumpMessage = $state('')
   incomingDraft = $state<{
     id: string
@@ -250,7 +252,10 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         if (this.ready) void this.restoreReceipts()
       } else if (event.type === 'navigate' && typeof event.value === 'string')
         void this.switchChannel(event.value)
-      else if (event.type === 'menu') {
+      else if (event.type === 'mcp-install' && event.value) {
+        this.mcpInstall = event.value as { name: string; config: string }
+        this.view = 'mcp'
+      } else if (event.type === 'menu') {
         if (event.value === 'new-chat') this.newChat()
         if (event.value === 'settings') this.view = 'settings'
         if (event.value === 'updates') this.updateDialogOpen = true

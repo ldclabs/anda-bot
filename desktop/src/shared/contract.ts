@@ -99,6 +99,7 @@ export interface PendingSubmission {
 export interface NativeEvent {
   type:
     | 'navigate'
+    | 'mcp-install'
     | 'connection'
     | 'menu'
     | 'update'

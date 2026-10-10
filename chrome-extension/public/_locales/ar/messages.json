@@ -2253,7 +2253,7 @@
     "message": "حفظ الرموز المميزة كأسرار"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "تذهب قيم الترويسات والبيئة إلى مخزن الأسرار، ولا يحتفظ mcp.json إلا بإشارة إليها."
+    "message": "تذهب قيم الترويسات والرموز المميزة والمفاتيح إلى مخزن الأسرار، ولا يحتفظ mcp.json إلا بإشارة إليها."
   },
   "mcpJsonInvalid": {
     "message": "هذا ليس JSON صالحًا."
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "تمت إضافة $1."
+  },
+  "mcpAddByHandDetail": {
+    "message": "عنوان URL بعيد أو أمر محلي أو JSON ملصق"
+  },
+  "mcpFromLink": {
+    "message": "جاء هذا الخادم من رابط. تحقق مما يتصل به أو يشغّله قبل أن تختبره أو تضيفه."
+  },
+  "mcpImportTitle": {
+    "message": "استيراد من تطبيقات أخرى"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude وCursor وVS Code وWindsurf وCodex"
+  },
+  "mcpImportDescription": {
+    "message": "خوادم MCP المُعدّة في تطبيقات أخرى على هذا الحاسوب. تُقرأ ملفاتها فقط ولا تُغيَّر أبدًا."
+  },
+  "mcpImportNone": {
+    "message": "لم يُعثر على إعدادات MCP لتطبيقات أخرى على هذا الحاسوب."
+  },
+  "mcpImportUnreadable": {
+    "message": "تعذرت القراءة: $1"
+  },
+  "mcpImportProject": {
+    "message": "المشروع $1"
+  },
+  "mcpImportPick": {
+    "message": "استيراد $1"
+  },
+  "mcpImportNew": {
+    "message": "جديد"
+  },
+  "mcpImportRenamed": {
+    "message": "الاسم مستخدم: يُستورد باسم $1"
+  },
+  "mcpImportExists": {
+    "message": "مضاف بالفعل باسم $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "الخادم نفسه مثل $1"
+  },
+  "mcpImportDuplicate": {
+    "message": "الخادم نفسه مثل أحد الخوادم أعلاه"
+  },
+  "mcpImportInvalid": {
+    "message": "لا يمكن استيراده"
+  },
+  "mcpImportAs": {
+    "message": "الاستيراد باسم"
+  },
+  "mcpImportPlaintext": {
+    "message": "ستُحفظ كأسرار: $1"
+  },
+  "mcpImportSecrets": {
+    "message": "الأسرار التي تحتاجها هذه الخوادم"
+  },
+  "mcpImportSecretLater": {
+    "message": "عيّنه الآن، أو لاحقًا من الأسرار"
+  },
+  "mcpImportIsolated": {
+    "message": "لا تحصل الخوادم المحلية المستوردة إلا على الأساسيات من بيئة العملية الخلفية وعلى env الخاص بها."
+  },
+  "mcpImportAction": {
+    "message": "استيراد $1"
+  },
+  "mcpImported": {
+    "message": "تم استيراد $1."
+  },
+  "mcpRegistryBrowse": {
+    "message": "تصفح MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "خوادم منشورة في السجل الرسمي"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "خوادم منشورة في MCP Registry الرسمي."
+  },
+  "mcpRegistrySearch": {
+    "message": "البحث في Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "لا توجد خوادم مطابقة."
+  },
+  "mcpRegistryLoadMore": {
+    "message": "تحميل المزيد"
+  },
+  "mcpRegistryTrust": {
+    "message": "يُظهر Registry أن الخادم منشور، لا أنه آمن. تحقق من ناشره قبل تثبيته. تسأل أدواته قبل التشغيل إلى أن تسمح بها."
+  },
+  "mcpRegistryVersion": {
+    "message": "الإصدار $1"
+  },
+  "mcpRegistrySource": {
+    "message": "الشفرة المصدرية"
+  },
+  "mcpRegistryWebsite": {
+    "message": "الموقع"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "طريقة التشغيل"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "بعيد · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "حزمة $1 محلية · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "يستخدم نقل SSE، الذي لا يدعمه Anda."
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "يعمل كخادم ويب محلي، ولا يستطيع Anda تشغيله."
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "لا يستطيع Anda تشغيل هذا النوع من الحزم. ثبّتها بنفسك، ثم أضف أمرها."
+  },
+  "mcpRegistryNothing": {
+    "message": "لا يستطيع Anda تشغيل هذا الخادم بأي من الطرق التي نُشر بها."
+  },
+  "mcpRegistryRequired": {
+    "message": "مطلوب"
+  },
+  "mcpRegistrySecretField": {
+    "message": "يُحفظ كسر"
+  },
+  "mcpRegistryMissing": {
+    "message": "املأ: $1"
+  },
+  "mcpRegistryBack": {
+    "message": "رجوع"
+  },
+  "mcpRegistryInstall": {
+    "message": "تثبيت"
+  },
+  "mcpSourceImport": {
+    "message": "مستورد من تطبيق آخر"
+  },
+  "mcpSourceRegistry": {
+    "message": "من MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "إعدادات متقدمة"
+  },
+  "mcpOptionsHelp": {
+    "message": "تُحفظ في مُدخل هذا الخادم في mcp.json. التغيير الذي يمس الاتصال يعيد توصيل الخادم."
+  },
+  "mcpOptionsUnavailable": {
+    "message": "أصلح مُدخل هذا الخادم في mcp.json لتغيير إعداداته المتقدمة."
+  },
+  "mcpOptionStartup": {
+    "message": "اكتشاف الأدوات"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "بعد بدء العملية الخلفية (افتراضي)"
+  },
+  "mcpOptionStartupEager": {
+    "message": "قبل جاهزية العملية الخلفية"
+  },
+  "mcpOptionLifecycle": {
+    "message": "البروتوكول"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "اكتشاف تلقائي (افتراضي)"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "الاكتشاف فقط"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "المصافحة القديمة"
+  },
+  "mcpOptionConcurrency": {
+    "message": "الأدوات في وقت واحد"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "واحدة في كل مرة (افتراضي)"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "أدوات القراءة فقط معًا"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "كلها معًا"
+  },
+  "mcpOptionTimeouts": {
+    "message": "المهل، بالثواني"
+  },
+  "mcpOptionSetup": {
+    "message": "الاتصال"
+  },
+  "mcpOptionList": {
+    "message": "سرد الأدوات"
+  },
+  "mcpOptionRequest": {
+    "message": "طلب واحد"
+  },
+  "mcpOptionCall": {
+    "message": "الاستدعاء كاملًا"
+  },
+  "mcpOptionOutput": {
+    "message": "نص النتيجة، بالبايت"
+  },
+  "mcpOptionEnv": {
+    "message": "البيئة"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "بيئة العملية الخلفية كاملة (افتراضي)"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "الأساسيات وenv الخاص به فقط"
+  },
+  "mcpOptionTasks": {
+    "message": "المهام الطويلة"
+  },
+  "mcpOptionTasksOff": {
+    "message": "متوقفة (افتراضي)"
+  },
+  "mcpOptionTasksOn": {
+    "message": "مفعّلة"
+  },
+  "mcpOptionTasksWait": {
+    "message": "أطول انتظار، بالثواني"
+  },
+  "mcpOptionsNumbers": {
+    "message": "استخدم أعدادًا صحيحة، أو اترك الحقل فارغًا لقيمته الافتراضية."
+  },
+  "mcpOptionsDefaults": {
+    "message": "استخدام الافتراضي"
+  },
+  "mcpOptionsSave": {
+    "message": "حفظ الإعدادات"
+  },
+  "mcpOptionsSaved": {
+    "message": "تم حفظ الإعدادات."
   }
 }

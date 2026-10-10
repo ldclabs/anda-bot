@@ -1,7 +1,8 @@
 use anda_core::BoxError;
 use anda_engine::extension::mcp::{
-    McpLifecycle, McpOAuthConfig, McpServerConfig, McpStartup, McpStdioTransport,
-    McpStreamableHttpTransport, McpTasksConfig, McpTransportConfig, OAuthAuthorizationCodeConfig,
+    McpConcurrency, McpLifecycle, McpLimits, McpOAuthConfig, McpServerConfig, McpStartup,
+    McpStdioTransport, McpStreamableHttpTransport, McpTasksConfig, McpTimeouts, McpTransportConfig,
+    OAuthAuthorizationCodeConfig,
 };
 use http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -250,6 +251,14 @@ struct McpJsonServer {
     approval: Option<McpJsonApproval>,
     #[serde(default)]
     allow_external_users: bool,
+    #[serde(default)]
+    inherit_env: Option<bool>,
+    #[serde(default)]
+    timeouts: McpTimeoutSettings,
+    #[serde(default)]
+    concurrency: Option<String>,
+    #[serde(default)]
+    limits: McpLimitSettings,
 }
 
 impl McpJsonServer {
@@ -273,6 +282,10 @@ impl McpJsonServer {
             tasks,
             approval,
             allow_external_users,
+            inherit_env,
+            timeouts,
+            concurrency,
+            limits,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
@@ -303,6 +316,20 @@ impl McpJsonServer {
                 .into());
             }
         };
+        let concurrency = match normalized_mode(concurrency).as_deref() {
+            None => None,
+            Some("serial") => Some(McpConcurrency::Serial),
+            Some("read_only_parallel") | Some("read-only-parallel") => {
+                Some(McpConcurrency::ReadOnlyParallel)
+            }
+            Some("parallel") => Some(McpConcurrency::Parallel),
+            Some(other) => {
+                return Err(format!(
+                    "concurrency has unsupported value {other:?}, expected serial, read_only_parallel, or parallel"
+                )
+                .into());
+            }
+        };
         let is_set =
             |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
         let stdio = match normalized_mode(transport_type).as_deref() {
@@ -326,8 +353,12 @@ impl McpJsonServer {
                 args,
                 env,
                 cwd,
+                inherit_env,
             })
         } else {
+            if inherit_env.is_some() {
+                return Err("inherit_env is only for local (stdio) servers".into());
+            }
             McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
                 url: url.unwrap_or_default(),
                 bearer_token,
@@ -347,6 +378,9 @@ impl McpJsonServer {
             tasks,
             approval,
             allow_external_users,
+            timeouts,
+            concurrency,
+            limits,
         })
     }
 }
@@ -401,6 +435,124 @@ pub struct McpServerSettings {
     /// they can only use the owner's servers that allow it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_external_users: bool,
+    /// Deadlines that override the engine's, in seconds.
+    #[serde(default, skip_serializing_if = "McpTimeoutSettings::is_empty")]
+    pub timeouts: McpTimeoutSettings,
+    /// Which of the server's tools may run at the same time. Absent runs
+    /// them one at a time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<McpConcurrency>,
+    /// Bounds that override the engine's.
+    #[serde(default, skip_serializing_if = "McpLimitSettings::is_empty")]
+    pub limits: McpLimitSettings,
+}
+
+/// The longest a timeout may be: a day, as the engine allows.
+const MAX_TIMEOUT_SECS: u64 = 86_400;
+/// The bounds of `limits.output_text_bytes`: the engine needs at least 256
+/// bytes, and more than a megabyte of text in one result floods the model.
+const MIN_OUTPUT_TEXT_BYTES: usize = 256;
+const MAX_OUTPUT_TEXT_BYTES: usize = 1024 * 1024;
+
+/// Timeouts in seconds; each one left out keeps the engine's default.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct McpTimeoutSettings {
+    /// Connecting, including sign-in and protocol negotiation (90).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_secs: Option<u64>,
+    /// Listing the server's tools (30).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_secs: Option<u64>,
+    /// One request within a tool call (180).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_secs: Option<u64>,
+    /// A whole tool call, including waiting for a task (600).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_secs: Option<u64>,
+    /// One elicitation answer (300). Anda does not answer elicitations yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elicitation_secs: Option<u64>,
+}
+
+impl McpTimeoutSettings {
+    /// The JSON keys of the timeouts, as mcp.json writes them.
+    pub const FIELDS: [&'static str; 5] = [
+        "setup_secs",
+        "list_secs",
+        "request_secs",
+        "call_secs",
+        "elicitation_secs",
+    ];
+
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn values(&self) -> [Option<u64>; 5] {
+        [
+            self.setup_secs,
+            self.list_secs,
+            self.request_secs,
+            self.call_secs,
+            self.elicitation_secs,
+        ]
+    }
+
+    fn to_timeouts(&self) -> McpTimeouts {
+        let defaults = McpTimeouts::default();
+        McpTimeouts {
+            setup_secs: self.setup_secs.unwrap_or(defaults.setup_secs),
+            list_secs: self.list_secs.unwrap_or(defaults.list_secs),
+            request_secs: self.request_secs.unwrap_or(defaults.request_secs),
+            call_secs: self.call_secs.unwrap_or(defaults.call_secs),
+            elicitation_secs: self.elicitation_secs.unwrap_or(defaults.elicitation_secs),
+        }
+    }
+}
+
+/// Bounds on what the server sends; each one left out keeps the engine's.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct McpLimitSettings {
+    /// Text the model gets from one tool result, in bytes (32 KiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_text_bytes: Option<usize>,
+}
+
+impl McpLimitSettings {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn to_limits(&self) -> McpLimits {
+        let mut limits = McpLimits::default();
+        if let Some(bytes) = self.output_text_bytes {
+            limits.output_text_bytes = bytes;
+        }
+        limits
+    }
+}
+
+/// The advanced settings of a server, as the MCP page and `anda mcp options`
+/// set them together. Each one left out takes its default.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpServerOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup: Option<McpStartup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<McpLifecycle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<McpConcurrency>,
+    #[serde(default, skip_serializing_if = "McpTimeoutSettings::is_empty")]
+    pub timeouts: McpTimeoutSettings,
+    #[serde(default, skip_serializing_if = "McpLimitSettings::is_empty")]
+    pub limits: McpLimitSettings,
+    /// Local servers only: whether the process gets the daemon's whole
+    /// environment (the default) or only the platform's essentials and `env`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherit_env: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<McpTasksConfig>,
 }
 
 /// When the agent asks before it calls a tool.
@@ -504,7 +656,70 @@ impl McpServerSettings {
         }
         self.transport
             .setup_issues(&McpExpansionVars::validation(), &mut issues);
+        for (field, value) in McpTimeoutSettings::FIELDS
+            .iter()
+            .zip(self.timeouts.values())
+        {
+            if value.is_some_and(|secs| !(1..=MAX_TIMEOUT_SECS).contains(&secs)) {
+                issues.push(format!(
+                    "timeouts.{field} must be between 1 and {MAX_TIMEOUT_SECS} seconds"
+                ));
+            }
+        }
+        if self
+            .limits
+            .output_text_bytes
+            .is_some_and(|bytes| !(MIN_OUTPUT_TEXT_BYTES..=MAX_OUTPUT_TEXT_BYTES).contains(&bytes))
+        {
+            issues.push(format!(
+                "limits.output_text_bytes must be between {MIN_OUTPUT_TEXT_BYTES} and {MAX_OUTPUT_TEXT_BYTES}"
+            ));
+        }
         issues
+    }
+
+    /// The advanced settings of this server.
+    pub fn options(&self) -> McpServerOptions {
+        McpServerOptions {
+            startup: self.startup,
+            lifecycle: self.lifecycle,
+            concurrency: self.concurrency,
+            timeouts: self.timeouts.clone(),
+            limits: self.limits.clone(),
+            inherit_env: match &self.transport {
+                McpTransportSettings::Stdio(stdio) => stdio.inherit_env,
+                McpTransportSettings::StreamableHttp(_) => None,
+            },
+            tasks: self.tasks.clone(),
+        }
+    }
+
+    /// Replaces the advanced settings. `inherit_env` is refused for a remote
+    /// server, which runs no process.
+    pub fn set_options(&mut self, options: McpServerOptions) -> Result<(), BoxError> {
+        let McpServerOptions {
+            startup,
+            lifecycle,
+            concurrency,
+            timeouts,
+            limits,
+            inherit_env,
+            tasks,
+        } = options;
+        match &mut self.transport {
+            McpTransportSettings::Stdio(stdio) => stdio.inherit_env = inherit_env,
+            McpTransportSettings::StreamableHttp(_) if inherit_env.is_some() => {
+                return Err("inherit_env is only for local (stdio) servers".into());
+            }
+            McpTransportSettings::StreamableHttp(_) => {}
+        }
+        self.startup = startup;
+        self.lifecycle = lifecycle;
+        self.concurrency = concurrency;
+        self.timeouts = timeouts;
+        self.limits = limits;
+        self.tasks = tasks;
+        Ok(())
     }
 
     /// Builds the engine config, expanding environment and secret references.
@@ -522,9 +737,9 @@ impl McpServerSettings {
             exclude: self.exclude.clone(),
             lifecycle: self.lifecycle.unwrap_or_default(),
             tasks: self.tasks.clone(),
-            limits: Default::default(),
-            timeouts: Default::default(),
-            concurrency: Default::default(),
+            limits: self.limits.to_limits(),
+            timeouts: self.timeouts.to_timeouts(),
+            concurrency: self.concurrency.unwrap_or_default(),
             // Never `required`: an unreachable server must not stop the daemon.
             required: false,
             // Discovery waits until after startup unless the entry asks for
@@ -620,6 +835,12 @@ pub struct McpStdioSettings {
     /// Optional working directory. Relative paths are rooted under ANDA_HOME.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Whether the process gets the daemon's whole environment, which is the
+    /// default. Off, it gets only the platform's essentials (PATH, HOME and
+    /// the like) and `env`, so no other secret in the daemon's environment
+    /// reaches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherit_env: Option<bool>,
 }
 
 impl McpStdioSettings {
@@ -682,9 +903,9 @@ impl McpStdioSettings {
                 })
                 .collect::<Result<_, _>>()?,
             env,
-            // Preserve Bot's existing stdio environment inheritance; `env`
-            // contains overrides, not a complete child environment.
-            inherit_env: true,
+            // On unless the entry turns it off, as before Anda had the
+            // setting: `env` then holds overrides, not the whole environment.
+            inherit_env: self.inherit_env.unwrap_or(true),
             cwd,
         })
     }
@@ -1487,6 +1708,7 @@ mod tests {
                             "${ANDA_MCP_TEST_TOKEN}".to_string(),
                         )]),
                         cwd: None,
+                        inherit_env: None,
                     }),
                     ..Default::default()
                 },
@@ -1603,6 +1825,80 @@ mod tests {
             expand_config_string("$ANDA_HOME:$ANDA_WORKSPACE", &validation, "field").unwrap(),
             ":"
         );
+    }
+
+    #[test]
+    fn advanced_settings_parse_check_and_reach_the_engine_config() {
+        let server = McpSettings::parse_entry(
+            "docs",
+            &serde_json::json!({
+                "command": "docs-mcp",
+                "inherit_env": false,
+                "timeouts": { "call_secs": 900 },
+                "concurrency": "read-only-parallel",
+                "limits": { "output_text_bytes": 4096 }
+            }),
+        )
+        .unwrap();
+        assert!(server.setup_issues().is_empty());
+        let config = server
+            .server_config(Path::new("/anda"), None, &McpSecretValues::new())
+            .unwrap();
+        assert_eq!(
+            (config.timeouts.call_secs, config.timeouts.setup_secs),
+            (900, 90)
+        );
+        assert_eq!(config.concurrency, McpConcurrency::ReadOnlyParallel);
+        assert_eq!(config.limits.output_text_bytes, 4096);
+        let McpTransportConfig::Stdio(stdio) = config.transport else {
+            panic!("docs runs a command");
+        };
+        assert!(!stdio.inherit_env);
+
+        // Left out, they keep the engine's defaults and the whole environment.
+        let plain = McpSettings::parse_entry("x", &serde_json::json!({ "command": "x" }))
+            .unwrap()
+            .server_config(Path::new("/anda"), None, &McpSecretValues::new())
+            .unwrap();
+        assert_eq!(plain.concurrency, McpConcurrency::Serial);
+        assert_eq!(
+            plain.limits.output_text_bytes,
+            McpLimits::default().output_text_bytes
+        );
+        assert!(matches!(plain.transport, McpTransportConfig::Stdio(stdio) if stdio.inherit_env));
+
+        for (entry, message) in [
+            (
+                serde_json::json!({ "command": "x", "concurrency": "many" }),
+                "concurrency has unsupported value",
+            ),
+            (
+                serde_json::json!({ "url": "https://x.test/mcp", "inherit_env": true }),
+                "only for local",
+            ),
+        ] {
+            let err = McpSettings::parse_entry("x", &entry).unwrap_err();
+            assert!(err.to_string().contains(message), "{err}");
+        }
+        for (entry, issue) in [
+            (
+                serde_json::json!({ "command": "x", "timeouts": { "setup_secs": 0 } }),
+                "timeouts.setup_secs must be between 1 and 86400 seconds",
+            ),
+            (
+                serde_json::json!({ "command": "x", "timeouts": { "call_secs": 86401 } }),
+                "timeouts.call_secs must be between 1 and 86400 seconds",
+            ),
+            (
+                serde_json::json!({ "command": "x", "limits": { "output_text_bytes": 100 } }),
+                "limits.output_text_bytes must be between 256 and 1048576",
+            ),
+        ] {
+            let issues = McpSettings::parse_entry("x", &entry)
+                .unwrap()
+                .setup_issues();
+            assert_eq!(issues, [issue]);
+        }
     }
 
     #[test]

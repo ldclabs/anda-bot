@@ -2253,7 +2253,7 @@
     "message": "Guardar los tokens como secretos"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "Los valores de cabeceras y entorno van al almacén de secretos y mcp.json conserva solo una referencia."
+    "message": "Los valores de las cabeceras, los tokens y las claves van al almacén de secretos, y mcp.json guarda solo una referencia."
   },
   "mcpJsonInvalid": {
     "message": "No es un JSON válido."
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "$1 añadido."
+  },
+  "mcpAddByHandDetail": {
+    "message": "Una URL remota, un comando local o JSON pegado"
+  },
+  "mcpFromLink": {
+    "message": "Este servidor viene de un enlace. Comprueba a qué se conecta o qué ejecuta antes de probarlo o añadirlo."
+  },
+  "mcpImportTitle": {
+    "message": "Importar de otras aplicaciones"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude, Cursor, VS Code, Windsurf y Codex"
+  },
+  "mcpImportDescription": {
+    "message": "Servidores MCP configurados en otras aplicaciones de este equipo. Sus archivos solo se leen, nunca se modifican."
+  },
+  "mcpImportNone": {
+    "message": "No se encontró configuración MCP de otras aplicaciones en este equipo."
+  },
+  "mcpImportUnreadable": {
+    "message": "No se pudo leer: $1"
+  },
+  "mcpImportProject": {
+    "message": "Proyecto $1"
+  },
+  "mcpImportPick": {
+    "message": "Importar $1"
+  },
+  "mcpImportNew": {
+    "message": "Nuevo"
+  },
+  "mcpImportRenamed": {
+    "message": "Nombre en uso: se importa como $1"
+  },
+  "mcpImportExists": {
+    "message": "Ya añadido como $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "Mismo servidor que $1"
+  },
+  "mcpImportDuplicate": {
+    "message": "Mismo servidor que uno de arriba"
+  },
+  "mcpImportInvalid": {
+    "message": "No se puede importar"
+  },
+  "mcpImportAs": {
+    "message": "Importar como"
+  },
+  "mcpImportPlaintext": {
+    "message": "Se guardarán como secretos: $1"
+  },
+  "mcpImportSecrets": {
+    "message": "Secretos que necesitan estos servidores"
+  },
+  "mcpImportSecretLater": {
+    "message": "Configúralo ahora o más tarde en Secretos"
+  },
+  "mcpImportIsolated": {
+    "message": "Los servidores locales importados solo reciben lo esencial del entorno del daemon y su propio env."
+  },
+  "mcpImportAction": {
+    "message": "Importar $1"
+  },
+  "mcpImported": {
+    "message": "Se importó $1."
+  },
+  "mcpRegistryBrowse": {
+    "message": "Explorar el MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "Servidores publicados en el registro oficial"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "Servidores publicados en el MCP Registry oficial."
+  },
+  "mcpRegistrySearch": {
+    "message": "Buscar en el Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "Ningún servidor coincide."
+  },
+  "mcpRegistryLoadMore": {
+    "message": "Cargar más"
+  },
+  "mcpRegistryTrust": {
+    "message": "El Registry indica que un servidor se publicó, no que sea seguro. Comprueba quién lo publica antes de instalarlo. Sus herramientas preguntan antes de ejecutarse hasta que las permitas."
+  },
+  "mcpRegistryVersion": {
+    "message": "Versión $1"
+  },
+  "mcpRegistrySource": {
+    "message": "Código fuente"
+  },
+  "mcpRegistryWebsite": {
+    "message": "Sitio web"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "Cómo se ejecuta"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "Remoto · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "Paquete $1 local · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "Usa el transporte SSE, que Anda no admite."
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "Se ejecuta como un servidor web local, que Anda no puede iniciar."
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "Anda no puede ejecutar este tipo de paquete. Instálalo tú y luego añade su comando."
+  },
+  "mcpRegistryNothing": {
+    "message": "Anda no puede ejecutar este servidor de ninguna de las formas en que está publicado."
+  },
+  "mcpRegistryRequired": {
+    "message": "Obligatorio"
+  },
+  "mcpRegistrySecretField": {
+    "message": "Se guarda como secreto"
+  },
+  "mcpRegistryMissing": {
+    "message": "Completa: $1"
+  },
+  "mcpRegistryBack": {
+    "message": "Atrás"
+  },
+  "mcpRegistryInstall": {
+    "message": "Instalar"
+  },
+  "mcpSourceImport": {
+    "message": "Importado de otra aplicación"
+  },
+  "mcpSourceRegistry": {
+    "message": "Del MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "Ajustes avanzados"
+  },
+  "mcpOptionsHelp": {
+    "message": "Se guardan en la entrada de este servidor en mcp.json. Un cambio que afecta a la conexión reconecta el servidor."
+  },
+  "mcpOptionsUnavailable": {
+    "message": "Corrige la entrada de este servidor en mcp.json para cambiar sus ajustes avanzados."
+  },
+  "mcpOptionStartup": {
+    "message": "Descubrir herramientas"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "Después de que arranque el daemon (predeterminado)"
+  },
+  "mcpOptionStartupEager": {
+    "message": "Antes de que el daemon esté listo"
+  },
+  "mcpOptionLifecycle": {
+    "message": "Protocolo"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "Detectar (predeterminado)"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "Solo descubrimiento"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "Saludo heredado"
+  },
+  "mcpOptionConcurrency": {
+    "message": "Herramientas a la vez"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "Una cada vez (predeterminado)"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "Las de solo lectura a la vez"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "Todas a la vez"
+  },
+  "mcpOptionTimeouts": {
+    "message": "Tiempos de espera, en segundos"
+  },
+  "mcpOptionSetup": {
+    "message": "Conectar"
+  },
+  "mcpOptionList": {
+    "message": "Listar herramientas"
+  },
+  "mcpOptionRequest": {
+    "message": "Una solicitud"
+  },
+  "mcpOptionCall": {
+    "message": "Llamada completa"
+  },
+  "mcpOptionOutput": {
+    "message": "Texto del resultado, en bytes"
+  },
+  "mcpOptionEnv": {
+    "message": "Entorno"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "Todo el entorno del daemon (predeterminado)"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "Solo lo esencial y su propio env"
+  },
+  "mcpOptionTasks": {
+    "message": "Tareas de larga duración"
+  },
+  "mcpOptionTasksOff": {
+    "message": "Desactivadas (predeterminado)"
+  },
+  "mcpOptionTasksOn": {
+    "message": "Activadas"
+  },
+  "mcpOptionTasksWait": {
+    "message": "Espera máxima, en segundos"
+  },
+  "mcpOptionsNumbers": {
+    "message": "Usa números enteros, o deja un campo vacío para su valor predeterminado."
+  },
+  "mcpOptionsDefaults": {
+    "message": "Usar predeterminados"
+  },
+  "mcpOptionsSave": {
+    "message": "Guardar ajustes"
+  },
+  "mcpOptionsSaved": {
+    "message": "Ajustes guardados."
   }
 }

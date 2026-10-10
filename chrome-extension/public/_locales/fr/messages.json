@@ -2253,7 +2253,7 @@
     "message": "Stocker les jetons comme secrets"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "Les valeurs des en-têtes et de l’environnement vont dans le coffre de secrets, et mcp.json ne garde qu’une référence."
+    "message": "Les valeurs des en-têtes, les jetons et les clés vont dans le coffre de secrets, et mcp.json ne garde qu'une référence."
   },
   "mcpJsonInvalid": {
     "message": "Ce n’est pas du JSON valide."
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "$1 ajouté."
+  },
+  "mcpAddByHandDetail": {
+    "message": "Une URL distante, une commande locale ou du JSON collé"
+  },
+  "mcpFromLink": {
+    "message": "Ce serveur vient d'un lien. Vérifiez à quoi il se connecte ou ce qu'il exécute avant de le tester ou de l'ajouter."
+  },
+  "mcpImportTitle": {
+    "message": "Importer depuis d'autres applications"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude, Cursor, VS Code, Windsurf et Codex"
+  },
+  "mcpImportDescription": {
+    "message": "Les serveurs MCP configurés dans d'autres applications de cet ordinateur. Leurs fichiers sont seulement lus, jamais modifiés."
+  },
+  "mcpImportNone": {
+    "message": "Aucune configuration MCP d'une autre application n'a été trouvée sur cet ordinateur."
+  },
+  "mcpImportUnreadable": {
+    "message": "Lecture impossible : $1"
+  },
+  "mcpImportProject": {
+    "message": "Projet $1"
+  },
+  "mcpImportPick": {
+    "message": "Importer $1"
+  },
+  "mcpImportNew": {
+    "message": "Nouveau"
+  },
+  "mcpImportRenamed": {
+    "message": "Nom déjà pris : importé sous le nom $1"
+  },
+  "mcpImportExists": {
+    "message": "Déjà ajouté sous le nom $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "Même serveur que $1"
+  },
+  "mcpImportDuplicate": {
+    "message": "Même serveur qu'un serveur ci-dessus"
+  },
+  "mcpImportInvalid": {
+    "message": "Import impossible"
+  },
+  "mcpImportAs": {
+    "message": "Importer sous le nom"
+  },
+  "mcpImportPlaintext": {
+    "message": "Seront enregistrés comme secrets : $1"
+  },
+  "mcpImportSecrets": {
+    "message": "Secrets nécessaires à ces serveurs"
+  },
+  "mcpImportSecretLater": {
+    "message": "Renseignez-le maintenant, ou plus tard dans Secrets"
+  },
+  "mcpImportIsolated": {
+    "message": "Les serveurs locaux importés ne reçoivent que l'essentiel de l'environnement du démon et leur propre env."
+  },
+  "mcpImportAction": {
+    "message": "Importer $1"
+  },
+  "mcpImported": {
+    "message": "$1 importé."
+  },
+  "mcpRegistryBrowse": {
+    "message": "Parcourir le MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "Serveurs publiés dans le registre officiel"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "Serveurs publiés dans le MCP Registry officiel."
+  },
+  "mcpRegistrySearch": {
+    "message": "Rechercher dans le Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "Aucun serveur ne correspond."
+  },
+  "mcpRegistryLoadMore": {
+    "message": "Charger plus"
+  },
+  "mcpRegistryTrust": {
+    "message": "Le Registry indique qu'un serveur a été publié, pas qu'il est sûr. Vérifiez qui le publie avant de l'installer. Ses outils demandent avant de s'exécuter tant que vous ne les autorisez pas."
+  },
+  "mcpRegistryVersion": {
+    "message": "Version $1"
+  },
+  "mcpRegistrySource": {
+    "message": "Code source"
+  },
+  "mcpRegistryWebsite": {
+    "message": "Site web"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "Mode d'exécution"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "Distant · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "Paquet $1 local · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "Il utilise le transport SSE, qu'Anda ne prend pas en charge."
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "Il s'exécute comme un serveur web local, qu'Anda ne peut pas démarrer."
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "Anda ne sait pas exécuter ce type de paquet. Installez-le vous-même, puis ajoutez sa commande."
+  },
+  "mcpRegistryNothing": {
+    "message": "Anda ne peut exécuter ce serveur d'aucune des façons dont il est publié."
+  },
+  "mcpRegistryRequired": {
+    "message": "Obligatoire"
+  },
+  "mcpRegistrySecretField": {
+    "message": "Enregistré comme secret"
+  },
+  "mcpRegistryMissing": {
+    "message": "À renseigner : $1"
+  },
+  "mcpRegistryBack": {
+    "message": "Retour"
+  },
+  "mcpRegistryInstall": {
+    "message": "Installer"
+  },
+  "mcpSourceImport": {
+    "message": "Importé d'une autre application"
+  },
+  "mcpSourceRegistry": {
+    "message": "Du MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "Réglages avancés"
+  },
+  "mcpOptionsHelp": {
+    "message": "Enregistrés dans l'entrée mcp.json de ce serveur. Un changement qui touche la connexion reconnecte le serveur."
+  },
+  "mcpOptionsUnavailable": {
+    "message": "Corrigez l'entrée de ce serveur dans mcp.json pour modifier ses réglages avancés."
+  },
+  "mcpOptionStartup": {
+    "message": "Découvrir les outils"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "Après le démarrage du démon (par défaut)"
+  },
+  "mcpOptionStartupEager": {
+    "message": "Avant que le démon soit prêt"
+  },
+  "mcpOptionLifecycle": {
+    "message": "Protocole"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "Détecter (par défaut)"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "Découverte uniquement"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "Poignée de main historique"
+  },
+  "mcpOptionConcurrency": {
+    "message": "Outils simultanés"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "Un à la fois (par défaut)"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "Outils en lecture seule ensemble"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "Tous ensemble"
+  },
+  "mcpOptionTimeouts": {
+    "message": "Délais, en secondes"
+  },
+  "mcpOptionSetup": {
+    "message": "Connexion"
+  },
+  "mcpOptionList": {
+    "message": "Liste des outils"
+  },
+  "mcpOptionRequest": {
+    "message": "Une requête"
+  },
+  "mcpOptionCall": {
+    "message": "Appel complet"
+  },
+  "mcpOptionOutput": {
+    "message": "Texte du résultat, en octets"
+  },
+  "mcpOptionEnv": {
+    "message": "Environnement"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "Tout l'environnement du démon (par défaut)"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "Seulement l'essentiel et son propre env"
+  },
+  "mcpOptionTasks": {
+    "message": "Tâches longues"
+  },
+  "mcpOptionTasksOff": {
+    "message": "Désactivées (par défaut)"
+  },
+  "mcpOptionTasksOn": {
+    "message": "Activées"
+  },
+  "mcpOptionTasksWait": {
+    "message": "Attente maximale, en secondes"
+  },
+  "mcpOptionsNumbers": {
+    "message": "Saisissez des nombres entiers, ou laissez un champ vide pour sa valeur par défaut."
+  },
+  "mcpOptionsDefaults": {
+    "message": "Valeurs par défaut"
+  },
+  "mcpOptionsSave": {
+    "message": "Enregistrer"
+  },
+  "mcpOptionsSaved": {
+    "message": "Réglages enregistrés."
   }
 }

@@ -26,6 +26,7 @@
     McpEntry,
     McpReceipt,
     McpSecretView,
+    McpServerOptions,
     McpServerDetail,
     McpServerView,
     McpSnapshot,
@@ -36,6 +37,9 @@
   } from '$lib/anda/client/types'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import Modal from '$lib/anda/Modal.svelte'
+  import McpImportDialog from './McpImportDialog.svelte'
+  import McpOptionsForm from './McpOptionsForm.svelte'
+  import McpRegistryDialog from './McpRegistryDialog.svelte'
   import { badgeClass, buttonClass, inputClass, textareaClass } from '$lib/anda/ui'
   import { getMessage } from '$lib/i18n'
   import { errorToMessage } from '$lib/service-worker/settings'
@@ -43,6 +47,7 @@
   import {
     AlertTriangle,
     Check,
+    Download,
     ExternalLink,
     Eye,
     EyeOff,
@@ -55,11 +60,21 @@
     Power,
     RefreshCw,
     Search,
+    Store,
     ShieldCheck,
     Trash2,
     X
   } from '@lucide/svelte'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
+
+  let {
+    installLink = null,
+    onInstallLinkHandled
+  }: {
+    /** A server offered by an `anda://mcp/install` link: opened in the add dialog, never saved by itself. */
+    installLink?: { name: string; config: string } | null
+    onInstallLinkHandled?: () => void
+  } = $props()
 
   const andaClient = useAndaClient()
   const mcp = andaClient.mcp
@@ -67,6 +82,7 @@
   type DetailTab = 'overview' | 'tools' | 'access' | 'config'
   type ListFilter = 'all' | 'attention' | 'ready' | 'disabled'
   type AddMode = 'url' | 'command' | 'json'
+  type AddAction = 'add' | 'import' | 'registry'
   type ToolApproval = McpApproval | 'inherit'
 
   /** The secrets list takes the place of a server in the detail pane. */
@@ -107,6 +123,25 @@
   let addJson = $state('')
   let storeAsSecrets = $state(true)
   let tests = $state<Record<string, McpTestReport | 'testing'>>({})
+  /** The dialog holds what a link offered, which the owner checks first. */
+  let addFromLink = $state(false)
+  let importOpen = $state(false)
+  let registryOpen = $state(false)
+
+  // A link opens the add dialog with its configuration; nothing is saved
+  // until the owner adds it.
+  $effect(() => {
+    const link = installLink
+    if (!link) return
+    untrack(() => {
+      openAdd()
+      addMode = 'json'
+      addJson = link.config
+      addId = link.name
+      addFromLink = true
+      onInstallLinkHandled?.()
+    })
+  })
 
   const statusLabels: Record<McpStatus, string> = {
     disabled: getMessage('mcpStatusDisabled'),
@@ -144,6 +179,23 @@
     { value: 'tools', label: getMessage('mcpTabTools') },
     { value: 'access', label: getMessage('mcpTabAccess') },
     { value: 'config', label: getMessage('mcpTabConfig') }
+  ]
+  const addMenuItems: { value: AddAction; label: string; description: string }[] = [
+    {
+      value: 'add',
+      label: getMessage('mcpAddServer'),
+      description: getMessage('mcpAddByHandDetail')
+    },
+    {
+      value: 'import',
+      label: getMessage('mcpImportTitle'),
+      description: getMessage('mcpImportMenuDetail')
+    },
+    {
+      value: 'registry',
+      label: getMessage('mcpRegistryBrowse'),
+      description: getMessage('mcpRegistryMenuDetail')
+    }
   ]
   const addModes: { value: AddMode; label: string }[] = [
     { value: 'url', label: getMessage('mcpAddRemote') },
@@ -419,7 +471,42 @@
     void storeClientState({ [noticeStorageKey]: true }).catch(() => undefined)
   }
 
+  function startAdding(action: AddAction) {
+    if (action === 'import') importOpen = true
+    else if (action === 'registry') registryOpen = true
+    else openAdd()
+  }
+
+  function setOptions(server: McpServerView, options: McpServerOptions) {
+    change('options', { op: 'set_options', id: server.id, options }, getMessage('mcpOptionsSaved'))
+  }
+
+  /** After an import: show what came in. */
+  function imported(receipt: McpReceipt) {
+    void run('import', async () => {
+      await refresh()
+      const ids = receipt.imported || []
+      if (ids[0]) {
+        selectedId = ''
+        select(ids[0])
+      }
+      return receiptText(receipt, getMessage('mcpImported', ids.join(', ')))
+    })
+  }
+
+  /** After a Registry install: show it, and sign in when its test asked for that. */
+  function installed(id: string, needsAuth: boolean) {
+    void run('add', async () => {
+      await refresh()
+      selectedId = ''
+      select(id)
+      if (needsAuth) return beginSignIn(id, false)
+      return getMessage('mcpAdded', id)
+    })
+  }
+
   function openAdd() {
+    addFromLink = false
     addMode = 'url'
     addId = ''
     addUrl = ''
@@ -593,7 +680,9 @@
   const sourceLabels: Record<McpServerView['source'], string> = {
     file: getMessage('mcpSourceFile'),
     manual: getMessage('mcpSourceManual'),
-    model: getMessage('mcpSourceModel')
+    model: getMessage('mcpSourceModel'),
+    import: getMessage('mcpSourceImport'),
+    registry: getMessage('mcpSourceRegistry')
   }
 
   function sourceLabel(server: McpServerView): string {
@@ -679,16 +768,17 @@
             <RefreshCw class="size-3.5" />
           {/if}
         </button>
-        <button
-          type="button"
+        <DropdownMenu
           class={buttonClass('default', 'icon-sm')}
+          items={addMenuItems}
+          onSelect={startAdding}
+          ariaLabel={getMessage('mcpAddServer')}
           title={getMessage('mcpAddServer')}
-          aria-label={getMessage('mcpAddServer')}
           disabled={!snapshot.running}
-          onclick={openAdd}
+          align="end"
         >
-          <Plus class="size-3.5" />
-        </button>
+          {#snippet trigger()}<Plus class="size-3.5" />{/snippet}
+        </DropdownMenu>
       </div>
       <DropdownMenu
         class="h-8 text-xs"
@@ -712,10 +802,28 @@
             {snapshot.servers.length ? getMessage('mcpNoMatch') : getMessage('mcpEmpty')}
           </span>
           {#if !snapshot.servers.length && snapshot.running}
-            <button type="button" class={buttonClass('outline', 'sm')} onclick={openAdd}>
-              <Plus class="size-3.5" />
-              {getMessage('mcpAddServer')}
-            </button>
+            <div class="grid gap-1.5">
+              <button type="button" class={buttonClass('outline', 'sm')} onclick={openAdd}>
+                <Plus class="size-3.5" />
+                {getMessage('mcpAddServer')}
+              </button>
+              <button
+                type="button"
+                class={buttonClass('outline', 'sm')}
+                onclick={() => (importOpen = true)}
+              >
+                <Download class="size-3.5" />
+                {getMessage('mcpImportTitle')}
+              </button>
+              <button
+                type="button"
+                class={buttonClass('outline', 'sm')}
+                onclick={() => (registryOpen = true)}
+              >
+                <Store class="size-3.5" />
+                {getMessage('mcpRegistryBrowse')}
+              </button>
+            </div>
           {/if}
         </div>
       {:else}
@@ -1041,6 +1149,14 @@
       <div class="grid gap-1 rounded-md border p-3">
         <div class="text-xs font-semibold text-muted-foreground">{getMessage('mcpSource')}</div>
         <div class="text-sm">{sourceLabel(server)}</div>
+        {#if server.source_ref}
+          <div
+            class="truncate font-mono text-[11px] text-muted-foreground"
+            title={server.source_ref}
+          >
+            {server.source_ref}
+          </div>
+        {/if}
         <div class="text-[11px] text-muted-foreground">
           {server.startup === 'eager'
             ? getMessage('mcpStartupEager')
@@ -1421,6 +1537,16 @@
 
 {#snippet configPane(server: McpServerView)}
   <div class="grid gap-3 p-4">
+    {#if server.options}
+      <McpOptionsForm
+        {server}
+        busy={Boolean(busy)}
+        saving={busy === 'options'}
+        onSave={(options) => setOptions(server, options)}
+      />
+    {:else}
+      <p class="text-xs text-muted-foreground">{getMessage('mcpOptionsUnavailable')}</p>
+    {/if}
     <p class="text-xs text-muted-foreground">
       {getMessage('mcpConfigHelp', snapshot.config_path || 'mcp.json')}
     </p>
@@ -1587,6 +1713,15 @@
   footer={addActions}
 >
   <div class="grid gap-3">
+    {#if addFromLink}
+      <div
+        class="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+        role="alert"
+      >
+        <AlertTriangle class="mt-0.5 size-4 shrink-0" />
+        <p>{getMessage('mcpFromLink')}</p>
+      </div>
+    {/if}
     <div class="flex gap-1 rounded-md bg-muted p-1" role="tablist">
       {#each addModes as mode (mode.value)}
         <button
@@ -1734,3 +1869,12 @@
     {/each}
   </div>
 </Modal>
+
+<McpImportDialog bind:open={importOpen} revision={snapshot.revision} onImported={imported} />
+<McpRegistryDialog
+  bind:open={registryOpen}
+  revision={snapshot.revision}
+  takenIds={new Set(snapshot.servers.map((server) => server.id))}
+  secretNames={new Set(secrets.map((secret) => secret.name))}
+  onInstalled={installed}
+/>

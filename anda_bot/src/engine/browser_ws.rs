@@ -1035,6 +1035,8 @@ mod tests {
                 owner: auth_key.id(),
                 admission: Arc::new(crate::runtime_admission::Admission::default()),
                 manager: super::super::mcp::McpManager::for_test(&home).await,
+                http: reqwest::Client::builder().no_proxy().build().unwrap(),
+                registry_url: super::super::mcp::MCP_REGISTRY_URL.to_string(),
             },
             auth_headers: {
                 let mut headers = HeaderMap::new();

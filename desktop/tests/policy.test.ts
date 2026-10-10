@@ -7,6 +7,7 @@ import {
   authorizeWorkspace,
   externalUrl,
   loopbackBaseUrl,
+  mcpInstallLink,
   navigationSource,
   validateRpc,
   rendererAssetPath
@@ -89,7 +90,28 @@ describe('desktop host boundaries', () => {
     // The MCP page manages the owner's servers; the daemon checks the owner.
     expect(() => validateRpc('mcp_apply', [{ change: { op: 'reload' } }])).not.toThrow()
     expect(() => validateRpc('mcp_secrets', [{}])).not.toThrow()
-    expect(() => validateRpc('mcp_import_scan', [{}])).toThrow('not available')
+    expect(() => validateRpc('mcp_import_scan', [{}])).not.toThrow()
+    expect(() => validateRpc('mcp_registry_search', [{ query: 'x' }])).not.toThrow()
+    expect(() => validateRpc('mcp_events_list', [{}])).toThrow('not available')
+  })
+  it('reads MCP install links into a configuration to check, never more', () => {
+    const config = Buffer.from(JSON.stringify({ url: 'https://docs.test/mcp' })).toString(
+      'base64url'
+    )
+    expect(mcpInstallLink(`anda://mcp/install?name=docs&config=${config}`)).toEqual({
+      name: 'docs',
+      config: JSON.stringify({ url: 'https://docs.test/mcp' }, null, 2)
+    })
+    const list = Buffer.from('[1]').toString('base64url')
+    for (const link of [
+      `anda://mcp/install?name=docs&config=${list}`,
+      'anda://mcp/install?name=docs&config=!!!',
+      'anda://mcp/install?name=docs',
+      `anda://mcp/remove?name=docs&config=${config}`,
+      `anda://chat?source=x`,
+      `anda://mcp/install?name=${'x'.repeat(129)}&config=${config}`
+    ])
+      expect(mcpInstallLink(link)).toBeNull()
   })
   it('limits deep links to navigation and external links to safe protocols', () => {
     expect(navigationSource('anda://chat?source=desktop%3Aone')).toBe('desktop:one')

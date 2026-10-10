@@ -96,6 +96,8 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
 
 每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（引用的环境变量未设置、不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录警告，其余服务照常加载。服务在 daemon 启动后于后台连接，较慢的端点或首次 `npx -y` 下载不会拖慢启动；如需在 daemon 报告就绪前完成工具发现，可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展 `PATH`，即使 daemon 作为登录服务运行，也能找到 `npx`、`uvx` 和 Homebrew 安装的命令；但登录服务看不到 shell 配置文件中导出的变量，`${VAR}` 引用的变量需要存在于 daemon 自身的环境中。
 
+条目还可以调整服务的运行方式。`timeouts` 以秒为单位，每项在 1 到 86400 之间：`setup_secs` 连接（默认 90）、`list_secs` 列出工具（30）、`request_secs` 单个请求（180）、`call_secs` 整次工具调用（600）。`concurrency` 决定哪些工具可以同时运行：`serial`（默认）、`read_only_parallel`（服务标为只读的工具）或 `parallel`。`limits.output_text_bytes` 是智能体从一次结果中得到的文本，在 256 到 1048576 之间（默认 32768）。`lifecycle` 决定协议版本的协商方式（`auto`、`discover` 或 `initialize`），`tasks`（`{"max_wait_secs": 900}`）让长时间运行的工具返回任务、由 Anda 轮询完成。本地服务默认获得 daemon 的全部环境变量；`"inherit_env": false` 只给它平台必需的变量（`PATH`、`HOME`、`TMPDIR` 等）和它自己的 `env`，daemon 环境中的其他密钥不会传给它。这些设置由你在 `mcp.json`、MCP 页面或 `anda mcp options` 中修改，智能体的工具不能修改。
+
 智能体也可以通过 `add_mcp_server` 在运行时添加服务。`persist: false` 只对当前 daemon 生效；`persist: true` 会把服务保存到 `~/.anda/mcp.json`，重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、`command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和 `exclude`，另外再加 tool 专用的 `id` 和 `persist`。`manage_mcp_server` 让智能体查看各服务的状态和最近错误，并重连某个服务；启用、停用、删除或登出服务前会先请求你的批准。
 
 ### 用 `anda mcp` 管理服务
@@ -110,13 +112,37 @@ anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth 登录；--no-br
 anda mcp tool github delete_repository --hide         # 不让智能体使用某个工具
 anda mcp secret set DOCS_TOKEN                        # 另有 secret list、secret unset
 anda mcp disable context7                             # 另有 enable、remove、reconnect、logout、reload
+anda mcp options github --call-timeout 900            # 高级设置；用 `default` 清除某项
+anda mcp import --dry-run                             # 其他应用里配置的服务
+anda mcp import github notes=work-notes --from cursor # 导入它们；不写名称则导入全部新服务
 ```
 
-daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users`、`secret` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义和说明以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
+daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users`、`secret`、`options`、`import` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义和说明以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
 
 ### MCP 页面
 
-Anda 桌面端（侧边栏中的 MCP）和扩展仪表盘（`#mcp`）管理的是同一组服务。页面列出每个服务及其状态，并显示它的最近错误、使用情况和说明；它的工具，以及每个工具的审批策略、服务提供的提示和自你审查后的变化；登录；它使用的密钥；以及隐藏了密钥的配置条目。“添加”可以填写带请求头的 URL、带环境变量的命令，或粘贴其他应用的配置。它会在运行任何东西之前显示完整命令行，测试连接，并默认把请求头和环境变量的值存为密钥，`mcp.json` 中只留下 `${secret:...}` 引用。需要 OAuth 的服务会在浏览器中打开登录页。
+Anda 桌面端（侧边栏中的 MCP）和扩展仪表盘（`#mcp`）管理的是同一组服务。页面列出每个服务及其状态，并显示它的最近错误、使用情况和说明；它的工具，以及每个工具的审批策略、服务提供的提示和自你审查后的变化；登录；它使用的密钥；以及隐藏了密钥的配置条目。“添加”可以填写带请求头的 URL、带环境变量的命令，或粘贴其他应用的配置。它会在运行任何东西之前显示完整命令行，测试连接，并默认把请求头的值、令牌和密钥存为密钥，`mcp.json` 中只留下 `${secret:...}` 引用。需要 OAuth 的服务会在浏览器中打开登录页。
+
+“添加”菜单还可以从其他应用导入服务、浏览 MCP Registry（见下文），“配置”标签页可以修改高级设置。
+
+在 Anda Desktop 中，形如 `anda://mcp/install?name=<id>&config=<base64url JSON>` 的链接会打开“添加”对话框，填入该配置，并提示你先检查它会运行什么。在你点击添加之前不会保存任何内容，链接也不能修改已有的服务。
+
+### 从其他应用导入
+
+`anda mcp import` 和 MCP 页面上的“从其他应用导入”会读取 Claude Desktop、Claude Code（`~/.claude.json`）、Cursor、VS Code（以及 GitHub Copilot 的 CLI，`~/.copilot/mcp-config.json`）、Windsurf 和 Codex（`~/.codex/config.toml`）的 MCP 设置，以及 Claude Code 记录的项目、当前目录（CLI）或 daemon 工作区中的项目文件（`.mcp.json`、`.cursor/mcp.json`、`.vscode/mcp.json`）。这些文件只会被读取，不会被修改。
+
+```bash
+anda mcp import --dry-run                    # 每个服务导入后会变成什么
+anda mcp import                              # 导入所有对 Anda 来说是新的服务
+anda mcp import github notes=work-notes      # 只导入列出的服务；NAME=ID 可以改名
+anda mcp import --from cursor --keep-plaintext
+```
+
+每个服务都会显示导入的结果：新服务；名称已被其他服务占用而改名；已在 Anda 中；与前面列出的某个服务相同；或无法导入（例如 SSE 服务）及原因。导入时，条目会被转换成 Anda 的格式：VS Code 的 `${env:NAME}`、`${userHome}` 和 `${workspaceFolder}` 会被填入，Windsurf 的 `serverUrl`、Copilot 的工具列表和 Codex 的表格也能读取。请求头的值、令牌和密钥会转存为密钥，除非传入 `--keep-plaintext`。VS Code 的 `${input:...}` 和 daemon 没有的环境变量会变成待设置的密钥：CLI 和页面会询问它们的值，密钥未设置的服务会等待设置后再启动。导入的本地服务会设为 `"inherit_env": false`。无法带过来的内容（例如 `envFile` 或自动批准的工具列表）会在服务下方列出。
+
+### MCP Registry
+
+MCP 页面上的“浏览 MCP Registry”会搜索官方 [MCP Registry](https://registry.modelcontextprotocol.io)。请求由 daemon 发出，使用它自己的代理设置。发布了远程端点的服务默认以该端点安装，因为这不会在你的电脑上运行任何程序；你也可以改选它的 npm、PyPI、OCI（Docker）或 NuGet 包，作为本地命令运行，并设为 `"inherit_env": false`。安装表单会询问服务声明的 URL 变量、请求头、环境变量和参数；标为密钥的值会存入密钥库。安装前可以先测试连接。Registry 只说明服务已经发布，并不代表它安全：在你放行之前，它的工具运行前仍会先询问。
 
 ### 密钥
 

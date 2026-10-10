@@ -3,14 +3,20 @@ import type { DaemonApi } from './daemon'
 import {
   McpApi,
   McpApiError,
+  defaultRegistryChoice,
+  isCredential,
   localEntry,
   moveCredentialsToSecrets,
   parseMcpConfig,
+  registryChoices,
+  registryEntry,
+  registryServerId,
   remoteEntry,
   secretReferences,
   splitCommandLine,
   suggestServerId
 } from './mcp'
+import type { McpRegistryServer } from './types'
 
 function createDaemon(reply: unknown, overrides: Partial<DaemonApi> = {}) {
   const rpc = vi.fn(async () => reply as never)
@@ -64,6 +70,26 @@ describe('McpApi', () => {
     expect(rpc).not.toHaveBeenCalled()
   })
 
+  it('scans, imports and searches with one parameter object each', async () => {
+    const { daemon, rpc } = createDaemon({ result: { revision: 'r2', imported: ['docs'] } })
+    const api = new McpApi(daemon)
+    const changed = vi.fn()
+    api.addEventListener('mcp-changed', changed)
+
+    await api.importScan(['cursor'])
+    await api.import({ items: [{ key: 'cursor:/c#docs' }], secrets: { TOKEN: 't' } })
+    await api.registrySearch('docs')
+    await api.registrySearch('docs', 'next')
+
+    expect(rpc.mock.calls).toEqual([
+      ['mcp_import_scan', [{ sources: ['cursor'], workspaces: [] }]],
+      ['mcp_import', [{ items: [{ key: 'cursor:/c#docs' }], secrets: { TOKEN: 't' } }]],
+      ['mcp_registry_search', [{ query: 'docs' }]],
+      ['mcp_registry_search', [{ query: 'docs', cursor: 'next' }]]
+    ])
+    expect(changed).toHaveBeenCalledTimes(1)
+  })
+
   it('tests an entry with secrets that are not stored yet', async () => {
     const { daemon, rpc } = createDaemon({ result: { status: 'ready', tools: [] } })
     await new McpApi(daemon).test({ id: 'docs', url: 'https://docs.test/mcp' }, { TOKEN: 't' })
@@ -84,6 +110,42 @@ describe('pasted configuration', () => {
     )
     expect(parsed.servers.map((server) => server.id)).toEqual(['github', 'context7'])
     expect(parsed.servers[1].args).toEqual(['-y', '@upstash/context7-mcp'])
+  })
+
+  it("reads other clients' spellings as Anda writes them", () => {
+    const parsed = parseMcpConfig(
+      JSON.stringify({
+        servers: {
+          wiki: {
+            serverUrl: 'https://wiki.test/mcp',
+            headers: { Authorization: 'Bearer ${input:wiki-token}' }
+          },
+          search: {
+            type: 'local',
+            command: 'search-mcp',
+            args: ['${env:HOME}/notes'],
+            env: { KEY: '${env:KEY:-x}' }
+          }
+        }
+      })
+    )
+    expect(parsed.servers).toEqual([
+      {
+        id: 'wiki',
+        url: 'https://wiki.test/mcp',
+        headers: { Authorization: 'Bearer ${secret:WIKI_TOKEN}' }
+      },
+      {
+        id: 'search',
+        type: 'stdio',
+        command: 'search-mcp',
+        args: ['${HOME}/notes'],
+        env: { KEY: '${KEY:-x}' }
+      }
+    ])
+    expect(parseMcpConfig('{"serverUrl":"https://wiki.test/mcp"}', 'wiki').servers[0].url).toBe(
+      'https://wiki.test/mcp'
+    )
   })
 
   it('takes one entry with the id it is given', () => {
@@ -141,10 +203,199 @@ describe('secrets', () => {
     expect(again.secrets).toEqual({ GIT_HUB_AUTHORIZATION_2: 'Bearer ghp_y' })
   })
 
+  it('moves only env values that are credentials, and never a reference', () => {
+    const { entry, secrets } = moveCredentialsToSecrets({
+      id: 'db',
+      command: 'db-mcp',
+      env: {
+        DB_PASSWORD: 'pw',
+        DATABASE_URL: 'postgres://app:pw@db/app',
+        MEMORY_FILE_PATH: '/tmp/memory.json',
+        API_KEY: 'Bearer ${TOKEN}'
+      }
+    })
+    expect(entry.env).toEqual({
+      DB_PASSWORD: '${secret:DB_DB_PASSWORD}',
+      DATABASE_URL: '${secret:DB_DATABASE_URL}',
+      MEMORY_FILE_PATH: '/tmp/memory.json',
+      API_KEY: 'Bearer ${TOKEN}'
+    })
+    expect(Object.keys(secrets)).toEqual(['DB_DB_PASSWORD', 'DB_DATABASE_URL'])
+    expect(isCredential('GIT_AUTHOR_NAME', 'Ada')).toBe(false)
+    expect(isCredential('OPENAI_API_KEY', 'sk')).toBe(true)
+  })
+
   it('finds the secrets a value references', () => {
     expect(secretReferences('Bearer ${secret:A} ${secret:B:-x} ${C} ${secret:A}')).toEqual([
       'A',
       'B'
     ])
+  })
+})
+
+// Shapes as the MCP Registry publishes them.
+const context7: McpRegistryServer = {
+  name: 'io.github.upstash/context7',
+  title: 'Context7',
+  version: '4.3.0',
+  packages: [
+    {
+      registryType: 'npm',
+      identifier: '@upstash/context7-mcp',
+      version: '4.3.0',
+      transport: { type: 'stdio' },
+      environmentVariables: [
+        { name: 'CONTEXT7_API_KEY', description: 'API key for authentication', isSecret: true }
+      ]
+    },
+    {
+      registryType: 'mcpb',
+      identifier: 'https://github.com/upstash/context7/releases/download/mcpb-v4.3.0/context7.mcpb',
+      version: '4.3.0',
+      fileSha256: 'e351',
+      transport: { type: 'stdio' }
+    }
+  ],
+  remotes: [
+    {
+      type: 'streamable-http',
+      url: 'https://mcp.context7.com/mcp',
+      headers: [{ name: 'Authorization', isSecret: true, description: 'API key' }]
+    }
+  ]
+}
+
+describe('MCP Registry installs', () => {
+  it('offers remotes first and says why a package cannot be installed', () => {
+    const choices = registryChoices(context7)
+    expect(choices.map((choice) => [choice.kind, choice.type, choice.unsupported])).toEqual([
+      ['remote', 'remote', undefined],
+      ['package', 'npm', undefined],
+      ['package', 'mcpb', 'package']
+    ])
+    expect(defaultRegistryChoice(choices)).toBe(choices[0])
+    expect(choices[0].fields).toEqual([
+      {
+        key: 'header:Authorization',
+        name: 'Authorization',
+        description: 'API key',
+        required: false,
+        secret: true,
+        default: undefined,
+        choices: undefined
+      }
+    ])
+    expect(registryServerId(context7.name)).toBe('context7')
+    expect(registryServerId('com.notion/mcp')).toBe('notion')
+    expect(registryServerId('io.github.bytedance/mcp-server-filesystem')).toBe('filesystem')
+  })
+
+  it('builds a remote entry with its secrets stored apart', () => {
+    const [remote] = registryChoices(context7)
+    const built = registryEntry(
+      context7,
+      remote,
+      'context7',
+      { 'header:Authorization': ' ctx-key ' },
+      new Set(['CONTEXT7_AUTHORIZATION'])
+    )
+    expect(built.entry).toEqual({
+      id: 'context7',
+      type: 'http',
+      url: 'https://mcp.context7.com/mcp',
+      headers: { Authorization: '${secret:CONTEXT7_AUTHORIZATION_2}' }
+    })
+    expect(built.secrets).toEqual({ CONTEXT7_AUTHORIZATION_2: 'ctx-key' })
+  })
+
+  it('fills header templates and URL variables', () => {
+    const server: McpRegistryServer = {
+      name: 'ai.smithery/github',
+      remotes: [
+        {
+          type: 'streamable-http',
+          url: 'https://{tenant}.example.com/mcp',
+          variables: { tenant: { description: 'Your tenant', isRequired: true } },
+          headers: [
+            { name: 'Authorization', value: 'Bearer {api_key}', isSecret: true, isRequired: true },
+            { name: 'X-Client', value: 'anda' }
+          ]
+        }
+      ]
+    }
+    const [remote] = registryChoices(server)
+    expect(remote.fields.map((field) => [field.key, field.required, field.secret])).toEqual([
+      ['url:tenant', true, false],
+      ['header:Authorization:api_key', true, true]
+    ])
+    expect(registryEntry(server, remote, 'github', {}).missing).toEqual(['tenant', 'api_key'])
+    const built = registryEntry(server, remote, 'github', {
+      'url:tenant': 'acme',
+      'header:Authorization:api_key': 'k1'
+    })
+    expect(built.entry).toEqual({
+      id: 'github',
+      type: 'http',
+      url: 'https://acme.example.com/mcp',
+      headers: { Authorization: 'Bearer ${secret:GITHUB_API_KEY}', 'X-Client': 'anda' }
+    })
+  })
+
+  it('runs packages with their runner and arguments, without the whole environment', () => {
+    const npm = registryChoices(context7)[1]
+    expect(registryEntry(context7, npm, 'context7', { 'env:CONTEXT7_API_KEY': 'k' }).entry).toEqual(
+      {
+        id: 'context7',
+        command: 'npx',
+        args: ['-y', '@upstash/context7-mcp@4.3.0'],
+        env: { CONTEXT7_API_KEY: '${secret:CONTEXT7_CONTEXT7_API_KEY}' },
+        inherit_env: false
+      }
+    )
+
+    const server: McpRegistryServer = {
+      name: 'com.example/files',
+      packages: [
+        {
+          registryType: 'pypi',
+          identifier: 'files-mcp',
+          version: '0.1.3',
+          runtimeHint: 'uvx',
+          transport: { type: 'stdio' },
+          packageArguments: [
+            { type: 'named', name: 'allowed-directories', isRequired: true },
+            { type: 'named', name: '--read-only', format: 'boolean', default: 'true' },
+            { type: 'positional', valueHint: 'root', default: '/srv' }
+          ]
+        },
+        {
+          registryType: 'oci',
+          identifier: 'ghcr.io/example/files:1.0.2',
+          transport: { type: 'stdio' },
+          environmentVariables: [{ name: 'FILES_ROOT', default: '/data' }]
+        },
+        {
+          registryType: 'npm',
+          identifier: 'files-http',
+          transport: { type: 'streamable-http', url: 'http://127.0.0.1:{port}/mcp' }
+        }
+      ]
+    }
+    const [pypi, oci, http] = registryChoices(server)
+    expect(http.unsupported).toBe('transport')
+    expect(registryEntry(server, pypi, 'files', {}).missing).toEqual(['allowed-directories'])
+    expect(registryEntry(server, pypi, 'files', { 'arg:package:0': '/a,/b' }).entry).toEqual({
+      id: 'files',
+      command: 'uvx',
+      args: ['files-mcp==0.1.3', '--allowed-directories', '/a,/b', '--read-only', '/srv'],
+      inherit_env: false
+    })
+    expect(registryEntry(server, oci, 'files', {}).entry).toEqual({
+      id: 'files',
+      command: 'docker',
+      args: ['run', '-i', '--rm', '-e', 'FILES_ROOT', 'ghcr.io/example/files:1.0.2'],
+      env: { FILES_ROOT: '/data' },
+      inherit_env: false
+    })
   })
 })

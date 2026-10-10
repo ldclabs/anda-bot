@@ -27,6 +27,27 @@ pub(crate) enum McpSource {
     Manual,
     /// Added by the agent, with the owner's approval.
     Model,
+    /// Imported from another MCP client's configuration.
+    Import,
+    /// Installed from the MCP Registry.
+    Registry,
+}
+
+/// Where a server being added came from: its source, and for an import or a
+/// Registry install which file or Registry entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct McpOrigin {
+    pub source: McpSource,
+    pub reference: Option<String>,
+}
+
+impl From<McpSource> for McpOrigin {
+    fn from(source: McpSource) -> Self {
+        Self {
+            source,
+            reference: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -39,6 +60,10 @@ pub(crate) struct McpErrorRecord {
 pub(crate) struct McpServerState {
     #[serde(default)]
     pub source: McpSource,
+    /// The file an imported server came from, or the Registry name and
+    /// version of an installed one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub added_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,6 +202,18 @@ impl McpStateStore {
     /// Saves the changes made with [`Self::update_later`], if any.
     pub async fn flush(&self) {
         if self.unsaved.load(Ordering::Relaxed) {
+            self.save().await;
+        }
+    }
+
+    /// Records where a server just added came from, and when.
+    pub async fn record_added(&self, id: &str, origin: &McpOrigin) {
+        let now = anda_engine::unix_ms();
+        if self.update(id, |state| {
+            state.source = origin.source;
+            state.source_ref = origin.reference.clone();
+            state.added_at = Some(now);
+        }) {
             self.save().await;
         }
     }

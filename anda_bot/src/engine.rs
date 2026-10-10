@@ -916,6 +916,8 @@ impl Engines {
             owner: self.cli_workspaces.owner(),
             admission: self.bot.admission(),
             manager: self.mcp.clone(),
+            http: self.runtime_models.http_client.clone(),
+            registry_url: mcp::MCP_REGISTRY_URL.to_string(),
         };
         let browser_ws_state = BrowserWebSocketState {
             admission: self.bot.admission(),

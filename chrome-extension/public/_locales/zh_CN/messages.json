@@ -2253,7 +2253,7 @@
     "message": "把令牌存为密钥"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "请求头和环境变量的值存入密钥库，mcp.json 中只保留引用。"
+    "message": "请求头的值、令牌和密钥会存入密钥库，mcp.json 中只保留引用。"
   },
   "mcpJsonInvalid": {
     "message": "这不是有效的 JSON。"
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "已添加 $1。"
+  },
+  "mcpAddByHandDetail": {
+    "message": "远程 URL、本地命令或粘贴 JSON"
+  },
+  "mcpFromLink": {
+    "message": "这个服务来自一个链接。测试或添加之前，请先确认它连接的地址或运行的命令。"
+  },
+  "mcpImportTitle": {
+    "message": "从其他应用导入"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude、Cursor、VS Code、Windsurf 和 Codex"
+  },
+  "mcpImportDescription": {
+    "message": "这台电脑上其他应用里配置的 MCP 服务。Anda 只读取它们的文件，不会修改。"
+  },
+  "mcpImportNone": {
+    "message": "在这台电脑上没有找到其他应用的 MCP 设置。"
+  },
+  "mcpImportUnreadable": {
+    "message": "无法读取：$1"
+  },
+  "mcpImportProject": {
+    "message": "项目 $1"
+  },
+  "mcpImportPick": {
+    "message": "导入 $1"
+  },
+  "mcpImportNew": {
+    "message": "新服务"
+  },
+  "mcpImportRenamed": {
+    "message": "名称已被占用，将导入为 $1"
+  },
+  "mcpImportExists": {
+    "message": "已添加为 $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "与 $1 是同一个服务"
+  },
+  "mcpImportDuplicate": {
+    "message": "与上面列出的某个服务相同"
+  },
+  "mcpImportInvalid": {
+    "message": "无法导入"
+  },
+  "mcpImportAs": {
+    "message": "导入为"
+  },
+  "mcpImportPlaintext": {
+    "message": "将存为密钥：$1"
+  },
+  "mcpImportSecrets": {
+    "message": "这些服务需要的密钥"
+  },
+  "mcpImportSecretLater": {
+    "message": "现在填写，或稍后在“密钥”中设置"
+  },
+  "mcpImportIsolated": {
+    "message": "导入的本地服务只获得守护进程环境中的必要变量和它自己的 env。"
+  },
+  "mcpImportAction": {
+    "message": "导入 $1 个"
+  },
+  "mcpImported": {
+    "message": "已导入 $1。"
+  },
+  "mcpRegistryBrowse": {
+    "message": "浏览 MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "官方 Registry 中发布的服务"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "发布在官方 MCP Registry 中的服务。"
+  },
+  "mcpRegistrySearch": {
+    "message": "搜索 Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "没有匹配的服务。"
+  },
+  "mcpRegistryLoadMore": {
+    "message": "加载更多"
+  },
+  "mcpRegistryTrust": {
+    "message": "Registry 只说明这个服务已经发布，并不代表它安全。安装前请确认发布者。在你放行之前，它的工具运行前都会先询问。"
+  },
+  "mcpRegistryVersion": {
+    "message": "版本 $1"
+  },
+  "mcpRegistrySource": {
+    "message": "源代码"
+  },
+  "mcpRegistryWebsite": {
+    "message": "网站"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "运行方式"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "远程 · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "本地 $1 包 · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "它使用 SSE 传输，Anda 不支持。"
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "它以本地 Web 服务的形式运行，Anda 无法启动。"
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "Anda 无法运行这种包。请自行安装，然后添加它的命令。"
+  },
+  "mcpRegistryNothing": {
+    "message": "这个服务发布的所有运行方式，Anda 都无法使用。"
+  },
+  "mcpRegistryRequired": {
+    "message": "必填"
+  },
+  "mcpRegistrySecretField": {
+    "message": "存为密钥"
+  },
+  "mcpRegistryMissing": {
+    "message": "请填写：$1"
+  },
+  "mcpRegistryBack": {
+    "message": "返回"
+  },
+  "mcpRegistryInstall": {
+    "message": "安装"
+  },
+  "mcpSourceImport": {
+    "message": "从其他应用导入"
+  },
+  "mcpSourceRegistry": {
+    "message": "来自 MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "高级设置"
+  },
+  "mcpOptionsHelp": {
+    "message": "保存在该服务的 mcp.json 条目中。影响连接的修改会让服务重新连接。"
+  },
+  "mcpOptionsUnavailable": {
+    "message": "请先修正该服务在 mcp.json 中的条目，才能修改高级设置。"
+  },
+  "mcpOptionStartup": {
+    "message": "发现工具"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "守护进程启动之后（默认）"
+  },
+  "mcpOptionStartupEager": {
+    "message": "守护进程就绪之前"
+  },
+  "mcpOptionLifecycle": {
+    "message": "协议"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "自动探测（默认）"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "只用发现"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "旧版握手"
+  },
+  "mcpOptionConcurrency": {
+    "message": "同时运行的工具"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "一次一个（默认）"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "只读工具可同时运行"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "全部可同时运行"
+  },
+  "mcpOptionTimeouts": {
+    "message": "超时（秒）"
+  },
+  "mcpOptionSetup": {
+    "message": "连接"
+  },
+  "mcpOptionList": {
+    "message": "列出工具"
+  },
+  "mcpOptionRequest": {
+    "message": "单个请求"
+  },
+  "mcpOptionCall": {
+    "message": "整次调用"
+  },
+  "mcpOptionOutput": {
+    "message": "结果文本上限（字节）"
+  },
+  "mcpOptionEnv": {
+    "message": "环境变量"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "守护进程的全部环境（默认）"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "只给必要变量和它自己的 env"
+  },
+  "mcpOptionTasks": {
+    "message": "长时间任务"
+  },
+  "mcpOptionTasksOff": {
+    "message": "关闭（默认）"
+  },
+  "mcpOptionTasksOn": {
+    "message": "开启"
+  },
+  "mcpOptionTasksWait": {
+    "message": "最长等待（秒）"
+  },
+  "mcpOptionsNumbers": {
+    "message": "请填写整数，或留空以使用默认值。"
+  },
+  "mcpOptionsDefaults": {
+    "message": "恢复默认"
+  },
+  "mcpOptionsSave": {
+    "message": "保存设置"
+  },
+  "mcpOptionsSaved": {
+    "message": "设置已保存。"
   }
 }

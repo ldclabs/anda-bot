@@ -2253,7 +2253,7 @@
     "message": "Store tokens as secrets"
   },
   "mcpStoreAsSecretsHelp": {
-    "message": "Header and environment values go to the secret store, and mcp.json keeps only a reference."
+    "message": "Header values, tokens and keys go to the secret store, and mcp.json keeps only a reference."
   },
   "mcpJsonInvalid": {
     "message": "This is not valid JSON."
@@ -2293,5 +2293,239 @@
   },
   "mcpAdded": {
     "message": "Added $1."
+  },
+  "mcpAddByHandDetail": {
+    "message": "A remote URL, a local command, or pasted JSON"
+  },
+  "mcpFromLink": {
+    "message": "This server came from a link. Check what it connects to or runs before you test or add it."
+  },
+  "mcpImportTitle": {
+    "message": "Import from other apps"
+  },
+  "mcpImportMenuDetail": {
+    "message": "Claude, Cursor, VS Code, Windsurf and Codex"
+  },
+  "mcpImportDescription": {
+    "message": "MCP servers set up in other apps on this computer. Their files are only read, never changed."
+  },
+  "mcpImportNone": {
+    "message": "No MCP settings from other apps were found on this computer."
+  },
+  "mcpImportUnreadable": {
+    "message": "Could not be read: $1"
+  },
+  "mcpImportProject": {
+    "message": "Project $1"
+  },
+  "mcpImportPick": {
+    "message": "Import $1"
+  },
+  "mcpImportNew": {
+    "message": "New"
+  },
+  "mcpImportRenamed": {
+    "message": "Name taken: imported as $1"
+  },
+  "mcpImportExists": {
+    "message": "Already added as $1"
+  },
+  "mcpImportDuplicateOf": {
+    "message": "Same server as $1"
+  },
+  "mcpImportDuplicate": {
+    "message": "Same server as one above"
+  },
+  "mcpImportInvalid": {
+    "message": "Cannot be imported"
+  },
+  "mcpImportAs": {
+    "message": "Import as"
+  },
+  "mcpImportPlaintext": {
+    "message": "Stored as secrets: $1"
+  },
+  "mcpImportSecrets": {
+    "message": "Secrets these servers need"
+  },
+  "mcpImportSecretLater": {
+    "message": "Set it now, or later under Secrets"
+  },
+  "mcpImportIsolated": {
+    "message": "Imported local servers get only the essentials of the daemon's environment and their own env."
+  },
+  "mcpImportAction": {
+    "message": "Import $1"
+  },
+  "mcpImported": {
+    "message": "Imported $1."
+  },
+  "mcpRegistryBrowse": {
+    "message": "Browse the MCP Registry"
+  },
+  "mcpRegistryMenuDetail": {
+    "message": "Servers published to the official registry"
+  },
+  "mcpRegistryTitle": {
+    "message": "MCP Registry"
+  },
+  "mcpRegistryDescription": {
+    "message": "Servers published to the official MCP Registry."
+  },
+  "mcpRegistrySearch": {
+    "message": "Search the Registry"
+  },
+  "mcpRegistryEmpty": {
+    "message": "No servers match."
+  },
+  "mcpRegistryLoadMore": {
+    "message": "Load more"
+  },
+  "mcpRegistryTrust": {
+    "message": "The Registry shows that a server was published, not that it is safe. Check who publishes it before you install it. Its tools ask before they run until you allow them."
+  },
+  "mcpRegistryVersion": {
+    "message": "Version $1"
+  },
+  "mcpRegistrySource": {
+    "message": "Source code"
+  },
+  "mcpRegistryWebsite": {
+    "message": "Website"
+  },
+  "mcpRegistryHowToRun": {
+    "message": "How it runs"
+  },
+  "mcpRegistryRemoteChoice": {
+    "message": "Remote · $1"
+  },
+  "mcpRegistryPackageChoice": {
+    "message": "Local $1 package · $2"
+  },
+  "mcpRegistryUnsupportedSse": {
+    "message": "It uses the SSE transport, which Anda does not support."
+  },
+  "mcpRegistryUnsupportedTransport": {
+    "message": "It runs as a local web server, which Anda cannot start."
+  },
+  "mcpRegistryUnsupportedPackage": {
+    "message": "Anda cannot run this kind of package. Install it yourself, then add its command."
+  },
+  "mcpRegistryNothing": {
+    "message": "Anda cannot run this server in any of the ways it is published."
+  },
+  "mcpRegistryRequired": {
+    "message": "Required"
+  },
+  "mcpRegistrySecretField": {
+    "message": "Stored as a secret"
+  },
+  "mcpRegistryMissing": {
+    "message": "Fill in: $1"
+  },
+  "mcpRegistryBack": {
+    "message": "Back"
+  },
+  "mcpRegistryInstall": {
+    "message": "Install"
+  },
+  "mcpSourceImport": {
+    "message": "Imported from another app"
+  },
+  "mcpSourceRegistry": {
+    "message": "From the MCP Registry"
+  },
+  "mcpOptionsTitle": {
+    "message": "Advanced settings"
+  },
+  "mcpOptionsHelp": {
+    "message": "Saved in this server's mcp.json entry. A change that affects the connection reconnects the server."
+  },
+  "mcpOptionsUnavailable": {
+    "message": "Fix this server's entry in mcp.json to change its advanced settings."
+  },
+  "mcpOptionStartup": {
+    "message": "Discover tools"
+  },
+  "mcpOptionStartupBackground": {
+    "message": "After the daemon starts (default)"
+  },
+  "mcpOptionStartupEager": {
+    "message": "Before the daemon is ready"
+  },
+  "mcpOptionLifecycle": {
+    "message": "Protocol"
+  },
+  "mcpOptionLifecycleAuto": {
+    "message": "Detect (default)"
+  },
+  "mcpOptionLifecycleDiscover": {
+    "message": "Discovery only"
+  },
+  "mcpOptionLifecycleInitialize": {
+    "message": "Legacy handshake"
+  },
+  "mcpOptionConcurrency": {
+    "message": "Tools at once"
+  },
+  "mcpOptionConcurrencySerial": {
+    "message": "One at a time (default)"
+  },
+  "mcpOptionConcurrencyReadOnly": {
+    "message": "Read-only tools together"
+  },
+  "mcpOptionConcurrencyParallel": {
+    "message": "All together"
+  },
+  "mcpOptionTimeouts": {
+    "message": "Timeouts, in seconds"
+  },
+  "mcpOptionSetup": {
+    "message": "Connect"
+  },
+  "mcpOptionList": {
+    "message": "List tools"
+  },
+  "mcpOptionRequest": {
+    "message": "One request"
+  },
+  "mcpOptionCall": {
+    "message": "Whole call"
+  },
+  "mcpOptionOutput": {
+    "message": "Result text, in bytes"
+  },
+  "mcpOptionEnv": {
+    "message": "Environment"
+  },
+  "mcpOptionEnvInherit": {
+    "message": "The daemon's whole environment (default)"
+  },
+  "mcpOptionEnvIsolate": {
+    "message": "Only the essentials and its own env"
+  },
+  "mcpOptionTasks": {
+    "message": "Long-running tasks"
+  },
+  "mcpOptionTasksOff": {
+    "message": "Off (default)"
+  },
+  "mcpOptionTasksOn": {
+    "message": "On"
+  },
+  "mcpOptionTasksWait": {
+    "message": "Longest wait, in seconds"
+  },
+  "mcpOptionsNumbers": {
+    "message": "Use whole numbers, or leave a field empty for its default."
+  },
+  "mcpOptionsDefaults": {
+    "message": "Use defaults"
+  },
+  "mcpOptionsSave": {
+    "message": "Save settings"
+  },
+  "mcpOptionsSaved": {
+    "message": "Settings saved."
   }
 }
