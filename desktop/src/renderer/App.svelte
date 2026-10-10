@@ -3,13 +3,14 @@
   import { onDestroy, tick, untrack } from 'svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   import { applyAppearanceTheme } from '$lib/anda/theme'
-  import pandaLogo from '../../../anda_bot/assets/logo.png'
+  import AndaMark from '$lib/anda/AndaMark.svelte'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
   import { displayMessages } from '$lib/anda/chat/message-display'
   import { actionPending } from '$lib/anda/chat/action-view'
-  import { firstLine, toolCallStatus, toolCallSummary } from '$lib/anda/chat/tool-view'
+  import { firstLine, runningToolLabel } from '$lib/anda/chat/tool-view'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import Modal from '$lib/anda/Modal.svelte'
   import { delay } from '$lib/utils/async'
@@ -242,14 +243,13 @@
       [...turnFiles.values()].flat().map((file) => workspaceRelative(file.path, client.workspace))
     )
   ])
-  const currentStep = $derived.by(() => {
-    if (!working) return ''
-    const tools = (transcriptGroups.at(-1)?.messages || []).flatMap((m) => m.tools || [])
-    const tool = tools.findLast((call) => toolCallStatus(call) === 'running')
-    if (!tool) return ''
-    const summary = toolCallSummary(tool)
-    return summary ? `${tool.name} · ${summary}` : tool.name
-  })
+  const currentStep = $derived(
+    working ? runningToolLabel(transcriptGroups.at(-1)?.messages || []) : ''
+  )
+  // The running turn's rows animate; the newest group can be an empty placeholder.
+  const liveGroup = $derived(
+    working ? transcriptGroups.findLast((group) => group.messages.length)?._id : undefined
+  )
   const elapsed = $derived.by(() => {
     const started = working ? workingSince.get(client.activeSource) : undefined
     return started ? formatElapsed(now - started) : ''
@@ -969,7 +969,7 @@
         </div>{/if}
     </header>
     {#if !client.ready}<div class="startup">
-        <img class="anda-logo" src={pandaLogo} alt="Anda" />
+        <AndaMark working class="anda-logo" />
         <p>{t('loading')}</p>
       </div>
     {:else if client.view === 'chat'}
@@ -1022,7 +1022,10 @@
         }}
       >
         {#if isEmpty}<div class="welcome">
-            <img class="anda-logo" src={pandaLogo} alt="Anda" />
+            <div class="welcome-mark">
+              <span class="welcome-aura" aria-hidden="true"></span>
+              <AndaMark track class="welcome-panda" />
+            </div>
             <h1>{t('welcome')}</h1>
             <p>{t('intro')}</p>
           </div>
@@ -1041,6 +1044,7 @@
                     onToggleQuickPrompt={(text) => client.quickPrompts.toggle(text)}
                     compactActions
                     groupTools
+                    live={group._id === liveGroup}
                   />
                 </div>
                 {#if turnFiles.get(message.id)}<EditedFiles
@@ -1052,11 +1056,11 @@
                 class="transcript-item"
               >
                 <ChatMessageItem {message} compactActions groupTools />
-              </div>{/each}{#if working}<div class="working-indicator" role="status">
-                <span class="working-dot"></span><span>{t('working')}</span>{#if elapsed}<span
-                    class="working-elapsed">{elapsed}</span
-                  >{/if}{#if currentStep}<code title={currentStep}>{currentStep}</code>{/if}
-              </div>{/if}
+              </div>{/each}{#if working}<ChatWorkingIndicator
+                label={t('working')}
+                {elapsed}
+                step={currentStep}
+              />{/if}
           </div>{/if}
       </div>
       {#if !following && messages.length}<button

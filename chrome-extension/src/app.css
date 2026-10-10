@@ -41,6 +41,56 @@
 
 :root {
   color-scheme: light dark;
+  /* Motion shared by the transcript and the composer: a spring that
+     overshoots for things that pop, a soft one for things that arrive. */
+  --anda-spring: linear(
+    0,
+    0.071,
+    0.238,
+    0.445,
+    0.65,
+    0.827,
+    0.963,
+    1.055,
+    1.107,
+    1.126,
+    1.121,
+    1.103,
+    1.077,
+    1.051,
+    1.027,
+    1.009,
+    0.996,
+    0.988,
+    0.984,
+    0.986,
+    0.993,
+    1
+  );
+  --anda-spring-soft: linear(
+    0,
+    0.097,
+    0.298,
+    0.514,
+    0.7,
+    0.839,
+    0.933,
+    0.989,
+    1.017,
+    1.027,
+    1.023,
+    1.011,
+    1.003,
+    1
+  );
+  --anda-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The working composer's comet travels its border by this angle. */
+@property --anda-comet-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
 }
 
 .dark {
@@ -290,6 +340,140 @@
     padding: 0;
     border-radius: 0;
     font-size: inherit;
+  }
+
+  /* A fenced block scrolls inside its code, so the language label and the
+     copy button (added by chat/code-blocks.ts) stay put in a header strip. */
+  .md-content pre:has(> code) {
+    position: relative;
+    overflow: hidden;
+    min-width: min(9rem, 100%);
+    padding: 0;
+  }
+
+  .md-content pre > code {
+    overflow-x: auto;
+    padding: 1em;
+  }
+
+  .md-content pre:has(> .md-code-copy) > code {
+    padding-top: 2.1rem;
+  }
+
+  .md-content pre:has(> .md-code-copy)::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 1.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--message-border, #e6e6e6) 70%, transparent);
+    background: color-mix(in srgb, var(--message-text, #171717) 2.5%, transparent);
+    content: attr(data-lang);
+    padding: 0.4rem 0.8rem;
+    color: var(--message-muted, #737373);
+    font-family: inherit;
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+  }
+
+  .md-code-copy {
+    position: absolute;
+    top: 0.125rem;
+    right: 0.25rem;
+    display: grid;
+    width: 1.5rem;
+    height: 1.5rem;
+    place-items: center;
+    border: 1px solid transparent;
+    border-radius: 0.375rem;
+    background: transparent;
+    color: var(--message-muted, #737373);
+    opacity: 0.6;
+    transition:
+      opacity 160ms ease-out,
+      transform 220ms var(--anda-spring),
+      color 120ms ease-out,
+      border-color 120ms ease-out;
+  }
+
+  .md-content pre:hover .md-code-copy,
+  .md-code-copy:focus-visible,
+  .md-code-copy[data-copied] {
+    opacity: 1;
+  }
+
+  .md-code-copy:active {
+    transform: scale(0.88);
+  }
+
+  .md-code-copy:hover {
+    border-color: var(--message-border, #e6e6e6);
+    color: var(--message-text, #171717);
+  }
+
+  .md-code-copy svg {
+    grid-area: 1 / 1;
+    width: 0.8125rem;
+    height: 0.8125rem;
+    transition:
+      opacity 140ms ease-out,
+      transform 320ms var(--anda-spring);
+  }
+
+  .md-code-copy .md-code-copied {
+    opacity: 0;
+    transform: scale(0.4) rotate(-20deg);
+  }
+
+  .md-code-copy[data-copied] {
+    color: #059669;
+  }
+
+  .md-code-copy[data-copied] .md-code-copied {
+    opacity: 1;
+    transform: none;
+  }
+
+  .md-code-copy[data-copied] .md-code-idle {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+
+  .dark .md-code-copy[data-copied] {
+    color: #34d399;
+  }
+
+  /* Text that is being worked on right now: a highlight sweeps across it. */
+  .anda-shimmer {
+    background: linear-gradient(
+        100deg,
+        var(--shimmer-base, var(--message-muted, #737373)) 40%,
+        var(--shimmer-glow, var(--message-text, #171717)) 50%,
+        var(--shimmer-base, var(--message-muted, #737373)) 60%
+      )
+      0 0 / 300% 100%;
+    background-clip: text;
+    color: transparent;
+    animation: anda-shimmer 2.4s linear infinite;
+  }
+
+  @keyframes anda-shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: 0% 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .anda-shimmer {
+      background: none;
+      color: var(--shimmer-base, var(--message-muted, #737373));
+      animation: none;
+    }
   }
 
   /* 链接 */

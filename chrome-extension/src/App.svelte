@@ -8,9 +8,12 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
+  import AndaMark from '$lib/anda/AndaMark.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
   import { actionPending } from '$lib/anda/chat/action-view'
   import { displayMessages } from '$lib/anda/chat/message-display'
+  import { runningToolLabel } from '$lib/anda/chat/tool-view'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
@@ -39,7 +42,7 @@
   import { statusLabel } from '$lib/anda/chat/status'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
-  import { badgeClass, buttonClass, cardClass, separatorClass } from '$lib/anda/ui'
+  import { badgeClass, buttonClass, separatorClass } from '$lib/anda/ui'
   import { scrollIntoView } from '$lib/utils/document'
   import { formatTimestamp } from '$lib/utils/format'
   import {
@@ -93,6 +96,13 @@
   const loadingPrevious = $derived(andaClient.activeChannel?.loadingPrevious || false)
   const visibleMessageGroups = $derived.by<MessageGroup[]>(() =>
     displayMessageGroups(andaClient.activeChannel?.messageGroups || [])
+  )
+  // The running turn's rows animate; the newest group can be an empty placeholder.
+  const liveGroup = $derived(
+    stoppable ? visibleMessageGroups.findLast((group) => group.messages.length)?._id : undefined
+  )
+  const currentStep = $derived(
+    stoppable ? runningToolLabel(visibleMessageGroups.at(-1)?.messages || []) : ''
   )
   const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
   const sideMessageCount = $derived(sideMessages.length)
@@ -556,14 +566,9 @@
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
         <div class="message-empty m-auto grid max-w-64 place-items-center gap-2 text-center">
-          <div
-            class={cardClass('message-empty-icon grid size-11 place-items-center rounded-md p-0')}
-          >
-            {#if syncing}
-              <LoaderCircle class="size-5 animate-spin text-emerald-800" />
-            {:else}
-              <Bot class="size-5 text-emerald-800" />
-            {/if}
+          <div class="message-empty-mark">
+            <span class="message-empty-aura" aria-hidden="true"></span>
+            <AndaMark track working={syncing} class="message-empty-panda" />
           </div>
           <div class="message-empty-title text-xs font-semibold">
             {syncing ? getMessage('syncing') : getMessage('ready')}
@@ -621,10 +626,16 @@
                 memoryActivity={memoryActivity.messages[message.id]}
                 quickPromptActive={andaClient.quickPrompts.has(message.text)}
                 onToggleQuickPrompt={toggleQuickPrompt}
+                live={group._id === liveGroup}
               />
             {/each}
           </section>
         {/each}
+        {#if stoppable}
+          <div class="mx-auto w-full max-w-3xl">
+            <ChatWorkingIndicator label={getMessage('working')} step={currentStep} />
+          </div>
+        {/if}
       {/if}
     </main>
 
@@ -737,6 +748,7 @@
     --message-text: #171717;
     --message-muted: #737373;
     --message-muted-soft: #a0a0a0;
+    --chat-accent: #10b981;
 
     background: var(--message-bg);
     color: var(--message-text);
@@ -751,6 +763,77 @@
 
   .message-scroll {
     background: var(--message-bg);
+    /* Text fades out under the header and into the footer instead of being cut. */
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 12px,
+      #000 calc(100% - 16px),
+      transparent
+    );
+  }
+
+  /* Anda waits on an empty chat: its eyes follow the pointer, a tap rolls it. */
+  .message-empty-mark {
+    position: relative;
+    margin-bottom: 0.25rem;
+    animation:
+      message-empty-rise 700ms var(--anda-spring-soft) both,
+      message-empty-float 6s ease-in-out 700ms infinite;
+  }
+
+  .message-empty-mark :global(.message-empty-panda) {
+    position: relative;
+    width: 3.25rem;
+    height: auto;
+  }
+
+  .message-empty-aura {
+    position: absolute;
+    inset: -45% -60%;
+    border-radius: 50%;
+    background: conic-gradient(
+      from var(--anda-comet-angle),
+      #10b98166,
+      #3b82f644,
+      #f59e0b44,
+      #10b98166
+    );
+    filter: blur(22px);
+    opacity: 0.45;
+    pointer-events: none;
+    animation: message-empty-aura 14s linear infinite;
+  }
+
+  :global(.dark) .message-empty-aura {
+    opacity: 0.3;
+  }
+
+  @keyframes message-empty-rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+      filter: blur(4px);
+    }
+  }
+
+  @keyframes message-empty-float {
+    50% {
+      translate: 0 -4px;
+    }
+  }
+
+  @keyframes message-empty-aura {
+    to {
+      --anda-comet-angle: 360deg;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .message-empty-mark,
+    .message-empty-aura {
+      animation: none;
+    }
   }
 
   .message-status-badge,
@@ -773,7 +856,6 @@
     color: var(--message-muted);
   }
 
-  .message-empty-icon,
   .message-muted-button,
   .message-side-icon {
     border-color: var(--message-border);
@@ -831,6 +913,7 @@
     --message-text: #f4f4f4;
     --message-muted: #adadad;
     --message-muted-soft: #858585;
+    --chat-accent: #34d399;
 
     color-scheme: dark;
   }

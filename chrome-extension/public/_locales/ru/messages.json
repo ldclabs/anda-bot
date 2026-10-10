@@ -1613,6 +1613,9 @@
   "copyMessage": {
     "message": "Копировать сообщение"
   },
+  "copyCode": {
+    "message": "Копировать код"
+  },
   "printMessage": {
     "message": "Распечатать сообщение"
   },

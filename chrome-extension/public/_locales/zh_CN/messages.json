@@ -1613,6 +1613,9 @@
   "copyMessage": {
     "message": "复制消息"
   },
+  "copyCode": {
+    "message": "复制代码"
+  },
   "printMessage": {
     "message": "打印消息"
   },

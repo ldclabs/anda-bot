@@ -46,6 +46,7 @@
 
 <script lang="ts">
   import AttachmentList from '$lib/anda/composer/AttachmentList.svelte'
+  import { prefersReducedMotion } from '$lib/anda/chat/entrance'
   import { fileToAttachment } from '$lib/anda/composer/attachments'
   import McpResourcePicker, {
     type McpResourceSource
@@ -78,6 +79,7 @@
     Check,
     LoaderCircle,
     Mic,
+    Paperclip,
     Plus,
     Settings,
     Shield,
@@ -91,6 +93,7 @@
   } from '@lucide/svelte'
   import { Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte'
+  import { fade } from 'svelte/transition'
 
   let {
     disabled = false,
@@ -211,6 +214,21 @@
   let approvalMenuElement: HTMLDivElement | null = $state(null)
   let lastIncomingAttachmentId = ''
   let lastIncomingDraftId = ''
+  let shellElement: HTMLDivElement | null = $state(null)
+  let sendButton: HTMLButtonElement | null = $state(null)
+  // A sent draft lifts off the box while a ring spreads from the send button.
+  interface Launch {
+    id: number
+    text: string
+    textStyle: string
+    ringX: number
+    ringY: number
+  }
+  let launches = $state<Launch[]>([])
+  let launchSeq = 0
+  const launchTimers = new Set<number>()
+  let dragDepth = 0
+  let draggingFiles = $state(false)
 
   const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
   const draftCommand = $derived(parsePromptCommand(text))
@@ -422,6 +440,7 @@
 
   onDestroy(() => {
     clearTimeout(workingTimeout)
+    for (const timer of launchTimers) clearTimeout(timer)
     document.removeEventListener('pointerdown', handleDocumentPointerDown)
     void recorder.cancel()
   })
@@ -658,6 +677,7 @@
       text: text.trim(),
       attachments
     }
+    launch(payload.text)
     // Clear optimistically: a send can take a while (e.g. /side runs inline on
     // the daemon) and the draft lingering in the box reads as "not sent".
     const draftText = text
@@ -682,6 +702,42 @@
         resizeTextarea()
       }
     }
+  }
+
+  function launch(draft: string) {
+    if (!shellElement || prefersReducedMotion()) return
+    const shell = shellElement.getBoundingClientRect()
+    const button = sendButton?.getBoundingClientRect()
+    let textStyle = ''
+    if (textareaElement && draft) {
+      const style = getComputedStyle(textareaElement)
+      const box = textareaElement.getBoundingClientRect()
+      textStyle = `left: ${box.left - shell.left}px; top: ${box.top - shell.top}px; width: ${box.width}px; height: ${box.height}px; font: ${style.font}; padding: ${style.padding}; letter-spacing: ${style.letterSpacing}`
+    }
+    const id = ++launchSeq
+    launches = [
+      ...launches,
+      {
+        id,
+        text: draft,
+        textStyle,
+        ringX: button ? button.left + button.width / 2 - shell.left : shell.width - 24,
+        ringY: button ? button.top + button.height / 2 - shell.top : shell.height - 24
+      }
+    ]
+    const timer = window.setTimeout(() => {
+      launchTimers.delete(timer)
+      launches = launches.filter((item) => item.id !== id)
+    }, 900)
+    launchTimers.add(timer)
+  }
+
+  // The border lights up around the pointer.
+  function trackPointer(event: PointerEvent) {
+    const shell = event.currentTarget as HTMLElement
+    const rect = shell.getBoundingClientRect()
+    shell.style.setProperty('--spot-x', `${event.clientX - rect.left}px`)
+    shell.style.setProperty('--spot-y', `${event.clientY - rect.top}px`)
   }
 
   async function stopTask() {
@@ -732,8 +788,26 @@
     input.value = ''
   }
 
+  function handleDragenter(event: DragEvent) {
+    if (disabled || !event.dataTransfer?.types.includes('Files')) {
+      return
+    }
+    dragDepth += 1
+    draggingFiles = true
+  }
+
+  function handleDragleave() {
+    if (!draggingFiles) {
+      return
+    }
+    dragDepth = Math.max(0, dragDepth - 1)
+    draggingFiles = dragDepth > 0
+  }
+
   async function handleDrop(event: DragEvent) {
     event.preventDefault()
+    dragDepth = 0
+    draggingFiles = false
     if (disabled) {
       return
     }
@@ -838,6 +912,8 @@
   onpaste={handlePaste}
   ondrop={handleDrop}
   ondragover={handleDragover}
+  ondragenter={handleDragenter}
+  ondragleave={handleDragleave}
 >
   <input
     bind:this={fileInputElement}
@@ -854,11 +930,36 @@
     />
   {/if}
 
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
+    bind:this={shellElement}
     class="composer-shell"
     class:composer-working={workingPersisted}
+    class:composer-dragging={draggingFiles}
     aria-busy={workingPersisted}
+    onpointermove={trackPointer}
   >
+    <span class="composer-spotlight" aria-hidden="true"></span>
+    {#each launches as item (item.id)}
+      <span
+        class="composer-ring"
+        style:left="{item.ringX}px"
+        style:top="{item.ringY}px"
+        aria-hidden="true"
+      ></span>
+      {#if item.text}
+        <div class="composer-flight" style={item.textStyle} aria-hidden="true">{item.text}</div>
+      {/if}
+    {/each}
+    {#if draggingFiles}
+      <div class="composer-drop" aria-hidden="true" transition:fade={{ duration: 140 }}>
+        <svg class="composer-drop-outline"><rect /></svg>
+        <span class="composer-drop-label">
+          <Paperclip class="size-4" />
+          {getMessage('attachFiles')}
+        </span>
+      </div>
+    {/if}
     <AttachmentList {attachments} onRemove={removeAttachment} />
 
     {#if attachmentError}
@@ -1129,7 +1230,11 @@
                       {...props}
                       type="button"
                       disabled={stopPending}
-                      class={buttonClass('default', 'icon-sm', 'rounded-full')}
+                      class={buttonClass(
+                        'default',
+                        'icon-sm',
+                        'composer-stop relative rounded-full'
+                      )}
                       aria-label={stopTitle}
                       onclick={stopTask}
                     >
@@ -1142,9 +1247,14 @@
                   {:else}
                     <button
                       {...props}
+                      bind:this={sendButton}
                       type="submit"
                       disabled={!canSend}
-                      class={buttonClass('default', 'icon-sm', 'rounded-full disabled:opacity-30')}
+                      class={buttonClass(
+                        'default',
+                        'icon-sm',
+                        'composer-send rounded-full disabled:opacity-30'
+                      )}
                       aria-label={getMessage('send')}
                     >
                       {#if sending}
@@ -1202,6 +1312,7 @@
 <style>
   /* One card: the text box on top, one toolbar row under it. */
   .composer-shell {
+    --composer-accent: var(--chat-accent, #10b981);
     position: relative;
     isolation: isolate;
     display: flex;
@@ -1214,49 +1325,57 @@
     color: var(--message-text, #171717);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
     transition:
-      border-color 180ms ease-out,
-      box-shadow 180ms ease-out;
+      border-color 220ms ease-out,
+      box-shadow 320ms var(--anda-ease-out, ease-out);
   }
 
+  .composer-shell:focus-within {
+    border-color: color-mix(in srgb, var(--composer-accent) 42%, var(--message-border, #e6e6e6));
+    box-shadow:
+      0 0 0 4px color-mix(in srgb, var(--composer-accent) 11%, transparent),
+      0 10px 32px rgba(0, 0, 0, 0.07);
+  }
+
+  /* While Anda works, a comet runs around the border with a soft glow. */
   .composer-shell::before,
   .composer-shell::after {
     position: absolute;
+    inset: -1px;
+    border-radius: inherit;
     content: '';
     pointer-events: none;
     opacity: 0;
-    transition: opacity 300ms ease-in-out;
+    background:
+      conic-gradient(
+        from var(--anda-comet-angle),
+        transparent 0deg 190deg,
+        rgba(16, 185, 129, 0.15) 220deg,
+        #10b981 290deg,
+        #3b82f6 330deg,
+        #f59e0b 352deg,
+        transparent 360deg
+      ),
+      linear-gradient(
+        90deg,
+        rgba(16, 185, 129, 0.28),
+        rgba(59, 130, 246, 0.28),
+        rgba(245, 158, 11, 0.28)
+      );
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    transition: opacity 360ms ease-in-out;
     z-index: 0;
   }
 
   .composer-shell::before {
-    inset: -1px;
-    border-radius: inherit;
-    background: linear-gradient(90deg, #10b981, #3b82f6, #f59e0b, #10b981);
-    background-size: 300% 100%;
-    mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
     padding: 1.5px;
   }
 
   .composer-shell::after {
-    inset: -1px;
-    border-radius: inherit;
-    background: linear-gradient(
-      90deg,
-      rgba(16, 185, 129, 0.4),
-      rgba(59, 130, 246, 0.4),
-      rgba(245, 158, 11, 0.4),
-      rgba(16, 185, 129, 0.4)
-    );
-    background-size: 300% 100%;
-    filter: blur(4px);
-    mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
     padding: 3px;
+    filter: blur(5px);
   }
 
   .composer-shell > :global(*) {
@@ -1271,7 +1390,148 @@
   .composer-shell.composer-working::before,
   .composer-shell.composer-working::after {
     opacity: 1;
-    animation: composer-border-flow 4s linear infinite;
+    animation: composer-comet 3.4s linear infinite;
+  }
+
+  .composer-shell.composer-working::after {
+    opacity: 0.75;
+  }
+
+  /* The pointer's light: a bright arc on the border nearest the pointer. */
+  .composer-shell > .composer-spotlight {
+    position: absolute;
+    inset: -1px;
+    z-index: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: radial-gradient(
+      150px circle at var(--spot-x, 50%) var(--spot-y, 50%),
+      color-mix(in srgb, var(--composer-accent) 85%, transparent),
+      transparent 70%
+    );
+    pointer-events: none;
+    opacity: 0;
+    mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    mask-composite: exclude;
+    transition: opacity 280ms ease-out;
+  }
+
+  .composer-shell:hover > .composer-spotlight {
+    opacity: 1;
+  }
+
+  .composer-shell.composer-working > .composer-spotlight {
+    opacity: 0;
+  }
+
+  /* A sent draft lifts off toward the transcript, over anything above the box. */
+  .composer-shell > .composer-flight {
+    position: absolute;
+    z-index: 3;
+    overflow: hidden;
+    color: var(--message-text, #171717);
+    pointer-events: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    animation: composer-flight 620ms cubic-bezier(0.3, 0.6, 0.2, 1) forwards;
+  }
+
+  .composer-shell > .composer-ring {
+    position: absolute;
+    z-index: 0;
+    width: 2rem;
+    height: 2rem;
+    margin: -1rem 0 0 -1rem;
+    border: 2px solid var(--composer-accent);
+    border-radius: 999px;
+    pointer-events: none;
+    animation: composer-ring 720ms var(--anda-ease-out, ease-out) forwards;
+  }
+
+  /* Files held over the box: a marching outline and what dropping does. */
+  .composer-shell.composer-dragging {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 92%, var(--composer-accent));
+  }
+
+  .composer-shell > .composer-drop {
+    position: absolute;
+    inset: -1px;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    border-radius: inherit;
+    background: color-mix(in srgb, var(--message-bg, #ffffff) 70%, transparent);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+  }
+
+  .composer-drop-outline {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .composer-drop-outline rect {
+    x: 1px;
+    y: 1px;
+    width: calc(100% - 2px);
+    height: calc(100% - 2px);
+    rx: 1.2rem;
+    fill: none;
+    stroke: var(--composer-accent);
+    stroke-width: 1.5px;
+    stroke-dasharray: 7 6;
+    animation: composer-march 0.9s linear infinite;
+  }
+
+  .composer-drop-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: color-mix(in srgb, var(--composer-accent) 70%, var(--message-text, #171717));
+    font-size: 0.8125rem;
+    font-weight: 600;
+    animation: composer-drop-bob 1.4s ease-in-out infinite;
+  }
+
+  /* Send springs in once there is something to send; stop wears a running ring. */
+  .composer-toolbar :global(.composer-send:not(:disabled)) {
+    animation: composer-send-ready 460ms var(--anda-spring, ease-out);
+  }
+
+  .composer-toolbar :global(.composer-send svg) {
+    transition: translate 240ms var(--anda-spring, ease-out);
+  }
+
+  .composer-toolbar :global(.composer-send:hover:not(:disabled) svg) {
+    translate: 0 -2px;
+  }
+
+  .composer-toolbar :global(.composer-stop)::before {
+    position: absolute;
+    inset: -3px;
+    border-radius: 999px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0 40%,
+      color-mix(in srgb, var(--composer-accent) 90%, transparent)
+    );
+    content: '';
+    mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
+    animation: composer-spin 1.1s linear infinite;
+  }
+
+  .composer-toolbar :global(.composer-stop:hover svg) {
+    scale: 1.15;
+  }
+
+  .composer-toolbar :global(.composer-stop svg) {
+    transition: scale 200ms var(--anda-spring, ease-out);
   }
 
   .composer-toolbar {
@@ -1325,6 +1585,24 @@
     background: color-mix(in srgb, var(--message-bg, #ffffff) 88%, var(--message-surface, #f7f7f7));
     color: var(--message-muted, #737373);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--message-bg, #ffffff) 70%, transparent);
+    transition:
+      transform 240ms var(--anda-spring, ease-out),
+      border-color 160ms ease-out,
+      box-shadow 240ms ease-out;
+  }
+
+  .quick-prompt-chip:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(
+      in srgb,
+      var(--chat-accent, #10b981) 35%,
+      var(--message-border, #e6e6e6)
+    );
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  .quick-prompt-chip:active {
+    transform: scale(0.97);
   }
 
   .quick-prompt-main,
@@ -1403,6 +1681,8 @@
     padding: 0.45rem;
     color: var(--message-text, #171717);
     box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16);
+    transform-origin: 1rem 100%;
+    animation: composer-menu-in 200ms var(--anda-ease-out, ease-out) both;
   }
 
   .approval-mode-menu-eyebrow {
@@ -1445,6 +1725,7 @@
 
   :global(.composer-textarea) {
     color: var(--message-text, #171717);
+    caret-color: var(--chat-accent, #10b981);
   }
 
   :global(.composer-textarea::placeholder) {
@@ -1460,18 +1741,78 @@
     color: var(--message-text, #171717);
   }
 
-  @keyframes composer-border-flow {
+  @keyframes composer-comet {
+    to {
+      --anda-comet-angle: 360deg;
+    }
+  }
+
+  @keyframes composer-flight {
     0% {
-      background-position: 0% 50%;
+      opacity: 1;
+      transform: none;
+      filter: blur(0);
+    }
+    25% {
+      opacity: 1;
     }
     100% {
-      background-position: 300% 50%;
+      opacity: 0;
+      transform: translateY(-64px) scale(0.92);
+      filter: blur(6px);
+    }
+  }
+
+  @keyframes composer-ring {
+    from {
+      opacity: 0.7;
+      transform: scale(0.6);
+    }
+    to {
+      opacity: 0;
+      transform: scale(2.8);
+    }
+  }
+
+  @keyframes composer-march {
+    to {
+      stroke-dashoffset: -13;
+    }
+  }
+
+  @keyframes composer-drop-bob {
+    50% {
+      transform: translateY(-3px);
+    }
+  }
+
+  @keyframes composer-menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.96);
+    }
+  }
+
+  @keyframes composer-send-ready {
+    from {
+      transform: scale(0.6);
+    }
+  }
+
+  @keyframes composer-spin {
+    to {
+      transform: rotate(360deg);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .composer-shell.composer-working::before,
-    .composer-shell.composer-working::after {
+    .composer-shell.composer-working::after,
+    .composer-drop-outline rect,
+    .composer-drop-label,
+    .approval-mode-menu,
+    .composer-toolbar :global(.composer-send:not(:disabled)),
+    .composer-toolbar :global(.composer-stop)::before {
       animation: none;
     }
   }

@@ -3,7 +3,11 @@
   import type { ChatAttachment } from '$lib/anda/client/types'
   import { formatFileSize } from '$lib/utils/format'
   import { buttonClass } from '$lib/anda/ui'
+  import { prefersReducedMotion } from '$lib/anda/chat/entrance'
   import { FileText, Paperclip, X } from '@lucide/svelte'
+  import { flip } from 'svelte/animate'
+  import { backOut } from 'svelte/easing'
+  import { scale, slide } from 'svelte/transition'
 
   let {
     attachments,
@@ -12,60 +16,70 @@
     attachments: ChatAttachment[]
     onRemove: (id: string) => void
   } = $props()
+
+  const still = prefersReducedMotion()
+  const tray = { duration: still ? 0 : 220 }
+  const chipIn = { start: 0.6, duration: still ? 0 : 360, easing: backOut }
+  const chipOut = { start: 0.6, duration: still ? 0 : 160 }
+  const reflow = { duration: still ? 0 : 240 }
 </script>
 
 {#if attachments.length}
-  <div class="attachment-tray" aria-label={getMessage('attachFiles')}>
+  <div class="attachment-tray" aria-label={getMessage('attachFiles')} transition:slide={tray}>
     <div class="attachment-tray-count" aria-hidden="true">
       <Paperclip class="size-3" />
-      <span>{attachments.length}</span>
+      {#key attachments.length}
+        <span class="attachment-tray-number">{attachments.length}</span>
+      {/key}
     </div>
     <div class="attachment-items">
       {#each attachments as attachment (attachment.id)}
-        {#if attachment.type?.startsWith('image/')}
-          <div class="attachment-image group">
-            <img
-              src={`data:${attachment.type};base64,${attachment.resource.blob}`}
-              alt={attachment.name}
-              class="size-full object-cover"
-            />
-            <button
-              type="button"
-              class={buttonClass(
-                'destructive',
-                'icon-xs',
-                'absolute top-0 right-0 size-4 rounded-none rounded-bl-md bg-black/50 p-0 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500'
-              )}
-              aria-label={getMessage('removeAttachment')}
-              onclick={() => onRemove(attachment.id)}
-            >
-              <X class="size-2" />
-            </button>
-          </div>
-        {:else}
-          <span class="attachment-pill" title={attachment.name}>
-            <span class="attachment-icon">
-              <FileText class="size-3.5" />
+        <div class="attachment-slot" animate:flip={reflow} in:scale={chipIn} out:scale={chipOut}>
+          {#if attachment.type?.startsWith('image/')}
+            <div class="attachment-image group">
+              <img
+                src={`data:${attachment.type};base64,${attachment.resource.blob}`}
+                alt={attachment.name}
+                class="size-full object-cover"
+              />
+              <button
+                type="button"
+                class={buttonClass(
+                  'destructive',
+                  'icon-xs',
+                  'absolute top-0 right-0 size-4 rounded-none rounded-bl-md bg-black/50 p-0 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-red-500'
+                )}
+                aria-label={getMessage('removeAttachment')}
+                onclick={() => onRemove(attachment.id)}
+              >
+                <X class="size-2" />
+              </button>
+            </div>
+          {:else}
+            <span class="attachment-pill" title={attachment.name}>
+              <span class="attachment-icon">
+                <FileText class="size-3.5" />
+              </span>
+              <span class="attachment-body">
+                <span class="attachment-name">{attachment.name}</span>
+                <span class="attachment-meta">{formatFileSize(attachment.size || 0)}</span>
+              </span>
+              <button
+                type="button"
+                class={buttonClass(
+                  'ghost',
+                  'icon-xs',
+                  'attachment-remove text-muted-foreground/80 hover:text-foreground'
+                )}
+                aria-label={getMessage('removeAttachment')}
+                title={getMessage('removeAttachment')}
+                onclick={() => onRemove(attachment.id)}
+              >
+                <X class="size-3" />
+              </button>
             </span>
-            <span class="attachment-body">
-              <span class="attachment-name">{attachment.name}</span>
-              <span class="attachment-meta">{formatFileSize(attachment.size || 0)}</span>
-            </span>
-            <button
-              type="button"
-              class={buttonClass(
-                'ghost',
-                'icon-xs',
-                'attachment-remove text-muted-foreground/80 hover:text-foreground'
-              )}
-              aria-label={getMessage('removeAttachment')}
-              title={getMessage('removeAttachment')}
-              onclick={() => onRemove(attachment.id)}
-            >
-              <X class="size-3" />
-            </button>
-          </span>
-        {/if}
+          {/if}
+        </div>
       {/each}
     </div>
   </div>
@@ -106,6 +120,30 @@
     flex: 1;
     flex-wrap: wrap;
     gap: 0.375rem;
+  }
+
+  .attachment-slot {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .attachment-tray-number {
+    display: inline-block;
+    animation: attachment-count 420ms var(--anda-spring, ease-out);
+  }
+
+  @keyframes attachment-count {
+    from {
+      transform: translateY(-6px) scale(0.6);
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .attachment-tray-number {
+      animation: none;
+    }
   }
 
   .attachment-image {
@@ -177,6 +215,24 @@
     height: 1.25rem;
     flex: 0 0 auto;
     border-radius: 0.25rem;
+  }
+
+  :global(.dark) .attachment-tray {
+    border-color: color-mix(in srgb, var(--message-border, #424242) 70%, #10b981);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 90%, #10b981);
+    box-shadow: none;
+  }
+
+  :global(.dark) .attachment-pill,
+  :global(.dark) .attachment-image {
+    border-color: color-mix(in srgb, var(--message-border, #424242) 75%, #10b981);
+    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 94%, #10b981);
+  }
+
+  :global(.dark) .attachment-tray-count,
+  :global(.dark) .attachment-icon {
+    background: color-mix(in srgb, #10b981 18%, transparent);
+    color: #6ee7b7;
   }
 
   @media (max-width: 420px) {

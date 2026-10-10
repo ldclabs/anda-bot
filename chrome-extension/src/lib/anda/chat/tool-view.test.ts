@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import type { ChatMessage, ChatToolCall } from '../client/types'
 import {
   firstLine,
+  runningToolLabel,
   runtimeNotices,
   toolCallStatus,
   toolCallSummary,
@@ -102,5 +104,24 @@ describe('tool-view', () => {
     expect(toolKind('subagent')).toBe('agent')
     expect(toolKind('todo')).toBe('tool')
     expect(firstLine('## Plan\nstep one')).toBe('Plan')
+  })
+
+  it('names the latest call still waiting for its result', () => {
+    const turn = (tools: ChatToolCall[]): ChatMessage[] => [
+      { id: 'm-1-0', conversation: 1, role: 'assistant', text: '', tools }
+    ]
+    expect(runningToolLabel([])).toBe('')
+    expect(runningToolLabel(turn([{ name: 'shell', args: { command: 'ls' }, output: '{}' }]))).toBe(
+      ''
+    )
+    expect(
+      runningToolLabel(
+        turn([
+          { name: 'shell', args: { command: 'ls' } },
+          { name: 'read_file', args: { path: 'a.md' } },
+          { name: 'todo', output: '{}' }
+        ])
+      )
+    ).toBe('read_file · a.md')
   })
 })

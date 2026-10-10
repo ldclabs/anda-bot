@@ -1,5 +1,5 @@
 import { decodeQuotedString } from '../client/conversations'
-import type { ChatToolCall, Json } from '../client/types'
+import type { ChatMessage, ChatToolCall, Json } from '../client/types'
 
 /**
  * How a tool call reads in the transcript: a one-line row (kind, name, the
@@ -83,6 +83,20 @@ export function toolCallSummary(tool: ChatToolCall): string {
     if (text) return text
   }
   return oneLine(JSON.stringify(args))
+}
+
+/** A call's name with its summary, as one line. */
+export function toolCallLabel(tool: ChatToolCall): string {
+  const summary = toolCallSummary(tool)
+  return summary ? `${tool.name} · ${summary}` : tool.name
+}
+
+/** The latest call still waiting for its result among a turn's messages, or ''. */
+export function runningToolLabel(messages: ChatMessage[]): string {
+  const tool = messages
+    .flatMap((message) => message.tools || [])
+    .findLast((call) => toolCallStatus(call) === 'running')
+  return tool ? toolCallLabel(tool) : ''
 }
 
 function summaryValue(value: Json | undefined, isPath: boolean): string {

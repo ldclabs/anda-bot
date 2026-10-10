@@ -36,10 +36,13 @@
     safeDownloadName,
     type AttachmentCaches
   } from '$lib/anda/chat/attachment-view'
+  import { copyCodeFromClick, enhanceCodeBlocks } from '$lib/anda/chat/code-blocks'
+  import { transcriptEntrances } from '$lib/anda/chat/entrance'
   import { isProcessStep } from '$lib/anda/chat/message-display'
   import {
     firstLine,
     runtimeNotices,
+    toolCallLabel,
     toolCallStatus,
     toolCallSummary,
     toolDetailSections,
@@ -78,7 +81,7 @@
     Terminal,
     Wrench
   } from '@lucide/svelte'
-  import { onDestroy, type Component } from 'svelte'
+  import { onDestroy, onMount, untrack, type Component } from 'svelte'
 
   let {
     message,
@@ -86,7 +89,8 @@
     quickPromptActive = false,
     onToggleQuickPrompt,
     compactActions = false,
-    groupTools = false
+    groupTools = false,
+    live = false
   }: {
     message: ChatMessage
     memoryActivity?: Activity
@@ -98,7 +102,22 @@
     compactActions?: boolean
     /** Folds two or more tool calls into one expandable summary row. */
     groupTools?: boolean
+    /** Part of the turn that is still running: unfinished rows animate. */
+    live?: boolean
   } = $props()
+
+  // A message that just arrived enters (once, see chat/entrance.ts); the class
+  // comes off once the entrance has played so later re-renders stay still.
+  const entranceDelay = untrack(() => transcriptEntrances.claim(message))
+  let entering = $state(entranceDelay !== null)
+  onMount(() => {
+    if (!entering) return
+    const timer = window.setTimeout(() => (entering = false), 1800 + (entranceDelay || 0))
+    return () => clearTimeout(timer)
+  })
+  let contentElement: HTMLElement | null = $state(null)
+  let bookmarkPopped = $state(false)
+  let quickPromptPopped = $state(false)
 
   let copied = $state(false)
   let articleElement: HTMLElement
@@ -148,9 +167,7 @@
     if (!groupedTools) return ''
     const running = tools.findLastIndex((_, index) => toolStatuses[index] === 'running')
     if (running >= 0) {
-      const tool = tools[running]!
-      const summary = toolCallSummary(tool)
-      return summary ? `${tool.name} · ${summary}` : tool.name
+      return toolCallLabel(tools[running]!)
     }
     const names = [...new Set(tools.map((tool) => tool.name))]
     return names.length > 4 ? `${names.slice(0, 4).join(', ')}, …` : names.join(', ')
@@ -173,10 +190,27 @@
     [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
   )
   const html = $derived(renderMarkdown(mainText))
+  // Reasoning still streaming in: nothing else has arrived for this step yet.
+  const thinkingLive = $derived(live && !hasMainText && !tools.length)
+  function rowDelay(index: number): number {
+    return entering ? (entranceDelay || 0) + 60 + Math.min(index, 8) * 45 : 0
+  }
+
+  $effect(() => {
+    void html
+    const element = contentElement
+    if (!element) return
+    enhanceCodeBlocks(element, getMessage('copyCode'))
+    if (untrack(() => entering)) {
+      for (const [index, child] of Array.from(element.children).entries()) {
+        ;(child as HTMLElement).style.setProperty('--i', String(index))
+      }
+    }
+  })
   const messageActionButtonClass = buttonClass(
     'ghost',
     'icon-xs',
-    'chat-message-action size-5 rounded-sm'
+    'chat-message-action relative size-5 rounded-sm'
   )
   type MoreAction = 'copy-rich' | 'print'
   const moreActions = $derived([
@@ -198,7 +232,17 @@
     copied = true
     window.setTimeout(() => {
       copied = false
-    }, 1200)
+    }, 1400)
+  }
+
+  function toggleBookmark() {
+    bookmarkPopped = !bookmarked
+    void andaClient.bookmarks.toggle(message)
+  }
+
+  function toggleQuickPrompt() {
+    quickPromptPopped = !quickPromptActive
+    void onToggleQuickPrompt?.(mainText)
   }
 
   async function copyRichMessage() {
@@ -504,6 +548,8 @@
   id={message.id}
   class="grid w-full min-w-0 gap-1 {isUser ? 'justify-items-end' : 'justify-items-start'}"
   class:chat-message-step={processStep}
+  class:chat-enter={entering}
+  style:--enter-delay={entering ? `${entranceDelay}ms` : undefined}
 >
   {#if hasThinkingText && !isTool}
     <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
@@ -512,6 +558,9 @@
         icon={Lightbulb}
         name={getMessage('thinkingProcess')}
         summary={firstLine(thinkingText)}
+        live={thinkingLive}
+        animate={entering || live}
+        enterDelay={rowDelay(0)}
       >
         <div
           class="chat-message-thinking md-content w-full min-w-0 text-xs leading-relaxed text-pretty wrap-break-word"
@@ -560,11 +609,19 @@
         {/if}
 
         {#if hasMainText}
-          <div class="md-content w-full min-w-0 text-pretty wrap-break-word">{@html html}</div>
+          <!-- Clicks reach the copy buttons the code blocks get (real buttons, so keyboard works). -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div
+            bind:this={contentElement}
+            class="md-content w-full min-w-0 text-pretty wrap-break-word"
+            onclick={copyCodeFromClick}
+          >
+            {@html html}
+          </div>
         {/if}
 
         {#if message.attachments?.length}
-          <div class="{hasMainText ? 'mt-2' : ''} grid min-w-0 gap-1.5">
+          <div class="chat-enter-block {hasMainText ? 'mt-2' : ''} grid min-w-0 gap-1.5">
             {#each message.attachments as attachment (attachment.id)}
               <div
                 class="chat-message-attachment max-w-full min-w-0 overflow-hidden rounded-md border p-1.5 text-xs"
@@ -637,7 +694,11 @@
         {/if}
 
         {#if message.actions?.length}
-          <div class="{hasMainText || hasAttachments ? 'mt-2' : ''} grid min-w-0 gap-2">
+          <div
+            class="chat-enter-block {hasMainText || hasAttachments
+              ? 'mt-2'
+              : ''} grid min-w-0 gap-2"
+          >
             {#each message.actions as action (action.id)}
               {@const pending = actionPending(action)}
               {@const selectedChoice = actionSelectedChoice(action)}
@@ -770,6 +831,9 @@
         summary={toolCallSummary(tool)}
         mono
         status={toolCallStatus(tool)}
+        live={live && toolCallStatus(tool) === 'running'}
+        animate={entering || live}
+        enterDelay={rowDelay(index + 1)}
       >
         <div class="grid min-w-0 gap-1.5">
           {#each toolDetailSections(tool) as section, sectionIndex (sectionIndex)}
@@ -794,6 +858,9 @@
           name={getMessage('toolCallsCount', String(tools.length))}
           summary={toolGroupSummary}
           status={toolGroupStatus}
+          live={live && toolGroupStatus === 'running'}
+          animate={entering || live}
+          enterDelay={rowDelay(1)}
         >
           <div class="grid min-w-0">{@render toolRows()}</div>
         </ChatDetailRow>
@@ -806,6 +873,8 @@
           icon={Bell}
           name={notice.kind || getMessage('runtimeNotice')}
           summary={firstLine(notice.body)}
+          animate={entering}
+          enterDelay={rowDelay(index)}
         >
           <pre
             class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{notice.body}</pre>
@@ -829,7 +898,8 @@
           onclick={copyMessage}
         >
           {#if copied}
-            <Check class="size-3.5" />
+            <Check class="chat-action-pop size-3.5" />
+            <span class="chat-action-burst" aria-hidden="true"></span>
           {:else}
             <Copy class="size-3.5" />
           {/if}
@@ -845,10 +915,13 @@
             : getMessage('addQuickPrompt')}
           aria-pressed={quickPromptActive}
           title={quickPromptActive ? getMessage('removeQuickPrompt') : getMessage('addQuickPrompt')}
-          onclick={() => onToggleQuickPrompt?.(mainText)}
+          onclick={toggleQuickPrompt}
         >
           {#if quickPromptActive}
-            <Check class="size-3.5" />
+            <Check class="size-3.5 {quickPromptPopped ? 'chat-action-pop' : ''}" />
+            {#if quickPromptPopped}
+              <span class="chat-action-burst" aria-hidden="true"></span>
+            {/if}
           {:else}
             <Plus class="size-3.5" />
           {/if}
@@ -864,7 +937,8 @@
             onclick={copyRichMessage}
           >
             {#if richCopied}
-              <Check class="size-3.5" />
+              <Check class="chat-action-pop size-3.5" />
+              <span class="chat-action-burst" aria-hidden="true"></span>
             {:else}
               <Clipboard class="size-3.5" />
             {/if}
@@ -889,10 +963,13 @@
             aria-label={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
             aria-pressed={bookmarked}
             title={bookmarked ? getMessage('removeBookmark') : getMessage('bookmark')}
-            onclick={() => andaClient.bookmarks.toggle(message)}
+            onclick={toggleBookmark}
           >
             {#if bookmarked}
-              <BookmarkCheck class="size-3.5" />
+              <BookmarkCheck class="size-3.5 {bookmarkPopped ? 'chat-action-pop' : ''}" />
+              {#if bookmarkPopped}
+                <span class="chat-action-burst" aria-hidden="true"></span>
+              {/if}
             {:else}
               <Bookmark class="size-3.5" />
             {/if}
@@ -1133,5 +1210,140 @@
     border-color: rgba(45, 212, 191, 0.28);
     background: color-mix(in srgb, var(--message-bg, #2a2a2a) 78%, #064e3b);
     color: #99f6e4;
+  }
+
+  /* Entrances, for messages that just arrived (chat/entrance.ts). A prompt
+     springs up from the composer; an answer settles in block by block. */
+  .chat-enter .chat-message-card-user {
+    transform-origin: 100% 100%;
+    animation: chat-bubble-in 640ms var(--anda-spring, ease-out) var(--enter-delay, 0ms) both;
+  }
+
+  .chat-enter .chat-message-card-external,
+  .chat-enter .chat-message-card-system,
+  .chat-enter .chat-message-card-tool {
+    transform-origin: 0% 100%;
+    animation: chat-bubble-in 640ms var(--anda-spring, ease-out) var(--enter-delay, 0ms) both;
+  }
+
+  .chat-enter .chat-message-card-assistant .md-content > :global(*) {
+    animation: chat-block-in 720ms var(--anda-ease-out, ease-out)
+      calc(var(--enter-delay, 0ms) + min(var(--i, 0), 12) * 55ms) both;
+  }
+
+  .chat-enter .chat-message-card-assistant .chat-enter-block {
+    animation: chat-block-in 720ms var(--anda-ease-out, ease-out)
+      calc(var(--enter-delay, 0ms) + 140ms) both;
+  }
+
+  .chat-enter .chat-message-meta {
+    animation: chat-meta-in 480ms ease-out calc(var(--enter-delay, 0ms) + 320ms) both;
+  }
+
+  @keyframes chat-bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(18px) scale(0.9);
+      filter: blur(4px);
+    }
+    40% {
+      filter: blur(0);
+    }
+  }
+
+  @keyframes chat-block-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+      filter: blur(6px);
+    }
+  }
+
+  @keyframes chat-meta-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  /* Copy, bookmark and quick-prompt confirmations pop with a small burst. */
+  .chat-message-action :global(.chat-action-pop) {
+    animation: chat-action-pop 480ms var(--anda-spring, ease-out) both;
+  }
+
+  .chat-action-burst {
+    --burst: #10b981;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 3px;
+    height: 3px;
+    margin: -1.5px;
+    border-radius: 999px;
+    pointer-events: none;
+    animation: chat-action-burst 560ms var(--anda-ease-out, ease-out) both;
+  }
+
+  :global(.dark) .chat-action-burst {
+    --burst: #34d399;
+  }
+
+  @keyframes chat-action-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.3) rotate(-25deg);
+    }
+  }
+
+  @keyframes chat-action-burst {
+    0% {
+      box-shadow:
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst),
+        0 0 0 0 var(--burst);
+    }
+    55% {
+      box-shadow:
+        0 -9px 0 0 var(--burst),
+        6.4px -6.4px 0 0 var(--burst),
+        9px 0 0 0 var(--burst),
+        6.4px 6.4px 0 0 var(--burst),
+        0 9px 0 0 var(--burst),
+        -6.4px 6.4px 0 0 var(--burst),
+        -9px 0 0 0 var(--burst),
+        -6.4px -6.4px 0 0 var(--burst);
+    }
+    100% {
+      box-shadow:
+        0 -13px 0 -1.5px var(--burst),
+        9.2px -9.2px 0 -1.5px var(--burst),
+        13px 0 0 -1.5px var(--burst),
+        9.2px 9.2px 0 -1.5px var(--burst),
+        0 13px 0 -1.5px var(--burst),
+        -9.2px 9.2px 0 -1.5px var(--burst),
+        -13px 0 0 -1.5px var(--burst),
+        -9.2px -9.2px 0 -1.5px var(--burst);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chat-enter .chat-message-card-user,
+    .chat-enter .chat-message-card-external,
+    .chat-enter .chat-message-card-system,
+    .chat-enter .chat-message-card-tool,
+    .chat-enter .chat-message-card-assistant .md-content > :global(*),
+    .chat-enter .chat-message-card-assistant .chat-enter-block,
+    .chat-enter .chat-message-meta,
+    .chat-message-action :global(.chat-action-pop) {
+      animation: none;
+    }
+
+    .chat-action-burst {
+      display: none;
+    }
   }
 </style>

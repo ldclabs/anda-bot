@@ -4,6 +4,8 @@
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* The shared chat components' accent (focus glow, caret, live marks). */
+  --chat-accent: var(--desk-accent);
   --desk-bg: #fcfcfb;
   --desk-side: #f3f3f1;
   --desk-border: #e8e8e5;
@@ -569,6 +571,14 @@ kbd {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Text fades out under the header and into the composer instead of being cut. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 16px,
+    #000 calc(100% - 24px),
+    transparent
+  );
 }
 .welcome {
   display: flex;
@@ -582,11 +592,63 @@ kbd {
   letter-spacing: -0.9px;
   font-weight: 500;
   margin: 0;
+  animation: welcome-rise 760ms var(--anda-ease-out) 120ms both;
 }
 .welcome > p {
   color: var(--desk-muted);
   margin: 10px 0 0;
   font-size: 13px;
+  animation: welcome-rise 760ms var(--anda-ease-out) 220ms both;
+}
+/* A new chat greets with Anda: its eyes follow the pointer, a tap rolls it. */
+.welcome-mark {
+  position: relative;
+  margin-bottom: 24px;
+  animation:
+    welcome-rise 760ms var(--anda-spring-soft) both,
+    welcome-float 6s ease-in-out 760ms infinite;
+}
+.welcome-panda {
+  position: relative;
+  width: 66px;
+  height: auto;
+}
+.welcome-aura {
+  position: absolute;
+  inset: -45% -60%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from var(--anda-comet-angle),
+    color-mix(in srgb, var(--desk-accent) 60%, transparent),
+    #10b98155,
+    #3b82f644,
+    #f59e0b44,
+    color-mix(in srgb, var(--desk-accent) 60%, transparent)
+  );
+  filter: blur(26px);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: welcome-aura 14s linear infinite;
+}
+:root.dark .welcome-aura {
+  opacity: 0.3;
+}
+@keyframes welcome-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+    filter: blur(4px);
+  }
+}
+@keyframes welcome-float {
+  50% {
+    translate: 0 -5px;
+  }
+}
+@keyframes welcome-aura {
+  to {
+    --anda-comet-angle: 360deg;
+  }
 }
 /* A new chat centres its composer; the welcome sits above it, suggestions below. */
 .empty-chat .conversation-scroll {
@@ -616,7 +678,11 @@ kbd {
   color: var(--desk-muted);
   background: var(--desk-input);
   font-size: 12px;
-  transition: border-color 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    transform 240ms var(--anda-spring),
+    box-shadow 240ms ease-out;
 }
 .suggestions button:hover,
 .recent-projects button:hover,
@@ -624,8 +690,31 @@ kbd {
   color: var(--desk-text);
   border-color: var(--desk-border-strong);
 }
+.suggestions button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px #0000000d;
+}
+.suggestions button:active {
+  transform: scale(0.97);
+}
 .suggestions svg {
   stroke-width: 1.4;
+  transition: rotate 320ms var(--anda-spring);
+}
+.suggestions button:hover svg {
+  rotate: -12deg;
+}
+.suggestions button {
+  animation: welcome-rise 640ms var(--anda-ease-out) both;
+}
+.suggestions button:nth-child(1) {
+  animation-delay: 300ms;
+}
+.suggestions button:nth-child(2) {
+  animation-delay: 360ms;
+}
+.suggestions button:nth-child(3) {
+  animation-delay: 420ms;
 }
 .recent-projects {
   display: flex;
@@ -666,15 +755,33 @@ kbd {
   --message-muted: var(--desk-muted);
   --message-border: var(--desk-border);
 }
-/* Message actions and times appear with the pointer or keyboard focus. */
+/* Message actions and times appear with the pointer or keyboard focus, one after another. */
 .transcript-item .chat-message-meta {
   opacity: 0;
   transition: opacity 120ms ease-out;
+}
+.transcript-item .chat-message-meta > * {
+  translate: 0 3px;
+  transition: translate 260ms var(--anda-spring);
+}
+.transcript-item .chat-message-meta > :nth-child(2) {
+  transition-delay: 30ms;
+}
+.transcript-item .chat-message-meta > :nth-child(3) {
+  transition-delay: 60ms;
+}
+.transcript-item .chat-message-meta > :nth-child(n + 4) {
+  transition-delay: 90ms;
 }
 .transcript-item:hover .chat-message-meta,
 .transcript-item:focus-within .chat-message-meta,
 .transcript-item .chat-message-meta:has([data-state='open']) {
   opacity: 1;
+}
+.transcript-item:hover .chat-message-meta > *,
+.transcript-item:focus-within .chat-message-meta > *,
+.transcript-item .chat-message-meta:has([data-state='open']) > * {
+  translate: 0 0;
 }
 .transcript .md-content code.file-link {
   cursor: pointer;
@@ -687,38 +794,10 @@ kbd {
   font-size: 11px;
   color: var(--desk-muted);
 }
-.working-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--desk-muted);
+.transcript .chat-working {
+  --message-muted: var(--desk-muted);
+  --message-text: var(--desk-text);
   padding: 15px 0;
-}
-.working-elapsed {
-  font-variant-numeric: tabular-nums;
-}
-.working-indicator code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-}
-.working-dot {
-  flex-shrink: 0;
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--desk-accent);
-  animation: breathe 1.5s ease-in-out infinite;
-}
-@keyframes breathe {
-  50% {
-    opacity: 0.3;
-  }
 }
 .edited-files {
   max-width: 92%;
@@ -949,6 +1028,34 @@ kbd {
   border: 1px solid var(--desk-border);
   font-size: 11px;
   box-shadow: 0 2px 8px #0000000a;
+  animation: jump-in 420ms var(--anda-spring) both;
+  transition:
+    box-shadow 200ms ease-out,
+    border-color 200ms ease-out;
+}
+.jump-bottom:hover {
+  border-color: var(--desk-border-strong);
+  box-shadow: 0 6px 18px #00000014;
+}
+.jump-bottom svg {
+  animation: jump-arrow 1.6s ease-in-out 600ms infinite;
+}
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+    scale: 0.9;
+  }
+}
+@keyframes jump-arrow {
+  0%,
+  60%,
+  100% {
+    translate: 0 0;
+  }
+  30% {
+    translate: 0 3px;
+  }
 }
 .management-page {
   min-height: 0;
@@ -2126,9 +2233,8 @@ button.primary {
   height: 10px;
 }
 .anda-logo {
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
+  width: 58px;
+  height: auto;
   margin-bottom: 22px;
 }
 
