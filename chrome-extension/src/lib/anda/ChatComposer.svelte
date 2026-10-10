@@ -1235,6 +1235,11 @@
     gap: 0.25rem;
   }
 
+  /* The right-hand controls keep their size; the left group gives way. */
+  .composer-toolbar-group:last-child {
+    flex-shrink: 0;
+  }
+
   .prompt-input-wrap {
     position: relative;
     min-width: 0;
@@ -1318,12 +1323,16 @@
     flex: 0 0 auto;
   }
 
+  /* In a narrow toolbar the label truncates. No ancestor may hide overflow:
+     the menu opens above the button. */
   .approval-mode-wrap {
     position: relative;
+    display: flex;
     min-width: 0;
   }
 
   .approval-mode-button {
+    flex-shrink: 1;
     max-width: 12rem;
   }
 

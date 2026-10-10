@@ -834,14 +834,7 @@ kbd {
   margin: 0 auto;
   container-type: inline-size;
 }
-/* The toolbar's right-hand controls keep their size; the approval label and
-   token count give way first in a narrow chat column. */
-.composer-container .composer-toolbar > .composer-toolbar-group:first-child {
-  overflow: hidden;
-}
-.composer-container .composer-toolbar > .composer-toolbar-group:last-child {
-  flex-shrink: 0;
-}
+/* In a narrow chat column the token count and the approval label give way. */
 @container (max-width: 560px) {
   .usage-meter,
   .approval-mode-button span {
