@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "创建"
+  },
+  "attachMenu": {
+    "message": "添加"
+  },
+  "attachMcpResource": {
+    "message": "MCP 资源"
+  },
+  "mcpResourcesTitle": {
+    "message": "添加 MCP 资源"
+  },
+  "mcpResourcesDescription": {
+    "message": "已连接的 MCP 服务器提供的资源。服务器返回的内容由它自己提供。"
+  },
+  "mcpResourcesSearch": {
+    "message": "搜索资源"
+  },
+  "mcpResourcesNone": {
+    "message": "已连接的 MCP 服务器都没有提供资源。"
+  },
+  "mcpResourcesNoMatch": {
+    "message": "没有匹配的资源。"
+  },
+  "actionDetailSite": {
+    "message": "网站"
+  },
+  "actionDetailLink": {
+    "message": "链接"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "说明"
+  },
+  "mcpAutomationsCount": {
+    "message": "$1 个事件自动化"
+  },
+  "mcpAutomationsPaused": {
+    "message": "$1 个事件自动化，$2 个已暂停"
+  },
+  "mcpOptionResources": {
+    "message": "资源"
+  },
+  "mcpOptionElicitation": {
+    "message": "向你请求输入"
+  },
+  "mcpOptionAllowed": {
+    "message": "允许"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "关闭"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "修改自动化"
+  },
+  "mcpTriggerSave": {
+    "message": "保存"
+  },
+  "mcpTriggerSaved": {
+    "message": "已保存自动化 $1。"
+  },
+  "mcpTriggerEdit": {
+    "message": "修改 $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "投递方式"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "自动"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "每小时运行次数"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "超过后会自动暂停，以防事件循环触发。"
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "每小时运行次数须在 1 到 $1 之间。"
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "这个服务器有 $1 个工具会被拒绝："
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "它们需要审批，而自动化中没有人能审批。请在“工具”标签页把需要的工具设为“总是允许”。"
+  },
+  "mcpTriggerLastEvent": {
+    "message": "最近事件 $1"
   }
 }

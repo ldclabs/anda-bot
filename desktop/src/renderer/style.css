@@ -1386,6 +1386,11 @@ button.primary {
   font-size: 12px;
   padding: 10px;
 }
+.job-warning {
+  color: var(--desk-warning);
+  font-size: 12px;
+  padding: 0 10px 10px;
+}
 .empty-automations {
   display: grid;
   justify-items: center;

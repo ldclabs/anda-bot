@@ -345,7 +345,8 @@ An entry can also tune how its server runs: `timeouts` in seconds (`setup_secs`
 90, `list_secs` 30, `request_secs` 180, `call_secs` 600), `concurrency`
 (`serial`, the default, `read_only_parallel` or `parallel`),
 `limits.output_text_bytes` (the text the agent gets from one result, 32768 by
-default), `lifecycle`, `tasks`, and for a local server `inherit_env`. A local
+default), `lifecycle`, `tasks`, `resources` and `elicitation` (both on unless
+`false`, see below), and for a local server `inherit_env`. A local
 server gets the daemon's whole environment unless `"inherit_env": false`, which
 leaves it only the platform's essentials (`PATH`, `HOME` and the like) and its
 own `env`. Change them on the MCP page or with `anda mcp options`.
@@ -433,7 +434,7 @@ your approval first):
 anda mcp events github                                # the events a server reports
 anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
     --instructions "Label each new issue and summarize it"
-anda mcp triggers                                     # also: get, pause, resume, delete
+anda mcp triggers                                     # also: get, update, pause, resume, delete
 ```
 
 Events that arrive within an automation's batch window (30 seconds by default)
@@ -445,7 +446,21 @@ default), or fails five times in a row, pauses itself. Anda receives events by
 push or by polling. An event that only a webhook delivers needs dMsg, which
 receives webhooks on Anda's behalf: add it to `mcp.json` with
 `"events": {"webhook_ingress": true}`, and Anda creates an endpoint there for
-each such automation and subscribes the server to it.
+each such automation and subscribes the server to it. Change an automation on
+the Events tab or with `anda mcp triggers update`; the dialog names the
+server's tools it would be refused. When an automation pauses itself, its
+server needs sign-in, or the server ends it, Anda tells you where its replies go.
+
+Servers can also offer resources, such as files or records by URI. The agent
+lists and reads them with `mcp_resources`, and the message box's + menu
+attaches one (MCP resource). A read follows the server's approval policy as a
+read-only tool does. A server can also ask you for input while one of its tools
+runs (MCP elicitation): a card above the message box asks for a form one field
+at a time, or offers a page to open. Decline it, or write in chat, and the
+request is cancelled, as it is where nobody can answer (an automation, a
+scheduled job, an IM chat). The answer goes to the server, so never enter
+passwords or keys there. `"resources": false` or `"elicitation": false` on a
+server turns either off.
 
 The agent can also connect a new MCP server during a conversation by calling
 `add_mcp_server`. Use `persist: false` for the current daemon only, or

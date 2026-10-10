@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "إنشاء"
+  },
+  "attachMenu": {
+    "message": "إرفاق"
+  },
+  "attachMcpResource": {
+    "message": "مورد MCP"
+  },
+  "mcpResourcesTitle": {
+    "message": "إرفاق مورد MCP"
+  },
+  "mcpResourcesDescription": {
+    "message": "الموارد التي تقدمها خوادم MCP المتصلة. ما يعيده الخادم هو محتواه الخاص."
+  },
+  "mcpResourcesSearch": {
+    "message": "البحث في الموارد"
+  },
+  "mcpResourcesNone": {
+    "message": "لا يقدم أي خادم MCP متصل موارد."
+  },
+  "mcpResourcesNoMatch": {
+    "message": "لا يوجد مورد مطابق."
+  },
+  "actionDetailSite": {
+    "message": "الموقع"
+  },
+  "actionDetailLink": {
+    "message": "الرابط"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "ملاحظة"
+  },
+  "mcpAutomationsCount": {
+    "message": "عمليات أتمتة على الأحداث: $1"
+  },
+  "mcpAutomationsPaused": {
+    "message": "عمليات أتمتة على الأحداث: $1، منها $2 متوقفة مؤقتًا"
+  },
+  "mcpOptionResources": {
+    "message": "الموارد"
+  },
+  "mcpOptionElicitation": {
+    "message": "طلبات الإدخال"
+  },
+  "mcpOptionAllowed": {
+    "message": "مسموح"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "متوقف"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "تعديل الأتمتة"
+  },
+  "mcpTriggerSave": {
+    "message": "حفظ"
+  },
+  "mcpTriggerSaved": {
+    "message": "تم حفظ الأتمتة $1."
+  },
+  "mcpTriggerEdit": {
+    "message": "تعديل $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "طريقة التسليم"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "تلقائي"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "مرات التشغيل في الساعة"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "إذا تجاوزتها تتوقف مؤقتًا من تلقاء نفسها، تحسبًا لدوران أحداثها في حلقة."
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "يجب أن تكون مرات التشغيل في الساعة بين 1 و$1."
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "أدوات هذا الخادم التي سترفض: $1 —"
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "تطلب هذه الأدوات موافقة لا يمنحها أحد في الأتمتة. اضبط ما تحتاجه منها على «السماح دائمًا» في تبويب الأدوات."
+  },
+  "mcpTriggerLastEvent": {
+    "message": "آخر حدث $1"
   }
 }

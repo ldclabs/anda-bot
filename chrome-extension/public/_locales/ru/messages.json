@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "Создать"
+  },
+  "attachMenu": {
+    "message": "Прикрепить"
+  },
+  "attachMcpResource": {
+    "message": "Ресурс MCP"
+  },
+  "mcpResourcesTitle": {
+    "message": "Прикрепить ресурс MCP"
+  },
+  "mcpResourcesDescription": {
+    "message": "Ресурсы, которые предлагают подключённые MCP-серверы. То, что возвращает сервер, — его собственное содержимое."
+  },
+  "mcpResourcesSearch": {
+    "message": "Поиск ресурсов"
+  },
+  "mcpResourcesNone": {
+    "message": "Ни один подключённый MCP-сервер не предлагает ресурсов."
+  },
+  "mcpResourcesNoMatch": {
+    "message": "Нет подходящих ресурсов."
+  },
+  "actionDetailSite": {
+    "message": "Сайт"
+  },
+  "actionDetailLink": {
+    "message": "Ссылка"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "Примечание"
+  },
+  "mcpAutomationsCount": {
+    "message": "Автоматизаций по событиям: $1"
+  },
+  "mcpAutomationsPaused": {
+    "message": "Автоматизаций по событиям: $1, на паузе: $2"
+  },
+  "mcpOptionResources": {
+    "message": "Ресурсы"
+  },
+  "mcpOptionElicitation": {
+    "message": "Запросы ввода"
+  },
+  "mcpOptionAllowed": {
+    "message": "Разрешены"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "Выключены"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "Изменить автоматизацию"
+  },
+  "mcpTriggerSave": {
+    "message": "Сохранить"
+  },
+  "mcpTriggerSaved": {
+    "message": "Автоматизация $1 сохранена."
+  },
+  "mcpTriggerEdit": {
+    "message": "Изменить $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "Доставка"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "Автоматически"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "Запусков в час"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "Сверх этого она ставится на паузу — на случай, если события зациклятся."
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "Запусков в час должно быть от 1 до $1."
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "Инструментов этого сервера, которые будут отклонены: $1 —"
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "Они требуют одобрения, а в автоматизации его некому дать. Установите для нужных «Всегда разрешать» на вкладке «Инструменты»."
+  },
+  "mcpTriggerLastEvent": {
+    "message": "Последнее событие $1"
   }
 }

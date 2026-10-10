@@ -47,6 +47,10 @@
 <script lang="ts">
   import AttachmentList from '$lib/anda/composer/AttachmentList.svelte'
   import { fileToAttachment } from '$lib/anda/composer/attachments'
+  import McpResourcePicker, {
+    type McpResourceSource
+  } from '$lib/anda/composer/McpResourcePicker.svelte'
+  import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import {
     buildPromptCommandSuggestions,
@@ -120,6 +124,7 @@
     initialDraft,
     onDraftChange,
     skillsRevision = 0,
+    mcpResources,
     actions
   }: {
     disabled?: boolean
@@ -153,6 +158,8 @@
     initialDraft?: ComposerSubmitPayload
     onDraftChange?: (draft: ComposerSubmitPayload) => void
     skillsRevision?: number
+    /** The connected MCP servers' resources: with it, + also attaches one. */
+    mcpResources?: McpResourceSource
     /** Extra controls at the head of the toolbar's right side, before the
      * voice and send buttons (the desktop puts its model picker here). */
     actions?: Snippet
@@ -788,6 +795,26 @@
     attachments = attachments.filter((attachment) => attachment.id !== id)
   }
 
+  let resourcePickerOpen = $state(false)
+  const attachMenuItems = [
+    { value: 'files', label: getMessage('attachFiles') },
+    { value: 'mcp', label: getMessage('attachMcpResource') }
+  ] as const
+
+  function attachFrom(choice: 'files' | 'mcp') {
+    if (choice === 'mcp') {
+      attachmentError = ''
+      resourcePickerOpen = true
+    } else {
+      openFileDialog()
+    }
+  }
+
+  function addAttachments(items: ChatAttachment[]) {
+    const existingIds = new Set(attachments.map((attachment) => attachment.id))
+    attachments = [...attachments, ...items.filter((item) => !existingIds.has(item.id))]
+  }
+
   function toggleInputMode() {
     if (inputMode === 'voice') {
       void recorder.cancel()
@@ -819,6 +846,13 @@
     class="hidden"
     onchange={handleFileInput}
   />
+  {#if mcpResources}
+    <McpResourcePicker
+      bind:open={resourcePickerOpen}
+      source={mcpResources}
+      onAttach={addAttachments}
+    />
+  {/if}
 
   <div
     class="composer-shell"
@@ -940,20 +974,39 @@
 
     <div class="composer-toolbar">
       <div class="composer-toolbar-group">
-        <button
-          type="button"
-          class={buttonClass('ghost', 'icon-sm', 'composer-icon-button rounded-full')}
-          disabled={disabled || preparingAttachments}
-          aria-label={getMessage('attachFiles')}
-          title={getMessage('attachFiles')}
-          onclick={openFileDialog}
-        >
-          {#if preparingAttachments}
-            <LoaderCircle class="size-4 animate-spin" />
-          {:else}
-            <Plus class="size-4.5" />
-          {/if}
-        </button>
+        {#if mcpResources}
+          <DropdownMenu
+            class={buttonClass('ghost', 'icon-sm', 'composer-icon-button rounded-full')}
+            items={attachMenuItems}
+            onSelect={attachFrom}
+            disabled={disabled || preparingAttachments}
+            ariaLabel={getMessage('attachMenu')}
+            title={getMessage('attachMenu')}
+          >
+            {#snippet trigger()}
+              {#if preparingAttachments}
+                <LoaderCircle class="size-4 animate-spin" />
+              {:else}
+                <Plus class="size-4.5" />
+              {/if}
+            {/snippet}
+          </DropdownMenu>
+        {:else}
+          <button
+            type="button"
+            class={buttonClass('ghost', 'icon-sm', 'composer-icon-button rounded-full')}
+            disabled={disabled || preparingAttachments}
+            aria-label={getMessage('attachFiles')}
+            title={getMessage('attachFiles')}
+            onclick={openFileDialog}
+          >
+            {#if preparingAttachments}
+              <LoaderCircle class="size-4 animate-spin" />
+            {:else}
+              <Plus class="size-4.5" />
+            {/if}
+          </button>
+        {/if}
 
         <div bind:this={approvalMenuElement} class="approval-mode-wrap">
           <button

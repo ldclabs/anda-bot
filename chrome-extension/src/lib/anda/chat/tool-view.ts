@@ -154,10 +154,13 @@ function shellOutputMeta(output: Record<string, Json>): string | undefined {
 
 /**
  * Splits runtime-injected text (`[$system: kind="…"]` + preamble + quoted
- * body, possibly several joined by `---`) into its notices.
+ * body, possibly several joined by `---`) into its notices. A header may also
+ * name the external `source` its content came from (an MCP server's events).
  */
 export function runtimeNotices(text: string): RuntimeNotice[] {
-  const headers = [...text.matchAll(/\[\$system:\s*kind=("(?:\\.|[^"\\])*")\]/g)]
+  const headers = [
+    ...text.matchAll(/\[\$system:\s*kind=("(?:\\.|[^"\\])*")(?:,\s*source="[^"\]]*")?\]/g)
+  ]
   if (!headers.length) {
     return text.trim() ? [{ kind: '', body: text.trim() }] : []
   }

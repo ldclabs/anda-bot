@@ -136,7 +136,9 @@ const mcpMethods = new Set([
   'mcp_events_list',
   'mcp_triggers_list',
   'mcp_trigger_get',
-  'mcp_trigger_apply'
+  'mcp_trigger_apply',
+  'mcp_resources',
+  'mcp_resource_read'
 ])
 
 export function validateRpc(method: unknown, params: unknown): asserts params is unknown[] {

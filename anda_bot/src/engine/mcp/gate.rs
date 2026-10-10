@@ -20,7 +20,10 @@ use anda_engine::{
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{McpChange, McpManager, redact::redact_json, review::McpReview, state::McpSource};
+use super::{
+    McpChange, McpElicitations, McpManager, redact::redact_json, review::McpReview,
+    state::McpSource,
+};
 use crate::{
     config::McpApproval,
     engine::{
@@ -37,11 +40,20 @@ const CARD_ARGUMENTS_BYTES: usize = 4096;
 pub(crate) struct McpGate {
     provider: Arc<McpToolProvider>,
     manager: McpManager,
+    elicitations: Arc<McpElicitations>,
 }
 
 impl McpGate {
-    pub fn new(provider: Arc<McpToolProvider>, manager: McpManager) -> Self {
-        Self { provider, manager }
+    pub fn new(
+        provider: Arc<McpToolProvider>,
+        manager: McpManager,
+        elicitations: Arc<McpElicitations>,
+    ) -> Self {
+        Self {
+            provider,
+            manager,
+            elicitations,
+        }
     }
 
     /// The tool a lowercase name calls: an Anda name, or an alias.
@@ -209,7 +221,16 @@ impl ToolProvider<BaseCtx> for McpGate {
                 return Ok(refusal);
             }
             input.name = route.name.clone();
-            let result = self.provider.call(ctx, input).await;
+            // The server may ask the user for input while the call runs.
+            let result = self
+                .elicitations
+                .during(
+                    &route.server_id,
+                    &ctx,
+                    self.manager.elicitation_timeout(&route.server_id),
+                    self.provider.call(ctx.clone(), input),
+                )
+                .await;
             let failed = result
                 .as_ref()
                 .map_or(true, |output| output.is_error == Some(true));
@@ -452,7 +473,11 @@ mod tests {
         manager.provider().refresh_server("mock").await.unwrap();
         Fixture {
             _dir: dir,
-            gate: McpGate::new(manager.provider().clone(), manager.clone()),
+            gate: McpGate::new(
+                manager.provider().clone(),
+                manager.clone(),
+                Arc::new(McpElicitations::default()),
+            ),
             manager,
             catalog,
         }

@@ -19,6 +19,7 @@ use std::fmt;
 mod api;
 pub(crate) mod config_store;
 mod credentials;
+mod elicitation;
 mod events;
 mod gate;
 pub(crate) mod import;
@@ -27,6 +28,7 @@ mod model_tools;
 mod oauth;
 mod redact;
 mod registry;
+mod resources;
 mod review;
 mod secrets;
 mod state;
@@ -36,6 +38,7 @@ mod view;
 
 pub(crate) use api::{McpApiState, is_write_method, mcp_route};
 pub(crate) use credentials::{FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME};
+pub(crate) use elicitation::McpElicitations;
 pub(crate) use events::{
     CreateEventTriggerTool, ListMcpEventsTool, ManageEventTriggerTool, McpEventRuntime,
     McpEventRuntimeConfig, TriggerInput, TriggerPatch, TriggerStore,
@@ -45,6 +48,7 @@ pub(crate) use manager::{McpChange, McpManager, McpManagerConfig};
 pub(crate) use model_tools::{ManageMcpServerTool, McpConnectTool, McpServerTool};
 pub(crate) use oauth::{CALLBACK_PATH, mcp_oauth_callback, open_in_browser};
 pub(crate) use registry::MCP_REGISTRY_URL;
+pub(crate) use resources::McpResourcesTool;
 pub(crate) use secrets::{
     MCP_SECRETS_FILE_NAME, McpSecretStore, orphaned_secrets, secret_views, secrets_in_use,
 };

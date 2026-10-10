@@ -10,6 +10,7 @@
   import {
     actionChoiceText,
     actionDetailIsBlock,
+    actionDetailUrl,
     actionDetailLabel,
     actionDetailText,
     actionKindLabel,
@@ -692,11 +693,19 @@
                   {#if action.details?.length}
                     <div class="grid min-w-0 gap-1.5">
                       {#each action.details as detail, detailIndex (`${action.id}-${detail.label}-${detailIndex}`)}
+                        {@const link = actionDetailUrl(detail)}
                         <div class="chat-action-detail min-w-0 rounded-md border px-2 py-1.5">
                           <div class="chat-action-meta mb-1 text-[10px] font-semibold uppercase">
                             {actionDetailLabel(detail)}
                           </div>
-                          {#if actionDetailIsBlock(detail)}
+                          {#if link}
+                            <a
+                              class="wrap-break-word underline underline-offset-2"
+                              href={link}
+                              target="_blank"
+                              rel="noopener noreferrer">{link}</a
+                            >
+                          {:else if actionDetailIsBlock(detail)}
                             <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code
                                 >{actionDetailText(detail)}</code
                               ></pre>

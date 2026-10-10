@@ -120,11 +120,13 @@ Optional per-server fields tune how Anda talks to the endpoint and runs the serv
 | `startup` | When Anda discovers the server's tools. `background` (default) connects after the daemon is up; `eager` waits for discovery before the daemon reports ready. Either way an unreachable server is skipped, never fatal. |
 | `lifecycle` | How the protocol revision is negotiated. `auto` (default) probes the stateless `server/discover` lifecycle and falls back to the legacy `initialize` handshake. Use `discover` to require the newer one, or `initialize` to pin a server that mishandles unknown methods. |
 | `tasks` | Opts into the tasks extension, so a long-running tool can hand back a task Anda polls to completion instead of holding its response open. Takes `{"max_wait_secs": <seconds>}`, default `300`. Omit it and the server must answer every call inline. |
-| `timeouts` | Deadlines in seconds, each between 1 and 86400: `setup_secs` to connect (default 90), `list_secs` to list the tools (30), `request_secs` for one request (180) and `call_secs` for a whole tool call (600). |
+| `timeouts` | Deadlines in seconds, each between 1 and 86400: `setup_secs` to connect (default 90), `list_secs` to list the tools (30), `request_secs` for one request (180), `call_secs` for a whole tool call (600) and `elicitation_secs` for you to answer a server's request for input (300). |
 | `concurrency` | Which of the server's tools may run at the same time: `serial` (default), `read_only_parallel` for tools the server marks read-only, or `parallel`. |
 | `limits` | `{"output_text_bytes": <bytes>}`: the text the agent gets from one result, between 256 and 1048576 (default 32768). |
 | `inherit_env` | Local servers only. `true` (default) gives the process the daemon's whole environment; `false` gives it only the platform's essentials (`PATH`, `HOME`, `TMPDIR` and the like) and its own `env`, so no other secret in the daemon's environment reaches it. |
 | `events` | `{"webhook_ingress": true}` makes this server (dMsg) receive webhooks for [event automations](#event-automations) whose events only a webhook delivers. One server can be the ingress. |
+| `resources` | Whether the agent and the apps may list and read the server's [resources](#resources-and-requests-for-input). On unless `false`. |
+| `elicitation` | Whether the server may [ask you for input](#resources-and-requests-for-input) while one of its tools runs. On unless `false`. |
 
 ```json
 {
@@ -176,7 +178,7 @@ anda mcp options github --call-timeout 900            # advanced settings; `defa
 anda mcp import --dry-run                             # servers set up in other apps
 anda mcp import github notes=work-notes --from cursor # import them; no names imports every new one
 anda mcp events github                                # the events a server reports
-anda mcp triggers                                     # event automations; also: add, get, pause, resume, delete
+anda mcp triggers                                     # event automations; also: add, get, update, pause, resume, delete
 ```
 
 With the daemon running, every command goes through it, so a change applies at
@@ -346,6 +348,7 @@ anda mcp events github                         # event types, how each is delive
 anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
     --instructions "Label each new issue and summarize it" --batch-window 60
 anda mcp triggers get 3                        # its state, latest runs and events
+anda mcp triggers update 3 --instructions "Label it and assign it"  # what you leave out stays
 anda mcp triggers pause 3                      # also: resume, delete
 ```
 
@@ -363,6 +366,15 @@ anda mcp triggers pause 3                      # also: resume, delete
   do not get the full access scheduled jobs have: they can call read-only tools
   and tools set to `allow`, and anything that needs approval (a write tool under
   `auto`, a risky shell command) is refused.
+- **Changes and notices.** Change an automation on the Events tab or with
+  `anda mcp triggers update`; changing its event, arguments or delivery
+  subscribes again from now. The dialog also names the server's tools the
+  automation would be refused. When an automation pauses itself, its server
+  needs sign-in, or the server ends it, Anda tells you in a short message where
+  its replies go.
+- **Memory.** What a run carries is attributed to the server and event
+  (`mcp:<server>/<event>`) as an external source, as an external IM sender's
+  words are, so Formation never records it as yours.
 - **Delivery.** Anda keeps a push stream open, or polls, as the event type
   allows, and keeps the position it reached, so events that arrived while the
   daemon was stopped are replayed when the server supports it; an event already
@@ -386,6 +398,34 @@ anda mcp triggers pause 3                      # also: resume, delete
 
 Automations, the events they received and their runs are kept in the daemon's
 database; an endpoint's signing secret is kept in the MCP secret store.
+
+### Resources and requests for input
+
+Servers can offer resources: files, records and other context by URI. The agent
+lists and reads them with `mcp_resources` (`list`, with no server for every
+connected one; `templates` for URI templates to fill in; and `read`); short text
+comes back inline, and long or binary contents as attachments. In Anda Desktop
+and the extension, the message box's + menu has MCP resource, which lists the
+connected servers' resources and attaches the one you pick to your message. A
+read changes nothing, so it follows the server's approval policy as a reviewed
+read-only tool does: it runs without asking unless the server is set to `ask`
+or the session asks before everything, and external IM users reach only servers
+that allow them. What a server returns is untrusted, like a tool's result.
+
+A server can also ask you for input while one of its tools runs (MCP
+elicitation). Anda shows the request above the message box of the conversation
+the call runs for: a form becomes one card per field, which checks your answer
+(a number in range, an email address, one of the options), and a request to
+open a page becomes a card with the link, which opens when you choose Open the
+page. Decline tells the server you won't answer; writing in chat instead, or
+letting the server's deadline pass (`timeouts.elicitation_secs`, 300 seconds by
+default), cancels the request. Where nobody can answer, such as an automation, a
+scheduled job or an IM chat, the request is cancelled at once. The answer goes
+to the server, so never enter passwords, keys or payment details in such a card.
+
+Both are on by default. Set `"resources": false` or `"elicitation": false` on
+an entry, or run `anda mcp options <id> --resources off` (or
+`--elicitation off`), to turn one off.
 
 ### Authorizing an MCP server over SSH
 

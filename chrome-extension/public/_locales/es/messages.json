@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "Crear"
+  },
+  "attachMenu": {
+    "message": "Adjuntar"
+  },
+  "attachMcpResource": {
+    "message": "Recurso MCP"
+  },
+  "mcpResourcesTitle": {
+    "message": "Adjuntar un recurso MCP"
+  },
+  "mcpResourcesDescription": {
+    "message": "Recursos que ofrecen tus servidores MCP conectados. Lo que devuelve un servidor es contenido suyo."
+  },
+  "mcpResourcesSearch": {
+    "message": "Buscar recursos"
+  },
+  "mcpResourcesNone": {
+    "message": "Ningún servidor MCP conectado ofrece recursos."
+  },
+  "mcpResourcesNoMatch": {
+    "message": "Ningún recurso coincide."
+  },
+  "actionDetailSite": {
+    "message": "Sitio"
+  },
+  "actionDetailLink": {
+    "message": "Enlace"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "Nota"
+  },
+  "mcpAutomationsCount": {
+    "message": "$1 automatizaciones por eventos"
+  },
+  "mcpAutomationsPaused": {
+    "message": "$1 automatizaciones por eventos, $2 en pausa"
+  },
+  "mcpOptionResources": {
+    "message": "Recursos"
+  },
+  "mcpOptionElicitation": {
+    "message": "Solicitudes de datos"
+  },
+  "mcpOptionAllowed": {
+    "message": "Permitido"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "Desactivado"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "Cambiar automatización"
+  },
+  "mcpTriggerSave": {
+    "message": "Guardar"
+  },
+  "mcpTriggerSaved": {
+    "message": "Se guardó la automatización $1."
+  },
+  "mcpTriggerEdit": {
+    "message": "Cambiar $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "Entrega"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "Automática"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "Ejecuciones por hora"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "Al superarlo se pausa sola, por si sus eventos entran en bucle."
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "Las ejecuciones por hora deben estar entre 1 y $1."
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "$1 herramientas de este servidor se rechazarían:"
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "Piden aprobación, y en una automatización nadie la da. Marca las que necesite como Permitir siempre en la pestaña Herramientas."
+  },
+  "mcpTriggerLastEvent": {
+    "message": "Último evento $1"
   }
 }

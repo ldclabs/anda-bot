@@ -215,6 +215,7 @@ enum McpSubcommand {
     ///   anda mcp triggers add github issue.opened --args '{"repo":"o/r"}' \
     ///       --instructions "Label each new issue"
     ///   anda mcp triggers get 3                             with its latest runs
+    ///   anda mcp triggers update 3 --instructions "Label and assign it"
     ///   anda mcp triggers pause 3 | resume 3 | delete 3
     #[command(verbatim_doc_comment)]
     Triggers {
@@ -248,6 +249,27 @@ enum TriggerAction {
         #[arg(long)]
         max_runs_per_hour: Option<u64>,
         /// auto (default), push, poll or webhook.
+        #[arg(long)]
+        delivery: Option<String>,
+    },
+    /// Change an automation; what is left out stays. A different event,
+    /// arguments or delivery subscribes again from now.
+    Update {
+        id: u64,
+        #[arg(long)]
+        instructions: Option<String>,
+        /// Subscription arguments, a JSON object.
+        #[arg(long = "args", value_name = "JSON")]
+        arguments: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        /// Seconds to collect events into one run.
+        #[arg(long = "batch-window", value_name = "SECS")]
+        batch_window_secs: Option<u64>,
+        /// Runs within an hour after which it pauses itself.
+        #[arg(long)]
+        max_runs_per_hour: Option<u64>,
+        /// auto, push, poll or webhook.
         #[arg(long)]
         delivery: Option<String>,
     },
@@ -293,6 +315,14 @@ struct OptionFlags {
     /// Long-running tasks: off (default), on, or the longest wait in seconds.
     #[arg(long, value_name = "on|off|SECS")]
     tasks: Option<String>,
+    /// Whether the agent and the apps may list and read the server's
+    /// resources: on (default) or off.
+    #[arg(long, value_name = "on|off")]
+    resources: Option<String>,
+    /// Whether the server may ask you for input while a call runs: on
+    /// (default) or off.
+    #[arg(long, value_name = "on|off")]
+    elicitation: Option<String>,
 }
 
 impl OptionFlags {
@@ -308,6 +338,8 @@ impl OptionFlags {
             &self.output_limit,
             &self.inherit_env,
             &self.tasks,
+            &self.resources,
+            &self.elicitation,
         ]
         .iter()
         .all(|flag| flag.is_none())
@@ -388,18 +420,24 @@ impl OptionFlags {
                 set(options, &path, value);
             }
         }
-        if let Some(value) = self.inherit_env.as_deref() {
-            let value = match value.trim() {
-                "on" | "true" => Some(json!(true)),
-                "off" | "false" => Some(json!(false)),
-                "default" => None,
-                other => {
-                    return Err(
-                        format!("--inherit-env takes on, off or default, not {other:?}").into(),
-                    );
-                }
-            };
-            set(options, &["inherit_env"], value);
+        for (flag, key, value) in [
+            ("inherit-env", "inherit_env", &self.inherit_env),
+            ("resources", "resources", &self.resources),
+            ("elicitation", "elicitation", &self.elicitation),
+        ] {
+            if let Some(value) = value.as_deref() {
+                let value = match value.trim() {
+                    "on" | "true" => Some(json!(true)),
+                    "off" | "false" => Some(json!(false)),
+                    "default" => None,
+                    other => {
+                        return Err(
+                            format!("--{flag} takes on, off or default, not {other:?}").into()
+                        );
+                    }
+                };
+                set(options, &[key], value);
+            }
         }
         if let Some(value) = self.tasks.as_deref() {
             let value = match value.trim() {
@@ -785,16 +823,9 @@ async fn triggers(
             max_runs_per_hour,
             delivery,
         } => {
-            let arguments = match arguments.as_deref() {
-                None => json!({}),
-                Some(text) => match serde_json::from_str::<Value>(text) {
-                    Ok(value @ Value::Object(_)) => value,
-                    _ => return Err("--args must be a JSON object".into()),
-                },
-            };
             let mut trigger = json!({
                 "server_id": server, "event": event, "instructions": instructions,
-                "arguments": arguments,
+                "arguments": trigger_arguments(arguments.as_deref())?.unwrap_or_else(|| json!({})),
             });
             for (key, value) in [
                 ("name", name.map(Value::from)),
@@ -807,6 +838,36 @@ async fn triggers(
                 }
             }
             apply(json!({ "op": "create", "trigger": trigger })).await?
+        }
+        TriggerAction::Update {
+            id,
+            instructions,
+            arguments,
+            name,
+            batch_window_secs,
+            max_runs_per_hour,
+            delivery,
+        } => {
+            let mut changes = json!({});
+            for (key, value) in [
+                ("instructions", instructions.map(Value::from)),
+                ("arguments", trigger_arguments(arguments.as_deref())?),
+                ("name", name.map(Value::from)),
+                ("batch_window_secs", batch_window_secs.map(Value::from)),
+                ("max_runs_per_hour", max_runs_per_hour.map(Value::from)),
+                ("delivery", delivery.map(Value::from)),
+            ] {
+                if let Some(value) = value {
+                    changes[key] = value;
+                }
+            }
+            if changes
+                .as_object()
+                .is_some_and(|changes| changes.is_empty())
+            {
+                return Err("say what to change, such as --instructions or --args".into());
+            }
+            apply(json!({ "op": "update", "id": id, "changes": changes })).await?
         }
         TriggerAction::Pause { id } | TriggerAction::Resume { id } => {
             let enabled = matches!(action, TriggerAction::Resume { .. });
@@ -826,6 +887,15 @@ async fn triggers(
     } else {
         print_trigger(&detail);
         Ok(())
+    }
+}
+
+/// `--args`: a JSON object, when given.
+fn trigger_arguments(text: Option<&str>) -> Result<Option<Value>, BoxError> {
+    match text.map(serde_json::from_str::<Value>) {
+        None => Ok(None),
+        Some(Ok(value @ Value::Object(_))) => Ok(Some(value)),
+        Some(_) => Err("--args must be a JSON object".into()),
     }
 }
 
@@ -1959,6 +2029,38 @@ mod tests {
         );
         assert_eq!(arguments.as_deref(), Some(r#"{"repo":"o/r"}"#));
         assert_eq!(batch_window_secs, Some(60));
+        let cli = Cli::try_parse_from([
+            "anda",
+            "triggers",
+            "update",
+            "3",
+            "--instructions",
+            "Label and assign it",
+            "--max-runs-per-hour",
+            "30",
+        ])
+        .unwrap();
+        let McpSubcommand::Triggers {
+            action:
+                Some(TriggerAction::Update {
+                    id,
+                    instructions,
+                    arguments,
+                    max_runs_per_hour,
+                    ..
+                }),
+        } = cli.mcp.command
+        else {
+            panic!("expected triggers update");
+        };
+        assert_eq!(id, 3);
+        assert_eq!(instructions.as_deref(), Some("Label and assign it"));
+        assert_eq!((arguments, max_runs_per_hour), (None, Some(30)));
+        assert_eq!(
+            trigger_arguments(Some(r#"{"repo":"o/r"}"#)).unwrap(),
+            Some(json!({"repo": "o/r"}))
+        );
+        assert!(trigger_arguments(Some("[1]")).is_err());
         let cli = Cli::try_parse_from(["anda", "triggers"]).unwrap();
         assert!(matches!(
             cli.mcp.command,
@@ -1976,6 +2078,7 @@ mod tests {
             startup: Some("default".into()),
             tasks: Some("120".into()),
             inherit_env: Some("off".into()),
+            elicitation: Some("off".into()),
             ..Default::default()
         };
         let mut options = json!({ "startup": "eager", "timeouts": { "setup_secs": 10 } });
@@ -1986,6 +2089,7 @@ mod tests {
                 "timeouts": { "setup_secs": 10, "call_secs": 900 },
                 "concurrency": "read_only_parallel",
                 "inherit_env": false,
+                "elicitation": false,
                 "tasks": { "max_wait_secs": 120 }
             })
         );

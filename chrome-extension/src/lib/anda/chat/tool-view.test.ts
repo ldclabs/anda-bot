@@ -86,6 +86,12 @@ describe('tool-view', () => {
       { kind: 'notice', body: 'second' }
     ])
     expect(runtimeNotices('plain runtime text')).toEqual([{ kind: '', body: 'plain runtime text' }])
+    // A header that names where its content came from.
+    expect(
+      runtimeNotices(
+        '[$system: kind="mcp event automation", source="mcp:github/issue.opened"]\nPreamble.\n\n"Label it."'
+      )
+    ).toEqual([{ kind: 'mcp event automation', body: 'Label it.' }])
   })
 
   it('classifies tools and takes a readable first line', () => {

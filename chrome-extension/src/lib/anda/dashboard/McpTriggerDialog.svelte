@@ -1,13 +1,22 @@
 <script lang="ts">
   /**
-   * Creates an automation on one of a server's events: the agent runs the
-   * owner's instructions when the event arrives, and its reply lands in a
-   * conversation of the owner's. The subscription arguments come from the
-   * event's schema as a form when it is flat, and as JSON otherwise.
+   * Creates an automation on one of a server's events, or changes one: the
+   * agent runs the owner's instructions when the event arrives, and its reply
+   * lands in a conversation of the owner's. The subscription arguments come
+   * from the event's schema as a form when it is flat, and as JSON otherwise.
+   * It also names the server's tools the automation would be refused, since
+   * nobody is there to approve them.
    */
   import { useAndaClient } from '$lib/anda/client/context'
-  import { eventArgumentFields, eventArguments } from '$lib/anda/client/mcp'
-  import type { Json, McpEventDefinition, McpTriggerDetail } from '$lib/anda/client/types'
+  import { automationBlockedTools, eventArgumentFields, eventArguments } from '$lib/anda/client/mcp'
+  import type {
+    Json,
+    McpEventDefinition,
+    McpToolView,
+    McpTrigger,
+    McpTriggerDelivery,
+    McpTriggerDetail
+  } from '$lib/anda/client/types'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import Modal from '$lib/anda/Modal.svelte'
   import { buttonClass, inputClass, textareaClass } from '$lib/anda/ui'
@@ -20,44 +29,83 @@
     open = $bindable(false),
     serverId,
     event,
-    onCreated
+    editing = null,
+    onSaved
   }: {
     open?: boolean
     serverId: string
+    /** The event type, when the server offers it now. */
     event: McpEventDefinition | null
-    onCreated: (trigger: McpTriggerDetail) => void
+    /** The automation to change; a new one is made without it. */
+    editing?: McpTrigger | null
+    onSaved: (trigger: McpTriggerDetail) => void
   } = $props()
 
   const mcp = useAndaClient().mcp
+  const MAX_RUNS = 120
+  const BLOCKED_SHOWN = 12
 
   let name = $state('')
   let values = $state<Record<string, string>>({})
   let json = $state('{}')
   let instructions = $state('')
   let batchWindow = $state('')
+  let maxRuns = $state('')
+  let delivery = $state<McpTriggerDelivery>('auto')
+  let blocked = $state<McpToolView[]>([])
   let busy = $state(false)
   let error = $state('')
 
+  const eventName = $derived(editing?.event ?? event?.name ?? '')
   const fields = $derived(event ? eventArgumentFields(event.input_schema) : null)
   const booleanItems = [
     { value: '', label: getMessage('mcpTriggerUnset') },
     { value: 'true', label: 'true' },
     { value: 'false', label: 'false' }
   ]
+  const deliveryItems = $derived([
+    { value: 'auto' as const, label: getMessage('mcpTriggerDeliveryAuto') },
+    ...(['push', 'poll', 'webhook'] as const)
+      .filter((mode) => !event || event.delivery.includes(mode) || editing?.delivery === mode)
+      .map((mode) => ({ value: mode, label: mode }))
+  ])
 
-  // A fresh form each time the dialog opens.
+  // A fresh form each time the dialog opens, filled from the automation
+  // being changed.
   $effect(() => {
     if (open) {
       untrack(() => {
-        name = ''
-        values = Object.fromEntries((fields ?? []).map((field) => [field.name, '']))
-        json = '{}'
-        instructions = ''
-        batchWindow = ''
+        const current = editing
+        const args = current?.arguments ?? {}
+        name = current?.name ?? ''
+        values = Object.fromEntries(
+          (fields ?? []).map((field) => {
+            const value = args[field.name]
+            return [field.name, value === undefined || value === null ? '' : String(value)]
+          })
+        )
+        json = JSON.stringify(args, null, 2)
+        instructions = current?.instructions ?? ''
+        batchWindow = current ? String(current.batch_window_secs) : ''
+        maxRuns = current ? String(current.max_runs_per_hour) : ''
+        delivery = current?.delivery ?? 'auto'
         error = ''
+        blocked = []
+        void loadBlocked()
       })
     }
   })
+
+  /** The server's tools an automation would be refused, from its detail. */
+  async function loadBlocked() {
+    const id = serverId
+    try {
+      const detail = await mcp.get(id)
+      if (id === serverId) blocked = automationBlockedTools(detail, detail.tools)
+    } catch {
+      blocked = []
+    }
+  }
 
   function argumentsOf(): Record<string, Json> {
     if (fields) {
@@ -79,8 +127,15 @@
     return parsed as Record<string, Json>
   }
 
-  async function create() {
-    if (!event || busy) return
+  /** A whole number field: `undefined` when left empty, `null` when invalid. */
+  function wholeNumber(text: string): number | undefined | null {
+    const value = text.trim()
+    if (!value) return undefined
+    return /^\d+$/.test(value) ? Number(value) : null
+  }
+
+  async function save() {
+    if (!eventName || busy) return
     error = ''
     let args: Record<string, Json>
     try {
@@ -89,26 +144,34 @@
       error = (err as Error).message
       return
     }
-    const seconds = batchWindow.trim()
-    if (seconds && !/^\d+$/.test(seconds)) {
+    const seconds = wholeNumber(batchWindow)
+    const runs = wholeNumber(maxRuns)
+    if (seconds === null || runs === null) {
       error = getMessage('mcpOptionsNumbers')
       return
     }
+    if (runs !== undefined && (runs < 1 || runs > MAX_RUNS)) {
+      error = getMessage('mcpTriggerMaxRunsRange', String(MAX_RUNS))
+      return
+    }
+    const settings = {
+      arguments: args,
+      instructions: instructions.trim(),
+      delivery,
+      ...(name.trim() ? { name: name.trim() } : {}),
+      ...(seconds !== undefined ? { batch_window_secs: seconds } : {}),
+      ...(runs !== undefined ? { max_runs_per_hour: runs } : {})
+    }
     busy = true
     try {
-      const result = await mcp.applyTrigger({
-        op: 'create',
-        trigger: {
-          server_id: serverId,
-          event: event.name,
-          arguments: args,
-          instructions: instructions.trim(),
-          ...(name.trim() ? { name: name.trim() } : {}),
-          ...(seconds ? { batch_window_secs: Number(seconds) } : {})
-        }
-      })
+      const result = editing
+        ? await mcp.applyTrigger({ op: 'update', id: editing.id, changes: settings })
+        : await mcp.applyTrigger({
+            op: 'create',
+            trigger: { server_id: serverId, event: eventName, ...settings }
+          })
       open = false
-      onCreated(result as McpTriggerDetail)
+      onSaved(result as McpTriggerDetail)
     } catch (err) {
       error = errorToMessage(err)
     } finally {
@@ -125,25 +188,25 @@
     type="button"
     class={buttonClass('default', 'sm')}
     disabled={busy || !instructions.trim()}
-    onclick={create}
+    onclick={save}
   >
     {#if busy}
       <LoaderCircle class="size-3.5 animate-spin" />
     {/if}
-    {getMessage('mcpTriggerCreate')}
+    {getMessage(editing ? 'mcpTriggerSave' : 'mcpTriggerCreate')}
   </button>
 {/snippet}
 
 <Modal
   bind:open
-  title={getMessage('mcpTriggerDialogTitle')}
-  description={event ? getMessage('mcpTriggerDialogDescription', [serverId, event.name]) : ''}
+  title={getMessage(editing ? 'mcpTriggerEditTitle' : 'mcpTriggerDialogTitle')}
+  description={eventName ? getMessage('mcpTriggerDialogDescription', [serverId, eventName]) : ''}
   contentClass="sm:max-w-xl"
   footer={actions}
 >
-  {#if event}
+  {#if eventName}
     <div class="grid gap-4">
-      {#if event.description}
+      {#if event?.description}
         <p class="text-xs whitespace-pre-wrap text-muted-foreground">{event.description}</p>
       {/if}
 
@@ -151,7 +214,7 @@
         {getMessage('mcpTriggerName')}
         <input
           class={inputClass('h-8 text-sm')}
-          placeholder={`${event.name} on ${serverId}`}
+          placeholder={`${eventName} on ${serverId}`}
           bind:value={name}
         />
       </label>
@@ -216,24 +279,61 @@
           bind:value={instructions}></textarea>
       </label>
 
-      <label class="grid gap-1 text-xs font-medium sm:max-w-56">
-        {getMessage('mcpTriggerBatchWindow')}
-        <input
-          class={inputClass('h-8 text-xs tabular-nums')}
-          inputmode="numeric"
-          placeholder="30"
-          bind:value={batchWindow}
-        />
-        <span class="text-[11px] font-normal text-muted-foreground">
-          {getMessage('mcpTriggerBatchWindowHelp')}
-        </span>
-      </label>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <label class="grid content-start gap-1 text-xs font-medium">
+          {getMessage('mcpTriggerBatchWindow')}
+          <input
+            class={inputClass('h-8 text-xs tabular-nums')}
+            inputmode="numeric"
+            placeholder="30"
+            bind:value={batchWindow}
+          />
+          <span class="text-[11px] font-normal text-muted-foreground">
+            {getMessage('mcpTriggerBatchWindowHelp')}
+          </span>
+        </label>
+        <label class="grid content-start gap-1 text-xs font-medium">
+          {getMessage('mcpTriggerMaxRuns')}
+          <input
+            class={inputClass('h-8 text-xs tabular-nums')}
+            inputmode="numeric"
+            placeholder="12"
+            bind:value={maxRuns}
+          />
+          <span class="text-[11px] font-normal text-muted-foreground">
+            {getMessage('mcpTriggerMaxRunsHelp')}
+          </span>
+        </label>
+        <div class="grid content-start gap-1 text-xs font-medium">
+          {getMessage('mcpTriggerDelivery')}
+          <DropdownMenu
+            class="h-8 text-xs"
+            items={deliveryItems}
+            bind:value={delivery}
+            ariaLabel={getMessage('mcpTriggerDelivery')}
+          />
+        </div>
+      </div>
 
       <div
-        class="flex gap-2 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+        class="grid gap-1.5 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
       >
-        <ShieldCheck class="mt-0.5 size-3.5 shrink-0" />
-        <span>{getMessage('mcpTriggerUnattended')}</span>
+        <div class="flex gap-2">
+          <ShieldCheck class="mt-0.5 size-3.5 shrink-0" />
+          <span>{getMessage('mcpTriggerUnattended')}</span>
+        </div>
+        {#if blocked.length}
+          <p class="ps-5.5">
+            {getMessage('mcpTriggerBlockedTools', String(blocked.length))}
+            <span class="font-mono break-all"
+              >{blocked
+                .slice(0, BLOCKED_SHOWN)
+                .map((tool) => tool.remote_name)
+                .join(', ')}{blocked.length > BLOCKED_SHOWN ? ', …' : ''}</span
+            >
+          </p>
+          <p class="ps-5.5 text-[11px] opacity-80">{getMessage('mcpTriggerBlockedToolsHint')}</p>
+        {/if}
       </div>
 
       {#if error}

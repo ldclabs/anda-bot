@@ -354,6 +354,36 @@ impl McpEventRuntime {
         Ok(view)
     }
 
+    /// Adds each server's events to an MCP snapshot (`servers[].events`): its
+    /// automations, how many are paused, and its event types when they were
+    /// listed lately. Reads only what is stored and cached.
+    pub(crate) async fn annotate_snapshot(&self, snapshot: &mut Value) {
+        let triggers = self.store().list().await.unwrap_or_default();
+        let types = self.cached_event_types().await;
+        let Some(servers) = snapshot.get_mut("servers").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for server in servers {
+            let id = server["id"].as_str().unwrap_or_default().to_string();
+            let (automations, paused) = triggers
+                .iter()
+                .filter(|trigger| trigger.server_id == id)
+                .fold((0, 0), |(all, paused), trigger| {
+                    (all + 1, paused + usize::from(!trigger.enabled))
+                });
+            let mut events = json!({ "automations": automations, "paused": paused });
+            match types.get(&id) {
+                Some(Some(count)) => {
+                    events["supported"] = true.into();
+                    events["types"] = (*count).into();
+                }
+                Some(None) => events["supported"] = false.into(),
+                None => {}
+            }
+            server["events"] = events;
+        }
+    }
+
     /// A server's event types and its triggers, for the MCP page. `supported`
     /// is false when the server does not implement MCP Events.
     pub(crate) async fn server_events(&self, server_id: &str) -> Result<Value, BoxError> {

@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "Create"
+  },
+  "attachMenu": {
+    "message": "Attach"
+  },
+  "attachMcpResource": {
+    "message": "MCP resource"
+  },
+  "mcpResourcesTitle": {
+    "message": "Attach an MCP resource"
+  },
+  "mcpResourcesDescription": {
+    "message": "Resources your connected MCP servers offer. What a server returns is its own content."
+  },
+  "mcpResourcesSearch": {
+    "message": "Search resources"
+  },
+  "mcpResourcesNone": {
+    "message": "No connected MCP server offers resources."
+  },
+  "mcpResourcesNoMatch": {
+    "message": "No resource matches."
+  },
+  "actionDetailSite": {
+    "message": "Site"
+  },
+  "actionDetailLink": {
+    "message": "Link"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "Note"
+  },
+  "mcpAutomationsCount": {
+    "message": "$1 event automations"
+  },
+  "mcpAutomationsPaused": {
+    "message": "$1 event automations, $2 paused"
+  },
+  "mcpOptionResources": {
+    "message": "Resources"
+  },
+  "mcpOptionElicitation": {
+    "message": "Requests for input"
+  },
+  "mcpOptionAllowed": {
+    "message": "Allowed"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "Off"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "Change automation"
+  },
+  "mcpTriggerSave": {
+    "message": "Save"
+  },
+  "mcpTriggerSaved": {
+    "message": "Saved the automation $1."
+  },
+  "mcpTriggerEdit": {
+    "message": "Change $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "Delivery"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "Automatic"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "Runs per hour"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "Past this it pauses itself, in case its events loop."
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "Runs per hour must be 1 to $1."
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "$1 of this server's tools would be refused:"
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "They ask for approval, which nobody gives in an automation. Set the ones it needs to Always allow on the Tools tab."
+  },
+  "mcpTriggerLastEvent": {
+    "message": "Last event $1"
   }
 }

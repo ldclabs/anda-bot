@@ -64,6 +64,7 @@
     Search,
     Store,
     ShieldCheck,
+    Zap,
     Trash2,
     X
   } from '@lucide/svelte'
@@ -868,6 +869,20 @@
                   {server.transport === 'stdio' ? getMessage('mcpLocal') : getMessage('mcpRemote')}
                 </span>
                 <span class="truncate">{statusLabels[server.status]}</span>
+                {#if server.events?.automations}
+                  <span
+                    class="flex shrink-0 items-center gap-0.5 tabular-nums"
+                    title={server.events.paused
+                      ? getMessage('mcpAutomationsPaused', [
+                          String(server.events.automations),
+                          String(server.events.paused)
+                        ])
+                      : getMessage('mcpAutomationsCount', String(server.events.automations))}
+                  >
+                    <Zap class="size-3" aria-hidden="true" />
+                    {server.events.automations}
+                  </span>
+                {/if}
                 {#if server.status === 'ready'}
                   <span class="ml-auto shrink-0 tabular-nums">
                     {getMessage('mcpToolCount', String(server.tools.total))}

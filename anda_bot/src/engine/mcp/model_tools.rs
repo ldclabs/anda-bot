@@ -167,6 +167,8 @@ fn server_settings(args: AddMcpServerArgs) -> Result<McpServerSettings, BoxError
         concurrency: None,
         limits: Default::default(),
         events: None,
+        resources: None,
+        elicitation: None,
     };
     let issues = server.setup_issues();
     if !issues.is_empty() {

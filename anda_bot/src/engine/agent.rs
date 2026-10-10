@@ -58,7 +58,8 @@ use session::{ConversationInput, Session};
 
 use super::{
     ActionEvent, ActionRuntime, ActionSession, AskUserChoiceTool, CompletionHook,
-    ManageMcpServerTool, McpServerTool,
+    CreateEventTriggerTool, ListMcpEventsTool, ManageEventTriggerTool, ManageMcpServerTool,
+    McpResourcesTool, McpServerTool,
     browser::ChromeBrowserTool,
     conversation::{AgentCaller, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalTool, GoalToolState},
@@ -165,6 +166,10 @@ fn base_tool_dependencies() -> Vec<String> {
         APPLY_PATCH_NAME.to_string(),
         McpServerTool::NAME.to_string(),
         ManageMcpServerTool::NAME.to_string(),
+        McpResourcesTool::NAME.to_string(),
+        ListMcpEventsTool::NAME.to_string(),
+        CreateEventTriggerTool::NAME.to_string(),
+        ManageEventTriggerTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
         SkillsListTool::NAME.to_string(),
@@ -1842,7 +1847,9 @@ mod tests {
         let mcp_manager = super::super::mcp::McpManager::for_test(&home).await;
         let mcp_provider = mcp_manager.provider().clone();
         let add_mcp_server = Arc::new(McpServerTool::new(mcp_manager.clone()));
-        let manage_mcp_server = Arc::new(ManageMcpServerTool::new(mcp_manager));
+        let manage_mcp_server = Arc::new(ManageMcpServerTool::new(mcp_manager.clone()));
+        let mcp_resources = Arc::new(McpResourcesTool::new(mcp_manager.clone()));
+        let mcp_events = super::super::mcp::McpEventRuntime::for_test(mcp_manager).await;
         let cron_runtime = Arc::new(
             crate::cron::CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())
                 .await
@@ -1952,6 +1959,14 @@ mod tests {
             .register_tool(add_mcp_server)
             .unwrap()
             .register_tool(manage_mcp_server)
+            .unwrap()
+            .register_tool(mcp_resources)
+            .unwrap()
+            .register_tool(Arc::new(ListMcpEventsTool::new(mcp_events.clone())))
+            .unwrap()
+            .register_tool(Arc::new(CreateEventTriggerTool::new(mcp_events.clone())))
+            .unwrap()
+            .register_tool(Arc::new(ManageEventTriggerTool::new(mcp_events)))
             .unwrap()
             .register_tool(resource_store.clone())
             .unwrap()

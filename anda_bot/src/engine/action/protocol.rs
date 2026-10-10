@@ -117,6 +117,11 @@ pub(crate) struct UserChoiceOption {
     pub description: Option<String>,
     #[serde(default)]
     pub input: Option<UserChoiceInput>,
+    /// An http(s) link the client opens when this option is chosen. Only
+    /// the runtime sets it (an MCP server's request to open a page); options
+    /// the model writes never carry one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -400,6 +405,7 @@ mod tests {
                 value: None,
                 description: None,
                 input: None,
+                url: None,
             }]),
             default_choice_id: Some("a".to_string()),
             status: ActionStatus::Pending,

@@ -5,6 +5,8 @@
     actionDefaultChoiceId,
     actionDenyLabel,
     actionDetailIsBlock,
+    actionDetailUrl,
+    safeLink,
     actionDetailLabel,
     actionDetailText,
     actionKindLabel,
@@ -211,6 +213,10 @@
       } else if (row.kind === 'remember') {
         await andaClient.respondAction({ actionId: current.id, approve: true, remember: true })
       } else if (row.kind === 'choice') {
+        // A page the card offers to open (an MCP server's request) opens
+        // with the click, before anything is awaited.
+        const link = safeLink(row.choice.url)
+        if (link) window.open(link, '_blank', 'noopener,noreferrer')
         await andaClient.respondAction({
           actionId: current.id,
           choiceId: row.id,
@@ -333,9 +339,17 @@
           {/if}
           {#if action.details?.length}
             {#each action.details as detail, detailIndex (`${detail.label}-${detailIndex}`)}
+              {@const link = actionDetailUrl(detail)}
               <div class="action-dock-detail">
                 <div class="action-dock-detail-label">{actionDetailLabel(detail)}</div>
-                {#if actionDetailIsBlock(detail)}
+                {#if link}
+                  <a
+                    class="action-dock-detail-text action-dock-link"
+                    href={link}
+                    target="_blank"
+                    rel="noopener noreferrer">{link}</a
+                  >
+                {:else if actionDetailIsBlock(detail)}
                   <pre class="action-dock-code"><code>{actionDetailText(detail)}</code></pre>
                 {:else}
                   <div class="action-dock-detail-text">{actionDetailText(detail)}</div>
@@ -575,6 +589,12 @@
   .action-dock-meta {
     color: var(--message-muted, #737373);
     font-size: 0.75rem;
+  }
+
+  .action-dock-link {
+    display: block;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .action-dock-code {

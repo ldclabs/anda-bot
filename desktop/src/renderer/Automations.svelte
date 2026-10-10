@@ -241,7 +241,10 @@
               <p>{trigger.instructions}</p>
               <span
                 >{trigger.event} · {trigger.server_id} · {triggerStates[trigger.state] ||
-                  trigger.state}</span
+                  trigger.state} · {trigger.mode ||
+                  (trigger.delivery === 'auto'
+                    ? getMessage('mcpTriggerDeliveryAuto')
+                    : trigger.delivery)}</span
               >
             </div>
           </div>
@@ -250,7 +253,10 @@
               >{getMessage('mcpTriggerStats', [
                 String(trigger.events_received),
                 String(trigger.runs)
-              ])}</span
+              ])}{#if trigger.last_event_at}{` · ${getMessage(
+                  'mcpTriggerLastEvent',
+                  new Date(trigger.last_event_at).toLocaleString()
+                )}`}{/if}</span
             ><button
               class="icon-button"
               title={trigger.enabled ? t('pause') : t('resume')}
@@ -263,6 +269,9 @@
             >
           </div>
           {#if trigger.last_error}<p class="job-error">{trigger.last_error}</p>{/if}
+          {#if trigger.missed_events_at}<p class="job-warning">
+              {getMessage('mcpTriggerMissed', new Date(trigger.missed_events_at).toLocaleString())}
+            </p>{/if}
         </article>{/each}
     </div>
   </section>

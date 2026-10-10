@@ -257,7 +257,8 @@ describe('normalizeMessage', () => {
                   required: true,
                   multiline: true
                 }
-              }
+              },
+              { id: 'open', label: 'Open the page', url: 'https://example.com/connect' }
             ],
             created_at: 100,
             expires_at: 200
@@ -297,6 +298,8 @@ describe('normalizeMessage', () => {
         multiline: true
       }
     })
+    // A page an MCP server asks to open keeps its link.
+    expect(normalized?.actions?.[0]?.choices?.[2]?.url).toBe('https://example.com/connect')
   })
 
   it('merges repeated action cards and keeps the original choices', () => {

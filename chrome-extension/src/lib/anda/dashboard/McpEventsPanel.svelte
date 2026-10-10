@@ -25,6 +25,7 @@
     ChevronRight,
     LoaderCircle,
     Pause,
+    Pencil,
     Play,
     Plus,
     RefreshCw,
@@ -47,6 +48,7 @@
   let error = $state('')
   let notice = $state('')
   let creating = $state<McpEventDefinition | null>(null)
+  let editing = $state<McpTrigger | null>(null)
   let createOpen = $state(false)
   let deleting = $state<McpTrigger | null>(null)
   let deleteOpen = $state(false)
@@ -127,11 +129,19 @@
 
   function openCreate(event: McpEventDefinition) {
     creating = event
+    editing = null
     createOpen = true
   }
 
-  function created(trigger: McpTriggerDetail) {
-    notice = getMessage('mcpTriggerCreated', trigger.name)
+  function openEdit(trigger: McpTrigger) {
+    creating = view?.events.find((event) => event.name === trigger.event) ?? null
+    editing = trigger
+    createOpen = true
+  }
+
+  function saved(trigger: McpTriggerDetail) {
+    notice = getMessage(editing ? 'mcpTriggerSaved' : 'mcpTriggerCreated', trigger.name)
+    expanded = {}
     void refreshTriggers()
   }
 
@@ -313,6 +323,16 @@
               </span>
             {/if}
             <div class="ms-auto flex gap-1">
+              <button
+                type="button"
+                class={buttonClass('ghost', 'icon-sm')}
+                aria-label={getMessage('mcpTriggerEdit', trigger.name)}
+                title={getMessage('mcpTriggerEdit', trigger.name)}
+                disabled={!!busy || loading}
+                onclick={() => openEdit(trigger)}
+              >
+                <Pencil class="size-3.5" />
+              </button>
               {#if trigger.enabled}
                 <button
                   type="button"
@@ -362,9 +382,10 @@
             {#if trigger.last_run_at}
               <span>{getMessage('mcpTriggerLastRun', timeLabel(trigger.last_run_at))}</span>
             {/if}
-            {#if trigger.mode}
-              <span>{trigger.mode}</span>
+            {#if trigger.last_event_at}
+              <span>{getMessage('mcpTriggerLastEvent', timeLabel(trigger.last_event_at))}</span>
             {/if}
+            <span>{trigger.mode || trigger.delivery}</span>
           </div>
           {#if trigger.last_error}
             <p class="text-xs break-words whitespace-pre-wrap text-destructive">
@@ -415,7 +436,8 @@
   bind:open={createOpen}
   serverId={server.id}
   event={creating}
-  onCreated={created}
+  {editing}
+  onSaved={saved}
 />
 
 {#snippet deleteActions()}

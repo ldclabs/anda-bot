@@ -52,6 +52,8 @@ const ENTRY_FIELDS: &[&str] = &[
     "concurrency",
     "limits",
     "events",
+    "resources",
+    "elicitation",
 ];
 
 /// Fields of an entry in the older list form.
@@ -70,6 +72,8 @@ const LIST_ENTRY_FIELDS: &[&str] = &[
     "concurrency",
     "limits",
     "events",
+    "resources",
+    "elicitation",
 ];
 
 /// mcp.json as it was read.
@@ -310,6 +314,8 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
                 ("lifecycle", options.lifecycle.map(|v| json!(v))),
                 ("concurrency", options.concurrency.map(|v| json!(v))),
                 ("tasks", options.tasks.as_ref().map(|v| json!(v))),
+                ("resources", options.resources.map(|v| json!(v))),
+                ("elicitation", options.elicitation.map(|v| json!(v))),
             ] {
                 set_or_remove_value(entry, key, value);
             }
@@ -512,6 +518,12 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
     }
     if let Some(events) = &server.events {
         object.insert("events".into(), json!(events));
+    }
+    if let Some(resources) = server.resources {
+        object.insert("resources".into(), json!(resources));
+    }
+    if let Some(elicitation) = server.elicitation {
+        object.insert("elicitation".into(), json!(elicitation));
     }
     object
 }

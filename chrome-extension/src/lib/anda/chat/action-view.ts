@@ -208,7 +208,16 @@ export function actionDetailLabel(detail: ChatActionDetail): string {
     case 'Environment keys':
       return getMessage('actionDetailEnvironmentKeys')
     case 'Server':
+    case 'MCP server':
       return getMessage('actionDetailServer') || detail.label
+    case 'Site':
+      return getMessage('actionDetailSite') || detail.label
+    case 'Link':
+      return getMessage('actionDetailLink') || detail.label
+    case 'URI':
+      return getMessage('actionDetailUri') || detail.label
+    case 'Note':
+      return getMessage('actionDetailNote') || detail.label
     case 'Tool':
       return getMessage('actionDetailTool') || detail.label
     case 'Description':
@@ -242,6 +251,24 @@ export function actionDetailText(detail: ChatActionDetail): string {
 }
 
 /** True when the detail needs its own block rather than an inline run. */
+/** The link a `url` detail carries, when it is an http(s) one. */
+export function actionDetailUrl(detail: ChatActionDetail): string | undefined {
+  return detail.format === 'url' && typeof detail.value === 'string'
+    ? safeLink(detail.value)
+    : undefined
+}
+
+/** `url` when it is an http(s) link, the only kind a card opens. */
+export function safeLink(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function actionDetailIsBlock(detail: ChatActionDetail): boolean {
   return detail.format === 'code' || detail.format === 'json' || detail.format === 'list'
 }

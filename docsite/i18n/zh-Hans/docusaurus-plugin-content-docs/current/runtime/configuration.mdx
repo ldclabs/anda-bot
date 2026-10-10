@@ -96,7 +96,7 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
 
 每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（引用的环境变量未设置、不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录警告，其余服务照常加载。服务在 daemon 启动后于后台连接，较慢的端点或首次 `npx -y` 下载不会拖慢启动；如需在 daemon 报告就绪前完成工具发现，可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展 `PATH`，即使 daemon 作为登录服务运行，也能找到 `npx`、`uvx` 和 Homebrew 安装的命令；但登录服务看不到 shell 配置文件中导出的变量，`${VAR}` 引用的变量需要存在于 daemon 自身的环境中。
 
-条目还可以调整服务的运行方式。`timeouts` 以秒为单位，每项在 1 到 86400 之间：`setup_secs` 连接（默认 90）、`list_secs` 列出工具（30）、`request_secs` 单个请求（180）、`call_secs` 整次工具调用（600）。`concurrency` 决定哪些工具可以同时运行：`serial`（默认）、`read_only_parallel`（服务标为只读的工具）或 `parallel`。`limits.output_text_bytes` 是智能体从一次结果中得到的文本，在 256 到 1048576 之间（默认 32768）。`lifecycle` 决定协议版本的协商方式（`auto`、`discover` 或 `initialize`），`tasks`（`{"max_wait_secs": 900}`）让长时间运行的工具返回任务、由 Anda 轮询完成。本地服务默认获得 daemon 的全部环境变量；`"inherit_env": false` 只给它平台必需的变量（`PATH`、`HOME`、`TMPDIR` 等）和它自己的 `env`，daemon 环境中的其他密钥不会传给它。这些设置由你在 `mcp.json`、MCP 页面或 `anda mcp options` 中修改，智能体的工具不能修改。
+条目还可以调整服务的运行方式。`timeouts` 以秒为单位，每项在 1 到 86400 之间：`setup_secs` 连接（默认 90）、`list_secs` 列出工具（30）、`request_secs` 单个请求（180）、`call_secs` 整次工具调用（600）。`concurrency` 决定哪些工具可以同时运行：`serial`（默认）、`read_only_parallel`（服务标为只读的工具）或 `parallel`。`limits.output_text_bytes` 是智能体从一次结果中得到的文本，在 256 到 1048576 之间（默认 32768）。`lifecycle` 决定协议版本的协商方式（`auto`、`discover` 或 `initialize`），`tasks`（`{"max_wait_secs": 900}`）让长时间运行的工具返回任务、由 Anda 轮询完成。本地服务默认获得 daemon 的全部环境变量；`"inherit_env": false` 只给它平台必需的变量（`PATH`、`HOME`、`TMPDIR` 等）和它自己的 `env`，daemon 环境中的其他密钥不会传给它。`resources` 和 `elicitation` 默认开启，设为 `false` 时分别不再允许智能体和应用列出、读取服务的[资源](#资源与输入请求)，或不再允许服务在工具运行期间[向你请求输入](#资源与输入请求)；`timeouts.elicitation_secs`（默认 300）是服务等待你回答的时间。这些设置由你在 `mcp.json`、MCP 页面或 `anda mcp options` 中修改，智能体的工具不能修改。
 
 智能体也可以通过 `add_mcp_server` 在运行时添加服务。`persist: false` 只对当前 daemon 生效；`persist: true` 会把服务保存到 `~/.anda/mcp.json`，重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、`command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和 `exclude`，另外再加 tool 专用的 `id` 和 `persist`。`manage_mcp_server` 让智能体查看各服务的状态和最近错误，并重连某个服务；启用、停用、删除或登出服务前会先请求你的批准。
 
@@ -116,7 +116,7 @@ anda mcp options github --call-timeout 900            # 高级设置；用 `defa
 anda mcp import --dry-run                             # 其他应用里配置的服务
 anda mcp import github notes=work-notes --from cursor # 导入它们；不写名称则导入全部新服务
 anda mcp events github                                # 服务上报哪些事件
-anda mcp triggers                                     # 事件自动化；另有 add、get、pause、resume、delete
+anda mcp triggers                                     # 事件自动化；另有 add、get、update、pause、resume、delete
 ```
 
 daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users`、`secret`、`options`、`import` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义和说明以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
@@ -202,12 +202,15 @@ anda mcp events github                         # 事件类型、投递方式和�
 anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
     --instructions "给每个新 issue 加标签并写一段摘要" --batch-window 60
 anda mcp triggers get 3                        # 状态、最近的运行和事件
+anda mcp triggers update 3 --instructions "加标签并指派负责人"  # 未给出的设置保持不变
 anda mcp triggers pause 3                      # 另有 resume、delete
 ```
 
 - **结果去向。** 在 MCP 页面或 CLI 创建的自动化在你的一个对话中回复，之后的运行继续使用该对话；智能体创建的自动化在被要求的地方回复，即那个对话或 IM 聊天。
 - **批处理与上限。** 在批处理窗口（默认 30 秒，最长一小时）内到达的事件合并为一次运行，每次最多 20 个事件。运行次数将超过每小时上限（`max_runs_per_hour`，默认 12）时，自动化会自行暂停，这也能截断反馈回路（例如回复 issue 后又把这条评论作为新事件收到）；连续失败五次也会暂停。准备好后再恢复即可。
 - **信任。** 事件数据来自服务，属于不可信内容：运行时以数据而非指令的形式交给模型，也不会记为你的内容。这些运行不像定时任务那样拥有完全访问权限：只能调用只读工具和设为 `allow` 的工具，需要审批的操作（`auto` 下的写工具、有风险的 shell 命令）一律拒绝。
+- **修改与通知。** 可以在“事件”标签页或用 `anda mcp triggers update` 修改自动化；修改事件、参数或投递方式会从此刻起重新订阅。对话框还会列出该服务在自动化中会被拒绝的工具。自动化自行暂停、服务需要重新登录或服务终止订阅时，Anda 会在自动化回复的地方发一条简短消息告诉你。
+- **记忆。** 一次运行带来的内容归属于该服务和事件（`mcp:<server>/<event>`），作为外部来源对待，与外部 IM 发送者的话一样，Formation 不会把它记为你的内容。
 - **投递。** Anda 按事件类型的支持情况保持推送流或轮询，并记录已到达的位置，所以 daemon 停止期间到达的事件，在服务支持回放时会被补发；已处理过的事件不会重复运行。服务报告有事件丢失时，自动化会显示出来。服务停用、删除或连接失败时自动化会等待，服务需要登录时会提示，服务恢复后两者都会自动继续。
 - **经由 dMsg 的 webhook。** 有些服务只通过 webhook 投递事件，而 Anda 不监听任何公网端口。在 dMsg 的条目上设置 `"events": {"webhook_ingress": true}`：对每个这样的自动化，Anda 会在 dMsg 上创建端点、让服务向它投递并在到期前续订，dMsg 再转交它验证过的投递。没有接收方时，自动化会停在 `needs_ingress` 状态。
 
@@ -220,6 +223,14 @@ anda mcp triggers pause 3                      # 另有 resume、delete
 ```
 
 自动化、收到的事件和运行记录保存在 daemon 的数据库中；端点的签名密钥保存在 MCP 密钥库中。
+
+### 资源与输入请求
+
+服务可以提供资源：按 URI 访问的文件、记录和其他上下文。智能体用 `mcp_resources` 列出和读取资源（`list` 不指定服务时列出所有已连接服务的资源，`templates` 列出可填写的 URI 模板，`read` 读取一个 URI）；较短的文本直接返回，较长或二进制的内容作为附件返回。在 Anda 桌面端和扩展中，输入框的 + 菜单有“MCP 资源”，会列出已连接服务的资源，并把你选中的那个作为附件加入消息。读取不会改变任何东西，所以它像已审查的只读工具一样遵循服务的审批策略：除非服务设为 `ask` 或会话要求每次都询问，否则无需审批；外部 IM 用户只能访问允许他们的服务。服务返回的内容和工具结果一样属于不可信内容。
+
+服务也可以在工具运行期间向你请求输入（MCP elicitation）。Anda 会在该调用所属对话的输入框上方显示请求：表单按字段逐张卡片询问，并在你回答时检查（数字范围、邮箱地址、选项之一）；要求打开页面的请求会显示带链接的卡片，选择 Open the page 时打开。选择 Decline 会告诉服务你不回答；改为在聊天中回复，或超过服务的等待时间（`timeouts.elicitation_secs`，默认 300 秒），请求会被取消。在无人能回答的场合（自动化、定时任务或 IM 聊天），请求会立即取消。答案会交给服务，请勿在这类卡片中输入密码、密钥或支付信息。
+
+两者默认开启。在条目上设置 `"resources": false` 或 `"elicitation": false`，或运行 `anda mcp options <id> --resources off`（或 `--elicitation off`），即可关闭其中一项。
 
 ## 本地目录结构
 

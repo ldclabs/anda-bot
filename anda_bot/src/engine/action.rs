@@ -37,10 +37,10 @@ mod protocol;
 
 pub(crate) use protocol::{
     ActionApiOutput, ActionDetail, ActionStatus, ApprovalLabels, TOOL_APPROVAL_ACTION,
-    USER_CHOICE_ACTION, UserChoiceOption, action_id_from_message, action_id_from_message_value,
-    action_message, apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
-    approval_detail, is_action_message_value, payload_action_id, payload_is_pending,
-    payload_responded_at, update_action_payload_resolution,
+    USER_CHOICE_ACTION, UserChoiceInput, UserChoiceOption, action_id_from_message,
+    action_id_from_message_value, action_message, apply_action_resolution_to_chat_message,
+    apply_action_resolution_to_message, approval_detail, is_action_message_value,
+    payload_action_id, payload_is_pending, payload_responded_at, update_action_payload_resolution,
 };
 use protocol::{ActionPayload, ActionToolRef};
 
@@ -522,6 +522,7 @@ impl ActionSession {
         let kind = PendingActionKind::Choice {
             choices: args.choices.clone(),
             default_choice_id: args.default_choice_id.clone(),
+            limit: None,
         };
         let meta = live_request_meta(ctx);
         if let Some(reason) = choice_unanswerable_reason(ctx, &meta) {
@@ -538,6 +539,113 @@ impl ActionSession {
             ..self.new_payload(ctx, &kind, args.title)
         };
         choice_result(self.publish_and_wait(payload, kind, "user choice").await?)
+    }
+
+    /// Shows one card of an MCP server's request for input and waits, at
+    /// most `card.timeout`, for the user's pick. Where no choice card can be
+    /// answered (automations, scheduled jobs, IM chats) nothing is shown.
+    pub(crate) async fn request_mcp_input(
+        &self,
+        ctx: &BaseCtx,
+        card: McpInputCard,
+    ) -> Result<McpInputAnswer, BoxError> {
+        let meta = live_request_meta(ctx);
+        if let Some(reason) = choice_unanswerable_reason(ctx, &meta) {
+            return Ok(McpInputAnswer::Unanswered(format!(
+                "nobody can answer it in this {reason}"
+            )));
+        }
+        let kind = PendingActionKind::Choice {
+            choices: card.choices.clone(),
+            default_choice_id: None,
+            limit: Some(card.timeout),
+        };
+        let payload = ActionPayload {
+            tool: Some(ActionToolRef::labeled(&card.tool, &card.tool_label)),
+            message: card.message,
+            details: (!card.details.is_empty()).then_some(card.details),
+            choices: Some(card.choices),
+            metadata: Some(card.metadata),
+            ..self.new_payload(ctx, &kind, card.title)
+        };
+        // The engine drops this wait when the server's deadline passes or the
+        // call ends; the card must close with it.
+        let _close = AbandonGuard {
+            runtime: &self.runtime,
+            action_id: payload.id.clone(),
+            event_sender: &self.event_sender,
+        };
+        let response = self
+            .publish_and_wait(payload, kind, "MCP server input")
+            .await?;
+        let text = |key: &str| {
+            response
+                .payload
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        Ok(match response.status {
+            ActionStatus::Selected => McpInputAnswer::Choice {
+                id: text("choice_id").unwrap_or_default(),
+                text: text("choice_text"),
+            },
+            ActionStatus::Expired if response.payload[ANSWERED_IN_CHAT] == true => {
+                McpInputAnswer::InChat
+            }
+            _ => McpInputAnswer::Unanswered(
+                text("reason").unwrap_or_else(|| "no answer".to_string()),
+            ),
+        })
+    }
+}
+
+/// One card of an MCP server's request for input (elicitation).
+pub(crate) struct McpInputCard {
+    pub tool: String,
+    pub tool_label: String,
+    pub title: String,
+    pub message: Option<String>,
+    pub details: Vec<ActionDetail>,
+    pub choices: Vec<UserChoiceOption>,
+    pub metadata: Value,
+    /// How long the server waits for the answer.
+    pub timeout: Duration,
+}
+
+/// What the user did with an [`McpInputCard`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum McpInputAnswer {
+    /// Picked an option, with the text typed into it.
+    Choice { id: String, text: Option<String> },
+    /// Wrote in chat instead.
+    InChat,
+    /// Nobody could or did answer; the reason.
+    Unanswered(String),
+}
+
+/// Resolves an MCP input card whose waiter went away, cancelled or timed out
+/// with its call, so the card does not stay open with nobody to take the
+/// answer. A card answered, expired or stopped is no longer pending, and this
+/// does nothing. Other cards wait for their session: stopping it resolves
+/// them as stopped.
+struct AbandonGuard<'a> {
+    runtime: &'a ActionRuntime,
+    action_id: String,
+    event_sender: &'a mpsc::Sender<ActionEvent>,
+}
+
+impl Drop for AbandonGuard<'_> {
+    fn drop(&mut self) {
+        if self.runtime.take(&self.action_id).is_some() {
+            let response = ActionResponse::new(
+                ActionStatus::Expired,
+                json!({ "reason": "the request was cancelled" }),
+            );
+            let _ = self
+                .event_sender
+                .try_send(response.event(std::mem::take(&mut self.action_id)));
+        }
     }
 }
 
@@ -569,6 +677,8 @@ enum PendingActionKind {
     Choice {
         choices: Vec<UserChoiceOption>,
         default_choice_id: Option<String>,
+        /// Waits this long instead of the usual timeout.
+        limit: Option<Duration>,
     },
 }
 
@@ -589,6 +699,9 @@ impl PendingActionKind {
 
     fn timeout(&self) -> Duration {
         match self {
+            Self::Choice {
+                limit: Some(limit), ..
+            } => *limit,
             Self::Choice {
                 default_choice_id: Some(_),
                 ..
@@ -635,6 +748,7 @@ impl PendingActionKind {
         if let Self::Choice {
             choices,
             default_choice_id: Some(choice_id),
+            ..
         } = self
             && let Ok(mut response) = select_choice(choices, choice_id, None)
         {
@@ -1107,6 +1221,27 @@ pub(crate) async fn request_mcp_tool_approval(
         .await
 }
 
+/// Asks the user to let the agent read from an MCP server's resources.
+pub(crate) async fn request_mcp_resource_approval(
+    ctx: &BaseCtx,
+    title: String,
+    card: McpApprovalCard,
+) -> Result<(), BoxError> {
+    let session = ctx
+        .get_state::<ActionSession>()
+        .ok_or("reading MCP resources requires user approval, which is not available here")?;
+    session
+        .request_mcp_approval(
+            ctx,
+            ActionToolRef::labeled("mcp_resources", "MCP resources"),
+            title,
+            card,
+            None,
+        )
+        .await
+        .map(|_| ())
+}
+
 /// Validates the choices and trims the ids the model wrote, so a response
 /// (which is trimmed too) and the default match them exactly.
 fn normalize_choice_args(args: &mut UserChoiceArgs) -> Result<(), BoxError> {
@@ -1128,6 +1263,8 @@ fn normalize_choice_args(args: &mut UserChoiceArgs) -> Result<(), BoxError> {
         if !seen.insert(choice.id.clone()) {
             return Err("choice ids must be unique".into());
         }
+        // Links are the runtime's: the model cannot make a card open one.
+        choice.url = None;
     }
     args.default_choice_id = args
         .default_choice_id
@@ -1490,6 +1627,7 @@ mod tests {
             value: None,
             description: None,
             input,
+            url: None,
         }
     }
 
@@ -1538,6 +1676,7 @@ mod tests {
         let with_default = PendingActionKind::Choice {
             choices: vec![option("a", None), option("b", None)],
             default_choice_id: Some("b".to_string()),
+            limit: None,
         };
         assert_eq!(with_default.timeout(), CHOICE_DEFAULT_TIMEOUT);
         let response = with_default.unanswered("no response within 3 minutes");
@@ -1551,6 +1690,7 @@ mod tests {
         let blocking = PendingActionKind::Choice {
             choices: vec![option("a", None)],
             default_choice_id: None,
+            limit: None,
         };
         assert_eq!(blocking.timeout(), ACTION_RESPONSE_TIMEOUT);
         let response = blocking.unanswered("no response within 10 minutes");
@@ -1691,12 +1831,14 @@ mod tests {
     fn choice_response_returns_selected_value() {
         let kind = PendingActionKind::Choice {
             default_choice_id: None,
+            limit: None,
             choices: vec![UserChoiceOption {
                 id: "a".to_string(),
                 label: "Option A".to_string(),
                 value: Some("value-a".to_string()),
                 description: None,
                 input: None,
+                url: None,
             }],
         };
 
@@ -1720,6 +1862,7 @@ mod tests {
     fn choice_response_returns_entered_text() {
         let kind = PendingActionKind::Choice {
             default_choice_id: None,
+            limit: None,
             choices: vec![UserChoiceOption {
                 id: "custom".to_string(),
                 label: "Custom".to_string(),
@@ -1730,6 +1873,7 @@ mod tests {
                     required: true,
                     multiline: true,
                 }),
+                url: None,
             }],
         };
 
@@ -1757,6 +1901,7 @@ mod tests {
     fn choice_response_rejects_missing_required_text() {
         let kind = PendingActionKind::Choice {
             default_choice_id: None,
+            limit: None,
             choices: vec![UserChoiceOption {
                 id: "custom".to_string(),
                 label: "Custom".to_string(),
@@ -1767,6 +1912,7 @@ mod tests {
                     required: true,
                     multiline: false,
                 }),
+                url: None,
             }],
         };
 
@@ -1865,12 +2011,14 @@ mod tests {
             conversation: 42,
             kind: PendingActionKind::Choice {
                 default_choice_id: None,
+                limit: None,
                 choices: vec![UserChoiceOption {
                     id: "a".to_string(),
                     label: "Option A".to_string(),
                     value: None,
                     description: None,
                     input: None,
+                    url: None,
                 }],
             },
             event_sender,

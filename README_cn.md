@@ -337,7 +337,8 @@ shell 配置文件中导出的变量。
 条目还可以调整服务的运行方式：`timeouts`，单位为秒（`setup_secs` 默认 90、
 `list_secs` 30、`request_secs` 180、`call_secs` 600）；`concurrency`（默认
 `serial`，可选 `read_only_parallel` 或 `parallel`）；`limits.output_text_bytes`
-（智能体从一次结果中得到的文本，默认 32768）；`lifecycle`、`tasks`，以及本地服务的
+（智能体从一次结果中得到的文本，默认 32768）；`lifecycle`、`tasks`、`resources` 和
+`elicitation`（两者默认开启，设为 `false` 关闭，见下文），以及本地服务的
 `inherit_env`。本地服务默认获得 daemon 的全部环境变量；设为 `"inherit_env": false`
 后，只获得平台必需的变量（`PATH`、`HOME` 等）和它自己的 `env`。可以在 MCP 页面或用
 `anda mcp options` 修改。
@@ -410,7 +411,7 @@ MCP 页面服务的“事件”标签页、用 `anda mcp triggers add`，或让�
 anda mcp events github                                # 服务上报哪些事件
 anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
     --instructions "给每个新 issue 加标签并写一段摘要"
-anda mcp triggers                                     # 另有：get、pause、resume、delete
+anda mcp triggers                                     # 另有：get、update、pause、resume、delete
 ```
 
 在自动化的批处理窗口（默认 30 秒）内到达的事件会合并到一次运行中处理。事件数据来自
@@ -419,7 +420,17 @@ anda mcp triggers                                     # 另有：get、pause、r
 或连续失败五次的自动化会自行暂停。Anda 通过推送或轮询接收事件。只通过 webhook 投递
 的事件需要 dMsg 代为接收：在 `mcp.json` 中加入 dMsg 并设置
 `"events": {"webhook_ingress": true}`，Anda 会为每个这样的自动化在 dMsg 上创建端点，
-并让服务向它投递。
+并让服务向它投递。可以在“事件”标签页或用 `anda mcp triggers update` 修改自动化；对话框
+会列出该服务在自动化中会被拒绝的工具。自动化自行暂停、服务需要重新登录或服务终止订阅时，
+Anda 会在自动化回复的地方告诉你。
+
+服务还可以提供资源，例如按 URI 访问的文件或记录。智能体用 `mcp_resources` 列出和读取
+资源，输入框的 + 菜单也可以添加一个资源作为附件（MCP 资源）。读取资源和只读工具一样遵循
+服务的审批策略。服务也可以在工具运行期间向你请求输入（MCP elicitation）：输入框上方会出现
+卡片，表单按字段逐个询问，或提供一个要打开的页面。选择拒绝或直接在聊天中回复，请求就会被
+取消；在无人能回答的场合（自动化、定时任务、IM 聊天）也会取消。答案会交给服务，请勿在这里
+输入密码或密钥。在服务条目上设置 `"resources": false` 或 `"elicitation": false`
+可以分别关闭这两项功能。
 
 智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
 表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，

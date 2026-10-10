@@ -2686,5 +2686,92 @@
   },
   "mcpTriggerCreate": {
     "message": "Créer"
+  },
+  "attachMenu": {
+    "message": "Joindre"
+  },
+  "attachMcpResource": {
+    "message": "Ressource MCP"
+  },
+  "mcpResourcesTitle": {
+    "message": "Joindre une ressource MCP"
+  },
+  "mcpResourcesDescription": {
+    "message": "Les ressources que proposent vos serveurs MCP connectés. Ce qu'un serveur renvoie est son propre contenu."
+  },
+  "mcpResourcesSearch": {
+    "message": "Rechercher des ressources"
+  },
+  "mcpResourcesNone": {
+    "message": "Aucun serveur MCP connecté ne propose de ressources."
+  },
+  "mcpResourcesNoMatch": {
+    "message": "Aucune ressource ne correspond."
+  },
+  "actionDetailSite": {
+    "message": "Site"
+  },
+  "actionDetailLink": {
+    "message": "Lien"
+  },
+  "actionDetailUri": {
+    "message": "URI"
+  },
+  "actionDetailNote": {
+    "message": "Remarque"
+  },
+  "mcpAutomationsCount": {
+    "message": "$1 automatisations sur événements"
+  },
+  "mcpAutomationsPaused": {
+    "message": "$1 automatisations sur événements, dont $2 en pause"
+  },
+  "mcpOptionResources": {
+    "message": "Ressources"
+  },
+  "mcpOptionElicitation": {
+    "message": "Demandes de saisie"
+  },
+  "mcpOptionAllowed": {
+    "message": "Autorisées"
+  },
+  "mcpOptionTurnedOff": {
+    "message": "Désactivées"
+  },
+  "mcpTriggerEditTitle": {
+    "message": "Modifier l'automatisation"
+  },
+  "mcpTriggerSave": {
+    "message": "Enregistrer"
+  },
+  "mcpTriggerSaved": {
+    "message": "Automatisation $1 enregistrée."
+  },
+  "mcpTriggerEdit": {
+    "message": "Modifier $1"
+  },
+  "mcpTriggerDelivery": {
+    "message": "Livraison"
+  },
+  "mcpTriggerDeliveryAuto": {
+    "message": "Automatique"
+  },
+  "mcpTriggerMaxRuns": {
+    "message": "Exécutions par heure"
+  },
+  "mcpTriggerMaxRunsHelp": {
+    "message": "Au-delà, elle se met en pause, au cas où ses événements tournent en boucle."
+  },
+  "mcpTriggerMaxRunsRange": {
+    "message": "Le nombre d'exécutions par heure doit être compris entre 1 et $1."
+  },
+  "mcpTriggerBlockedTools": {
+    "message": "$1 outils de ce serveur seraient refusés :"
+  },
+  "mcpTriggerBlockedToolsHint": {
+    "message": "Ils demandent une approbation, que personne ne donne dans une automatisation. Réglez ceux dont elle a besoin sur Toujours autoriser dans l'onglet Outils."
+  },
+  "mcpTriggerLastEvent": {
+    "message": "Dernier événement $1"
   }
 }

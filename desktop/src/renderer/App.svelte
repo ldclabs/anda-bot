@@ -1096,6 +1096,7 @@
               onApprovalModeChange={(mode) => preference({ approvalMode: mode })}
               submitKeyMode={client.preferences.submitKeyMode}
               onLoadSkills={client.authorized ? () => client.skills.listPrompts() : undefined}
+              mcpResources={client.authorized ? client.mcp : undefined}
               quickPrompts={client.quickPrompts.items}
               onRemoveQuickPrompt={(prompt) => client.quickPrompts.remove(prompt.text)}
               onClearQuickPrompts={() => client.quickPrompts.clear()}

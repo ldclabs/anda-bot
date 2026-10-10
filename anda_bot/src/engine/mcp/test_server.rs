@@ -1,7 +1,8 @@
 //! A Streamable HTTP MCP server for tests, answering JSON. It offers the
 //! tools in its catalog and the instructions given, which a test can change
 //! to play a server that updates them, and answers every call with what it
-//! was called with.
+//! was called with. It also offers two resources, `file:///notes.md` (text)
+//! and `file:///logo.png` (a blob), and a template.
 
 use axum::{Json, http::StatusCode, response::IntoResponse, routing};
 use parking_lot::RwLock;
@@ -42,7 +43,7 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
                         "jsonrpc": "2.0", "id": id,
                         "result": {
                             "protocolVersion": request["params"]["protocolVersion"],
-                            "capabilities": { "tools": {} },
+                            "capabilities": { "tools": {}, "resources": {} },
                             "serverInfo": { "name": "mock", "title": "Mock Server", "version": "1.0.0" },
                             "instructions": *instructions.read()
                         }
@@ -64,6 +65,37 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
                             }]
                         }
                     }),
+                    Some("resources/list") => json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": { "resources": [
+                            { "uri": "file:///notes.md", "name": "notes.md",
+                              "description": "Meeting notes", "mimeType": "text/markdown" },
+                            { "uri": "file:///logo.png", "name": "logo.png",
+                              "mimeType": "image/png", "size": 4 }
+                        ] }
+                    }),
+                    Some("resources/templates/list") => json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": { "resourceTemplates": [
+                            { "uriTemplate": "file:///issues/{id}", "name": "issue" }
+                        ] }
+                    }),
+                    Some("resources/read") => match request["params"]["uri"].as_str() {
+                        Some("file:///notes.md") => json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "result": { "contents": [{ "uri": "file:///notes.md",
+                                "mimeType": "text/markdown", "text": "# Notes\nShip it." }] }
+                        }),
+                        Some("file:///logo.png") => json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "result": { "contents": [{ "uri": "file:///logo.png",
+                                "mimeType": "image/png", "blob": "iVBORw==" }] }
+                        }),
+                        _ => json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": { "code": -32002, "message": "Resource not found" }
+                        }),
+                    },
                     _ => json!({
                         "jsonrpc": "2.0", "id": id,
                         "error": { "code": -32601, "message": "Method not found" }

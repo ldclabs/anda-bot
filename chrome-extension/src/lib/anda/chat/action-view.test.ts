@@ -8,6 +8,7 @@ import {
   actionDenyLabel,
   actionDetailIsBlock,
   actionDetailLabel,
+  actionDetailUrl,
   actionDetailText,
   actionKindLabel,
   actionMessage,
@@ -18,6 +19,7 @@ import {
   actionTitle,
   actionToolLabel,
   choiceInputPlaceholder,
+  safeLink,
   choiceInputRequired,
   countdownLabel,
   isApprovalAction,
@@ -271,5 +273,20 @@ describe('action details', () => {
     expect(actionDetailIsBlock(detail({ format: 'list' }))).toBe(true)
     expect(actionDetailIsBlock(detail({ format: 'text' }))).toBe(false)
     expect(actionDetailIsBlock(detail())).toBe(false)
+  })
+})
+
+describe('action links', () => {
+  it('opens only http(s) links', () => {
+    expect(
+      actionDetailUrl({ label: 'Link', value: 'https://example.com/a?b=1', format: 'url' })
+    ).toBe('https://example.com/a?b=1')
+    expect(actionDetailUrl({ label: 'Link', value: 'https://example.com', format: 'text' })).toBe(
+      undefined
+    )
+    expect(safeLink('javascript:alert(1)')).toBe(undefined)
+    expect(safeLink('file:///etc/passwd')).toBe(undefined)
+    expect(safeLink('not a url')).toBe(undefined)
+    expect(safeLink(null)).toBe(undefined)
   })
 })

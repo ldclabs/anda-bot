@@ -12,12 +12,16 @@ import type {
   McpRegistryPackage,
   McpRegistryPage,
   McpRegistryServer,
+  McpResourceAttachment,
+  McpResourceListing,
   McpSecretView,
   McpServerDetail,
+  McpServerView,
   McpSignIn,
   McpSnapshot,
   McpTestReport,
   McpToolDiff,
+  McpToolView,
   McpTrigger,
   McpTriggerChange,
   McpTriggerDetail
@@ -146,6 +150,24 @@ export class McpApi extends EventTarget {
     })
     this.notifyChanged()
     return result
+  }
+
+  /** The resources of a connected server, or of each. */
+  async resources(id?: string): Promise<McpResourceListing[]> {
+    const result = await this.#call<{ servers: McpResourceListing[] }>(
+      'mcp_resources',
+      id ? { id } : {}
+    )
+    return result.servers
+  }
+
+  /** Reads a resource to attach to a message: each of its contents as a file. */
+  async readResource(id: string, uri: string): Promise<McpResourceAttachment[]> {
+    const result = await this.#call<{ attachments: McpResourceAttachment[] }>('mcp_resource_read', {
+      id,
+      uri
+    })
+    return result.attachments
   }
 
   /** Applies mcp.json as it is on disk. */
@@ -817,4 +839,26 @@ export function eventArguments(
     }
   }
   return result
+}
+
+/**
+ * The tools of a server that an event automation cannot use. Automations run
+ * with nobody to answer an approval, so a tool that would ask is refused: it
+ * runs only when set to Always allow, or when the server's `auto` lets a
+ * reviewed read-only tool run unasked (the call gate's rule for a session that
+ * asks on risk). A tool whose definition changed asks again either way.
+ */
+export function automationBlockedTools(
+  server: Pick<McpServerView, 'approval'>,
+  tools: McpToolView[]
+): McpToolView[] {
+  return tools.filter((tool) => {
+    if (tool.hidden) return false
+    const approval = tool.approval ?? server.approval
+    const reviewed = (tool.review ?? 'trusted') === 'trusted'
+    const readOnly = tool.annotations.read_only === true && tool.annotations.destructive !== true
+    if (approval === 'ask') return true
+    if (approval === 'allow') return !reviewed
+    return !(reviewed && readOnly)
+  })
 }

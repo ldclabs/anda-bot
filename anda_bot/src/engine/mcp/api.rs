@@ -28,6 +28,7 @@ use super::{
     import::{McpImportContext, McpImportRequest, McpImportSource},
     manager::SignIn,
     registry::{self, McpRegistryQuery},
+    resources,
     state::{McpOrigin, McpSource},
 };
 use crate::{
@@ -89,6 +90,27 @@ enum McpRequest {
     TriggersList(Option<String>),
     TriggerGet(u64),
     TriggerApply(TriggerChange),
+    /// The resources of one connected server, or of each.
+    Resources(Option<String>),
+    /// A resource read to attach to a message.
+    ResourceRead {
+        id: String,
+        uri: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourcesParams {
+    #[serde(default)]
+    id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceReadParams {
+    id: String,
+    uri: String,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +401,15 @@ impl McpRequest {
             "mcp_trigger_apply" => {
                 Self::TriggerApply(params_of::<TriggerApplyParams>(method, params)?.change)
             }
+            "mcp_resources" => Self::Resources(if params.is_null() {
+                None
+            } else {
+                params_of::<ResourcesParams>(method, params)?.id
+            }),
+            "mcp_resource_read" => {
+                let ResourceReadParams { id, uri } = params_of(method, params)?;
+                Self::ResourceRead { id, uri }
+            }
             _ => {
                 return Err(error(
                     "unsupported_capability",
@@ -403,6 +434,8 @@ pub(crate) fn is_write_method(method: &str) -> bool {
                 | "mcp_events_list"
                 | "mcp_triggers_list"
                 | "mcp_trigger_get"
+                | "mcp_resources"
+                | "mcp_resource_read"
         )
 }
 
@@ -451,7 +484,11 @@ impl McpApiState {
     async fn execute(&self, request: McpRequest) -> Reply {
         let manager = &self.manager;
         match request {
-            McpRequest::List => ok(manager.snapshot().await),
+            McpRequest::List => {
+                let mut snapshot = json!(manager.snapshot().await);
+                self.events.annotate_snapshot(&mut snapshot).await;
+                ok(snapshot)
+            }
             McpRequest::Get(id) => respond(manager.server(&id).await),
             McpRequest::ToolDiff { id, tool } => respond(manager.tool_diff(&id, &tool)),
             McpRequest::Test(server, secrets) => respond(manager.test(server, secrets).await),
@@ -492,6 +529,10 @@ impl McpApiState {
             }
             McpRequest::TriggerGet(id) => respond(self.events.trigger_detail(id).await),
             McpRequest::TriggerApply(change) => respond(self.apply_trigger(change).await),
+            McpRequest::Resources(id) => ok(resources::app_listing(manager, id.as_deref()).await),
+            McpRequest::ResourceRead { id, uri } => {
+                respond(resources::app_read(manager, &id, &uri).await)
+            }
         }
     }
 
@@ -1025,6 +1066,12 @@ mod tests {
         )
         .await;
         assert_eq!(body["result"].as_array().unwrap().len(), 1);
+        // The server list counts them, with the event types already listed.
+        let (_, body) = call(&state, owner(), "mcp_list", json!({})).await;
+        assert_eq!(
+            body["result"]["servers"][0]["events"],
+            json!({ "automations": 1, "paused": 1, "supported": true, "types": 1 })
+        );
 
         for (params, code) in [
             (
@@ -1065,6 +1112,8 @@ mod tests {
             "mcp_events_list",
             "mcp_triggers_list",
             "mcp_trigger_get",
+            "mcp_resources",
+            "mcp_resource_read",
         ] {
             assert!(!is_write_method(method));
         }

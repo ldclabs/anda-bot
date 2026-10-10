@@ -2,7 +2,8 @@
   /**
    * A server's advanced settings: when its tools are discovered, how the
    * protocol is negotiated, which tools may run at once, its timeouts and
-   * result limit, a local server's environment, and long-running tasks. A
+   * result limit, a local server's environment, long-running tasks, and
+   * whether its resources may be read and it may ask the user for input. A
    * field left empty takes the default, shown as its placeholder. Saving
    * replaces them all, and the daemon reconnects the server when its
    * connection changed.
@@ -40,6 +41,8 @@
     env: string
     tasks: string
     wait: string
+    resources: string
+    elicitation: string
   }
 
   let draft = $state<Draft>(fromOptions(undefined))
@@ -82,6 +85,10 @@
     { value: '', label: getMessage('mcpOptionTasksOff') },
     { value: 'on', label: getMessage('mcpOptionTasksOn') }
   ]
+  const allowItems = [
+    { value: '', label: getMessage('mcpOptionAllowed') },
+    { value: 'off', label: getMessage('mcpOptionTurnedOff') }
+  ]
 
   const next = $derived(toOptions(draft))
   const changed = $derived(JSON.stringify(next) !== JSON.stringify(normalized(server.options)))
@@ -105,7 +112,9 @@
       output: number(options?.limits?.output_text_bytes),
       env: options?.inherit_env === false ? 'off' : '',
       tasks: options?.tasks ? 'on' : '',
-      wait: number(options?.tasks?.max_wait_secs)
+      wait: number(options?.tasks?.max_wait_secs),
+      resources: options?.resources === false ? 'off' : '',
+      elicitation: options?.elicitation === false ? 'off' : ''
     }
   }
 
@@ -135,6 +144,8 @@
       const wait = number(value.wait)
       options.tasks = wait === undefined ? {} : { max_wait_secs: wait }
     }
+    if (value.resources === 'off') options.resources = false
+    if (value.elicitation === 'off') options.elicitation = false
     return options
   }
 
@@ -237,6 +248,24 @@
         />
       </label>
     {/if}
+    <div class="grid gap-1 text-xs font-medium">
+      {getMessage('mcpOptionResources')}
+      <DropdownMenu
+        class="h-8 text-xs"
+        items={allowItems}
+        bind:value={draft.resources}
+        ariaLabel={getMessage('mcpOptionResources')}
+      />
+    </div>
+    <div class="grid gap-1 text-xs font-medium">
+      {getMessage('mcpOptionElicitation')}
+      <DropdownMenu
+        class="h-8 text-xs"
+        items={allowItems}
+        bind:value={draft.elicitation}
+        ariaLabel={getMessage('mcpOptionElicitation')}
+      />
+    </div>
   </div>
 
   {#if invalid}

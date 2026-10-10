@@ -96,6 +96,11 @@ describe('desktop host boundaries', () => {
     expect(() =>
       validateRpc('mcp_trigger_apply', [{ change: { op: 'delete', id: 1 } }])
     ).not.toThrow()
+    // The composer attaches a server's resources.
+    expect(() => validateRpc('mcp_resources', [{}])).not.toThrow()
+    expect(() =>
+      validateRpc('mcp_resource_read', [{ id: 'docs', uri: 'file:///notes.md' }])
+    ).not.toThrow()
     expect(() => validateRpc('mcp_events_subscribe', [{}])).toThrow('not available')
   })
   it('reads MCP install links into a configuration to check, never more', () => {

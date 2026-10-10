@@ -68,11 +68,11 @@ use resources::record_artifacts;
 pub(crate) use action::{
     ActionApiOutput, ActionDetail, ActionEvent, ActionResponseArgs, ActionRuntime, ActionSession,
     ActionStatus, ActionsTool, ActionsToolArgs, ApprovalMode, AskUserChoiceTool, McpApprovalCard,
-    McpApprovalKind, action_id_from_message, action_id_from_message_value,
-    apply_action_resolution_to_chat_message, apply_action_resolution_to_message, approval_detail,
-    approval_scope, is_action_message_value, payload_action_id, payload_is_pending,
-    payload_responded_at, request_mcp_tool_approval, require_mcp_approval,
-    update_action_payload_resolution,
+    McpApprovalKind, McpInputAnswer, McpInputCard, UserChoiceInput, UserChoiceOption,
+    action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
+    apply_action_resolution_to_message, approval_detail, approval_scope, is_action_message_value,
+    payload_action_id, payload_is_pending, payload_responded_at, request_mcp_resource_approval,
+    request_mcp_tool_approval, require_mcp_approval, update_action_payload_resolution,
 };
 pub(crate) use agent::memory_policy::{MemoryMode, MemoryPolicy};
 pub use agent::{
@@ -83,12 +83,17 @@ pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub use idle::{BrainSleepIdleHook, IdleHook};
-pub(crate) use mcp::{ManageMcpServerTool, McpConnectTool, McpServerTool};
+pub(crate) use mcp::{
+    CreateEventTriggerTool, ListMcpEventsTool, ManageEventTriggerTool, ManageMcpServerTool,
+    McpConnectTool, McpResourcesTool, McpServerTool,
+};
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
 pub use skill_library::SkillLibrary;
-pub(crate) use system::{external_user_prompt_with_space, system_runtime_prompt};
+pub(crate) use system::{
+    external_user_prompt_with_space, system_runtime_prompt, system_runtime_prompt_from,
+};
 
 // Empty model labels resolve through Models::get_model(), which tracks the active model.
 const ACTIVE_MODEL_LABEL: &str = "";
@@ -358,6 +363,10 @@ fn build_skill_registry(
             McpServerTool::NAME,
             McpConnectTool::NAME,
             ManageMcpServerTool::NAME,
+            McpResourcesTool::NAME,
+            ListMcpEventsTool::NAME,
+            CreateEventTriggerTool::NAME,
+            ManageEventTriggerTool::NAME,
             ResourceStore::NAME,
             ConversationsTool::NAME,
             ActionsTool::NAME,
@@ -678,6 +687,9 @@ impl Engines {
                 .map(|manager| manager.supported_audio_formats())
                 .unwrap_or_default(),
         };
+        // Servers' questions during a call (elicitation) reach the user the
+        // call runs for: the gate notes each call, the provider asks here.
+        let mcp_elicitations = Arc::new(mcp::McpElicitations::default());
         let mcp_provider = {
             // OAuth refresh tokens persist here, so servers marked `oauth` in
             // mcp.json reconnect across restarts without a new browser flow.
@@ -687,6 +699,7 @@ impl Engines {
             Arc::new(
                 McpToolProvider::builder()
                     .credential_store(credential_store)
+                    .elicitation_handler(mcp_elicitations.clone())
                     .build()?,
             )
         };
@@ -698,6 +711,7 @@ impl Engines {
             default_cwd: Some(default_workspace.clone()),
             write_lock: config_write_lock.clone(),
             gateway_addr: cfg.gateway_addr,
+            elicitation: true,
         })
         .await;
         // MCP event automations run like cron jobs, under the same admission.
@@ -710,6 +724,7 @@ impl Engines {
         let add_mcp_server_tool = Arc::new(McpServerTool::new(mcp_manager.clone()));
         let connect_mcp_server_tool = Arc::new(McpConnectTool::new(mcp_manager.clone()));
         let manage_mcp_server_tool = Arc::new(ManageMcpServerTool::new(mcp_manager.clone()));
+        let mcp_resources_tool = Arc::new(McpResourcesTool::new(mcp_manager.clone()));
         use agent::memory_policy::{MemoryPolicyAgent, MemoryPolicyTool};
         let mut hooks = anda_engine::hook::Hooks::new();
         hooks.add(Box::new(agent::memory_policy::MemoryPolicyHook));
@@ -775,14 +790,15 @@ impl Engines {
             .register_tool(record_artifacts(add_mcp_server_tool))?
             .register_tool(record_artifacts(connect_mcp_server_tool))?
             .register_tool(record_artifacts(manage_mcp_server_tool))?
-            .register_tool(record_artifacts(Arc::new(mcp::ListMcpEventsTool::new(
+            .register_tool(record_artifacts(mcp_resources_tool))?
+            .register_tool(record_artifacts(Arc::new(ListMcpEventsTool::new(
                 mcp_events.clone(),
             ))))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
-                mcp::CreateEventTriggerTool::new(mcp_events.clone()),
+                CreateEventTriggerTool::new(mcp_events.clone()),
             )))))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
-                mcp::ManageEventTriggerTool::new(mcp_events.clone()),
+                ManageEventTriggerTool::new(mcp_events.clone()),
             )))))?
             .register_tool(record_artifacts(resource_store.clone()))?
             .register_tool(record_artifacts(conversations_tool.clone()))?
@@ -819,10 +835,13 @@ impl Engines {
         }
         // Every agent call to an MCP tool passes the gate, which asks first
         // when the server's policy says so.
-        engine_builder =
-            engine_builder.register_tool_provider(Arc::new(resources::ArtifactProvider(
-                Arc::new(mcp::McpGate::new(mcp_provider, mcp_manager.clone())),
-            )))?;
+        engine_builder = engine_builder.register_tool_provider(Arc::new(
+            resources::ArtifactProvider(Arc::new(mcp::McpGate::new(
+                mcp_provider,
+                mcp_manager.clone(),
+                mcp_elicitations,
+            ))),
+        ))?;
         for agent in media_agents {
             let label = agent.model_label().to_string();
             engine_builder = engine_builder.register_agent(

@@ -3,6 +3,7 @@ import type { DaemonApi } from './daemon'
 import {
   McpApi,
   McpApiError,
+  automationBlockedTools,
   defaultRegistryChoice,
   eventArgumentFields,
   eventArguments,
@@ -18,7 +19,7 @@ import {
   splitCommandLine,
   suggestServerId
 } from './mcp'
-import type { McpRegistryServer } from './types'
+import type { McpRegistryServer, McpToolView } from './types'
 
 function createDaemon(reply: unknown, overrides: Partial<DaemonApi> = {}) {
   const rpc = vi.fn(async () => reply as never)
@@ -112,6 +113,21 @@ describe('McpApi', () => {
       ['mcp_trigger_apply', [{ change: { op: 'set_enabled', id: 3, enabled: false } }]]
     ])
     expect(changed).toHaveBeenCalledTimes(1)
+  })
+
+  it('lists and reads resources with one parameter object each', async () => {
+    const { daemon, rpc } = createDaemon({ result: { servers: [], attachments: [] } })
+    const api = new McpApi(daemon)
+
+    expect(await api.resources()).toEqual([])
+    await api.resources('docs')
+    expect(await api.readResource('docs', 'file:///notes.md')).toEqual([])
+
+    expect(rpc.mock.calls).toEqual([
+      ['mcp_resources', [{}]],
+      ['mcp_resources', [{ id: 'docs' }]],
+      ['mcp_resource_read', [{ id: 'docs', uri: 'file:///notes.md' }]]
+    ])
   })
 
   it('tests an entry with secrets that are not stored yet', async () => {
@@ -461,5 +477,35 @@ describe('event automation arguments', () => {
     ).toEqual({ repo: 'o/r', limit: 5, drafts: false })
     expect(() => eventArguments(fields, {})).toThrow('repo')
     expect(() => eventArguments(fields, { repo: 'o/r', limit: '1.5' })).toThrow('limit')
+  })
+})
+
+describe('event automation tools', () => {
+  const tool = (remote_name: string, extra: Partial<McpToolView> = {}): McpToolView => ({
+    remote_name,
+    annotations: {},
+    hidden: false,
+    review: 'trusted',
+    ...extra
+  })
+
+  it('names the tools an automation would be refused', () => {
+    const tools = [
+      tool('search', { annotations: { read_only: true } }),
+      tool('wipe', { annotations: { read_only: true, destructive: true } }),
+      tool('comment'),
+      tool('label', { approval: 'allow' }),
+      tool('label_v2', { approval: 'allow', review: 'changed' }),
+      tool('peek', { annotations: { read_only: true }, approval: 'ask' }),
+      tool('fetch', { annotations: { read_only: true }, review: 'new' }),
+      tool('secret', { hidden: true })
+    ]
+    const names = (approval: 'auto' | 'ask' | 'allow') =>
+      automationBlockedTools({ approval }, tools).map((tool) => tool.remote_name)
+
+    expect(names('auto')).toEqual(['wipe', 'comment', 'label_v2', 'peek', 'fetch'])
+    // A server that always allows lets every reviewed tool run unless it asks.
+    expect(names('allow')).toEqual(['label_v2', 'peek', 'fetch'])
+    expect(names('ask')).toEqual(['search', 'wipe', 'comment', 'label_v2', 'peek', 'fetch'])
   })
 })

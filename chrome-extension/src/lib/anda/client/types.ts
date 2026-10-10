@@ -72,6 +72,8 @@ export interface ChatActionChoice {
   value?: string | null
   description?: string | null
   input?: ChatActionChoiceInput | null
+  /** A link the client opens when this option is chosen (an MCP server's page). */
+  url?: string | null
 }
 
 export interface ChatActionChoiceInput {
@@ -627,6 +629,16 @@ export interface McpServerView {
   settings: Record<string, Json>
   /** The advanced settings, for an entry that parses. */
   options?: McpServerOptions
+  /** Its event automations, and its event types once they were listed. */
+  events?: McpServerEvents
+}
+
+export interface McpServerEvents {
+  automations: number
+  paused: number
+  /** Known once the server's events were listed: whether it reports any. */
+  supported?: boolean
+  types?: number
 }
 
 /** A server's advanced settings; each one left out takes its default. */
@@ -645,6 +657,10 @@ export interface McpServerOptions {
   /** Local servers only: the daemon's whole environment, or only the essentials and `env`. */
   inherit_env?: boolean
   tasks?: { max_wait_secs?: number }
+  /** The agent and the apps may list and read its resources; on unless false. */
+  resources?: boolean
+  /** It may ask the user for input while a call runs; on unless false. */
+  elicitation?: boolean
 }
 
 export interface McpToolView {
@@ -948,6 +964,35 @@ export interface McpTriggerEvent {
 export interface McpTriggerDetail extends McpTrigger {
   runs_recent: McpTriggerRun[]
   events_recent: McpTriggerEvent[]
+}
+
+/** A server's resources, or why they could not be listed. Server text is untrusted. */
+export interface McpResourceListing {
+  server_id: string
+  title?: string | null
+  resources?: McpResource[]
+  truncated?: boolean
+  error?: string
+}
+
+export interface McpResource {
+  uri: string
+  name: string
+  title?: string | null
+  description?: string | null
+  mime_type?: string | null
+  size?: number | null
+}
+
+/** One content of a resource read, to attach to a message. */
+export interface McpResourceAttachment {
+  name: string
+  uri: string
+  mime_type?: string | null
+  size: number
+  text: boolean
+  /** The bytes, base64. */
+  blob: string
 }
 
 export interface McpTriggerInput {

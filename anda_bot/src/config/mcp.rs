@@ -278,6 +278,10 @@ struct McpJsonServer {
     limits: McpLimitSettings,
     #[serde(default)]
     events: Option<McpEventSettings>,
+    #[serde(default)]
+    resources: Option<bool>,
+    #[serde(default)]
+    elicitation: Option<bool>,
 }
 
 impl McpJsonServer {
@@ -306,6 +310,8 @@ impl McpJsonServer {
             concurrency,
             limits,
             events,
+            resources,
+            elicitation,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
@@ -402,6 +408,8 @@ impl McpJsonServer {
             concurrency,
             limits,
             events,
+            resources,
+            elicitation,
         })
     }
 }
@@ -469,6 +477,14 @@ pub struct McpServerSettings {
     /// How the server takes part in MCP event automations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub events: Option<McpEventSettings>,
+    /// Whether the agent and the apps may list and read the server's
+    /// resources. Absent means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<bool>,
+    /// Whether the server may ask the user for input while a call runs
+    /// (elicitation). Absent means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<bool>,
 }
 
 /// An entry's `events` settings.
@@ -503,7 +519,8 @@ pub struct McpTimeoutSettings {
     /// A whole tool call, including waiting for a task (600).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_secs: Option<u64>,
-    /// One elicitation answer (300). Anda does not answer elicitations yet.
+    /// One elicitation answer (300): how long the user has to answer a
+    /// server's request for input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elicitation_secs: Option<u64>,
 }
@@ -587,6 +604,12 @@ pub struct McpServerOptions {
     pub inherit_env: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tasks: Option<McpTasksConfig>,
+    /// Resources the agent and the apps may read; absent means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<bool>,
+    /// Input the server may ask the user for; absent means on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<bool>,
 }
 
 /// When the agent asks before it calls a tool.
@@ -725,6 +748,8 @@ impl McpServerSettings {
                 McpTransportSettings::StreamableHttp(_) => None,
             },
             tasks: self.tasks.clone(),
+            resources: self.resources,
+            elicitation: self.elicitation,
         }
     }
 
@@ -739,6 +764,8 @@ impl McpServerSettings {
             limits,
             inherit_env,
             tasks,
+            resources,
+            elicitation,
         } = options;
         match &mut self.transport {
             McpTransportSettings::Stdio(stdio) => stdio.inherit_env = inherit_env,
@@ -753,6 +780,8 @@ impl McpServerSettings {
         self.timeouts = timeouts;
         self.limits = limits;
         self.tasks = tasks;
+        self.resources = resources;
+        self.elicitation = elicitation;
         Ok(())
     }
 
@@ -780,8 +809,10 @@ impl McpServerSettings {
             // it, so a slow server (or an `npx -y` download) does not hold the
             // daemon back.
             startup: self.startup.unwrap_or(McpStartup::Background),
-            elicitation: false,
-            resources: false,
+            // Both on unless the entry turns them off. The manager turns
+            // elicitation off on a provider that has nobody to ask.
+            elicitation: self.elicitation.unwrap_or(true),
+            resources: self.resources.unwrap_or(true),
         })
     }
 }

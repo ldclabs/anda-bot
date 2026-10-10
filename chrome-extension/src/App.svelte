@@ -712,6 +712,7 @@
         onBrowserAudioStop={() => andaClient.voice.stopAudioCapture()}
         onBrowserAudioCancel={() => andaClient.voice.cancelAudioCapture()}
         onLoadSkills={() => andaClient.skills.listPrompts()}
+        mcpResources={andaClient.settings.token ? andaClient.mcp : undefined}
         {skillsRevision}
         quickPrompts={andaClient.quickPrompts.items}
         incomingAttachment={pageElementComposerAttachment}

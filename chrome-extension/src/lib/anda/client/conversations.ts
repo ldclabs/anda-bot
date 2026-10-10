@@ -553,7 +553,8 @@ function choicesFromJson(value: unknown): ChatActionChoice[] | undefined {
       label,
       value: nullableStringFromJson(raw.value),
       description: nullableStringFromJson(raw.description),
-      input: choiceInputFromJson(raw.input)
+      input: choiceInputFromJson(raw.input),
+      url: nullableStringFromJson(raw.url)
     })
   }
   return choices.length ? choices : undefined

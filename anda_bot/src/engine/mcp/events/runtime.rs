@@ -8,7 +8,10 @@
 //! replays them at most; the store drops the ones it already has. Events of a
 //! trigger are collected for its batch window and handed to one unattended
 //! agent run, on the route the trigger was created from. A trigger that runs
-//! more often than its hourly limit, or fails repeatedly, pauses itself.
+//! more often than its hourly limit, or fails repeatedly, pauses itself. When
+//! a trigger stops for a reason the owner has to act on (paused by its
+//! limits, its server needs sign-in, or the server ended it), a short run
+//! tells the owner on the same route.
 
 use anda_core::{BoxError, BoxFut};
 use anda_engine::{
@@ -37,7 +40,7 @@ use crate::{
     cron::{CronJobOrigin, CronJobResult},
     engine::{
         mcp::{McpManager, McpServerView, McpStatus},
-        system_runtime_prompt,
+        system_runtime_prompt, system_runtime_prompt_from,
     },
     runtime_admission::Admission,
     util::request_meta::keys,
@@ -294,20 +297,31 @@ impl McpEventRuntime {
         self.inner.subscriptions.lock().remove(&id)
     }
 
+    /// Records where a trigger stands. Moving an enabled trigger to a state
+    /// only the owner can get it out of tells the owner.
     async fn set_state(&self, id: u64, state: TriggerState, error: Option<String>) {
         let result = self
             .inner
             .store
             .modify(id, |trigger| {
+                let before = trigger.state;
                 trigger.state = state;
                 if error.is_some() || !matches!(state, TriggerState::Paused | TriggerState::Ended) {
                     trigger.last_error = error;
                 }
-                Ok(())
+                Ok(before)
             })
             .await;
-        if let Err(err) = result {
-            log::warn!("MCP event automation {id} state not saved: {err}");
+        match result {
+            Ok(Some((trigger, before)))
+                if before != state
+                    && trigger.enabled
+                    && matches!(state, TriggerState::NeedsAuth | TriggerState::Ended) =>
+            {
+                self.notify(trigger)
+            }
+            Ok(_) => {}
+            Err(err) => log::warn!("MCP event automation {id} state not saved: {err}"),
         }
     }
 
@@ -542,6 +556,18 @@ impl McpEventRuntime {
         Ok(events)
     }
 
+    /// How many event types each server offered when last listed, `None`
+    /// for a server without MCP Events. Lists nothing.
+    pub(crate) async fn cached_event_types(&self) -> HashMap<String, Option<usize>> {
+        self.inner
+            .catalogs
+            .lock()
+            .await
+            .iter()
+            .map(|(id, (_, events))| (id.clone(), events.as_ref().map(Vec::len)))
+            .collect()
+    }
+
     async fn forget_catalog(&self, server_id: &str) {
         self.inner.catalogs.lock().await.remove(server_id);
     }
@@ -651,7 +677,7 @@ impl McpEventRuntime {
             .missed_events_at
             .is_some_and(|at| trigger.last_run_at.is_none_or(|last| at > last));
         let prompt = run_prompt(&trigger, &pending, missed);
-        let meta = run_meta(&trigger, run._id);
+        let meta = run_meta(&trigger, Some(run._id));
         let result = crate::cron::run_unattended_agent(
             &engine,
             trigger.origin.as_ref(),
@@ -713,9 +739,10 @@ impl McpEventRuntime {
         }
     }
 
+    /// Pauses a trigger that hit its run limits, and tells the owner.
     async fn pause(&self, id: u64, reason: String) {
         log::warn!("MCP event automation {id}: {reason}");
-        let _ = self
+        let paused = self
             .inner
             .store
             .modify(id, |trigger| {
@@ -727,6 +754,50 @@ impl McpEventRuntime {
             .await;
         if let Some(live) = self.take_live(id) {
             live.subscription.cancel().await;
+        }
+        if let Ok(Some((trigger, _))) = paused {
+            self.notify(trigger);
+        }
+    }
+
+    /// Tells the owner, on the trigger's route, that it stopped and what to
+    /// do: a short unattended run, as cron reports a shell job's result.
+    fn notify(&self, trigger: EventTrigger) {
+        let runtime = self.clone();
+        tokio::spawn(async move { runtime.send_notice(trigger).await });
+    }
+
+    async fn send_notice(&self, trigger: EventTrigger) {
+        let Ok(_slot) = self.inner.runs.clone().acquire_owned().await else {
+            return;
+        };
+        if self.inner.cancel.is_cancelled() {
+            return;
+        }
+        let Ok(_permit) = self.inner.admission.enter() else {
+            log::info!(
+                "MCP event automation {}: no notice during maintenance",
+                trigger._id
+            );
+            return;
+        };
+        let Some(engine) = self.inner.engine.get() else {
+            return;
+        };
+        let result = crate::cron::run_unattended_agent(
+            &engine,
+            trigger.origin.as_ref(),
+            run_meta(&trigger, None),
+            notice_prompt(&trigger),
+            &self.inner.cancel,
+        )
+        .await
+        .unwrap_or_else(CronJobResult::from);
+        if let Some(error) = result.error {
+            log::warn!(
+                "MCP event automation {}: the owner was not told it stopped: {error}",
+                trigger._id
+            );
         }
     }
 
@@ -905,9 +976,9 @@ fn parse_time_ms(time: &str) -> Option<u64> {
         .and_then(|time| u64::try_from(time.timestamp_millis()).ok())
 }
 
-/// Request metadata of one run: the trigger's route and the keys that make
-/// the run unattended.
-fn run_meta(trigger: &EventTrigger, run_id: u64) -> anda_core::RequestMeta {
+/// Request metadata of one run, or of a notice (no run id): the trigger's
+/// route and the keys that make the run unattended.
+fn run_meta(trigger: &EventTrigger, run_id: Option<u64>) -> anda_core::RequestMeta {
     let mut meta = trigger
         .origin
         .as_ref()
@@ -915,8 +986,10 @@ fn run_meta(trigger: &EventTrigger, run_id: u64) -> anda_core::RequestMeta {
         .to_request_meta(trigger.last_conversation_id);
     meta.extra
         .insert(keys::MCP_TRIGGER_ID.to_string(), trigger._id.into());
-    meta.extra
-        .insert(keys::MCP_TRIGGER_RUN_ID.to_string(), run_id.into());
+    if let Some(run_id) = run_id {
+        meta.extra
+            .insert(keys::MCP_TRIGGER_RUN_ID.to_string(), run_id.into());
+    }
     meta.extra.insert(
         keys::MCP_TRIGGER_NAME.to_string(),
         trigger.name.clone().into(),
@@ -926,7 +999,9 @@ fn run_meta(trigger: &EventTrigger, run_id: u64) -> anda_core::RequestMeta {
 
 /// The prompt of one run. The owner's instructions are trusted; the events
 /// come from the server and are marked untrusted. Each event is compact JSON
-/// on one line, so its strings cannot forge the structure around it.
+/// on one line, so its strings cannot forge the structure around it. The
+/// message names the server and event as its source, so Formation attributes
+/// what it carries to `mcp:<server>/<event>`, not to the owner.
 pub(crate) fn run_prompt(trigger: &EventTrigger, events: &[EventRecord], missed: bool) -> String {
     let mut body = format!(
         "An MCP event automation is running. Follow the owner's instructions for the events \
@@ -972,7 +1047,45 @@ pub(crate) fn run_prompt(trigger: &EventTrigger, events: &[EventRecord], missed:
         body.push_str("\n\nEvent: ");
         body.push_str(&serde_json::to_string(&event).unwrap_or_default());
     }
-    system_runtime_prompt("mcp event automation", body)
+    system_runtime_prompt_from(
+        "mcp event automation",
+        &format!("mcp:{}/{}", trigger.server_id, trigger.event),
+        body,
+    )
+}
+
+/// The prompt of a notice that `trigger` stopped, in its current state.
+pub(crate) fn notice_prompt(trigger: &EventTrigger) -> String {
+    let what = match trigger.state {
+        TriggerState::Paused => format!(
+            "It was paused and runs no more until it is resumed: on the MCP page (the server's \
+             Events tab), on Anda Desktop's Automations page, or with `anda mcp triggers resume {}`.",
+            trigger._id
+        ),
+        TriggerState::NeedsAuth => format!(
+            "Its MCP server {0} needs the owner to sign in again; the automation resumes by \
+             itself afterwards. Sign in on the MCP page or with `anda mcp login {0}`.",
+            trigger.server_id
+        ),
+        _ => "The server ended its subscription, so it receives no events. Change or resume \
+              it to subscribe again, or delete it."
+            .to_string(),
+    };
+    system_runtime_prompt(
+        "mcp event automation notice",
+        format!(
+            "An MCP event automation stopped working and needs the owner. Tell the owner in one \
+             or two sentences, in their language, what happened and what they can do. Do not \
+             call tools.\n\nAutomation: {} (id {})\nServer: {}\nEvent: {}\nWhat happened: {}\n\
+             Reason (it can quote the server, which is untrusted): {:?}",
+            trigger.name,
+            trigger._id,
+            trigger.server_id,
+            trigger.event,
+            what,
+            trigger.last_error.as_deref().unwrap_or("not given"),
+        ),
+    )
 }
 
 /// Receives one subscription's signals for a trigger.
@@ -1363,7 +1476,6 @@ pub(crate) mod tests {
         assert!(!stored.enabled);
         assert_eq!(stored.state, TriggerState::Paused);
         assert!(stored.last_error.unwrap().contains("feedback loop"));
-        assert!(prompts.lock().is_empty());
         assert_eq!(
             runtime
                 .store()
@@ -1374,11 +1486,39 @@ pub(crate) mod tests {
             1
         );
 
+        // The owner is told on the trigger's route, by a run of its own.
+        until(&runtime, "the notice", || async {
+            prompts.lock().len() == 1
+        })
+        .await;
+        let (notice, meta) = prompts.lock()[0].clone();
+        assert!(
+            notice.starts_with("[$system: kind=\"mcp event automation notice\"]"),
+            "{notice}"
+        );
+        assert!(notice.contains("paused") && notice.contains("feedback loop"));
+        assert!(notice.contains(&format!("anda mcp triggers resume {}", trigger._id)));
+        assert_eq!(meta.extra[keys::MCP_TRIGGER_ID], json!(trigger._id));
+        assert!(meta.extra.get(keys::MCP_TRIGGER_RUN_ID).is_none());
+        assert!(
+            runtime
+                .store()
+                .list_runs(trigger._id, 10)
+                .await
+                .unwrap()
+                .len()
+                == 1
+        );
+        // Ticking a paused trigger tells the owner no more.
+        runtime.tick().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(prompts.lock().len(), 1);
+
         // Resuming starts the count again: the waiting event runs.
         tokio::time::sleep(Duration::from_millis(2)).await;
         runtime.set_enabled(trigger._id, true).await.unwrap();
         runtime.run(trigger._id).await;
-        assert_eq!(prompts.lock().len(), 1);
+        assert_eq!(prompts.lock().len(), 2);
         assert!(runtime.store().get(trigger._id).await.unwrap().enabled);
     }
 
@@ -1403,10 +1543,16 @@ pub(crate) mod tests {
                 .unwrap();
             runtime.run(trigger._id).await;
         }
-        assert_eq!(prompts.lock().len(), MAX_CONSECUTIVE_FAILURES as usize);
         let stored = runtime.store().get(trigger._id).await.unwrap();
         assert!(!stored.enabled);
         assert!(stored.last_error.unwrap().contains("failed runs in a row"));
+        // Then the notice that it paused.
+        let runs = MAX_CONSECUTIVE_FAILURES as usize;
+        until(&runtime, "the notice", || async {
+            prompts.lock().len() == runs + 1
+        })
+        .await;
+        assert!(prompts.lock()[runs].0.contains("failed runs in a row"));
 
         // Resuming forgets the failures: one more failure does not pause it.
         runtime.set_enabled(trigger._id, true).await.unwrap();
@@ -1604,13 +1750,54 @@ pub(crate) mod tests {
             ],
             true,
         );
-        assert!(prompt.starts_with("[$system: kind=\"mcp event automation\"]"));
+        assert!(prompt.starts_with(
+            "[$system: kind=\"mcp event automation\", source=\"mcp:gh/issue.opened\"]"
+        ));
         assert!(prompt.contains("untrusted"));
         assert!(prompt.contains("some events were lost"));
         // The whole body is one escaped string, so event text cannot open a
         // header of its own.
         assert_eq!(prompt.matches("\n[$system").count(), 0);
         assert!(prompt.len() < 40_000, "{}", prompt.len());
+    }
+
+    #[tokio::test]
+    async fn a_server_that_needs_sign_in_or_ends_a_trigger_tells_the_owner_once() {
+        let (runtime, _engine, prompts, _home) = runtime_with(json!({}), false).await;
+        let mut trigger = super::super::store::tests::trigger("gh", "issue.opened");
+        trigger.origin = Some(origin());
+        let trigger = runtime.store().insert(trigger).await.unwrap();
+        let id = trigger._id;
+        for _ in 0..2 {
+            runtime
+                .set_state(
+                    id,
+                    TriggerState::NeedsAuth,
+                    Some("MCP server gh needs sign-in".to_string()),
+                )
+                .await;
+        }
+        until(&runtime, "the notice", || async {
+            prompts.lock().len() == 1
+        })
+        .await;
+        assert!(prompts.lock()[0].0.contains("anda mcp login gh"));
+
+        runtime
+            .set_state(id, TriggerState::Ended, Some("Access revoked".to_string()))
+            .await;
+        until(&runtime, "the second notice", || async {
+            prompts.lock().len() == 2
+        })
+        .await;
+        let notice = prompts.lock()[1].0.clone();
+        assert!(notice.contains("ended its subscription") && notice.contains("Access revoked"));
+
+        // A paused trigger that the server then ends says nothing more.
+        runtime.set_enabled(id, false).await.unwrap();
+        runtime.set_state(id, TriggerState::NeedsAuth, None).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(prompts.lock().len(), 2);
     }
 
     #[test]

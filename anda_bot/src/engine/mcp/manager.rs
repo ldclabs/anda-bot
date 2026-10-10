@@ -84,6 +84,9 @@ pub(crate) struct McpManagerConfig {
     pub write_lock: Arc<Mutex<()>>,
     /// The gateway, which serves the OAuth redirect.
     pub gateway_addr: SocketAddr,
+    /// The provider has an elicitation handler, so servers may ask the user
+    /// for input. Without one, their entries' `elicitation` is turned off.
+    pub elicitation: bool,
 }
 
 /// One change to the configured servers.
@@ -250,6 +253,8 @@ struct Inner {
     view: parking_lot::RwLock<View>,
     state: McpStateStore,
     secrets: McpSecretStore,
+    /// See [`McpManagerConfig::elicitation`].
+    elicitation: bool,
 }
 
 #[derive(Default)]
@@ -312,6 +317,7 @@ impl McpManager {
             default_cwd,
             write_lock,
             gateway_addr,
+            elicitation,
         } = config;
         let state = McpStateStore::open(home_dir.join(MCP_STATE_FILE_NAME)).await;
         let secrets = McpSecretStore::open(home_dir.join(MCP_SECRETS_FILE_NAME)).await;
@@ -327,6 +333,7 @@ impl McpManager {
                 view: Default::default(),
                 state,
                 secrets,
+                elicitation,
             }),
         };
         let _ops = manager.inner.ops.lock().await;
@@ -840,7 +847,7 @@ impl McpManager {
                     self.inner.default_cwd.as_deref(),
                     &secrets,
                 ) {
-                    Ok(config) => server.config = config,
+                    Ok(config) => server.config = self.finish(config),
                     Err(err) => warnings.push(format!("MCP server {}: {err}", server.settings.id)),
                 }
             }
@@ -848,6 +855,17 @@ impl McpManager {
         let mut receipt = self.reconcile_locked(true).await;
         receipt.warnings.extend(warnings);
         receipt
+    }
+
+    /// How long server `id` waits for the user to answer its questions.
+    pub fn elicitation_timeout(&self, id: &str) -> std::time::Duration {
+        let view = self.inner.view.read();
+        let secs = running_settings(&view, id)
+            .and_then(|server| server.timeouts.elicitation_secs)
+            .unwrap_or_else(|| {
+                anda_engine::extension::mcp::McpTimeouts::default().elicitation_secs
+            });
+        std::time::Duration::from_secs(secs)
     }
 
     /// The approval policy and external-user setting for `tool` of server
@@ -1183,6 +1201,8 @@ impl McpManager {
             )
             .map_err(|err| McpError::invalid(format!("MCP server {}: {err}", server.id)))?;
         config.startup = McpStartup::Eager;
+        // Nobody answers a test connection's questions.
+        config.elicitation = false;
         let id = config.id.clone();
         let url = match &config.transport {
             McpTransportConfig::StreamableHttp(http) => Some(http.url.clone()),
@@ -1793,7 +1813,7 @@ impl McpManager {
         );
         let configs = configs
             .into_iter()
-            .map(|config| (config.id.clone(), config))
+            .map(|config| (config.id.clone(), self.finish(config)))
             .collect();
         let build_errors = issues
             .into_iter()
@@ -2023,7 +2043,15 @@ impl McpManager {
                 self.inner.default_cwd.as_deref(),
                 &self.inner.secrets.values(),
             )
+            .map(|config| self.finish(config))
             .map_err(|err| McpError::invalid(format!("MCP server {}: {err}", server.id)))
+    }
+
+    /// An engine config this manager's provider can connect: without an
+    /// elicitation handler, nobody would answer a server's questions.
+    fn finish(&self, mut config: McpServerConfig) -> McpServerConfig {
+        config.elicitation &= self.inner.elicitation;
+        config
     }
 
     fn declared_in_file(&self, id: &str) -> bool {
@@ -2153,6 +2181,7 @@ impl McpManager {
             default_cwd: None,
             write_lock: Arc::new(Mutex::new(())),
             gateway_addr: "127.0.0.1:8042".parse().unwrap(),
+            elicitation: false,
         })
         .await
     }
@@ -2605,6 +2634,7 @@ mod tests {
             default_cwd: None,
             write_lock: Arc::new(Mutex::new(())),
             gateway_addr: "127.0.0.1:8042".parse().unwrap(),
+            elicitation: false,
         })
         .await;
 
