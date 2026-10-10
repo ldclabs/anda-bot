@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "ChatGPT 请求失败（$1）。"
+  },
+  "actionAlwaysAllow": {
+    "message": "始终允许"
+  },
+  "actionDetailServer": {
+    "message": "服务"
+  },
+  "actionDetailTool": {
+    "message": "工具"
+  },
+  "actionDetailDescription": {
+    "message": "描述"
+  },
+  "actionDetailServerHints": {
+    "message": "服务提示"
+  },
+  "actionDetailReview": {
+    "message": "审查"
+  },
+  "actionDetailArguments": {
+    "message": "参数"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "运行 MCP 工具：$1"
+  },
+  "dashboardMcpDetail": {
+    "message": "工具与连接"
+  },
+  "dashboardMcpCrumb": {
+    "message": "服务"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "工具与连接"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "搜索服务"
+  },
+  "mcpFilter": {
+    "message": "显示服务"
+  },
+  "mcpFilterAll": {
+    "message": "全部服务"
+  },
+  "mcpFilterAttention": {
+    "message": "需要处理"
+  },
+  "mcpFilterReady": {
+    "message": "已连接"
+  },
+  "mcpFilterDisabled": {
+    "message": "已停用"
+  },
+  "mcpReload": {
+    "message": "从磁盘应用 mcp.json"
+  },
+  "mcpReloaded": {
+    "message": "已应用 mcp.json。"
+  },
+  "mcpAddServer": {
+    "message": "添加服务"
+  },
+  "mcpEmpty": {
+    "message": "还没有 MCP 服务。"
+  },
+  "mcpEmptyDetail": {
+    "message": "添加 MCP 服务可以给 Anda 新的工具：粘贴其他应用的配置、远程 URL 或本地命令。"
+  },
+  "mcpNoMatch": {
+    "message": "没有匹配的服务。"
+  },
+  "mcpSelectServer": {
+    "message": "请选择一个服务。"
+  },
+  "mcpNotConnected": {
+    "message": "连接到 Anda 守护进程后才能管理 MCP 服务。"
+  },
+  "mcpLocal": {
+    "message": "本地"
+  },
+  "mcpRemote": {
+    "message": "远程"
+  },
+  "mcpToolCount": {
+    "message": "$1 个工具"
+  },
+  "mcpHiddenCount": {
+    "message": "$1 个已隐藏"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "$1 项待审查"
+  },
+  "mcpStatusDisabled": {
+    "message": "已停用"
+  },
+  "mcpStatusInvalid": {
+    "message": "配置错误"
+  },
+  "mcpStatusConnecting": {
+    "message": "连接中"
+  },
+  "mcpStatusReady": {
+    "message": "已连接"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "需要登录"
+  },
+  "mcpStatusFailed": {
+    "message": "连接失败"
+  },
+  "mcpStatusDisconnected": {
+    "message": "未连接"
+  },
+  "mcpStatusUnknown": {
+    "message": "未知"
+  },
+  "mcpSourceFile": {
+    "message": "来自 mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "由你添加"
+  },
+  "mcpSourceModel": {
+    "message": "由 Anda 添加"
+  },
+  "mcpSourceRuntime": {
+    "message": "仅限守护进程本次运行"
+  },
+  "mcpReconnect": {
+    "message": "重新连接"
+  },
+  "mcpReconnected": {
+    "message": "已重新连接 $1。"
+  },
+  "mcpSignIn": {
+    "message": "登录"
+  },
+  "mcpReauthorize": {
+    "message": "重新登录"
+  },
+  "mcpSignOut": {
+    "message": "退出登录"
+  },
+  "mcpSignedIn": {
+    "message": "已登录 $1。"
+  },
+  "mcpSignedOut": {
+    "message": "已退出 $1。"
+  },
+  "mcpSignInWaiting": {
+    "message": "请在浏览器中完成 $1 的登录，完成后本页会自动更新。"
+  },
+  "mcpOpenSignIn": {
+    "message": "打开登录页"
+  },
+  "mcpEnable": {
+    "message": "启用"
+  },
+  "mcpDisable": {
+    "message": "停用"
+  },
+  "mcpEnabled": {
+    "message": "已启用 $1。"
+  },
+  "mcpDisabledNotice": {
+    "message": "已停用 $1，配置已保留。"
+  },
+  "mcpRemove": {
+    "message": "删除"
+  },
+  "mcpRemoveTitle": {
+    "message": "删除 $1？"
+  },
+  "mcpRemoveConfirm": {
+    "message": "这会从 mcp.json 中删除该服务，同时删除它保存的登录信息和只有它使用的密钥。"
+  },
+  "mcpRemoved": {
+    "message": "已删除 $1。"
+  },
+  "mcpSecretsRemoved": {
+    "message": "已删除密钥：$1。"
+  },
+  "mcpApprovalNotice": {
+    "message": "现在调用 MCP 工具前会先询问，除非工具是只读的、且自你审查后没有变化，或者当前聊天有完全访问权限。想让某个服务的工具不经询问直接运行，打开它的“工具”页并选择“始终允许”。"
+  },
+  "mcpDismiss": {
+    "message": "关闭"
+  },
+  "mcpChangedOnDisk": {
+    "message": "mcp.json 在 Anda 之外被修改了。请先应用，再在这里修改。"
+  },
+  "mcpApplyFile": {
+    "message": "应用"
+  },
+  "mcpTabOverview": {
+    "message": "概览"
+  },
+  "mcpTabTools": {
+    "message": "工具"
+  },
+  "mcpTabAccess": {
+    "message": "访问"
+  },
+  "mcpTabConfig": {
+    "message": "配置"
+  },
+  "mcpLastError": {
+    "message": "最近的错误"
+  },
+  "mcpNextRetry": {
+    "message": "将于 $1 重试"
+  },
+  "mcpStatus": {
+    "message": "状态"
+  },
+  "mcpLastReady": {
+    "message": "上次连接于 $1"
+  },
+  "mcpCommand": {
+    "message": "命令"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "来源"
+  },
+  "mcpStartupEager": {
+    "message": "随守护进程启动"
+  },
+  "mcpStartupBackground": {
+    "message": "在后台连接"
+  },
+  "mcpUsage": {
+    "message": "使用情况"
+  },
+  "mcpUsageCalls": {
+    "message": "$1 次调用，$2 次失败"
+  },
+  "mcpUsageNone": {
+    "message": "尚未使用"
+  },
+  "mcpLastUsed": {
+    "message": "上次使用于 $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "工具默认设置"
+  },
+  "mcpServerDescription": {
+    "message": "描述"
+  },
+  "mcpInstructions": {
+    "message": "给模型的说明"
+  },
+  "mcpFromServer": {
+    "message": "来自服务，未经验证"
+  },
+  "mcpShowInstructions": {
+    "message": "显示说明"
+  },
+  "mcpReviewedVersion": {
+    "message": "已审查"
+  },
+  "mcpCurrentVersion": {
+    "message": "现在"
+  },
+  "mcpNone": {
+    "message": "（无）"
+  },
+  "mcpApprovalAuto": {
+    "message": "自动"
+  },
+  "mcpApprovalAsk": {
+    "message": "每次询问"
+  },
+  "mcpApprovalAllow": {
+    "message": "始终允许"
+  },
+  "mcpApprovalInherit": {
+    "message": "服务默认（$1）"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "工具只读且已审查、或聊天有完全访问权限时直接运行，否则询问。"
+  },
+  "mcpApprovalAskDetail": {
+    "message": "每次调用前都询问，即使有完全访问权限。"
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "工具自审查后没有变化时，不经询问直接运行。"
+  },
+  "mcpApprovalHelp": {
+    "message": "工具自己的设置优先于服务默认设置。自你审查后发生变化的工具会重新询问。"
+  },
+  "mcpAcceptAll": {
+    "message": "全部标记为已审查"
+  },
+  "mcpAccept": {
+    "message": "标记为已审查"
+  },
+  "mcpReviewed": {
+    "message": "已标记为已审查。"
+  },
+  "mcpReviewNew": {
+    "message": "新增"
+  },
+  "mcpReviewChanged": {
+    "message": "已变化"
+  },
+  "mcpShowChanges": {
+    "message": "查看变化"
+  },
+  "mcpHideChanges": {
+    "message": "收起变化"
+  },
+  "mcpHintReadOnly": {
+    "message": "只读"
+  },
+  "mcpHintDestructive": {
+    "message": "破坏性"
+  },
+  "mcpHintIdempotent": {
+    "message": "幂等"
+  },
+  "mcpHintOpenWorld": {
+    "message": "访问外部"
+  },
+  "mcpToolApproval": {
+    "message": "调用 $1 前何时询问"
+  },
+  "mcpHideTool": {
+    "message": "对 Anda 隐藏"
+  },
+  "mcpShowTool": {
+    "message": "对 Anda 显示"
+  },
+  "mcpHiddenTools": {
+    "message": "已隐藏的工具"
+  },
+  "mcpToolHidden": {
+    "message": "已对 Anda 隐藏 $1。"
+  },
+  "mcpToolShown": {
+    "message": "Anda 又可以使用 $1 了。"
+  },
+  "mcpToolsWhenConnected": {
+    "message": "服务连接后会显示它的工具。"
+  },
+  "mcpNoTools": {
+    "message": "这个服务没有提供工具。"
+  },
+  "mcpPolicySaved": {
+    "message": "已保存。"
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "这个服务只为本次运行的守护进程添加，设置无法保存。把它加入 mcp.json 才能保留设置。"
+  },
+  "mcpSignInTitle": {
+    "message": "登录"
+  },
+  "mcpOAuthNeeded": {
+    "message": "这个服务需要你登录。"
+  },
+  "mcpOAuthSignedIn": {
+    "message": "已通过 OAuth 登录。"
+  },
+  "mcpAuthNone": {
+    "message": "未配置登录。"
+  },
+  "mcpAuthHeaders": {
+    "message": "使用配置中的请求头登录。"
+  },
+  "mcpServerSecrets": {
+    "message": "密钥"
+  },
+  "mcpNoServerSecrets": {
+    "message": "这个服务没有使用已保存的密钥。"
+  },
+  "mcpExternalUsers": {
+    "message": "允许外部 IM 用户使用这个服务"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "为你在 IM 渠道聊天的人运行任务时，可以调用它无需审批的工具。他们永远不能替你批准调用。"
+  },
+  "mcpConfigHelp": {
+    "message": "该服务在 $1 中的条目，密钥已隐藏。手动编辑文件后再应用。"
+  },
+  "mcpSecrets": {
+    "message": "密钥"
+  },
+  "mcpSecretsDetail": {
+    "message": "mcp.json 以 ${secret:NAME} 引用的值"
+  },
+  "mcpSecretsHelp": {
+    "message": "密钥让令牌不写进 mcp.json：在请求头、环境变量或 URL 中用 ${secret:NAME} 引用。值保存在这台电脑上，之后不会再显示。"
+  },
+  "mcpNoSecrets": {
+    "message": "还没有密钥。"
+  },
+  "mcpNewSecret": {
+    "message": "新建密钥"
+  },
+  "mcpSecretName": {
+    "message": "密钥名称"
+  },
+  "mcpSecretValue": {
+    "message": "值"
+  },
+  "mcpSecretValueFor": {
+    "message": "$1 的值"
+  },
+  "mcpSecretReplace": {
+    "message": "新的值"
+  },
+  "mcpSecretSet": {
+    "message": "已设置 $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "未设置"
+  },
+  "mcpSecretUsedBy": {
+    "message": "使用者：$1"
+  },
+  "mcpSecretUnused": {
+    "message": "未被使用"
+  },
+  "mcpSecretDelete": {
+    "message": "删除密钥"
+  },
+  "mcpSecretSaved": {
+    "message": "已保存密钥 $1。"
+  },
+  "mcpSecretDeleted": {
+    "message": "已删除密钥 $1。"
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "名称可以使用字母、数字和 _。"
+  },
+  "mcpAddDescription": {
+    "message": "添加前 Anda 会先测试连接。本地命令会在这台电脑上运行，请先确认。"
+  },
+  "mcpAddRemote": {
+    "message": "远程 URL"
+  },
+  "mcpAddLocal": {
+    "message": "本地命令"
+  },
+  "mcpAddJson": {
+    "message": "粘贴 JSON"
+  },
+  "mcpHeaders": {
+    "message": "请求头，每行一个 Name: value"
+  },
+  "mcpEnvironment": {
+    "message": "环境变量，每行一个 KEY=value"
+  },
+  "mcpPasteJson": {
+    "message": "其他应用的配置"
+  },
+  "mcpServerId": {
+    "message": "名称"
+  },
+  "mcpIdForEntry": {
+    "message": "名称（单个条目时使用）"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "把令牌存为密钥"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "请求头和环境变量的值存入密钥库，mcp.json 中只保留引用。"
+  },
+  "mcpJsonInvalid": {
+    "message": "这不是有效的 JSON。"
+  },
+  "mcpJsonNoServers": {
+    "message": "没有找到服务。请粘贴 mcpServers 对象，或包含 command 或 url 的单个条目。"
+  },
+  "mcpJsonNeedsId": {
+    "message": "请给这个条目起个名称。"
+  },
+  "mcpIdTaken": {
+    "message": "已存在名为 $1 的服务。"
+  },
+  "mcpLocalWarning": {
+    "message": "这条命令会在这台电脑上运行。"
+  },
+  "mcpValueSecret": {
+    "message": "密钥 $1"
+  },
+  "mcpValuePlain": {
+    "message": "保存在 mcp.json 中"
+  },
+  "mcpTestConnection": {
+    "message": "测试"
+  },
+  "mcpTestReady": {
+    "message": "已连接 · $1 个工具"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "需要登录"
+  },
+  "mcpTestFailed": {
+    "message": "失败"
+  },
+  "mcpAdd": {
+    "message": "添加"
+  },
+  "mcpAdded": {
+    "message": "已添加 $1。"
   }
 }

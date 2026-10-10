@@ -85,14 +85,14 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
       "type": "http",
       "url": "https://mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+        "Authorization": "Bearer ${secret:MCP_REMOTE_TOKEN}"
       }
     }
   }
 }
 ```
 
-远端 MCP 工具会以 `mcp_<server_id>_<remote_tool>` 这样的 Anda 工具名出现。配置字符串支持 `$VAR` 和 `${VAR}` 环境变量展开；`ANDA_HOME` 和 `ANDA_WORKSPACE` 是内置变量。stdio 服务的 `command` 会直接启动，不经过 shell；未配置 `cwd` 时，会使用第一个 Anda workspace。未配置 `type` 时，Anda 会根据 `command` 推断为 `stdio`，或根据 `url` 推断为 `http`。
+远端 MCP 工具会以 `mcp_<server_id>_<remote_tool>` 这样的 Anda 工具名出现。配置字符串支持 `$VAR` 和 `${VAR}` 环境变量展开，变量可能未设置时可写 `${VAR:-default}`，`${secret:NAME}` 引用密钥（见下文“密钥”一节）；`ANDA_HOME` 和 `ANDA_WORKSPACE` 是内置变量。stdio 服务的 `command` 会直接启动，不经过 shell；未配置 `cwd` 时，会使用第一个 Anda workspace。未配置 `type` 时，Anda 会根据 `command` 推断为 `stdio`，或根据 `url` 推断为 `http`。
 
 每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（引用的环境变量未设置、不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录警告，其余服务照常加载。服务在 daemon 启动后于后台连接，较慢的端点或首次 `npx -y` 下载不会拖慢启动；如需在 daemon 报告就绪前完成工具发现，可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展 `PATH`，即使 daemon 作为登录服务运行，也能找到 `npx`、`uvx` 和 Homebrew 安装的命令；但登录服务看不到 shell 配置文件中导出的变量，`${VAR}` 引用的变量需要存在于 daemon 自身的环境中。
 
@@ -108,10 +108,28 @@ anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Be
 anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
 anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth 登录；--no-browser 只打印地址
 anda mcp tool github delete_repository --hide         # 不让智能体使用某个工具
+anda mcp secret set DOCS_TOKEN                        # 另有 secret list、secret unset
 anda mcp disable context7                             # 另有 enable、remove、reconnect、logout、reload
 ```
 
-daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
+daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users`、`secret` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义和说明以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
+
+### MCP 页面
+
+Anda 桌面端（侧边栏中的 MCP）和扩展仪表盘（`#mcp`）管理的是同一组服务。页面列出每个服务及其状态，并显示它的最近错误、使用情况和说明；它的工具，以及每个工具的审批策略、服务提供的提示和自你审查后的变化；登录；它使用的密钥；以及隐藏了密钥的配置条目。“添加”可以填写带请求头的 URL、带环境变量的命令，或粘贴其他应用的配置。它会在运行任何东西之前显示完整命令行，测试连接，并默认把请求头和环境变量的值存为密钥，`mcp.json` 中只留下 `${secret:...}` 引用。需要 OAuth 的服务会在浏览器中打开登录页。
+
+### 密钥
+
+请求头、环境变量、参数或 URL 中的 `${secret:NAME}` 会展开为保存在 `~/.anda/mcp_secrets.json` 中的密钥，该文件只有你的用户可以读取，因此 `mcp.json` 中没有令牌，可以直接分享或备份。名称由字母、数字和 `_` 组成，一个密钥可以供多个服务使用。
+
+```bash
+anda mcp secret set GITHUB_PAT              # 不回显地读取值
+gh auth token | anda mcp secret set GITHUB_PAT
+anda mcp secret list                        # 名称、是否已设置，以及使用它的服务
+anda mcp secret unset GITHUB_PAT
+```
+
+CLI、MCP 页面和 API 都不会再显示密钥的值：要修改就重新设置。引用的密钥未设置时，该服务会被跳过，诊断信息会指出缺少哪个密钥，设置后自动启动；更新密钥会重启使用它的服务。删除服务时，只有它使用的密钥也会一并删除，除非传入 `--keep-credentials`。
 
 ### 审批 MCP 工具调用
 
@@ -139,7 +157,9 @@ anda mcp approval github inherit --tool merge_pull_request  # 恢复为服务的
 
 策略只在调用工具时读取，修改它不会重连服务。定时任务和目标模式以完全访问权限运行，因此 `auto` 工具在其中也会直接运行。在无人能应答审批的场合（例如 IM 聊天，或遇到 `ask` 工具的定时任务），调用不会执行，智能体会得知你可以如何放行。
 
-Anda 会记住服务第一次提供的每个工具定义。之后如果服务修改了某个工具的描述或参数 schema，或新增了工具，该工具就失去旧定义获得的放行：即使在 `allow` 下也会询问，直到你批准它的一次调用，或用 `anda mcp review github`（全部工具）或 `anda mcp review github <tool>` 确认。`anda mcp diff github <tool>` 显示具体变化，`anda mcp get github` 会标出需要审查的工具。
+MCP 工具的审批卡片还提供“始终允许”（终端 UI 中按 `a`）：批准本次调用，并把该工具设为 `allow`。
+
+Anda 会记住服务第一次提供的每个工具定义。之后如果服务修改了某个工具的描述或参数 schema，或新增了工具，该工具就失去旧定义获得的放行：即使在 `allow` 下也会询问，直到你批准它的一次调用，或用 `anda mcp review github`（全部工具）或 `anda mcp review github <tool>` 确认。`anda mcp diff github <tool>` 显示具体变化，`anda mcp get github` 会标出需要审查的工具。服务给模型的说明也以同样方式记录：说明变化后，`anda mcp get` 会提示，MCP 页面会显示新旧两个版本，直到 `anda mcp review github` 接受它们。
 
 外部 IM 用户的请求只有在服务允许时（`"allow_external_users": true`，或 `anda mcp external-users github on`）才能调用它的工具，而且永远不能调用需要审批的工具：外部用户不能代你批准。
 
@@ -151,6 +171,7 @@ Anda 会记住服务第一次提供的每个工具定义。之后如果服务修
 ~/.anda/
   config.yaml
   mcp.json
+  mcp_secrets.json
   mcp_state.json
   anda-daemon.pid
   channels/

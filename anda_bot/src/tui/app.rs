@@ -995,6 +995,10 @@ impl App {
                 self.answer_action(&action, TuiActionAnswer::Approve(false));
                 true
             }
+            KeyCode::Char('a' | 'A') if action.remember_label().is_some() => {
+                self.answer_action(&action, TuiActionAnswer::AlwaysAllow);
+                true
+            }
             KeyCode::Char(ch) => {
                 let Some(choice) = action.choice_for_key(ch).cloned() else {
                     // The keystroke falls through into the composer, which
@@ -1018,6 +1022,11 @@ impl App {
                 self.start_action_response(TuiActionResponseRequest::approve(
                     action.id.clone(),
                     approve,
+                ));
+            }
+            TuiActionAnswer::AlwaysAllow => {
+                self.start_action_response(TuiActionResponseRequest::always_allow(
+                    action.id.clone(),
                 ));
             }
             TuiActionAnswer::Choice(choice) => self.answer_choice(action, &choice),

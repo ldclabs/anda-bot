@@ -18,6 +18,10 @@ use super::normalize_string;
 
 pub const MCP_CONFIG_FILE_NAME: &str = "mcp.json";
 
+/// The values of `${secret:NAME}` references, by name. They come from the MCP
+/// secret store (`mcp_secrets.json`), never from mcp.json itself.
+pub type McpSecretValues = BTreeMap<String, String>;
+
 /// MCP host/client configuration.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct McpSettings {
@@ -129,17 +133,18 @@ impl McpSettings {
     }
 
     /// Builds the engine configs for the enabled servers. An entry that cannot
-    /// be built (one naming an unset environment variable, say) is reported
-    /// in the returned diagnostics and left out.
+    /// be built (one naming an unset environment variable or secret, say) is
+    /// reported in the returned diagnostics and left out.
     pub fn server_configs(
         &self,
         home_dir: &Path,
         default_cwd: Option<&Path>,
+        secrets: &McpSecretValues,
     ) -> (Vec<McpServerConfig>, Vec<McpDiagnostic>) {
         let mut configs = Vec::new();
         let mut diagnostics = Vec::new();
         for server in self.servers.iter().filter(|server| !server.disabled) {
-            match server.server_config(home_dir, default_cwd) {
+            match server.server_config(home_dir, default_cwd, secrets) {
                 Ok(config) => configs.push(config),
                 Err(err) => diagnostics.push(McpDiagnostic::server(server.id.trim(), err)),
             }
@@ -502,13 +507,14 @@ impl McpServerSettings {
         issues
     }
 
-    /// Builds the engine config, expanding environment references.
+    /// Builds the engine config, expanding environment and secret references.
     pub fn server_config(
         &self,
         home_dir: &Path,
         default_cwd: Option<&Path>,
+        secrets: &McpSecretValues,
     ) -> Result<McpServerConfig, BoxError> {
-        let vars = McpExpansionVars::new(home_dir, default_cwd);
+        let vars = McpExpansionVars::new(home_dir, default_cwd, secrets);
         Ok(McpServerConfig {
             id: self.id.trim().to_string(),
             transport: self.transport.to_transport_config(&vars, default_cwd)?,
@@ -528,6 +534,32 @@ impl McpServerSettings {
             elicitation: false,
             resources: false,
         })
+    }
+}
+
+impl McpServerSettings {
+    /// The secrets this entry references as `${secret:NAME}`.
+    pub fn secret_names(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        let mut scan = |value: &str| secret_references(value, &mut names);
+        match &self.transport {
+            McpTransportSettings::Stdio(stdio) => {
+                scan(&stdio.command);
+                stdio.args.iter().for_each(|arg| scan(arg));
+                stdio.env.values().for_each(|value| scan(value));
+                if let Some(cwd) = &stdio.cwd {
+                    scan(cwd);
+                }
+            }
+            McpTransportSettings::StreamableHttp(http) => {
+                scan(&http.url);
+                if let Some(token) = &http.bearer_token {
+                    scan(token);
+                }
+                http.headers.values().for_each(|value| scan(value));
+            }
+        }
+        names
     }
 }
 
@@ -773,14 +805,22 @@ impl McpStreamableHttpSettings {
 struct McpExpansionVars<'a> {
     home_dir: &'a Path,
     default_cwd: Option<&'a Path>,
+    /// `None` while validating: the store is not read then, so any secret
+    /// name passes.
+    secrets: Option<&'a McpSecretValues>,
     validate_only: bool,
 }
 
 impl<'a> McpExpansionVars<'a> {
-    fn new(home_dir: &'a Path, default_cwd: Option<&'a Path>) -> Self {
+    fn new(
+        home_dir: &'a Path,
+        default_cwd: Option<&'a Path>,
+        secrets: &'a McpSecretValues,
+    ) -> Self {
         Self {
             home_dir,
             default_cwd,
+            secrets: Some(secrets),
             validate_only: false,
         }
     }
@@ -789,7 +829,15 @@ impl<'a> McpExpansionVars<'a> {
         Self {
             home_dir: Path::new(""),
             default_cwd: None,
+            secrets: None,
             validate_only: true,
+        }
+    }
+
+    fn secret(&self, name: &str) -> Option<String> {
+        match self.secrets {
+            Some(secrets) => secrets.get(name).cloned(),
+            None => Some(String::new()),
         }
     }
 
@@ -851,19 +899,66 @@ fn expand_config_string(
     Ok(out)
 }
 
+/// Expands one reference: `NAME` (an environment variable) or
+/// `secret:NAME`, either one optionally followed by `:-default`, which is
+/// used when the variable or secret is not set.
 fn expand_env_reference(
-    name: &str,
+    reference: &str,
     vars: &McpExpansionVars<'_>,
     field: &str,
 ) -> Result<String, BoxError> {
-    if name.is_empty()
-        || !name.chars().next().is_some_and(is_env_name_start)
-        || !name.chars().all(is_env_name_char)
-    {
+    let (name, default) = match reference.split_once(":-") {
+        Some((name, default)) => (name, Some(default)),
+        None => (reference, None),
+    };
+    if let Some(secret) = name.strip_prefix(SECRET_PREFIX) {
+        if !is_secret_name(secret) {
+            return Err(format!("{field} contains an invalid secret reference").into());
+        }
+        return vars
+            .secret(secret)
+            .or_else(|| default.map(str::to_string))
+            .ok_or_else(|| {
+                format!(
+                    "{field} references secret {secret}, which is not set; set it in the MCP settings or with `anda mcp secret set {secret}`"
+                )
+                .into()
+            });
+    }
+    if !is_secret_name(name) {
         return Err(format!("{field} contains an invalid environment reference").into());
     }
     vars.get(name)
+        .or_else(|| default.map(str::to_string))
         .ok_or_else(|| format!("{field} references missing environment variable {name}").into())
+}
+
+const SECRET_PREFIX: &str = "secret:";
+
+/// Whether `name` can name an environment variable or a secret.
+pub fn is_secret_name(name: &str) -> bool {
+    name.chars().next().is_some_and(is_env_name_start) && name.chars().all(is_env_name_char)
+}
+
+/// Adds the names of the `${secret:NAME}` references in `value` to `names`.
+pub fn secret_references(value: &str, names: &mut BTreeSet<String>) {
+    let mut rest = value;
+    while let Some(start) = rest.find("${") {
+        let braced = &rest[start + 2..];
+        let Some(end) = braced.find('}') else {
+            return;
+        };
+        let reference = &braced[..end];
+        let name = reference
+            .split_once(":-")
+            .map_or(reference, |(name, _)| name);
+        if let Some(secret) = name.strip_prefix(SECRET_PREFIX)
+            && is_secret_name(secret)
+        {
+            names.insert(secret.to_string());
+        }
+        rest = &braced[end + 1..];
+    }
 }
 
 fn is_env_name_start(c: char) -> bool {
@@ -968,7 +1063,8 @@ mod tests {
         assert_eq!(oauth.client_id, None);
         assert_eq!(oauth.scopes, vec!["events:read", "handles:read"]);
 
-        let (configs, issues) = settings.server_configs(Path::new("/tmp/anda-home"), None);
+        let (configs, issues) =
+            settings.server_configs(Path::new("/tmp/anda-home"), None, &McpSecretValues::new());
         assert!(issues.is_empty());
         match &configs[0].transport {
             McpTransportConfig::StreamableHttp(http) => match &http.auth {
@@ -1087,7 +1183,8 @@ mod tests {
         )
         .unwrap();
 
-        let (configs, issues) = settings.server_configs(Path::new("/tmp"), None);
+        let (configs, issues) =
+            settings.server_configs(Path::new("/tmp"), None, &McpSecretValues::new());
         assert!(issues.is_empty());
         let by_id = |id: &str| {
             configs
@@ -1187,14 +1284,19 @@ mod tests {
         // A policy changes nothing about the connection.
         let home = Path::new("/tmp/anda-home");
         assert_eq!(
-            serde_json::to_value(github.server_config(home, None).unwrap()).unwrap(),
+            serde_json::to_value(
+                github
+                    .server_config(home, None, &McpSecretValues::new())
+                    .unwrap()
+            )
+            .unwrap(),
             serde_json::to_value(
                 McpServerSettings {
                     approval: McpApprovalSettings::default(),
                     allow_external_users: false,
                     ..github.clone()
                 }
-                .server_config(home, None)
+                .server_config(home, None, &McpSecretValues::new())
                 .unwrap()
             )
             .unwrap()
@@ -1415,7 +1517,8 @@ mod tests {
 
         let home = Path::new("/tmp/anda-home");
         let workspace = home.join("workspace");
-        let (servers, issues) = settings.server_configs(home, Some(&workspace));
+        let (servers, issues) =
+            settings.server_configs(home, Some(&workspace), &McpSecretValues::new());
         assert!(issues.is_empty());
         assert_eq!(servers.len(), 2);
 
@@ -1457,7 +1560,7 @@ mod tests {
             ..Default::default()
         };
         let path_of = |server: McpServerSettings| match server
-            .server_config(Path::new("/tmp/anda-home"), None)
+            .server_config(Path::new("/tmp/anda-home"), None, &McpSecretValues::new())
             .unwrap()
             .transport
         {
@@ -1482,7 +1585,8 @@ mod tests {
     fn expand_config_string_keeps_literal_dollars() {
         let _env = EnvGuard::new();
         unsafe { std::env::set_var("ANDA_MCP_TEST_TOKEN", "t") };
-        let vars = McpExpansionVars::new(Path::new("/h"), None);
+        let secrets = McpSecretValues::from([("GITHUB_PAT".to_string(), "ghp_x".to_string())]);
+        let vars = McpExpansionVars::new(Path::new("/h"), None, &secrets);
         let expand = |value: &str| expand_config_string(value, &vars, "field");
 
         assert_eq!(
@@ -1498,6 +1602,53 @@ mod tests {
         assert_eq!(
             expand_config_string("$ANDA_HOME:$ANDA_WORKSPACE", &validation, "field").unwrap(),
             ":"
+        );
+    }
+
+    #[test]
+    fn secrets_and_defaults_expand_and_missing_secrets_say_how_to_set_them() {
+        let _env = EnvGuard::new();
+        let secrets = McpSecretValues::from([("GITHUB_PAT".to_string(), "ghp_x".to_string())]);
+        let vars = McpExpansionVars::new(Path::new("/h"), None, &secrets);
+        let expand = |value: &str| expand_config_string(value, &vars, "headers.Authorization");
+
+        assert_eq!(
+            expand("Bearer ${secret:GITHUB_PAT}").unwrap(),
+            "Bearer ghp_x"
+        );
+        assert_eq!(
+            expand("${ANDA_MCP_TEST_TOKEN:-fallback}").unwrap(),
+            "fallback"
+        );
+        assert_eq!(expand("${ANDA_MCP_TEST_TOKEN:-}").unwrap(), "");
+        assert_eq!(expand("${secret:OTHER:-none}").unwrap(), "none");
+        let missing = expand("${secret:LINEAR_KEY}").unwrap_err().to_string();
+        assert!(
+            missing.contains("headers.Authorization references secret LINEAR_KEY")
+                && missing.contains("anda mcp secret set LINEAR_KEY"),
+            "{missing}"
+        );
+        assert!(expand("${secret:bad-name}").is_err());
+        assert!(expand("${secret:}").is_err());
+
+        // Validation does not read the store: any well-formed name passes.
+        let validation = McpExpansionVars::validation();
+        assert!(expand_config_string("${secret:LINEAR_KEY}", &validation, "f").is_ok());
+
+        let server = McpSettings::parse_entry(
+            "github",
+            &serde_json::json!({
+                "url": "https://api.test/${secret:HOST:-mcp}",
+                "headers": {
+                    "Authorization": "Bearer ${secret:GITHUB_PAT}",
+                    "X-Env": "${ANDA_MCP_TEST_TOKEN}"
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            server.secret_names().into_iter().collect::<Vec<_>>(),
+            ["GITHUB_PAT", "HOST"]
         );
     }
 
@@ -1547,7 +1698,8 @@ mod tests {
             ..Default::default()
         };
 
-        let (configs, issues) = settings.server_configs(Path::new("/tmp/anda-home"), None);
+        let (configs, issues) =
+            settings.server_configs(Path::new("/tmp/anda-home"), None, &McpSecretValues::new());
         assert!(configs.is_empty() && issues.is_empty());
     }
 }

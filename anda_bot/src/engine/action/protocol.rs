@@ -82,6 +82,11 @@ pub(crate) struct ApprovalLabels {
     pub approve_label: String,
     #[serde(alias = "denyLabel")]
     pub deny_label: String,
+    /// Set on a card whose approval can be remembered: clients offer a third
+    /// answer that approves and stops asking (`remember: true`). Clients
+    /// that do not know it show approve and deny as before.
+    #[serde(alias = "rememberLabel", skip_serializing_if = "Option::is_none")]
+    pub remember_label: Option<String>,
 }
 
 impl ApprovalLabels {
@@ -89,6 +94,15 @@ impl ApprovalLabels {
         Self {
             approve_label: "Approve".to_string(),
             deny_label: "Deny".to_string(),
+            remember_label: None,
+        }
+    }
+
+    /// Approve, deny, and approve without asking again.
+    pub(crate) fn approve_deny_remember(remember_label: &str) -> Self {
+        Self {
+            remember_label: Some(remember_label.to_string()),
+            ..Self::approve_deny()
         }
     }
 }
@@ -358,6 +372,8 @@ mod tests {
         assert_eq!(approval["tool"]["name"], "shell");
         assert_eq!(approval["tool"]["label"], "Shell command");
         assert_eq!(approval["approval"]["approve_label"], "Approve");
+        // No third answer unless the card offers one.
+        assert!(approval["approval"].get("remember_label").is_none());
         assert_eq!(approval["details"][0]["label"], "Workspace");
         assert_eq!(approval["details"][0]["format"], "text");
         assert_eq!(approval["status"], "pending");
@@ -410,7 +426,7 @@ mod tests {
             "id": "act_9",
             "kind": "tool_approval",
             "tool": "shell",
-            "approval": {"approveLabel": "Yes", "denyLabel": "No"},
+            "approval": {"approveLabel": "Yes", "denyLabel": "No", "rememberLabel": "Always"},
             "status": "approved",
             "responded_at": 42,
         });
@@ -420,6 +436,7 @@ mod tests {
         let approval = payload.approval.unwrap();
         assert_eq!(approval.approve_label, "Yes");
         assert_eq!(approval.deny_label, "No");
+        assert_eq!(approval.remember_label.as_deref(), Some("Always"));
         assert_eq!(payload.status, ActionStatus::Approved);
         assert_eq!(payload.responded_at, Some(42));
     }

@@ -118,8 +118,25 @@ export function loopbackBaseUrl(raw: string): string {
   return url.origin
 }
 
+/** The owner's MCP management; the daemon checks that the caller is the owner. */
+const mcpMethods = new Set([
+  'mcp_list',
+  'mcp_get',
+  'mcp_tool_diff',
+  'mcp_secrets',
+  'mcp_test',
+  'mcp_apply',
+  'mcp_reconnect',
+  'mcp_sign_in',
+  'mcp_sign_out',
+  'mcp_reload'
+])
+
 export function validateRpc(method: unknown, params: unknown): asserts params is unknown[] {
-  if (typeof method !== 'string' || (!rpcMethods.has(method) && !memoryMethods.has(method)))
+  if (
+    typeof method !== 'string' ||
+    (!rpcMethods.has(method) && !memoryMethods.has(method) && !mcpMethods.has(method))
+  )
     throw new Error('RPC method is not available to the desktop UI')
   if (!Array.isArray(params) || params.length > 8) throw new Error('Invalid RPC arguments')
   if (Buffer.byteLength(JSON.stringify(params)) > 32 * 1024 * 1024)

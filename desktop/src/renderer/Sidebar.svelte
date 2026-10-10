@@ -34,6 +34,7 @@
     MoreHorizontal,
     PanelLeftClose,
     Pin,
+    Plug,
     RotateCw,
     Search,
     Settings,
@@ -94,6 +95,7 @@
   const navigation = [
     { id: 'memory', text: 'memory' as Label, icon: BrainCircuit },
     { id: 'skills', text: 'skills' as Label, icon: BookOpen },
+    { id: 'mcp', text: 'mcp' as Label, icon: Plug },
     { id: 'automations', text: 'automations' as Label, icon: Clock3 },
     { id: 'bookmarks', text: 'bookmarks' as Label, icon: Bookmark }
   ]

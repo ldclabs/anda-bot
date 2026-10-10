@@ -55,8 +55,20 @@ pub(crate) struct McpServerState {
     /// definition differs, or that has none, needs review.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, McpToolPin>,
+    /// The reviewed instructions the server gives the model, pinned when it
+    /// is first seen connected, like its tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<McpInstructionsPin>,
     #[serde(default, skip_serializing_if = "McpUsage::is_empty")]
     pub usage: McpUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct McpInstructionsPin {
+    /// `None` when the server gave no instructions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub reviewed_at: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

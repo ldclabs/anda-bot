@@ -48,6 +48,8 @@ pub(super) struct TuiActionDetail {
 pub(super) struct TuiActionApproval {
     pub(super) approve_label: Option<String>,
     pub(super) deny_label: Option<String>,
+    /// Offered on cards that can approve without asking again.
+    pub(super) remember_label: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +69,8 @@ pub(super) struct TuiActionChoiceInput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TuiActionAnswer {
     Approve(bool),
+    /// Approve, and stop asking.
+    AlwaysAllow,
     Choice(TuiActionChoice),
 }
 
@@ -100,6 +104,7 @@ pub(super) struct TuiActionResponseRequest {
     pub(super) approve: Option<bool>,
     pub(super) choice_id: Option<String>,
     pub(super) choice_text: Option<String>,
+    pub(super) remember: Option<bool>,
 }
 
 impl TuiActionResponseRequest {
@@ -109,6 +114,14 @@ impl TuiActionResponseRequest {
             approve: Some(approve),
             choice_id: None,
             choice_text: None,
+            remember: None,
+        }
+    }
+
+    pub(super) fn always_allow(action_id: String) -> Self {
+        Self {
+            remember: Some(true),
+            ..Self::approve(action_id, true)
         }
     }
 
@@ -122,6 +135,7 @@ impl TuiActionResponseRequest {
             approve: None,
             choice_id: Some(choice_id),
             choice_text,
+            remember: None,
         }
     }
 
@@ -133,6 +147,7 @@ impl TuiActionResponseRequest {
                 approve: self.approve,
                 choice_id: self.choice_id.clone(),
                 choice_text: self.choice_text.clone(),
+                remember: self.remember,
             }),
         )
     }
@@ -171,14 +186,21 @@ impl TuiAction {
 
         let title = self.display_title();
         if self.is_approval() {
-            return Some(if hotkeys_live {
-                format!(
+            return Some(match (hotkeys_live, self.remember_label()) {
+                (true, Some(always)) => format!(
+                    "{title} · y {} · a {always} · n {}",
+                    self.approve_label(),
+                    self.deny_label()
+                ),
+                (true, None) => format!(
                     "{title} · y {} · n {}",
                     self.approve_label(),
                     self.deny_label()
-                )
-            } else {
-                format!("{title} · type y/n + Enter · Ctrl+U clears input")
+                ),
+                (false, Some(_)) => {
+                    format!("{title} · type y/a/n + Enter · Ctrl+U clears input")
+                }
+                (false, None) => format!("{title} · type y/n + Enter · Ctrl+U clears input"),
             });
         }
 
@@ -233,6 +255,9 @@ impl TuiAction {
             return match text.to_ascii_lowercase().as_str() {
                 "y" | "yes" => Some(TuiActionAnswer::Approve(true)),
                 "n" | "no" => Some(TuiActionAnswer::Approve(false)),
+                "a" | "always" if self.remember_label().is_some() => {
+                    Some(TuiActionAnswer::AlwaysAllow)
+                }
                 _ => None,
             };
         }
@@ -308,6 +333,13 @@ impl TuiAction {
             .as_ref()
             .and_then(|approval| approval.deny_label.clone())
             .unwrap_or_else(|| "Deny".to_string())
+    }
+
+    /// The third answer a card offers, approving without asking again.
+    pub(super) fn remember_label(&self) -> Option<String> {
+        self.approval
+            .as_ref()
+            .and_then(|approval| approval.remember_label.clone())
     }
 
     fn response_label(&self) -> Option<String> {
@@ -440,11 +472,18 @@ pub(super) fn action_transcript_text(action: &TuiAction) -> String {
     }
 
     if action.is_pending() && action.is_approval() {
-        lines.push(format!(
-            "[y] {}  [n] {}",
-            action.approve_label(),
-            action.deny_label()
-        ));
+        lines.push(match action.remember_label() {
+            Some(always) => format!(
+                "[y] {}  [a] {always}  [n] {}",
+                action.approve_label(),
+                action.deny_label()
+            ),
+            None => format!(
+                "[y] {}  [n] {}",
+                action.approve_label(),
+                action.deny_label()
+            ),
+        });
     } else if action.is_pending() && !action.choices.is_empty() {
         for (index, choice) in action.choices.iter().take(MAX_CHOICE_KEYS).enumerate() {
             let mut line = format!("[{}] {}", index + 1, choice.label);
@@ -613,6 +652,13 @@ fn approval_from_value(value: Option<&Value>) -> Option<TuiActionApproval> {
         deny_label: object
             .get("deny_label")
             .or_else(|| object.get("denyLabel"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .map(str::to_string),
+        remember_label: object
+            .get("remember_label")
+            .or_else(|| object.get("rememberLabel"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|label| !label.is_empty())

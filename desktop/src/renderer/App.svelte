@@ -17,6 +17,7 @@
   import { openChatGptUrl, usageUrl } from '$lib/anda/chatgpt/api'
   import MemoryWorkspace from '$lib/anda/memory/MemoryWorkspace.svelte'
   import SkillsWorkspace from '$lib/anda/dashboard/SkillsWorkspace.svelte'
+  import McpWorkspace from '$lib/anda/dashboard/McpWorkspace.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
   import {
     ArrowDown,
@@ -1216,6 +1217,7 @@
       </footer>
     {:else if client.view === 'memory'}<div class="management-page"><MemoryWorkspace /></div>
     {:else if client.view === 'skills'}<div class="management-page"><SkillsWorkspace /></div>
+    {:else if client.view === 'mcp'}<div class="management-page"><McpWorkspace /></div>
     {:else if client.view === 'bookmarks'}<div class="management-page"><BookmarksWorkspace /></div>
     {:else if client.view === 'automations'}<div class="management-page">
         <Automations {client} />

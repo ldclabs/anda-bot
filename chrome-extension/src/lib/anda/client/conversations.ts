@@ -528,7 +528,8 @@ function approvalFromJson(value: unknown): ChatAction['approval'] {
   const raw = value as Record<string, unknown>
   return {
     approveLabel: nullableStringFromJson(raw.approve_label ?? raw.approveLabel),
-    denyLabel: nullableStringFromJson(raw.deny_label ?? raw.denyLabel)
+    denyLabel: nullableStringFromJson(raw.deny_label ?? raw.denyLabel),
+    rememberLabel: nullableStringFromJson(raw.remember_label ?? raw.rememberLabel)
   }
 }
 

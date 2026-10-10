@@ -1,6 +1,7 @@
 //! A Streamable HTTP MCP server for tests, answering JSON. It offers the
-//! tools in its catalog, which a test can change to play a server that
-//! updates its tools, and answers every call with what it was called with.
+//! tools in its catalog and the instructions given, which a test can change
+//! to play a server that updates them, and answers every call with what it
+//! was called with.
 
 use axum::{Json, http::StatusCode, response::IntoResponse, routing};
 use parking_lot::RwLock;
@@ -8,6 +9,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub(crate) type Catalog = Arc<RwLock<Vec<Value>>>;
+pub(crate) type Instructions = Arc<RwLock<String>>;
 
 /// A read-only tool definition named `name`.
 pub(crate) fn read_only_tool(name: &str) -> Value {
@@ -21,10 +23,16 @@ pub(crate) fn read_only_tool(name: &str) -> Value {
 
 /// Serves `catalog` and returns the endpoint URL.
 pub(crate) async fn serve(catalog: Catalog) -> String {
+    serve_with(catalog, Arc::new(RwLock::new("Use the mock.".to_string()))).await
+}
+
+/// Serves `catalog` with `instructions`, and returns the endpoint URL.
+pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> String {
     let app = axum::Router::new().route(
         "/mcp",
         routing::post(move |Json(request): Json<Value>| {
             let catalog = catalog.clone();
+            let instructions = instructions.clone();
             async move {
                 let Some(id) = request.get("id").cloned() else {
                     return StatusCode::ACCEPTED.into_response();
@@ -36,7 +44,7 @@ pub(crate) async fn serve(catalog: Catalog) -> String {
                             "protocolVersion": request["params"]["protocolVersion"],
                             "capabilities": { "tools": {} },
                             "serverInfo": { "name": "mock", "title": "Mock Server", "version": "1.0.0" },
-                            "instructions": "Use the mock."
+                            "instructions": *instructions.read()
                         }
                     }),
                     Some("tools/list") => json!({

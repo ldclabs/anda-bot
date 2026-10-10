@@ -3,6 +3,7 @@
     brain: () => import('$lib/anda/memory/MemoryWorkspace.svelte'),
     bookmarks: () => import('$lib/anda/dashboard/BookmarksWorkspace.svelte'),
     skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte'),
+    mcp: () => import('$lib/anda/dashboard/McpWorkspace.svelte'),
     config: () => import('./ConfigApp.svelte')
   }
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
@@ -20,13 +21,14 @@
     Database,
     PanelLeftClose,
     PanelLeftOpen,
+    Plug,
     RefreshCw,
     Settings,
     WandSparkles
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
-  type WorkspaceId = 'brain' | 'bookmarks' | 'skills' | 'config'
+  type WorkspaceId = 'brain' | 'bookmarks' | 'skills' | 'mcp' | 'config'
   const dashboardNavCollapsedStorageKey = 'andaDashboardNavCollapsed'
 
   interface Workspace {
@@ -54,6 +56,12 @@
       label: getMessage('skills'),
       detail: getMessage('dashboardSkillsDetail'),
       icon: WandSparkles
+    },
+    {
+      id: 'mcp',
+      label: getMessage('mcpTitle'),
+      detail: getMessage('dashboardMcpDetail'),
+      icon: Plug
     },
     {
       id: 'config',
@@ -94,7 +102,13 @@
 
   function workspaceFromHash(): WorkspaceId {
     const hash = window.location.hash.replace(/^#\/?/, '')
-    if (hash === 'bookmarks' || hash === 'skills' || hash === 'config' || hash === 'brain') {
+    if (
+      hash === 'bookmarks' ||
+      hash === 'skills' ||
+      hash === 'mcp' ||
+      hash === 'config' ||
+      hash === 'brain'
+    ) {
       return hash
     }
     return 'brain'
@@ -263,7 +277,9 @@
                   ? getMessage('dashboardLibraryCrumb')
                   : activeWorkspace === 'skills'
                     ? getMessage('dashboardSkillsCrumb')
-                    : getMessage('dashboardStudioCrumb')}
+                    : activeWorkspace === 'mcp'
+                      ? getMessage('dashboardMcpCrumb')
+                      : getMessage('dashboardStudioCrumb')}
             </span>
           </div>
           <p class="truncate text-xs text-muted-foreground">{active.detail}</p>

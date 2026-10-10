@@ -1,6 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity'
 import { Channel, type AgentSubmission } from '$lib/anda/client/channel.svelte'
 import { SkillsApi } from '$lib/anda/client/skills'
+import { McpApi } from '$lib/anda/client/mcp'
 import { BookmarksApi } from '$lib/anda/client/bookmarks.svelte'
 import { QuickPrompts } from '$lib/anda/client/quick-prompts.svelte'
 import { ResourceCache } from '$lib/anda/client/resources'
@@ -75,6 +76,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   } | null>(null)
   readonly channels = new SvelteMap<string, Channel>()
   readonly skills = new SkillsApi(this)
+  readonly mcp = new McpApi(this)
   readonly resources = new ResourceCache(this)
   readonly voice = new VoiceSession(this, {
     send: async () => ({ result: { available: false } as never })
@@ -557,6 +559,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     approve?: boolean
     choiceId?: string
     choiceText?: string
+    remember?: boolean
   }): Promise<ActionApiOutput> {
     const { output } = await this.toolCall<ActionApiOutput>(
       'actions_api',
@@ -565,7 +568,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         action_id: input.actionId,
         approve: input.approve ?? null,
         choice_id: input.choiceId ?? null,
-        choice_text: input.choiceText ?? null
+        choice_text: input.choiceText ?? null,
+        ...(input.remember ? { remember: true } : {})
       },
       [],
       {

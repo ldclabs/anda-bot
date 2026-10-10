@@ -86,6 +86,10 @@ describe('desktop host boundaries', () => {
     expect(() => validateRpc('memory_entity_search', [{ query: 'x' }])).not.toThrow()
     // The graph page is gone; its raw Brain reads stay closed to the renderer.
     expect(() => validateRpc('brain_kip_readonly', [{}])).toThrow('not available')
+    // The MCP page manages the owner's servers; the daemon checks the owner.
+    expect(() => validateRpc('mcp_apply', [{ change: { op: 'reload' } }])).not.toThrow()
+    expect(() => validateRpc('mcp_secrets', [{}])).not.toThrow()
+    expect(() => validateRpc('mcp_import_scan', [{}])).toThrow('not available')
   })
   it('limits deep links to navigation and external links to safe protocols', () => {
     expect(navigationSource('anda://chat?source=desktop%3Aone')).toBe('desktop:one')

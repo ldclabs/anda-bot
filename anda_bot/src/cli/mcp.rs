@@ -16,9 +16,9 @@ use crate::{
     config::{McpApproval, McpSettings},
     daemon::Daemon,
     engine::mcp::{
-        FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME,
-        config_store::{self, McpFileEdit},
-        offline_snapshot, open_in_browser,
+        FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME, MCP_SECRETS_FILE_NAME, McpSecretStore,
+        config_store::{self, McpConfigFile, McpFileEdit},
+        offline_snapshot, open_in_browser, orphaned_secrets, secret_views, secrets_in_use,
     },
     gateway,
 };
@@ -148,12 +148,32 @@ enum McpSubcommand {
         setting: Switch,
     },
     /// Accept the current definitions of a server's tools as reviewed: all
-    /// of them, or the ones named.
+    /// of them and the server's instructions, or the tools named.
     Review { id: String, tools: Vec<String> },
     /// Show what changed in a tool since it was reviewed.
     Diff { id: String, tool: String },
+    /// Manage the secrets that mcp.json references as `${secret:NAME}`.
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
     /// Apply mcp.json after editing it by hand.
     Reload,
+}
+
+#[derive(Subcommand)]
+enum SecretAction {
+    /// List the secrets that are set or referenced, never their values.
+    List,
+    /// Set a secret. The value is read from the terminal without echo, or
+    /// from standard input when it is piped:
+    ///
+    ///   anda mcp secret set GITHUB_PAT
+    ///   gh auth token | anda mcp secret set GITHUB_PAT
+    #[command(verbatim_doc_comment)]
+    Set { name: String },
+    /// Delete a secret.
+    Unset { name: String },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -255,11 +275,27 @@ pub async fn run(
                     &format!("Removed {id}."),
                 )?;
             } else {
+                let used_before = offline_secrets_in_use(&daemon.home).await?;
                 edit_offline(&daemon.home, McpFileEdit::Remove(&id)).await?;
+                let mut done = format!("Removed {id} from mcp.json.");
                 if !keep_credentials {
                     credential_store(&daemon.home).clear(&id).await?;
+                    // Its secrets go too, unless another server uses them.
+                    let store = secret_store(&daemon.home).await;
+                    let orphaned = orphaned_secrets(
+                        &id,
+                        &used_before,
+                        &offline_secrets_in_use(&daemon.home).await?,
+                        &store.names(),
+                    );
+                    for name in &orphaned {
+                        store.set(name, None).await?;
+                    }
+                    if !orphaned.is_empty() {
+                        done.push_str(&format!(" Deleted secrets: {}.", orphaned.join(", ")));
+                    }
                 }
-                report_offline(json, &format!("Removed {id} from mcp.json."))?;
+                report_offline(json, &done)?;
             }
         }
         McpSubcommand::Enable { id } => set_enabled(daemon, live, json, id, true).await?,
@@ -399,6 +435,7 @@ pub async fn run(
                 print_diff(&diff);
             }
         }
+        McpSubcommand::Secret { action } => secret(daemon, live, json, action).await?,
         McpSubcommand::Reload => {
             let Some(client) = live else {
                 return Err(
@@ -443,6 +480,104 @@ async fn add(
         println!("Note: {}", issues.join("; "));
     }
     Ok(())
+}
+
+async fn secret(
+    daemon: &Daemon,
+    live: Option<&gateway::Client>,
+    json: bool,
+    action: SecretAction,
+) -> Result<(), BoxError> {
+    let (name, value) = match action {
+        SecretAction::List => {
+            let secrets = match live {
+                Some(client) => client.mcp("mcp_secrets", json!({})).await?,
+                None => json!(secret_views(
+                    offline_secrets_in_use(&daemon.home).await?,
+                    &secret_store(&daemon.home).await.names(),
+                )),
+            };
+            if json {
+                print_json(&secrets)?;
+            } else {
+                print_secrets(&secrets);
+            }
+            return Ok(());
+        }
+        SecretAction::Set { name } => {
+            let value = read_secret(&format!("Value for {name}: "))?;
+            (name, Some(value))
+        }
+        SecretAction::Unset { name } => (name, None),
+    };
+    let done = match value {
+        Some(_) => format!("Set the secret {name}."),
+        None => format!("Deleted the secret {name}."),
+    };
+    if let Some(client) = live {
+        let change = json!({ "op": "set_secret", "name": name, "value": value });
+        report(json, &apply(client, change).await?, &done)
+    } else {
+        secret_store(&daemon.home)
+            .await
+            .set(&name, value.as_deref())
+            .await?;
+        report_offline(json, &done)
+    }
+}
+
+/// Reads a secret without echoing it: from the terminal, or piped in.
+fn read_secret(prompt: &str) -> Result<String, BoxError> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use std::io::{IsTerminal, Read, Write};
+
+    if !std::io::stdin().is_terminal() {
+        let mut value = String::new();
+        std::io::stdin().read_to_string(&mut value)?;
+        return Ok(value.trim_end_matches(['\r', '\n']).to_string());
+    }
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+    crossterm::terminal::enable_raw_mode()?;
+    let read = || -> Result<String, BoxError> {
+        let mut value = String::new();
+        loop {
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Enter => return Ok(value),
+                KeyCode::Esc => return Err("cancelled".into()),
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Err("cancelled".into());
+                }
+                KeyCode::Backspace => {
+                    value.pop();
+                }
+                KeyCode::Char(ch) => value.push(ch),
+                _ => {}
+            }
+        }
+    };
+    let result = read();
+    crossterm::terminal::disable_raw_mode()?;
+    eprintln!();
+    result
+}
+
+async fn secret_store(home: &Path) -> McpSecretStore {
+    McpSecretStore::open(home.join(MCP_SECRETS_FILE_NAME)).await
+}
+
+/// The secrets mcp.json references, by the ids that reference them.
+async fn offline_secrets_in_use(
+    home: &Path,
+) -> Result<BTreeMap<String, std::collections::BTreeSet<String>>, BoxError> {
+    let file = McpConfigFile::read(&McpSettings::file_path(home)).await?;
+    Ok(secrets_in_use(&file.root(), []))
 }
 
 async fn set_enabled(
@@ -649,6 +784,9 @@ fn report(json: bool, result: &Value, nothing: &str) -> Result<(), BoxError> {
         );
         said = true;
     }
+    if let Some(names) = names("secrets_removed") {
+        println!("Deleted secrets: {names}");
+    }
     for warning in result["warnings"].as_array().into_iter().flatten() {
         println!("Warning: {}", warning.as_str().unwrap_or_default());
     }
@@ -664,6 +802,38 @@ fn report_offline(json: bool, done: &str) -> Result<(), BoxError> {
     }
     println!("{done} The daemon is not running; this takes effect when it starts.");
     Ok(())
+}
+
+fn print_secrets(secrets: &Value) {
+    let secrets = secrets.as_array().map(Vec::as_slice).unwrap_or_default();
+    if secrets.is_empty() {
+        println!(
+            "No secrets. Reference one in mcp.json as ${{secret:NAME}}, then `anda mcp secret set NAME`."
+        );
+        return;
+    }
+    for secret in secrets {
+        let used_by: Vec<&str> = secret["used_by"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        println!(
+            "{:<24} {:<8} {}",
+            text(secret, "name"),
+            if secret["is_set"] == true {
+                "set"
+            } else {
+                "not set"
+            },
+            if used_by.is_empty() {
+                "unused".to_string()
+            } else {
+                format!("used by {}", used_by.join(", "))
+            }
+        );
+    }
 }
 
 fn print_json(value: &Value) -> Result<(), BoxError> {
@@ -776,6 +946,11 @@ fn print_detail(detail: &Value) {
     }
     for diagnostic in detail["diagnostics"].as_array().into_iter().flatten() {
         println!("  ! {}", diagnostic.as_str().unwrap_or_default());
+    }
+    if detail["instructions_changed"] == true {
+        println!(
+            "  ! the server's instructions changed since review; accept them with `anda mcp review {id}`"
+        );
     }
     print_tools(detail);
 }
@@ -955,5 +1130,43 @@ mod tests {
             .unwrap();
         let err = offline_server(home, "docs").await.unwrap_err();
         assert!(err.to_string().contains("not configured"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn offline_secrets_list_their_users_and_go_with_the_last_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        for (id, token) in [("docs", "${secret:SHARED}"), ("wiki", "${secret:WIKI}")] {
+            let entry = json!({
+                "url": format!("https://{id}.test/mcp"),
+                "headers": {
+                    "Authorization": format!("Bearer {token}"),
+                    "X-Also": "${secret:SHARED}"
+                }
+            });
+            let server = McpSettings::parse_entry(id, &entry).unwrap();
+            edit_offline(home, McpFileEdit::Add(&server)).await.unwrap();
+        }
+        let store = secret_store(home).await;
+        store.set("SHARED", Some("s")).await.unwrap();
+        store.set("WIKI", Some("w")).await.unwrap();
+
+        let views = json!(secret_views(
+            offline_secrets_in_use(home).await.unwrap(),
+            &store.names()
+        ));
+        assert_eq!(views[0]["name"], "SHARED");
+        assert_eq!(views[0]["used_by"], json!(["docs", "wiki"]));
+        assert!(!views.to_string().contains("\"s\""), "{views}");
+
+        let before = offline_secrets_in_use(home).await.unwrap();
+        edit_offline(home, McpFileEdit::Remove("wiki"))
+            .await
+            .unwrap();
+        let after = offline_secrets_in_use(home).await.unwrap();
+        assert_eq!(
+            orphaned_secrets("wiki", &before, &after, &store.names()),
+            ["WIKI"]
+        );
     }
 }

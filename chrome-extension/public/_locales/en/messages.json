@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "ChatGPT request failed ($1)."
+  },
+  "actionAlwaysAllow": {
+    "message": "Always allow"
+  },
+  "actionDetailServer": {
+    "message": "Server"
+  },
+  "actionDetailTool": {
+    "message": "Tool"
+  },
+  "actionDetailDescription": {
+    "message": "Description"
+  },
+  "actionDetailServerHints": {
+    "message": "Server hints"
+  },
+  "actionDetailReview": {
+    "message": "Review"
+  },
+  "actionDetailArguments": {
+    "message": "Arguments"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "Run MCP tool: $1"
+  },
+  "dashboardMcpDetail": {
+    "message": "Tools and connections"
+  },
+  "dashboardMcpCrumb": {
+    "message": "Servers"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "Tools and connections"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "Search servers"
+  },
+  "mcpFilter": {
+    "message": "Show servers"
+  },
+  "mcpFilterAll": {
+    "message": "All servers"
+  },
+  "mcpFilterAttention": {
+    "message": "Needs attention"
+  },
+  "mcpFilterReady": {
+    "message": "Connected"
+  },
+  "mcpFilterDisabled": {
+    "message": "Disabled"
+  },
+  "mcpReload": {
+    "message": "Apply mcp.json from disk"
+  },
+  "mcpReloaded": {
+    "message": "mcp.json is applied."
+  },
+  "mcpAddServer": {
+    "message": "Add server"
+  },
+  "mcpEmpty": {
+    "message": "No MCP servers yet."
+  },
+  "mcpEmptyDetail": {
+    "message": "Add an MCP server to give Anda new tools: paste a configuration from another app, a remote URL, or a local command."
+  },
+  "mcpNoMatch": {
+    "message": "No servers match."
+  },
+  "mcpSelectServer": {
+    "message": "Select a server."
+  },
+  "mcpNotConnected": {
+    "message": "Connect to the Anda daemon to manage MCP servers."
+  },
+  "mcpLocal": {
+    "message": "Local"
+  },
+  "mcpRemote": {
+    "message": "Remote"
+  },
+  "mcpToolCount": {
+    "message": "$1 tools"
+  },
+  "mcpHiddenCount": {
+    "message": "$1 hidden"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "$1 to review"
+  },
+  "mcpStatusDisabled": {
+    "message": "Disabled"
+  },
+  "mcpStatusInvalid": {
+    "message": "Configuration error"
+  },
+  "mcpStatusConnecting": {
+    "message": "Connecting"
+  },
+  "mcpStatusReady": {
+    "message": "Connected"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "Needs sign-in"
+  },
+  "mcpStatusFailed": {
+    "message": "Connection failed"
+  },
+  "mcpStatusDisconnected": {
+    "message": "Not connected"
+  },
+  "mcpStatusUnknown": {
+    "message": "Unknown"
+  },
+  "mcpSourceFile": {
+    "message": "From mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "Added by you"
+  },
+  "mcpSourceModel": {
+    "message": "Added by Anda"
+  },
+  "mcpSourceRuntime": {
+    "message": "This session of the daemon only"
+  },
+  "mcpReconnect": {
+    "message": "Reconnect"
+  },
+  "mcpReconnected": {
+    "message": "Reconnected $1."
+  },
+  "mcpSignIn": {
+    "message": "Sign in"
+  },
+  "mcpReauthorize": {
+    "message": "Sign in again"
+  },
+  "mcpSignOut": {
+    "message": "Sign out"
+  },
+  "mcpSignedIn": {
+    "message": "Signed in to $1."
+  },
+  "mcpSignedOut": {
+    "message": "Signed out of $1."
+  },
+  "mcpSignInWaiting": {
+    "message": "Finish signing in to $1 in your browser. This page updates when it is done."
+  },
+  "mcpOpenSignIn": {
+    "message": "Open sign-in page"
+  },
+  "mcpEnable": {
+    "message": "Enable"
+  },
+  "mcpDisable": {
+    "message": "Disable"
+  },
+  "mcpEnabled": {
+    "message": "Enabled $1."
+  },
+  "mcpDisabledNotice": {
+    "message": "Disabled $1. Its configuration is kept."
+  },
+  "mcpRemove": {
+    "message": "Remove"
+  },
+  "mcpRemoveTitle": {
+    "message": "Remove $1?"
+  },
+  "mcpRemoveConfirm": {
+    "message": "This removes the server from mcp.json, with its stored sign-in and the secrets that only it uses."
+  },
+  "mcpRemoved": {
+    "message": "Removed $1."
+  },
+  "mcpSecretsRemoved": {
+    "message": "Deleted secrets: $1."
+  },
+  "mcpApprovalNotice": {
+    "message": "MCP tools now ask before they run, unless they are read-only and unchanged since you reviewed them, or the chat has full access. To let a server's tools run without asking, open its Tools tab and choose Always allow."
+  },
+  "mcpDismiss": {
+    "message": "Dismiss"
+  },
+  "mcpChangedOnDisk": {
+    "message": "mcp.json was changed outside Anda. Apply it before making changes here."
+  },
+  "mcpApplyFile": {
+    "message": "Apply"
+  },
+  "mcpTabOverview": {
+    "message": "Overview"
+  },
+  "mcpTabTools": {
+    "message": "Tools"
+  },
+  "mcpTabAccess": {
+    "message": "Access"
+  },
+  "mcpTabConfig": {
+    "message": "Configuration"
+  },
+  "mcpLastError": {
+    "message": "Last error"
+  },
+  "mcpNextRetry": {
+    "message": "Retrying at $1"
+  },
+  "mcpStatus": {
+    "message": "Status"
+  },
+  "mcpLastReady": {
+    "message": "Last connected $1"
+  },
+  "mcpCommand": {
+    "message": "Command"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "Source"
+  },
+  "mcpStartupEager": {
+    "message": "Starts with the daemon"
+  },
+  "mcpStartupBackground": {
+    "message": "Connects in the background"
+  },
+  "mcpUsage": {
+    "message": "Usage"
+  },
+  "mcpUsageCalls": {
+    "message": "$1 calls, $2 failed"
+  },
+  "mcpUsageNone": {
+    "message": "Not used yet"
+  },
+  "mcpLastUsed": {
+    "message": "Last used $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "Default for tools"
+  },
+  "mcpServerDescription": {
+    "message": "Description"
+  },
+  "mcpInstructions": {
+    "message": "Instructions for the model"
+  },
+  "mcpFromServer": {
+    "message": "From the server, not verified"
+  },
+  "mcpShowInstructions": {
+    "message": "Show instructions"
+  },
+  "mcpReviewedVersion": {
+    "message": "Reviewed"
+  },
+  "mcpCurrentVersion": {
+    "message": "Now"
+  },
+  "mcpNone": {
+    "message": "(none)"
+  },
+  "mcpApprovalAuto": {
+    "message": "Auto"
+  },
+  "mcpApprovalAsk": {
+    "message": "Ask every time"
+  },
+  "mcpApprovalAllow": {
+    "message": "Always allow"
+  },
+  "mcpApprovalInherit": {
+    "message": "Server default ($1)"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "Asks unless the tool is read-only and reviewed, or the chat has full access."
+  },
+  "mcpApprovalAskDetail": {
+    "message": "Asks before every call, even with full access."
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "Runs without asking while the tool is unchanged since review."
+  },
+  "mcpApprovalHelp": {
+    "message": "A tool's own setting wins over the server default. A tool that changed since you reviewed it asks again."
+  },
+  "mcpAcceptAll": {
+    "message": "Mark all reviewed"
+  },
+  "mcpAccept": {
+    "message": "Mark reviewed"
+  },
+  "mcpReviewed": {
+    "message": "Marked as reviewed."
+  },
+  "mcpReviewNew": {
+    "message": "New"
+  },
+  "mcpReviewChanged": {
+    "message": "Changed"
+  },
+  "mcpShowChanges": {
+    "message": "Show changes"
+  },
+  "mcpHideChanges": {
+    "message": "Hide changes"
+  },
+  "mcpHintReadOnly": {
+    "message": "Read-only"
+  },
+  "mcpHintDestructive": {
+    "message": "Destructive"
+  },
+  "mcpHintIdempotent": {
+    "message": "Idempotent"
+  },
+  "mcpHintOpenWorld": {
+    "message": "Open world"
+  },
+  "mcpToolApproval": {
+    "message": "When to ask before $1"
+  },
+  "mcpHideTool": {
+    "message": "Hide from Anda"
+  },
+  "mcpShowTool": {
+    "message": "Show to Anda"
+  },
+  "mcpHiddenTools": {
+    "message": "Hidden tools"
+  },
+  "mcpToolHidden": {
+    "message": "Hid $1 from Anda."
+  },
+  "mcpToolShown": {
+    "message": "$1 is available to Anda again."
+  },
+  "mcpToolsWhenConnected": {
+    "message": "The tools appear once the server is connected."
+  },
+  "mcpNoTools": {
+    "message": "This server offers no tools."
+  },
+  "mcpPolicySaved": {
+    "message": "Saved."
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "This server was added for the running daemon only, so its settings cannot be saved. Add it to mcp.json to keep them."
+  },
+  "mcpSignInTitle": {
+    "message": "Sign-in"
+  },
+  "mcpOAuthNeeded": {
+    "message": "This server needs you to sign in."
+  },
+  "mcpOAuthSignedIn": {
+    "message": "Signed in with OAuth."
+  },
+  "mcpAuthNone": {
+    "message": "No sign-in configured."
+  },
+  "mcpAuthHeaders": {
+    "message": "Signs in with the headers in its configuration."
+  },
+  "mcpServerSecrets": {
+    "message": "Secrets"
+  },
+  "mcpNoServerSecrets": {
+    "message": "This server uses no stored secrets."
+  },
+  "mcpExternalUsers": {
+    "message": "Let external IM users use this server"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "Runs for people you chat with on IM channels may call its tools that need no approval. They can never approve a call for you."
+  },
+  "mcpConfigHelp": {
+    "message": "The server's entry in $1, with secrets hidden. Edit the file by hand, then apply it."
+  },
+  "mcpSecrets": {
+    "message": "Secrets"
+  },
+  "mcpSecretsDetail": {
+    "message": "Values that mcp.json references as ${secret:NAME}"
+  },
+  "mcpSecretsHelp": {
+    "message": "Secrets keep tokens out of mcp.json: reference one as ${secret:NAME} in a header, env value, or URL. Values are stored on this computer and are never shown again."
+  },
+  "mcpNoSecrets": {
+    "message": "No secrets yet."
+  },
+  "mcpNewSecret": {
+    "message": "New secret"
+  },
+  "mcpSecretName": {
+    "message": "Secret name"
+  },
+  "mcpSecretValue": {
+    "message": "Value"
+  },
+  "mcpSecretValueFor": {
+    "message": "Value for $1"
+  },
+  "mcpSecretReplace": {
+    "message": "New value"
+  },
+  "mcpSecretSet": {
+    "message": "Set $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "Not set"
+  },
+  "mcpSecretUsedBy": {
+    "message": "Used by $1"
+  },
+  "mcpSecretUnused": {
+    "message": "Not used"
+  },
+  "mcpSecretDelete": {
+    "message": "Delete secret"
+  },
+  "mcpSecretSaved": {
+    "message": "Saved the secret $1."
+  },
+  "mcpSecretDeleted": {
+    "message": "Deleted the secret $1."
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "Names use letters, digits, and _."
+  },
+  "mcpAddDescription": {
+    "message": "Anda tests the server before you add it. A local command runs on this computer: check it first."
+  },
+  "mcpAddRemote": {
+    "message": "Remote URL"
+  },
+  "mcpAddLocal": {
+    "message": "Local command"
+  },
+  "mcpAddJson": {
+    "message": "Paste JSON"
+  },
+  "mcpHeaders": {
+    "message": "Headers, one Name: value per line"
+  },
+  "mcpEnvironment": {
+    "message": "Environment, one KEY=value per line"
+  },
+  "mcpPasteJson": {
+    "message": "Configuration from another app"
+  },
+  "mcpServerId": {
+    "message": "Name"
+  },
+  "mcpIdForEntry": {
+    "message": "Name, for a single entry"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "Store tokens as secrets"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "Header and environment values go to the secret store, and mcp.json keeps only a reference."
+  },
+  "mcpJsonInvalid": {
+    "message": "This is not valid JSON."
+  },
+  "mcpJsonNoServers": {
+    "message": "No servers found. Paste an mcpServers object, or a single entry with a command or url."
+  },
+  "mcpJsonNeedsId": {
+    "message": "Give this entry a name."
+  },
+  "mcpIdTaken": {
+    "message": "A server named $1 already exists."
+  },
+  "mcpLocalWarning": {
+    "message": "This command will run on this computer."
+  },
+  "mcpValueSecret": {
+    "message": "secret $1"
+  },
+  "mcpValuePlain": {
+    "message": "stored in mcp.json"
+  },
+  "mcpTestConnection": {
+    "message": "Test"
+  },
+  "mcpTestReady": {
+    "message": "Connected · $1 tools"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "Needs sign-in"
+  },
+  "mcpTestFailed": {
+    "message": "Failed"
+  },
+  "mcpAdd": {
+    "message": "Add"
+  },
+  "mcpAdded": {
+    "message": "Added $1."
   }
 }

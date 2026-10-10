@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "Запрос к ChatGPT не выполнен ($1)."
+  },
+  "actionAlwaysAllow": {
+    "message": "Разрешать всегда"
+  },
+  "actionDetailServer": {
+    "message": "Сервер"
+  },
+  "actionDetailTool": {
+    "message": "Инструмент"
+  },
+  "actionDetailDescription": {
+    "message": "Описание"
+  },
+  "actionDetailServerHints": {
+    "message": "Подсказки сервера"
+  },
+  "actionDetailReview": {
+    "message": "Проверка"
+  },
+  "actionDetailArguments": {
+    "message": "Аргументы"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "Запуск инструмента MCP: $1"
+  },
+  "dashboardMcpDetail": {
+    "message": "Инструменты и подключения"
+  },
+  "dashboardMcpCrumb": {
+    "message": "Серверы"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "Инструменты и подключения"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "Поиск серверов"
+  },
+  "mcpFilter": {
+    "message": "Показать серверы"
+  },
+  "mcpFilterAll": {
+    "message": "Все серверы"
+  },
+  "mcpFilterAttention": {
+    "message": "Требуют внимания"
+  },
+  "mcpFilterReady": {
+    "message": "Подключены"
+  },
+  "mcpFilterDisabled": {
+    "message": "Отключены"
+  },
+  "mcpReload": {
+    "message": "Применить mcp.json с диска"
+  },
+  "mcpReloaded": {
+    "message": "mcp.json применён."
+  },
+  "mcpAddServer": {
+    "message": "Добавить сервер"
+  },
+  "mcpEmpty": {
+    "message": "Серверов MCP пока нет."
+  },
+  "mcpEmptyDetail": {
+    "message": "Добавьте сервер MCP, чтобы дать Anda новые инструменты: вставьте конфигурацию из другого приложения, удалённый URL или локальную команду."
+  },
+  "mcpNoMatch": {
+    "message": "Подходящих серверов нет."
+  },
+  "mcpSelectServer": {
+    "message": "Выберите сервер."
+  },
+  "mcpNotConnected": {
+    "message": "Подключитесь к демону Anda, чтобы управлять серверами MCP."
+  },
+  "mcpLocal": {
+    "message": "Локальный"
+  },
+  "mcpRemote": {
+    "message": "Удалённый"
+  },
+  "mcpToolCount": {
+    "message": "Инструментов: $1"
+  },
+  "mcpHiddenCount": {
+    "message": "Скрыто: $1"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "К проверке: $1"
+  },
+  "mcpStatusDisabled": {
+    "message": "Отключён"
+  },
+  "mcpStatusInvalid": {
+    "message": "Ошибка конфигурации"
+  },
+  "mcpStatusConnecting": {
+    "message": "Подключение"
+  },
+  "mcpStatusReady": {
+    "message": "Подключён"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "Нужен вход"
+  },
+  "mcpStatusFailed": {
+    "message": "Не удалось подключиться"
+  },
+  "mcpStatusDisconnected": {
+    "message": "Не подключён"
+  },
+  "mcpStatusUnknown": {
+    "message": "Неизвестно"
+  },
+  "mcpSourceFile": {
+    "message": "Из mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "Добавлен вами"
+  },
+  "mcpSourceModel": {
+    "message": "Добавлен Anda"
+  },
+  "mcpSourceRuntime": {
+    "message": "Только для текущего запуска демона"
+  },
+  "mcpReconnect": {
+    "message": "Переподключить"
+  },
+  "mcpReconnected": {
+    "message": "$1 переподключён."
+  },
+  "mcpSignIn": {
+    "message": "Войти"
+  },
+  "mcpReauthorize": {
+    "message": "Войти снова"
+  },
+  "mcpSignOut": {
+    "message": "Выйти"
+  },
+  "mcpSignedIn": {
+    "message": "Вход в $1 выполнен."
+  },
+  "mcpSignedOut": {
+    "message": "Выход из $1 выполнен."
+  },
+  "mcpSignInWaiting": {
+    "message": "Завершите вход в $1 в браузере. Эта страница обновится, когда всё будет готово."
+  },
+  "mcpOpenSignIn": {
+    "message": "Открыть страницу входа"
+  },
+  "mcpEnable": {
+    "message": "Включить"
+  },
+  "mcpDisable": {
+    "message": "Отключить"
+  },
+  "mcpEnabled": {
+    "message": "$1 включён."
+  },
+  "mcpDisabledNotice": {
+    "message": "$1 отключён. Его конфигурация сохранена."
+  },
+  "mcpRemove": {
+    "message": "Удалить"
+  },
+  "mcpRemoveTitle": {
+    "message": "Удалить $1?"
+  },
+  "mcpRemoveConfirm": {
+    "message": "Сервер будет удалён из mcp.json вместе с сохранённым входом и секретами, которые использует только он."
+  },
+  "mcpRemoved": {
+    "message": "$1 удалён."
+  },
+  "mcpSecretsRemoved": {
+    "message": "Удалены секреты: $1."
+  },
+  "mcpApprovalNotice": {
+    "message": "Теперь инструменты MCP спрашивают разрешения перед запуском. Исключения — инструменты только для чтения, не изменившиеся с вашей проверки, и чаты с полным доступом. Чтобы инструменты сервера запускались без вопросов, откройте его вкладку «Инструменты» и выберите «Разрешать всегда»."
+  },
+  "mcpDismiss": {
+    "message": "Закрыть"
+  },
+  "mcpChangedOnDisk": {
+    "message": "mcp.json изменён вне Anda. Примените его, прежде чем вносить изменения здесь."
+  },
+  "mcpApplyFile": {
+    "message": "Применить"
+  },
+  "mcpTabOverview": {
+    "message": "Обзор"
+  },
+  "mcpTabTools": {
+    "message": "Инструменты"
+  },
+  "mcpTabAccess": {
+    "message": "Доступ"
+  },
+  "mcpTabConfig": {
+    "message": "Конфигурация"
+  },
+  "mcpLastError": {
+    "message": "Последняя ошибка"
+  },
+  "mcpNextRetry": {
+    "message": "Повтор в $1"
+  },
+  "mcpStatus": {
+    "message": "Состояние"
+  },
+  "mcpLastReady": {
+    "message": "Последнее подключение: $1"
+  },
+  "mcpCommand": {
+    "message": "Команда"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "Источник"
+  },
+  "mcpStartupEager": {
+    "message": "Запускается вместе с демоном"
+  },
+  "mcpStartupBackground": {
+    "message": "Подключается в фоне"
+  },
+  "mcpUsage": {
+    "message": "Использование"
+  },
+  "mcpUsageCalls": {
+    "message": "Вызовов: $1, с ошибкой: $2"
+  },
+  "mcpUsageNone": {
+    "message": "Ещё не использовался"
+  },
+  "mcpLastUsed": {
+    "message": "Последнее использование: $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "По умолчанию для инструментов"
+  },
+  "mcpServerDescription": {
+    "message": "Описание"
+  },
+  "mcpInstructions": {
+    "message": "Инструкции для модели"
+  },
+  "mcpFromServer": {
+    "message": "От сервера, не проверено"
+  },
+  "mcpShowInstructions": {
+    "message": "Показать инструкции"
+  },
+  "mcpReviewedVersion": {
+    "message": "Проверенная"
+  },
+  "mcpCurrentVersion": {
+    "message": "Текущая"
+  },
+  "mcpNone": {
+    "message": "(нет)"
+  },
+  "mcpApprovalAuto": {
+    "message": "Автоматически"
+  },
+  "mcpApprovalAsk": {
+    "message": "Спрашивать всегда"
+  },
+  "mcpApprovalAllow": {
+    "message": "Разрешать всегда"
+  },
+  "mcpApprovalInherit": {
+    "message": "Как у сервера ($1)"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "Спрашивает, кроме инструментов только для чтения, прошедших проверку, и чатов с полным доступом."
+  },
+  "mcpApprovalAskDetail": {
+    "message": "Спрашивает перед каждым вызовом, даже при полном доступе."
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "Запускается без вопросов, пока инструмент не изменился после проверки."
+  },
+  "mcpApprovalHelp": {
+    "message": "Собственная настройка инструмента важнее настройки сервера. Инструмент, изменившийся после вашей проверки, снова спрашивает."
+  },
+  "mcpAcceptAll": {
+    "message": "Отметить всё как проверенное"
+  },
+  "mcpAccept": {
+    "message": "Отметить как проверенное"
+  },
+  "mcpReviewed": {
+    "message": "Отмечено как проверенное."
+  },
+  "mcpReviewNew": {
+    "message": "Новый"
+  },
+  "mcpReviewChanged": {
+    "message": "Изменён"
+  },
+  "mcpShowChanges": {
+    "message": "Показать изменения"
+  },
+  "mcpHideChanges": {
+    "message": "Скрыть изменения"
+  },
+  "mcpHintReadOnly": {
+    "message": "Только чтение"
+  },
+  "mcpHintDestructive": {
+    "message": "Разрушающий"
+  },
+  "mcpHintIdempotent": {
+    "message": "Идемпотентный"
+  },
+  "mcpHintOpenWorld": {
+    "message": "Внешний мир"
+  },
+  "mcpToolApproval": {
+    "message": "Когда спрашивать перед $1"
+  },
+  "mcpHideTool": {
+    "message": "Скрыть от Anda"
+  },
+  "mcpShowTool": {
+    "message": "Показать Anda"
+  },
+  "mcpHiddenTools": {
+    "message": "Скрытые инструменты"
+  },
+  "mcpToolHidden": {
+    "message": "$1 скрыт от Anda."
+  },
+  "mcpToolShown": {
+    "message": "$1 снова доступен Anda."
+  },
+  "mcpToolsWhenConnected": {
+    "message": "Инструменты появятся, когда сервер подключится."
+  },
+  "mcpNoTools": {
+    "message": "Этот сервер не предоставляет инструментов."
+  },
+  "mcpPolicySaved": {
+    "message": "Сохранено."
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "Этот сервер добавлен только для работающего демона, поэтому его настройки нельзя сохранить. Добавьте его в mcp.json, чтобы сохранить их."
+  },
+  "mcpSignInTitle": {
+    "message": "Вход"
+  },
+  "mcpOAuthNeeded": {
+    "message": "Этому серверу нужно, чтобы вы вошли."
+  },
+  "mcpOAuthSignedIn": {
+    "message": "Вход выполнен через OAuth."
+  },
+  "mcpAuthNone": {
+    "message": "Вход не настроен."
+  },
+  "mcpAuthHeaders": {
+    "message": "Входит с заголовками из своей конфигурации."
+  },
+  "mcpServerSecrets": {
+    "message": "Секреты"
+  },
+  "mcpNoServerSecrets": {
+    "message": "Этот сервер не использует сохранённые секреты."
+  },
+  "mcpExternalUsers": {
+    "message": "Разрешить внешним пользователям мессенджеров использовать этот сервер"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "Задачи для людей, с которыми вы общаетесь в мессенджерах, могут вызывать его инструменты, не требующие одобрения. Одобрить вызов за вас они не могут."
+  },
+  "mcpConfigHelp": {
+    "message": "Запись сервера в $1, секреты скрыты. Отредактируйте файл вручную, затем примените его."
+  },
+  "mcpSecrets": {
+    "message": "Секреты"
+  },
+  "mcpSecretsDetail": {
+    "message": "Значения, на которые mcp.json ссылается как ${secret:NAME}"
+  },
+  "mcpSecretsHelp": {
+    "message": "Секреты не дают токенам попасть в mcp.json: ссылайтесь на секрет как ${secret:NAME} в заголовке, переменной окружения или URL. Значения хранятся на этом компьютере и больше не показываются."
+  },
+  "mcpNoSecrets": {
+    "message": "Секретов пока нет."
+  },
+  "mcpNewSecret": {
+    "message": "Новый секрет"
+  },
+  "mcpSecretName": {
+    "message": "Имя секрета"
+  },
+  "mcpSecretValue": {
+    "message": "Значение"
+  },
+  "mcpSecretValueFor": {
+    "message": "Значение для $1"
+  },
+  "mcpSecretReplace": {
+    "message": "Новое значение"
+  },
+  "mcpSecretSet": {
+    "message": "Задан $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "Не задан"
+  },
+  "mcpSecretUsedBy": {
+    "message": "Используется: $1"
+  },
+  "mcpSecretUnused": {
+    "message": "Не используется"
+  },
+  "mcpSecretDelete": {
+    "message": "Удалить секрет"
+  },
+  "mcpSecretSaved": {
+    "message": "Секрет $1 сохранён."
+  },
+  "mcpSecretDeleted": {
+    "message": "Секрет $1 удалён."
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "В именах допустимы буквы, цифры и _."
+  },
+  "mcpAddDescription": {
+    "message": "Anda проверяет сервер перед добавлением. Локальная команда выполняется на этом компьютере: сначала проверьте её."
+  },
+  "mcpAddRemote": {
+    "message": "Удалённый URL"
+  },
+  "mcpAddLocal": {
+    "message": "Локальная команда"
+  },
+  "mcpAddJson": {
+    "message": "Вставить JSON"
+  },
+  "mcpHeaders": {
+    "message": "Заголовки, по одному Name: value в строке"
+  },
+  "mcpEnvironment": {
+    "message": "Окружение, по одному KEY=value в строке"
+  },
+  "mcpPasteJson": {
+    "message": "Конфигурация из другого приложения"
+  },
+  "mcpServerId": {
+    "message": "Имя"
+  },
+  "mcpIdForEntry": {
+    "message": "Имя для одиночной записи"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "Хранить токены как секреты"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "Значения заголовков и окружения попадают в хранилище секретов, а в mcp.json остаётся только ссылка."
+  },
+  "mcpJsonInvalid": {
+    "message": "Это не корректный JSON."
+  },
+  "mcpJsonNoServers": {
+    "message": "Серверы не найдены. Вставьте объект mcpServers или одну запись с command или url."
+  },
+  "mcpJsonNeedsId": {
+    "message": "Дайте этой записи имя."
+  },
+  "mcpIdTaken": {
+    "message": "Сервер с именем $1 уже есть."
+  },
+  "mcpLocalWarning": {
+    "message": "Эта команда выполнится на этом компьютере."
+  },
+  "mcpValueSecret": {
+    "message": "секрет $1"
+  },
+  "mcpValuePlain": {
+    "message": "хранится в mcp.json"
+  },
+  "mcpTestConnection": {
+    "message": "Проверить"
+  },
+  "mcpTestReady": {
+    "message": "Подключено · инструментов: $1"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "Нужен вход"
+  },
+  "mcpTestFailed": {
+    "message": "Ошибка"
+  },
+  "mcpAdd": {
+    "message": "Добавить"
+  },
+  "mcpAdded": {
+    "message": "Добавлено: $1."
   }
 }

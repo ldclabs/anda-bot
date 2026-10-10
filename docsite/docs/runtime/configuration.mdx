@@ -86,7 +86,7 @@ you can paste configs from other MCP-compatible tools with minimal changes.
       "type": "http",
       "url": "https://mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+        "Authorization": "Bearer ${secret:MCP_REMOTE_TOKEN}"
       }
     }
   }
@@ -95,7 +95,9 @@ you can paste configs from other MCP-compatible tools with minimal changes.
 
 Remote MCP tools appear as Anda tools named like
 `mcp_<server_id>_<remote_tool>`. Config strings support `$VAR` and `${VAR}`
-environment expansion. `ANDA_HOME` and `ANDA_WORKSPACE` are built in. For stdio
+environment expansion, with `${VAR:-default}` for a variable that may be unset,
+and `${secret:NAME}` for a secret (see [Secrets](#secrets)). `ANDA_HOME` and
+`ANDA_WORKSPACE` are built in. For stdio
 servers, `command` is spawned directly without a shell; when `cwd` is omitted,
 the first Anda workspace is used. If `type` is omitted, Anda infers `stdio` from
 `command` or `http` from `url`.
@@ -162,6 +164,7 @@ anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Be
 anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
 anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in; --no-browser prints the URL
 anda mcp tool github delete_repository --hide         # keep one tool from the agent
+anda mcp secret set DOCS_TOKEN                        # also: secret list, secret unset
 anda mcp disable context7                             # also: enable, remove, reconnect, logout, reload
 ```
 
@@ -170,16 +173,49 @@ once: a server whose connection settings changed restarts, and one whose change
 the connection does not use (a field Anda does not read, say) keeps running.
 Failed servers are retried in the background, backing off from 30 seconds to 30
 minutes, and the reason is kept for `list`. Without the daemon, `add`,
-`add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users`
-and `logout` edit the files directly and take effect when the daemon starts. `list` also shows entries that
+`add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users`,
+`secret` and `logout` edit the files directly and take effect when the daemon starts. `list` also shows entries that
 were skipped and why, and `--json` prints any result as JSON.
 
 Edits keep the fields Anda does not read, your `${VAR}` references, and the root
 the file uses. `remove` also deletes the server's stored sign-in unless you pass
 `--keep-credentials`. Anda does not watch `mcp.json`: after editing it by hand,
 run `anda mcp reload`. Where each server came from, its last error, the tool
-definitions you reviewed and how often its tools were called are kept in
-`~/.anda/mcp_state.json`.
+definitions and instructions you reviewed and how often its tools were called
+are kept in `~/.anda/mcp_state.json`.
+
+### The MCP page
+
+Anda Desktop (MCP in the sidebar) and the extension dashboard (`#mcp`) manage the
+same servers. The page lists each server with its status, and shows its last
+error, usage and instructions; its tools, with the approval policy of each, the
+server's hints, and what changed since you reviewed it; sign-in; the secrets it
+uses; and its entry, with secrets hidden. Add takes a URL with headers, a
+command with environment variables, or configuration pasted from another app.
+It shows the full command line before anything runs, tests the connection, and
+by default stores the header and environment values as secrets, leaving only
+`${secret:...}` references in `mcp.json`. A server that asks for OAuth opens its
+sign-in page in your browser.
+
+### Secrets
+
+`${secret:NAME}` in a header, environment value, argument or URL expands to a
+secret stored in `~/.anda/mcp_secrets.json`, which only your user can read, so
+`mcp.json` holds no tokens and can be shared or backed up as it is. Names use
+letters, digits and `_`, and one secret can serve several servers.
+
+```bash
+anda mcp secret set GITHUB_PAT              # reads the value without echo
+gh auth token | anda mcp secret set GITHUB_PAT
+anda mcp secret list                        # names, whether set, and the servers using each
+anda mcp secret unset GITHUB_PAT
+```
+
+Values are never shown again, by the CLI, the MCP page or the API: set a new one
+to change it. A server whose secret is not set is skipped, with a diagnostic
+naming the secret, and starts once you set it; a new value restarts the servers
+that use it. Removing a server also deletes the secrets only it used, unless you
+pass `--keep-credentials`.
 
 ### Approving MCP tool calls
 
@@ -213,12 +249,18 @@ there too. Where nobody can answer an approval, such as an IM chat or a
 scheduled job that meets an `ask` tool, the call is not made and the agent is
 told how you can allow it.
 
+An approval card for an MCP tool also offers Always allow (the `a` key in the
+terminal UI): it approves the call and sets that tool to `allow`.
+
 Anda keeps each tool's definition as the server first served it. When a server
 later changes a tool's description or schema, or adds a tool, that tool loses
 what its old definition was granted: it is asked about, even under `allow`,
 until you approve one call of it or accept it with `anda mcp review github`
 (all tools) or `anda mcp review github <tool>`. `anda mcp diff github <tool>`
 shows what changed, and `anda mcp get github` marks the tools that need review.
+The instructions a server gives the model are kept the same way: when they
+change, `anda mcp get` says so and the MCP page shows both versions, until
+`anda mcp review github` accepts them.
 
 Requests from external IM users can call a server's tools only when the server
 allows them (`"allow_external_users": true`, or `anda mcp external-users github
@@ -260,6 +302,7 @@ Anda call `connect_mcp_server` with that string as `redirect_url`.
 ~/.anda/
   config.yaml
   mcp.json
+  mcp_secrets.json
   mcp_state.json
   anda-daemon.pid
   channels/

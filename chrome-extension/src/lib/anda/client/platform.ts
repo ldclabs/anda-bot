@@ -36,6 +36,18 @@ export async function storeClientState(items: Record<string, unknown>): Promise<
   await chrome.storage.local.set(items)
 }
 
+export async function readClientState(keys: string[]): Promise<Record<string, unknown>> {
+  if (nativePlatform) return nativePlatform.storage.get(keys)
+  return chrome.storage.local.get(keys)
+}
+
+/** Opens an http(s) page in the user's browser: the system one in Anda Desktop. */
+export async function openExternalUrl(url: string): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) links can be opened')
+  if (nativePlatform?.openExternal) return nativePlatform.openExternal(url)
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
 /**
  * Calls a daemon RPC through the host's transport: the native bridge in Anda
  * Desktop, otherwise the extension service worker's WebSocket. A failed call

@@ -9,6 +9,9 @@
 //! [`McpGate`] stands between the agent and the servers' tools: every call
 //! passes it, and it asks the owner first when the server's approval policy,
 //! the session's approval mode and the tool's reviewed definition say so.
+//!
+//! The values mcp.json references as `${secret:NAME}` live apart, in the
+//! owner-only [`McpSecretStore`], and never leave the daemon.
 
 use anda_core::BoxError;
 use std::fmt;
@@ -22,6 +25,7 @@ mod model_tools;
 mod oauth;
 mod redact;
 mod review;
+mod secrets;
 mod state;
 #[cfg(test)]
 mod test_server;
@@ -33,6 +37,9 @@ pub(crate) use gate::McpGate;
 pub(crate) use manager::{McpChange, McpManager, McpManagerConfig};
 pub(crate) use model_tools::{ManageMcpServerTool, McpConnectTool, McpServerTool};
 pub(crate) use oauth::{CALLBACK_PATH, mcp_oauth_callback, open_in_browser};
+pub(crate) use secrets::{
+    MCP_SECRETS_FILE_NAME, McpSecretStore, orphaned_secrets, secret_views, secrets_in_use,
+};
 pub(crate) use view::{McpServerView, offline_snapshot};
 
 /// A request the caller can correct, with a stable code for the API.

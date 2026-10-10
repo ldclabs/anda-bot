@@ -16,6 +16,7 @@ import { Channel, type API } from './channel.svelte'
 import type { DaemonApi } from './daemon'
 import { QuickPrompts } from './quick-prompts.svelte'
 import { SkillsApi, skillsRevisionStorageKey } from './skills'
+import { McpApi } from './mcp'
 import { ResourceCache } from './resources'
 import { VoiceSession } from './voice-session.svelte'
 import {
@@ -78,6 +79,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       .catch(() => undefined)
   })
   /** Bookmark verbs plus the star state the transcript renders. */
+  /** The owner's MCP servers, and the `mcp-changed` event views listen on. */
+  readonly mcp = new McpApi(this)
   readonly bookmarks = new BookmarksApi(this, {
     activeSource: () => this.activeSource || '',
     bookmarkRequestMeta: (bookmark) => this.requestMetaForBookmark(bookmark),
@@ -505,6 +508,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     approve?: boolean
     choiceId?: string
     choiceText?: string
+    remember?: boolean
   }): Promise<ActionApiOutput> {
     if (!this.settings.token) {
       this.systemMessage = { kind: 'error', text: getMessage('pasteTokenFirst') }
@@ -516,7 +520,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       action_id: input.actionId,
       approve: input.approve ?? null,
       choice_id: input.choiceId ?? null,
-      choice_text: input.choiceText ?? null
+      choice_text: input.choiceText ?? null,
+      ...(input.remember ? { remember: true } : {})
     })
     this.activeChannel?.applyActionResponse(output)
     this.activeChannel?.wakePolling()

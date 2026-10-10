@@ -9,6 +9,7 @@
     actionDetailText,
     actionKindLabel,
     actionMessage,
+    actionRememberLabel,
     actionTitle,
     choiceHasInput,
     choiceInputPlaceholder,
@@ -22,7 +23,7 @@
 
   /** One answer row: a click, its number key, or Enter on it answers at once. */
   type DockRow =
-    | { kind: 'approve' | 'deny'; id: string; label: string }
+    | { kind: 'approve' | 'remember' | 'deny'; id: string; label: string }
     | { kind: 'choice'; id: string; label: string; choice: ChatActionChoice }
     | { kind: 'reply'; id: string; label: string; placeholder: string }
 
@@ -100,8 +101,10 @@
     const replyRow = (label: string, placeholder: string): DockRow[] =>
       onReply ? [{ kind: 'reply', id: '$reply', label, placeholder }] : []
     if (approval) {
+      const remember = actionRememberLabel(action)
       return [
         { kind: 'approve', id: '$approve', label: actionApproveLabel(action) },
+        ...(remember ? [{ kind: 'remember', id: '$remember', label: remember } as DockRow] : []),
         { kind: 'deny', id: '$deny', label: actionDenyLabel(action) },
         ...replyRow(getMessage('actionDenyWithReply'), getMessage('actionDenyWithReplyPlaceholder'))
       ]
@@ -205,6 +208,8 @@
     try {
       if (row.kind === 'approve' || row.kind === 'deny') {
         await andaClient.respondAction({ actionId: current.id, approve: row.kind === 'approve' })
+      } else if (row.kind === 'remember') {
+        await andaClient.respondAction({ actionId: current.id, approve: true, remember: true })
       } else if (row.kind === 'choice') {
         await andaClient.respondAction({
           actionId: current.id,

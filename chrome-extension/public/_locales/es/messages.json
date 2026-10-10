@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "La solicitud a ChatGPT falló ($1)."
+  },
+  "actionAlwaysAllow": {
+    "message": "Permitir siempre"
+  },
+  "actionDetailServer": {
+    "message": "Servidor"
+  },
+  "actionDetailTool": {
+    "message": "Herramienta"
+  },
+  "actionDetailDescription": {
+    "message": "Descripción"
+  },
+  "actionDetailServerHints": {
+    "message": "Indicaciones del servidor"
+  },
+  "actionDetailReview": {
+    "message": "Revisión"
+  },
+  "actionDetailArguments": {
+    "message": "Argumentos"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "Ejecutar herramienta MCP: $1"
+  },
+  "dashboardMcpDetail": {
+    "message": "Herramientas y conexiones"
+  },
+  "dashboardMcpCrumb": {
+    "message": "Servidores"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "Herramientas y conexiones"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "Buscar servidores"
+  },
+  "mcpFilter": {
+    "message": "Mostrar servidores"
+  },
+  "mcpFilterAll": {
+    "message": "Todos los servidores"
+  },
+  "mcpFilterAttention": {
+    "message": "Requieren atención"
+  },
+  "mcpFilterReady": {
+    "message": "Conectados"
+  },
+  "mcpFilterDisabled": {
+    "message": "Deshabilitados"
+  },
+  "mcpReload": {
+    "message": "Aplicar mcp.json desde el disco"
+  },
+  "mcpReloaded": {
+    "message": "mcp.json aplicado."
+  },
+  "mcpAddServer": {
+    "message": "Añadir servidor"
+  },
+  "mcpEmpty": {
+    "message": "Aún no hay servidores MCP."
+  },
+  "mcpEmptyDetail": {
+    "message": "Añade un servidor MCP para dar a Anda nuevas herramientas: pega la configuración de otra aplicación, una URL remota o un comando local."
+  },
+  "mcpNoMatch": {
+    "message": "Ningún servidor coincide."
+  },
+  "mcpSelectServer": {
+    "message": "Selecciona un servidor."
+  },
+  "mcpNotConnected": {
+    "message": "Conéctate al daemon de Anda para gestionar los servidores MCP."
+  },
+  "mcpLocal": {
+    "message": "Local"
+  },
+  "mcpRemote": {
+    "message": "Remoto"
+  },
+  "mcpToolCount": {
+    "message": "$1 herramientas"
+  },
+  "mcpHiddenCount": {
+    "message": "$1 ocultas"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "$1 por revisar"
+  },
+  "mcpStatusDisabled": {
+    "message": "Deshabilitado"
+  },
+  "mcpStatusInvalid": {
+    "message": "Error de configuración"
+  },
+  "mcpStatusConnecting": {
+    "message": "Conectando"
+  },
+  "mcpStatusReady": {
+    "message": "Conectado"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "Requiere iniciar sesión"
+  },
+  "mcpStatusFailed": {
+    "message": "Falló la conexión"
+  },
+  "mcpStatusDisconnected": {
+    "message": "No conectado"
+  },
+  "mcpStatusUnknown": {
+    "message": "Desconocido"
+  },
+  "mcpSourceFile": {
+    "message": "De mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "Añadido por ti"
+  },
+  "mcpSourceModel": {
+    "message": "Añadido por Anda"
+  },
+  "mcpSourceRuntime": {
+    "message": "Solo en esta ejecución del daemon"
+  },
+  "mcpReconnect": {
+    "message": "Reconectar"
+  },
+  "mcpReconnected": {
+    "message": "$1 reconectado."
+  },
+  "mcpSignIn": {
+    "message": "Iniciar sesión"
+  },
+  "mcpReauthorize": {
+    "message": "Volver a iniciar sesión"
+  },
+  "mcpSignOut": {
+    "message": "Cerrar sesión"
+  },
+  "mcpSignedIn": {
+    "message": "Sesión iniciada en $1."
+  },
+  "mcpSignedOut": {
+    "message": "Sesión cerrada en $1."
+  },
+  "mcpSignInWaiting": {
+    "message": "Termina de iniciar sesión en $1 en tu navegador. Esta página se actualizará al terminar."
+  },
+  "mcpOpenSignIn": {
+    "message": "Abrir la página de inicio de sesión"
+  },
+  "mcpEnable": {
+    "message": "Habilitar"
+  },
+  "mcpDisable": {
+    "message": "Deshabilitar"
+  },
+  "mcpEnabled": {
+    "message": "$1 habilitado."
+  },
+  "mcpDisabledNotice": {
+    "message": "$1 deshabilitado. Su configuración se conserva."
+  },
+  "mcpRemove": {
+    "message": "Eliminar"
+  },
+  "mcpRemoveTitle": {
+    "message": "¿Eliminar $1?"
+  },
+  "mcpRemoveConfirm": {
+    "message": "Esto elimina el servidor de mcp.json, junto con su inicio de sesión guardado y los secretos que solo él usa."
+  },
+  "mcpRemoved": {
+    "message": "$1 eliminado."
+  },
+  "mcpSecretsRemoved": {
+    "message": "Secretos eliminados: $1."
+  },
+  "mcpApprovalNotice": {
+    "message": "Ahora las herramientas MCP piden permiso antes de ejecutarse, salvo que sean de solo lectura y no hayan cambiado desde que las revisaste, o que el chat tenga acceso completo. Para que las herramientas de un servidor se ejecuten sin preguntar, abre su pestaña Herramientas y elige Permitir siempre."
+  },
+  "mcpDismiss": {
+    "message": "Cerrar"
+  },
+  "mcpChangedOnDisk": {
+    "message": "mcp.json se modificó fuera de Anda. Aplícalo antes de hacer cambios aquí."
+  },
+  "mcpApplyFile": {
+    "message": "Aplicar"
+  },
+  "mcpTabOverview": {
+    "message": "Resumen"
+  },
+  "mcpTabTools": {
+    "message": "Herramientas"
+  },
+  "mcpTabAccess": {
+    "message": "Acceso"
+  },
+  "mcpTabConfig": {
+    "message": "Configuración"
+  },
+  "mcpLastError": {
+    "message": "Último error"
+  },
+  "mcpNextRetry": {
+    "message": "Se reintentará a las $1"
+  },
+  "mcpStatus": {
+    "message": "Estado"
+  },
+  "mcpLastReady": {
+    "message": "Conectado por última vez: $1"
+  },
+  "mcpCommand": {
+    "message": "Comando"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "Origen"
+  },
+  "mcpStartupEager": {
+    "message": "Se inicia con el daemon"
+  },
+  "mcpStartupBackground": {
+    "message": "Se conecta en segundo plano"
+  },
+  "mcpUsage": {
+    "message": "Uso"
+  },
+  "mcpUsageCalls": {
+    "message": "$1 llamadas, $2 fallidas"
+  },
+  "mcpUsageNone": {
+    "message": "Aún sin usar"
+  },
+  "mcpLastUsed": {
+    "message": "Usado por última vez: $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "Predeterminado para las herramientas"
+  },
+  "mcpServerDescription": {
+    "message": "Descripción"
+  },
+  "mcpInstructions": {
+    "message": "Instrucciones para el modelo"
+  },
+  "mcpFromServer": {
+    "message": "Del servidor, sin verificar"
+  },
+  "mcpShowInstructions": {
+    "message": "Mostrar instrucciones"
+  },
+  "mcpReviewedVersion": {
+    "message": "Revisado"
+  },
+  "mcpCurrentVersion": {
+    "message": "Ahora"
+  },
+  "mcpNone": {
+    "message": "(ninguno)"
+  },
+  "mcpApprovalAuto": {
+    "message": "Automático"
+  },
+  "mcpApprovalAsk": {
+    "message": "Preguntar siempre"
+  },
+  "mcpApprovalAllow": {
+    "message": "Permitir siempre"
+  },
+  "mcpApprovalInherit": {
+    "message": "Predeterminado del servidor ($1)"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "Pregunta salvo que la herramienta sea de solo lectura y esté revisada, o que el chat tenga acceso completo."
+  },
+  "mcpApprovalAskDetail": {
+    "message": "Pregunta antes de cada llamada, incluso con acceso completo."
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "Se ejecuta sin preguntar mientras la herramienta no cambie desde la revisión."
+  },
+  "mcpApprovalHelp": {
+    "message": "El ajuste propio de una herramienta prevalece sobre el predeterminado del servidor. Una herramienta que cambió desde tu revisión vuelve a preguntar."
+  },
+  "mcpAcceptAll": {
+    "message": "Marcar todo como revisado"
+  },
+  "mcpAccept": {
+    "message": "Marcar como revisado"
+  },
+  "mcpReviewed": {
+    "message": "Marcado como revisado."
+  },
+  "mcpReviewNew": {
+    "message": "Nueva"
+  },
+  "mcpReviewChanged": {
+    "message": "Cambió"
+  },
+  "mcpShowChanges": {
+    "message": "Ver cambios"
+  },
+  "mcpHideChanges": {
+    "message": "Ocultar cambios"
+  },
+  "mcpHintReadOnly": {
+    "message": "Solo lectura"
+  },
+  "mcpHintDestructive": {
+    "message": "Destructiva"
+  },
+  "mcpHintIdempotent": {
+    "message": "Idempotente"
+  },
+  "mcpHintOpenWorld": {
+    "message": "Mundo abierto"
+  },
+  "mcpToolApproval": {
+    "message": "Cuándo preguntar antes de $1"
+  },
+  "mcpHideTool": {
+    "message": "Ocultar a Anda"
+  },
+  "mcpShowTool": {
+    "message": "Mostrar a Anda"
+  },
+  "mcpHiddenTools": {
+    "message": "Herramientas ocultas"
+  },
+  "mcpToolHidden": {
+    "message": "$1 oculta para Anda."
+  },
+  "mcpToolShown": {
+    "message": "$1 vuelve a estar disponible para Anda."
+  },
+  "mcpToolsWhenConnected": {
+    "message": "Las herramientas aparecen cuando el servidor está conectado."
+  },
+  "mcpNoTools": {
+    "message": "Este servidor no ofrece herramientas."
+  },
+  "mcpPolicySaved": {
+    "message": "Guardado."
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "Este servidor se añadió solo para el daemon en ejecución, así que sus ajustes no se pueden guardar. Añádelo a mcp.json para conservarlos."
+  },
+  "mcpSignInTitle": {
+    "message": "Inicio de sesión"
+  },
+  "mcpOAuthNeeded": {
+    "message": "Este servidor necesita que inicies sesión."
+  },
+  "mcpOAuthSignedIn": {
+    "message": "Sesión iniciada con OAuth."
+  },
+  "mcpAuthNone": {
+    "message": "Sin inicio de sesión configurado."
+  },
+  "mcpAuthHeaders": {
+    "message": "Inicia sesión con las cabeceras de su configuración."
+  },
+  "mcpServerSecrets": {
+    "message": "Secretos"
+  },
+  "mcpNoServerSecrets": {
+    "message": "Este servidor no usa secretos guardados."
+  },
+  "mcpExternalUsers": {
+    "message": "Permitir que usuarios externos de mensajería usen este servidor"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "Las ejecuciones para personas con las que chateas en canales de mensajería pueden llamar a sus herramientas que no requieren aprobación. Nunca pueden aprobar una llamada por ti."
+  },
+  "mcpConfigHelp": {
+    "message": "La entrada del servidor en $1, con los secretos ocultos. Edita el archivo a mano y luego aplícalo."
+  },
+  "mcpSecrets": {
+    "message": "Secretos"
+  },
+  "mcpSecretsDetail": {
+    "message": "Valores que mcp.json referencia como ${secret:NAME}"
+  },
+  "mcpSecretsHelp": {
+    "message": "Los secretos mantienen los tokens fuera de mcp.json: referencia uno como ${secret:NAME} en una cabecera, una variable de entorno o una URL. Los valores se guardan en este equipo y no se vuelven a mostrar."
+  },
+  "mcpNoSecrets": {
+    "message": "Aún no hay secretos."
+  },
+  "mcpNewSecret": {
+    "message": "Nuevo secreto"
+  },
+  "mcpSecretName": {
+    "message": "Nombre del secreto"
+  },
+  "mcpSecretValue": {
+    "message": "Valor"
+  },
+  "mcpSecretValueFor": {
+    "message": "Valor de $1"
+  },
+  "mcpSecretReplace": {
+    "message": "Nuevo valor"
+  },
+  "mcpSecretSet": {
+    "message": "Guardado $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "Sin definir"
+  },
+  "mcpSecretUsedBy": {
+    "message": "Usado por $1"
+  },
+  "mcpSecretUnused": {
+    "message": "Sin usar"
+  },
+  "mcpSecretDelete": {
+    "message": "Eliminar secreto"
+  },
+  "mcpSecretSaved": {
+    "message": "Secreto $1 guardado."
+  },
+  "mcpSecretDeleted": {
+    "message": "Secreto $1 eliminado."
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "Los nombres usan letras, dígitos y _."
+  },
+  "mcpAddDescription": {
+    "message": "Anda prueba el servidor antes de añadirlo. Un comando local se ejecuta en este equipo: revísalo antes."
+  },
+  "mcpAddRemote": {
+    "message": "URL remota"
+  },
+  "mcpAddLocal": {
+    "message": "Comando local"
+  },
+  "mcpAddJson": {
+    "message": "Pegar JSON"
+  },
+  "mcpHeaders": {
+    "message": "Cabeceras, una Name: value por línea"
+  },
+  "mcpEnvironment": {
+    "message": "Entorno, una KEY=value por línea"
+  },
+  "mcpPasteJson": {
+    "message": "Configuración de otra aplicación"
+  },
+  "mcpServerId": {
+    "message": "Nombre"
+  },
+  "mcpIdForEntry": {
+    "message": "Nombre, para una sola entrada"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "Guardar los tokens como secretos"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "Los valores de cabeceras y entorno van al almacén de secretos y mcp.json conserva solo una referencia."
+  },
+  "mcpJsonInvalid": {
+    "message": "No es un JSON válido."
+  },
+  "mcpJsonNoServers": {
+    "message": "No se encontraron servidores. Pega un objeto mcpServers, o una sola entrada con command o url."
+  },
+  "mcpJsonNeedsId": {
+    "message": "Pon un nombre a esta entrada."
+  },
+  "mcpIdTaken": {
+    "message": "Ya existe un servidor llamado $1."
+  },
+  "mcpLocalWarning": {
+    "message": "Este comando se ejecutará en este equipo."
+  },
+  "mcpValueSecret": {
+    "message": "secreto $1"
+  },
+  "mcpValuePlain": {
+    "message": "guardado en mcp.json"
+  },
+  "mcpTestConnection": {
+    "message": "Probar"
+  },
+  "mcpTestReady": {
+    "message": "Conectado · $1 herramientas"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "Requiere iniciar sesión"
+  },
+  "mcpTestFailed": {
+    "message": "Falló"
+  },
+  "mcpAdd": {
+    "message": "Añadir"
+  },
+  "mcpAdded": {
+    "message": "$1 añadido."
   }
 }

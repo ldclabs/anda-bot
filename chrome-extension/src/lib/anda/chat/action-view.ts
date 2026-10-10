@@ -46,6 +46,10 @@ export function actionTitle(action: ChatAction): string {
   if (isShellApproval(action) && (!action.title || action.title === 'Approve shell command')) {
     return getMessage('shellApprovalTitle')
   }
+  const mcpTool = /^Run MCP tool: (.+)$/.exec(action.title || '')
+  if (mcpTool) {
+    return getMessage('mcpToolApprovalTitle', mcpTool[1]) || action.title || ''
+  }
   return action.title || ''
 }
 
@@ -102,6 +106,18 @@ export function actionApproveLabel(action: ChatAction): string {
 export function actionDenyLabel(action: ChatAction): string {
   const label = action.approval?.denyLabel
   return label && label !== 'Deny' ? label : getMessage('actionDeny')
+}
+
+/**
+ * The third answer of a card that can approve without asking again, or ''
+ * when it offers none.
+ */
+export function actionRememberLabel(action: ChatAction): string {
+  const label = action.approval?.rememberLabel
+  if (!label) {
+    return ''
+  }
+  return label === 'Always allow' ? getMessage('actionAlwaysAllow') || label : label
 }
 
 /** The id of the choice the user picked, or '' when none was. */
@@ -191,6 +207,18 @@ export function actionDetailLabel(detail: ChatActionDetail): string {
       return getMessage('actionDetailMode')
     case 'Environment keys':
       return getMessage('actionDetailEnvironmentKeys')
+    case 'Server':
+      return getMessage('actionDetailServer') || detail.label
+    case 'Tool':
+      return getMessage('actionDetailTool') || detail.label
+    case 'Description':
+      return getMessage('actionDetailDescription') || detail.label
+    case 'Server hints':
+      return getMessage('actionDetailServerHints') || detail.label
+    case 'Review':
+      return getMessage('actionDetailReview') || detail.label
+    case 'Arguments':
+      return getMessage('actionDetailArguments') || detail.label
     default:
       return detail.label
   }

@@ -9,6 +9,7 @@ export type UiClient = Pick<
   | 'activeChannel'
   | 'status'
   | 'skills'
+  | 'mcp'
   | 'bookmarks'
   | 'respondAction'
   | 'loadResource'

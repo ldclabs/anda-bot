@@ -15,8 +15,8 @@ use crate::{auto_update::AutoUpdateState, config::Config, gateway};
 
 use super::{
     action::{
-        action_state_snapshot, action_transcript_text, active_pending_action,
-        apply_action_response_to_messages,
+        TuiActionAnswer, TuiActionResponseRequest, action_state_snapshot, action_transcript_text,
+        active_pending_action, apply_action_response_to_messages,
     },
     app::App,
     input::{
@@ -879,6 +879,55 @@ async fn stray_keystroke_keeps_a_pending_approval_answerable() {
     assert!(app.input_buf.is_empty());
     assert!(app.action_response_pending());
     assert!(!app.chat.sending);
+}
+
+#[tokio::test]
+async fn a_card_that_can_be_remembered_answers_a_with_always_allow() {
+    let mut app = ready_app();
+    app.chat.messages.push(anda_core::Message {
+        role: "assistant".to_string(),
+        name: Some("$action".to_string()),
+        content: vec![ContentPart::Action {
+            name: "anda.tool_approval".to_string(),
+            payload: serde_json::json!({
+                "id": "act_2",
+                "kind": "tool_approval",
+                "tool": {"name": "mcp_docs_search", "label": "MCP tool"},
+                "title": "Run MCP tool: docs · search",
+                "approval": {
+                    "approve_label": "Approve",
+                    "deny_label": "Deny",
+                    "remember_label": "Always allow"
+                },
+                "status": "pending"
+            }),
+            recipients: None,
+            signature: None,
+        }],
+        ..Default::default()
+    });
+    assert_eq!(
+        line_text(
+            status_footer_lines(&app, 100)
+                .first()
+                .expect("action footer")
+        ),
+        "ACTION Run MCP tool: docs · search · y Approve · a Always allow · n Deny"
+    );
+    let action = app.active_pending_action().unwrap();
+    assert_eq!(
+        action.answer_from_text("always"),
+        Some(TuiActionAnswer::AlwaysAllow)
+    );
+    let request = TuiActionResponseRequest::always_allow(action.id.clone());
+    assert_eq!(
+        (request.approve, request.remember),
+        (Some(true), Some(true))
+    );
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE), 40);
+    assert!(app.action_response_pending());
+    assert!(app.input_buf.is_empty());
 }
 
 #[tokio::test]

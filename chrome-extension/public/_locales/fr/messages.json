@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "La requête ChatGPT a échoué ($1)."
+  },
+  "actionAlwaysAllow": {
+    "message": "Toujours autoriser"
+  },
+  "actionDetailServer": {
+    "message": "Serveur"
+  },
+  "actionDetailTool": {
+    "message": "Outil"
+  },
+  "actionDetailDescription": {
+    "message": "Description"
+  },
+  "actionDetailServerHints": {
+    "message": "Indications du serveur"
+  },
+  "actionDetailReview": {
+    "message": "Vérification"
+  },
+  "actionDetailArguments": {
+    "message": "Arguments"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "Exécuter l’outil MCP : $1"
+  },
+  "dashboardMcpDetail": {
+    "message": "Outils et connexions"
+  },
+  "dashboardMcpCrumb": {
+    "message": "Serveurs"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "Outils et connexions"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "Rechercher des serveurs"
+  },
+  "mcpFilter": {
+    "message": "Afficher les serveurs"
+  },
+  "mcpFilterAll": {
+    "message": "Tous les serveurs"
+  },
+  "mcpFilterAttention": {
+    "message": "À traiter"
+  },
+  "mcpFilterReady": {
+    "message": "Connectés"
+  },
+  "mcpFilterDisabled": {
+    "message": "Désactivés"
+  },
+  "mcpReload": {
+    "message": "Appliquer mcp.json depuis le disque"
+  },
+  "mcpReloaded": {
+    "message": "mcp.json est appliqué."
+  },
+  "mcpAddServer": {
+    "message": "Ajouter un serveur"
+  },
+  "mcpEmpty": {
+    "message": "Aucun serveur MCP pour l’instant."
+  },
+  "mcpEmptyDetail": {
+    "message": "Ajoutez un serveur MCP pour donner de nouveaux outils à Anda : collez la configuration d’une autre application, une URL distante ou une commande locale."
+  },
+  "mcpNoMatch": {
+    "message": "Aucun serveur ne correspond."
+  },
+  "mcpSelectServer": {
+    "message": "Sélectionnez un serveur."
+  },
+  "mcpNotConnected": {
+    "message": "Connectez-vous au démon Anda pour gérer les serveurs MCP."
+  },
+  "mcpLocal": {
+    "message": "Local"
+  },
+  "mcpRemote": {
+    "message": "Distant"
+  },
+  "mcpToolCount": {
+    "message": "$1 outils"
+  },
+  "mcpHiddenCount": {
+    "message": "$1 masqués"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "$1 à vérifier"
+  },
+  "mcpStatusDisabled": {
+    "message": "Désactivé"
+  },
+  "mcpStatusInvalid": {
+    "message": "Erreur de configuration"
+  },
+  "mcpStatusConnecting": {
+    "message": "Connexion en cours"
+  },
+  "mcpStatusReady": {
+    "message": "Connecté"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "Connexion requise"
+  },
+  "mcpStatusFailed": {
+    "message": "Échec de la connexion"
+  },
+  "mcpStatusDisconnected": {
+    "message": "Non connecté"
+  },
+  "mcpStatusUnknown": {
+    "message": "Inconnu"
+  },
+  "mcpSourceFile": {
+    "message": "Depuis mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "Ajouté par vous"
+  },
+  "mcpSourceModel": {
+    "message": "Ajouté par Anda"
+  },
+  "mcpSourceRuntime": {
+    "message": "Uniquement pour cette exécution du démon"
+  },
+  "mcpReconnect": {
+    "message": "Reconnecter"
+  },
+  "mcpReconnected": {
+    "message": "$1 reconnecté."
+  },
+  "mcpSignIn": {
+    "message": "Se connecter"
+  },
+  "mcpReauthorize": {
+    "message": "Se reconnecter"
+  },
+  "mcpSignOut": {
+    "message": "Se déconnecter"
+  },
+  "mcpSignedIn": {
+    "message": "Connecté à $1."
+  },
+  "mcpSignedOut": {
+    "message": "Déconnecté de $1."
+  },
+  "mcpSignInWaiting": {
+    "message": "Terminez la connexion à $1 dans votre navigateur. Cette page se met à jour une fois terminé."
+  },
+  "mcpOpenSignIn": {
+    "message": "Ouvrir la page de connexion"
+  },
+  "mcpEnable": {
+    "message": "Activer"
+  },
+  "mcpDisable": {
+    "message": "Désactiver"
+  },
+  "mcpEnabled": {
+    "message": "$1 activé."
+  },
+  "mcpDisabledNotice": {
+    "message": "$1 désactivé. Sa configuration est conservée."
+  },
+  "mcpRemove": {
+    "message": "Supprimer"
+  },
+  "mcpRemoveTitle": {
+    "message": "Supprimer $1 ?"
+  },
+  "mcpRemoveConfirm": {
+    "message": "Le serveur est retiré de mcp.json, avec sa connexion enregistrée et les secrets qu’il est seul à utiliser."
+  },
+  "mcpRemoved": {
+    "message": "$1 supprimé."
+  },
+  "mcpSecretsRemoved": {
+    "message": "Secrets supprimés : $1."
+  },
+  "mcpApprovalNotice": {
+    "message": "Les outils MCP demandent désormais l’autorisation avant de s’exécuter, sauf s’ils sont en lecture seule et inchangés depuis votre vérification, ou si la discussion a un accès complet. Pour qu’un serveur s’exécute sans demander, ouvrez son onglet Outils et choisissez Toujours autoriser."
+  },
+  "mcpDismiss": {
+    "message": "Fermer"
+  },
+  "mcpChangedOnDisk": {
+    "message": "mcp.json a été modifié en dehors d’Anda. Appliquez-le avant de faire des changements ici."
+  },
+  "mcpApplyFile": {
+    "message": "Appliquer"
+  },
+  "mcpTabOverview": {
+    "message": "Aperçu"
+  },
+  "mcpTabTools": {
+    "message": "Outils"
+  },
+  "mcpTabAccess": {
+    "message": "Accès"
+  },
+  "mcpTabConfig": {
+    "message": "Configuration"
+  },
+  "mcpLastError": {
+    "message": "Dernière erreur"
+  },
+  "mcpNextRetry": {
+    "message": "Nouvel essai à $1"
+  },
+  "mcpStatus": {
+    "message": "État"
+  },
+  "mcpLastReady": {
+    "message": "Dernière connexion : $1"
+  },
+  "mcpCommand": {
+    "message": "Commande"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "Origine"
+  },
+  "mcpStartupEager": {
+    "message": "Démarre avec le démon"
+  },
+  "mcpStartupBackground": {
+    "message": "Se connecte en arrière-plan"
+  },
+  "mcpUsage": {
+    "message": "Utilisation"
+  },
+  "mcpUsageCalls": {
+    "message": "$1 appels, $2 échoués"
+  },
+  "mcpUsageNone": {
+    "message": "Pas encore utilisé"
+  },
+  "mcpLastUsed": {
+    "message": "Dernière utilisation : $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "Par défaut pour les outils"
+  },
+  "mcpServerDescription": {
+    "message": "Description"
+  },
+  "mcpInstructions": {
+    "message": "Instructions pour le modèle"
+  },
+  "mcpFromServer": {
+    "message": "Fournies par le serveur, non vérifiées"
+  },
+  "mcpShowInstructions": {
+    "message": "Afficher les instructions"
+  },
+  "mcpReviewedVersion": {
+    "message": "Vérifiée"
+  },
+  "mcpCurrentVersion": {
+    "message": "Actuelle"
+  },
+  "mcpNone": {
+    "message": "(aucune)"
+  },
+  "mcpApprovalAuto": {
+    "message": "Automatique"
+  },
+  "mcpApprovalAsk": {
+    "message": "Toujours demander"
+  },
+  "mcpApprovalAllow": {
+    "message": "Toujours autoriser"
+  },
+  "mcpApprovalInherit": {
+    "message": "Valeur du serveur ($1)"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "Demande, sauf si l’outil est en lecture seule et vérifié, ou si la discussion a un accès complet."
+  },
+  "mcpApprovalAskDetail": {
+    "message": "Demande avant chaque appel, même avec un accès complet."
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "S’exécute sans demander tant que l’outil n’a pas changé depuis la vérification."
+  },
+  "mcpApprovalHelp": {
+    "message": "Le réglage propre à un outil l’emporte sur la valeur du serveur. Un outil modifié depuis votre vérification demande à nouveau."
+  },
+  "mcpAcceptAll": {
+    "message": "Tout marquer comme vérifié"
+  },
+  "mcpAccept": {
+    "message": "Marquer comme vérifié"
+  },
+  "mcpReviewed": {
+    "message": "Marqué comme vérifié."
+  },
+  "mcpReviewNew": {
+    "message": "Nouveau"
+  },
+  "mcpReviewChanged": {
+    "message": "Modifié"
+  },
+  "mcpShowChanges": {
+    "message": "Voir les modifications"
+  },
+  "mcpHideChanges": {
+    "message": "Masquer les modifications"
+  },
+  "mcpHintReadOnly": {
+    "message": "Lecture seule"
+  },
+  "mcpHintDestructive": {
+    "message": "Destructif"
+  },
+  "mcpHintIdempotent": {
+    "message": "Idempotent"
+  },
+  "mcpHintOpenWorld": {
+    "message": "Monde ouvert"
+  },
+  "mcpToolApproval": {
+    "message": "Quand demander avant $1"
+  },
+  "mcpHideTool": {
+    "message": "Masquer à Anda"
+  },
+  "mcpShowTool": {
+    "message": "Montrer à Anda"
+  },
+  "mcpHiddenTools": {
+    "message": "Outils masqués"
+  },
+  "mcpToolHidden": {
+    "message": "$1 est masqué à Anda."
+  },
+  "mcpToolShown": {
+    "message": "$1 est de nouveau disponible pour Anda."
+  },
+  "mcpToolsWhenConnected": {
+    "message": "Les outils apparaissent une fois le serveur connecté."
+  },
+  "mcpNoTools": {
+    "message": "Ce serveur ne propose aucun outil."
+  },
+  "mcpPolicySaved": {
+    "message": "Enregistré."
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "Ce serveur a été ajouté pour le démon en cours uniquement : ses réglages ne peuvent pas être enregistrés. Ajoutez-le à mcp.json pour les conserver."
+  },
+  "mcpSignInTitle": {
+    "message": "Connexion"
+  },
+  "mcpOAuthNeeded": {
+    "message": "Ce serveur vous demande de vous connecter."
+  },
+  "mcpOAuthSignedIn": {
+    "message": "Connecté avec OAuth."
+  },
+  "mcpAuthNone": {
+    "message": "Aucune connexion configurée."
+  },
+  "mcpAuthHeaders": {
+    "message": "Se connecte avec les en-têtes de sa configuration."
+  },
+  "mcpServerSecrets": {
+    "message": "Secrets"
+  },
+  "mcpNoServerSecrets": {
+    "message": "Ce serveur n’utilise aucun secret enregistré."
+  },
+  "mcpExternalUsers": {
+    "message": "Autoriser les utilisateurs de messagerie externes à utiliser ce serveur"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "Les exécutions pour les personnes avec qui vous discutez sur des canaux de messagerie peuvent appeler ses outils qui ne demandent pas d’approbation. Elles ne peuvent jamais approuver un appel à votre place."
+  },
+  "mcpConfigHelp": {
+    "message": "L’entrée du serveur dans $1, secrets masqués. Modifiez le fichier à la main, puis appliquez-le."
+  },
+  "mcpSecrets": {
+    "message": "Secrets"
+  },
+  "mcpSecretsDetail": {
+    "message": "Valeurs que mcp.json référence par ${secret:NAME}"
+  },
+  "mcpSecretsHelp": {
+    "message": "Les secrets gardent les jetons hors de mcp.json : référencez-en un par ${secret:NAME} dans un en-tête, une variable d’environnement ou une URL. Les valeurs sont stockées sur cet ordinateur et ne sont plus jamais affichées."
+  },
+  "mcpNoSecrets": {
+    "message": "Aucun secret pour l’instant."
+  },
+  "mcpNewSecret": {
+    "message": "Nouveau secret"
+  },
+  "mcpSecretName": {
+    "message": "Nom du secret"
+  },
+  "mcpSecretValue": {
+    "message": "Valeur"
+  },
+  "mcpSecretValueFor": {
+    "message": "Valeur de $1"
+  },
+  "mcpSecretReplace": {
+    "message": "Nouvelle valeur"
+  },
+  "mcpSecretSet": {
+    "message": "Défini le $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "Non défini"
+  },
+  "mcpSecretUsedBy": {
+    "message": "Utilisé par $1"
+  },
+  "mcpSecretUnused": {
+    "message": "Inutilisé"
+  },
+  "mcpSecretDelete": {
+    "message": "Supprimer le secret"
+  },
+  "mcpSecretSaved": {
+    "message": "Secret $1 enregistré."
+  },
+  "mcpSecretDeleted": {
+    "message": "Secret $1 supprimé."
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "Les noms utilisent des lettres, des chiffres et _."
+  },
+  "mcpAddDescription": {
+    "message": "Anda teste le serveur avant de l’ajouter. Une commande locale s’exécute sur cet ordinateur : vérifiez-la d’abord."
+  },
+  "mcpAddRemote": {
+    "message": "URL distante"
+  },
+  "mcpAddLocal": {
+    "message": "Commande locale"
+  },
+  "mcpAddJson": {
+    "message": "Coller du JSON"
+  },
+  "mcpHeaders": {
+    "message": "En-têtes, un Name: value par ligne"
+  },
+  "mcpEnvironment": {
+    "message": "Environnement, un KEY=value par ligne"
+  },
+  "mcpPasteJson": {
+    "message": "Configuration d’une autre application"
+  },
+  "mcpServerId": {
+    "message": "Nom"
+  },
+  "mcpIdForEntry": {
+    "message": "Nom, pour une seule entrée"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "Stocker les jetons comme secrets"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "Les valeurs des en-têtes et de l’environnement vont dans le coffre de secrets, et mcp.json ne garde qu’une référence."
+  },
+  "mcpJsonInvalid": {
+    "message": "Ce n’est pas du JSON valide."
+  },
+  "mcpJsonNoServers": {
+    "message": "Aucun serveur trouvé. Collez un objet mcpServers, ou une seule entrée avec command ou url."
+  },
+  "mcpJsonNeedsId": {
+    "message": "Donnez un nom à cette entrée."
+  },
+  "mcpIdTaken": {
+    "message": "Un serveur nommé $1 existe déjà."
+  },
+  "mcpLocalWarning": {
+    "message": "Cette commande s’exécutera sur cet ordinateur."
+  },
+  "mcpValueSecret": {
+    "message": "secret $1"
+  },
+  "mcpValuePlain": {
+    "message": "stocké dans mcp.json"
+  },
+  "mcpTestConnection": {
+    "message": "Tester"
+  },
+  "mcpTestReady": {
+    "message": "Connecté · $1 outils"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "Connexion requise"
+  },
+  "mcpTestFailed": {
+    "message": "Échec"
+  },
+  "mcpAdd": {
+    "message": "Ajouter"
+  },
+  "mcpAdded": {
+    "message": "$1 ajouté."
   }
 }

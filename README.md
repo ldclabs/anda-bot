@@ -194,7 +194,7 @@ Input preserves spaces in text and code. Cursor movement and deletion treat comb
 
 Risky shell commands, MCP server connections and MCP tool calls that need your consent raise an approval card before they run:
 
-- With an empty input box, press `y` to approve or `n` to deny.
+- With an empty input box, press `y` to approve or `n` to deny. An MCP tool card also offers `a`, Always allow, which approves and stops asking for that tool.
 - If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
 - Approval cards expire after 10 minutes, and the tool call then fails.
 
@@ -316,16 +316,21 @@ paste configs from other MCP-compatible tools with minimal changes.
       "type": "http",
       "url": "https://mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${MCP_REMOTE_TOKEN}"
+        "Authorization": "Bearer ${secret:MCP_REMOTE_TOKEN}"
       }
     }
   }
 }
 ```
 
-Configured strings support `$VAR` and `${VAR}` environment expansion. `ANDA_HOME`
-and `ANDA_WORKSPACE` are built in, and stdio servers default to the first Anda
-workspace as their working directory.
+Configured strings support `$VAR` and `${VAR}` environment expansion, with
+`${VAR:-default}` for a variable that may be unset. `ANDA_HOME` and
+`ANDA_WORKSPACE` are built in, and stdio servers default to the first Anda
+workspace as their working directory. `${secret:NAME}` expands to a secret kept
+outside `mcp.json`, in the owner-only `~/.anda/mcp_secrets.json`; set one with
+`anda mcp secret set NAME` (it reads the value without echo, or from a pipe) or
+on the MCP page. A server whose secret is not set is skipped until it is, and
+removing a server also deletes the secrets only it used.
 
 Each entry is loaded on its own, and MCP never stops the daemon from starting:
 an entry that cannot be used (an unset environment variable, an unsupported
@@ -345,8 +350,16 @@ anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Be
 anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
 anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in
 anda mcp tool github delete_repository --hide         # keep one tool from the agent
+anda mcp secret set MCP_REMOTE_TOKEN                  # also: secret list, secret unset
 anda mcp disable context7                             # also: enable, remove, reconnect, logout
 ```
+
+Anda Desktop and the extension dashboard (`#mcp`) have an MCP page with the same
+controls: each server's status, last error and instructions, its tools with
+their approval policy and what changed since review, sign-in, secrets (write
+only: a value is never shown again), and an Add dialog that takes a URL, a
+command, or JSON pasted from another app, tests it, and stores the tokens in it
+as secrets.
 
 With the daemon running, a change applies at once and failed servers are retried
 in the background; without it, the command edits `mcp.json` and the change
@@ -365,10 +378,12 @@ anda mcp approval github ask --tool merge_pull_request  # always ask, even with 
 anda mcp review github                                  # accept tools that changed since review
 ```
 
+Choosing Always allow on an MCP tool's approval card sets that tool to `allow`.
 Anda keeps each tool's definition as the server first served it: a tool that
 changes later, or a new one, is asked about again, even under `allow`, until you
 approve a call of it or accept it with `anda mcp review` (`anda mcp diff <id>
-<tool>` shows what changed). Requests from external IM users can use a server
+<tool>` shows what changed). The server's instructions to the model are kept the
+same way, and the MCP page flags them when they change. Requests from external IM users can use a server
 only after `anda mcp external-users <id> on`, and never a tool that needs
 approval. Skills written for other agents can name tools as
 `mcp__<server>__<tool>`.

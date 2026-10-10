@@ -351,6 +351,7 @@ impl ActionSession {
                 "tool": ShellTool::NAME,
                 "command": &args.command,
             }),
+            rememberable: false,
         };
         let payload = ActionPayload {
             tool: Some(ActionToolRef::labeled(ShellTool::NAME, "Shell command")),
@@ -371,19 +372,22 @@ impl ActionSession {
         };
         self.request_approval(payload, kind, "shell command")
             .await
-            .map(|()| args)
+            .map(|_| args)
     }
 
     /// Shows an MCP approval card and waits for the answer: one for adding,
     /// connecting or changing a server ([`require_mcp_approval`]), or for one
-    /// call of a server's tool ([`request_mcp_tool_approval`]).
+    /// call of a server's tool ([`request_mcp_tool_approval`]). A card with a
+    /// `remember_label` offers to stop asking; the result says whether the
+    /// user chose that.
     async fn request_mcp_approval(
         &self,
         ctx: &BaseCtx,
         tool: ActionToolRef,
         title: String,
         card: McpApprovalCard,
-    ) -> Result<(), BoxError> {
+        remember_label: Option<&str>,
+    ) -> Result<bool, BoxError> {
         let McpApprovalCard {
             message,
             summary,
@@ -398,28 +402,34 @@ impl ActionSession {
                 "tool": tool_name,
                 "summary": &summary,
             }),
+            rememberable: remember_label.is_some(),
         };
         let payload = ActionPayload {
             tool: Some(tool),
             message: Some(message),
             summary: Some(summary),
             details: Some(details),
-            approval: Some(ApprovalLabels::approve_deny()),
+            approval: Some(match remember_label {
+                Some(label) => ApprovalLabels::approve_deny_remember(label),
+                None => ApprovalLabels::approve_deny(),
+            }),
             metadata: Some(metadata),
             ..self.new_payload(ctx, &kind, title)
         };
         self.request_approval(payload, kind, "MCP server").await
     }
 
+    /// Waits for an approval; `Ok(true)` when the user also asked not to be
+    /// asked again.
     async fn request_approval(
         &self,
         payload: ActionPayload,
         kind: PendingActionKind,
         what: &str,
-    ) -> Result<(), BoxError> {
+    ) -> Result<bool, BoxError> {
         let response = self.publish_and_wait(payload, kind, what).await?;
         match response.status {
-            ActionStatus::Approved => Ok(()),
+            ActionStatus::Approved => Ok(response.payload["remember"] == true),
             // Approvals never pass by default: an unanswered one is refused,
             // and the error says so plainly so the model neither mistakes it
             // for a failed run nor queues the same card again.
@@ -535,6 +545,8 @@ impl PendingAction {
 enum PendingActionKind {
     Approval {
         approved_payload: Value,
+        /// The card offers to approve without asking again.
+        rememberable: bool,
     },
     Choice {
         choices: Vec<UserChoiceOption>,
@@ -569,7 +581,10 @@ impl PendingActionKind {
 
     fn response_from_args(&self, args: &ActionResponseArgs) -> Result<ActionResponse, BoxError> {
         match self {
-            Self::Approval { approved_payload } => {
+            Self::Approval {
+                approved_payload,
+                rememberable,
+            } => {
                 if !args.approve.ok_or("approve is required")? {
                     return Ok(ActionResponse::new(
                         ActionStatus::Denied,
@@ -578,6 +593,10 @@ impl PendingActionKind {
                 }
                 let mut payload = approved_payload.clone();
                 payload["approve"] = true.into();
+                // Only a card that offered it can be remembered.
+                if *rememberable && args.remember == Some(true) {
+                    payload["remember"] = true.into();
+                }
                 Ok(ActionResponse::new(ActionStatus::Approved, payload))
             }
             Self::Choice { choices, .. } => {
@@ -706,6 +725,10 @@ pub(crate) struct ActionResponseArgs {
     pub(crate) choice_id: Option<String>,
     #[serde(default)]
     pub(crate) choice_text: Option<String>,
+    /// With `approve: true`, on a card that offers it: stop asking. Left
+    /// off the wire when unset, as older daemons never sent it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) remember: Option<bool>,
 }
 
 pub(crate) struct ActionsTool {
@@ -838,9 +861,13 @@ fn actions_tool_parameters() -> Value {
             "choice_text": {
                 "type": ["string", "null"],
                 "description": "For choice cards with an input field, the user-entered text. Null otherwise."
+            },
+            "remember": {
+                "type": ["boolean", "null"],
+                "description": "With approve true on an approval card that has a remember_label: true also stops asking for this from now on. Null otherwise."
             }
         },
-        "required": ["type", "action_id", "approve", "choice_id", "choice_text"],
+        "required": ["type", "action_id", "approve", "choice_id", "choice_text", "remember"],
         "additionalProperties": false
     })
 }
@@ -982,8 +1009,10 @@ pub(crate) async fn require_mcp_approval(
                 details,
                 metadata,
             },
+            None,
         )
         .await
+        .map(|_| ())
 }
 
 /// Who answers an approval for the request being served.
@@ -1024,13 +1053,14 @@ pub(crate) fn approval_scope(ctx: &BaseCtx) -> ApprovalScope {
 
 /// Asks the user before the agent calls `tool_name`, a tool of an MCP
 /// server. The caller decides that it must ask and checks with
-/// [`approval_scope`] that someone can answer.
+/// [`approval_scope`] that someone can answer. `Ok(true)`: approved, and the
+/// user chose to always allow the tool.
 pub(crate) async fn request_mcp_tool_approval(
     ctx: &BaseCtx,
     tool_name: &str,
     title: String,
     card: McpApprovalCard,
-) -> Result<(), BoxError> {
+) -> Result<bool, BoxError> {
     let session = ctx
         .get_state::<ActionSession>()
         .ok_or("calling this MCP tool requires user approval, which is not available here")?;
@@ -1040,6 +1070,7 @@ pub(crate) async fn request_mcp_tool_approval(
             ActionToolRef::labeled(tool_name, "MCP tool"),
             title,
             card,
+            Some("Always allow"),
         )
         .await
 }
@@ -1284,6 +1315,7 @@ mod tests {
                     approve: Some(true),
                     choice_id: None,
                     choice_text: None,
+                    remember: None,
                 },
             )
             .await
@@ -1361,6 +1393,7 @@ mod tests {
                     approve: Some(false),
                     choice_id: None,
                     choice_text: None,
+                    remember: None,
                 },
             )
             .await
@@ -1446,6 +1479,7 @@ mod tests {
         // Approvals never pass by default.
         let approval = PendingActionKind::Approval {
             approved_payload: json!({"tool": "shell"}),
+            rememberable: false,
         };
         assert_eq!(approval.unanswered("late").status, ActionStatus::Expired);
     }
@@ -1532,6 +1566,7 @@ mod tests {
             conversation: 9,
             kind: PendingActionKind::Approval {
                 approved_payload: json!({}),
+                rememberable: false,
             },
             event_sender: mpsc::channel(1).0,
             tx: approval_tx,
@@ -1589,6 +1624,7 @@ mod tests {
                 approve: None,
                 choice_id: Some("a".to_string()),
                 choice_text: None,
+                remember: None,
             })
             .unwrap();
 
@@ -1621,6 +1657,7 @@ mod tests {
                 approve: None,
                 choice_id: Some("custom".to_string()),
                 choice_text: Some("Please focus on the UI state.".to_string()),
+                remember: None,
             })
             .unwrap();
 
@@ -1657,6 +1694,7 @@ mod tests {
                 approve: None,
                 choice_id: Some("custom".to_string()),
                 choice_text: Some("   ".to_string()),
+                remember: None,
             })
             .unwrap_err();
 
@@ -1670,6 +1708,7 @@ mod tests {
                 "tool": "payments",
                 "payment_id": "pay_1"
             }),
+            rememberable: false,
         };
 
         let response = kind
@@ -1678,6 +1717,7 @@ mod tests {
                 approve: Some(true),
                 choice_id: None,
                 choice_text: None,
+                remember: None,
             })
             .unwrap();
 
@@ -1688,9 +1728,33 @@ mod tests {
     }
 
     #[test]
+    fn only_a_card_that_offers_it_remembers_an_approval() {
+        let answer = |rememberable: bool, approve: bool| {
+            PendingActionKind::Approval {
+                approved_payload: json!({ "tool": "mcp_docs_search" }),
+                rememberable,
+            }
+            .response_from_args(&ActionResponseArgs {
+                action_id: "act_1".to_string(),
+                approve: Some(approve),
+                choice_id: None,
+                choice_text: None,
+                remember: Some(true),
+            })
+            .unwrap()
+            .payload
+        };
+        assert_eq!(answer(true, true)["remember"], true);
+        assert!(answer(false, true).get("remember").is_none());
+        // Denying is never remembered.
+        assert_eq!(answer(true, false), json!({ "approve": false }));
+    }
+
+    #[test]
     fn approval_response_requires_explicit_decision() {
         let kind = PendingActionKind::Approval {
             approved_payload: json!({"tool": "payments"}),
+            rememberable: false,
         };
 
         let err = kind
@@ -1699,6 +1763,7 @@ mod tests {
                 approve: None,
                 choice_id: None,
                 choice_text: None,
+                remember: None,
             })
             .unwrap_err();
 
@@ -1739,6 +1804,7 @@ mod tests {
                     approve: None,
                     choice_id: Some("missing".to_string()),
                     choice_text: None,
+                    remember: None,
                 },
             )
             .await
@@ -1756,6 +1822,7 @@ mod tests {
                     approve: None,
                     choice_id: Some("a".to_string()),
                     choice_text: None,
+                    remember: None,
                 },
             )
             .await
@@ -1791,6 +1858,7 @@ mod tests {
             conversation: 1,
             kind: PendingActionKind::Approval {
                 approved_payload: json!({}),
+                rememberable: false,
             },
             event_sender,
             tx,
@@ -1808,6 +1876,7 @@ mod tests {
                         approve: Some(true),
                         choice_id: None,
                         choice_text: None,
+                        remember: None,
                     }
                 )
                 .await

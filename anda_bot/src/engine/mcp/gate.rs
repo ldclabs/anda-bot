@@ -20,7 +20,7 @@ use anda_engine::{
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{McpManager, redact::redact_json, review::McpReview};
+use super::{McpChange, McpManager, redact::redact_json, review::McpReview, state::McpSource};
 use crate::{
     config::McpApproval,
     engine::{
@@ -105,11 +105,28 @@ impl McpGate {
         }
 
         let (title, card) = approval_card(route, policy.approval, review, &digest, args);
-        request_mcp_tool_approval(ctx, &route.name, title, card).await?;
+        let always = request_mcp_tool_approval(ctx, &route.name, title, card).await?;
         // The card showed the tool as new or changed: approving it accepts
         // the definition, so it is not asked about as new again.
         if !reviewed {
             self.manager.accept_definition(route).await;
+        }
+        // "Always allow" is the owner's answer on the card, written to the
+        // server's entry like any other policy. The call goes ahead either
+        // way: it was approved.
+        if always {
+            let change = McpChange::SetApproval {
+                id: route.server_id.clone(),
+                tool: Some(route.remote_name.clone()),
+                approval: Some(McpApproval::Allow),
+            };
+            if let Err(err) = self.manager.apply(change, None, McpSource::Manual).await {
+                log::warn!(
+                    "MCP tool {} of {} was approved, but always allowing it failed: {err}",
+                    route.remote_name,
+                    route.server_id
+                );
+            }
         }
         Ok(None)
     }
@@ -340,14 +357,6 @@ fn approval_card(
         arguments.push_str("\n…");
     }
     details.push(approval_detail("Arguments", arguments, "code"));
-    details.push(approval_detail(
-        "Always allow",
-        format!(
-            "anda mcp approval {} allow --tool {}",
-            route.server_id, route.remote_name
-        ),
-        "code",
-    ));
 
     let card = McpApprovalCard {
         message,
@@ -479,6 +488,14 @@ mod tests {
     /// `ctx` with a user who answers every approval card with `approve`, and
     /// the cards they were shown.
     fn answering(ctx: BaseCtx, approve: bool) -> (BaseCtx, Arc<Mutex<Vec<Value>>>) {
+        answering_with(ctx, approve, None)
+    }
+
+    fn answering_with(
+        ctx: BaseCtx,
+        approve: bool,
+        remember: Option<bool>,
+    ) -> (BaseCtx, Arc<Mutex<Vec<Value>>>) {
         let caller = ctx.caller().to_text();
         let runtime = Arc::new(ActionRuntime::new());
         let (event_sender, mut event_rx) = tokio::sync::mpsc::channel(4);
@@ -510,6 +527,7 @@ mod tests {
                                 approve: Some(approve),
                                 choice_id: None,
                                 choice_text: None,
+                                remember,
                             },
                         )
                         .await;
@@ -582,6 +600,31 @@ mod tests {
         let usage = mock.manager.server("mock").await.unwrap().server.usage;
         assert_eq!((usage.calls, usage.errors), (3, 0));
         assert!(usage.last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn always_allow_on_the_card_stops_asking_for_that_tool() {
+        let mock = fixture(json!({}), vec![write_tool("delete"), write_tool("create")]).await;
+        let (always, cards) = answering_with(ctx(&[]), true, Some(true));
+        assert!(ran(&mock.call(always, "mcp_mock_delete").await));
+        let card = cards.lock().pop().unwrap();
+        assert_eq!(card["approval"]["remember_label"], "Always allow");
+        assert_eq!(
+            mock.manager.tool_policy("mock", "delete").approval,
+            McpApproval::Allow
+        );
+        let entry = &crate::engine::mcp::config_store::McpConfigFile::read(
+            &McpSettings::file_path(mock._dir.path()),
+        )
+        .await
+        .unwrap()
+        .root()["mcpServers"]["mock"];
+        assert_eq!(entry["approval"], json!({ "tools": { "delete": "allow" } }));
+
+        // Nobody is asked about it again; the other tool still asks.
+        assert!(ran(&mock.call(ctx(&[]), "mcp_mock_delete").await));
+        let result = mock.call(ctx(&[]), "mcp_mock_create").await;
+        assert_eq!(refused(&result).as_deref(), Some("approval_required"));
     }
 
     #[tokio::test]

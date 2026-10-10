@@ -12,6 +12,7 @@ import {
   actionKindLabel,
   actionMessage,
   actionPending,
+  actionRememberLabel,
   actionSelectedChoice,
   actionStatusLabel,
   actionTitle,
@@ -137,6 +138,25 @@ describe('action labels', () => {
     expect(actionApproveLabel(action({ approval: { approveLabel: 'Ship it' } }))).toBe('Ship it')
     expect(actionDenyLabel(action({ approval: { denyLabel: 'Deny' } }))).toBe('actionDeny')
     expect(actionDenyLabel(action({ approval: { denyLabel: 'Stop' } }))).toBe('Stop')
+  })
+
+  it('offers always allow only on cards that can remember an approval', () => {
+    expect(actionRememberLabel(action({ approval: { approveLabel: 'Approve' } }))).toBe('')
+    expect(actionRememberLabel(action({ approval: { rememberLabel: 'Always allow' } }))).toBe(
+      'actionAlwaysAllow'
+    )
+    expect(actionRememberLabel(action({ approval: { rememberLabel: 'Trust it' } }))).toBe(
+      'Trust it'
+    )
+  })
+
+  it('localizes MCP tool cards', () => {
+    expect(actionTitle(action({ title: 'Run MCP tool: docs · search' }))).toBe(
+      'mcpToolApprovalTitle:docs · search'
+    )
+    expect(actionDetailLabel({ label: 'Arguments', value: '{}', format: 'code' })).toBe(
+      'actionDetailArguments'
+    )
   })
 })
 

@@ -84,6 +84,9 @@ pub(crate) struct McpServerView {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
     pub tools: McpToolCounts,
+    /// The server's instructions differ from the reviewed ones.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub instructions_changed: bool,
     #[serde(skip_serializing_if = "McpUsage::is_empty")]
     pub usage: McpUsage,
     /// The mcp.json entry, redacted.
@@ -131,6 +134,9 @@ pub(crate) struct McpServerDetail {
     /// What the server tells the model about itself. Untrusted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    /// The reviewed instructions, when they differ from `instructions`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reviewed_instructions: Option<String>,
     pub tools: Vec<McpToolView>,
 }
 
@@ -273,9 +279,16 @@ impl ViewSource<'_> {
             .live
             .and_then(|live| live.meta.get(id))
             .and_then(|meta| meta.instructions.clone());
+        let reviewed_instructions = if view.instructions_changed {
+            self.state
+                .read(id, |state| state?.instructions.as_ref()?.text.clone())
+        } else {
+            None
+        };
         McpServerDetail {
             server: view,
             instructions,
+            reviewed_instructions,
             tools,
         }
     }
@@ -374,6 +387,12 @@ impl ViewSource<'_> {
             (None, None) => json!({}),
         };
         let meta = self.live.and_then(|live| live.meta.get(id));
+        let instructions_changed = meta.is_some_and(|meta| {
+            state
+                .instructions
+                .as_ref()
+                .is_some_and(|pin| pin.text != meta.instructions)
+        });
         let needs_review = self
             .reviews(id)
             .values()
@@ -420,6 +439,7 @@ impl ViewSource<'_> {
                 },
                 needs_review,
             },
+            instructions_changed,
             usage: state.usage,
             settings: entry,
         }
@@ -457,6 +477,7 @@ impl ViewSource<'_> {
                 hidden: 0,
                 needs_review: 0,
             },
+            instructions_changed: false,
             usage: state.usage,
             settings: json!({ "type": "http", "url": summary }),
         }

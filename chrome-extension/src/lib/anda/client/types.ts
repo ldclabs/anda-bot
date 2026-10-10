@@ -96,6 +96,8 @@ export interface ChatActionDetail {
 export interface ChatActionApproval {
   approveLabel?: string | null
   denyLabel?: string | null
+  /** A third answer that approves and stops asking, when the card offers one. */
+  rememberLabel?: string | null
 }
 
 export interface ChatAction {
@@ -569,4 +571,145 @@ export interface RequestMeta {
   thread?: Xid
   user?: string
   [key: string]: Json | undefined
+}
+
+/** A server's state as one word; see the daemon's `McpStatus`. */
+export type McpStatus =
+  | 'disabled'
+  | 'invalid'
+  | 'connecting'
+  | 'ready'
+  | 'needs_auth'
+  | 'failed'
+  | 'disconnected'
+  | 'unknown'
+
+/** When the agent asks before calling a tool: `auto` follows the session's approval mode. */
+export type McpApproval = 'auto' | 'ask' | 'allow'
+
+/** How a tool's definition compares with the one that was reviewed. */
+export type McpReview = 'trusted' | 'new' | 'changed'
+
+export interface McpUsage {
+  calls?: number
+  errors?: number
+  last_used_at?: number
+}
+
+/** One configured server. Every secret in `settings` is `{ redacted: true, secrets? }`. */
+export interface McpServerView {
+  id: string
+  /** The server's own name and description: untrusted. */
+  title?: string
+  description?: string
+  transport: 'stdio' | 'http' | 'unknown'
+  /** The command line or URL, redacted. */
+  summary: string
+  enabled: boolean
+  /** In mcp.json; otherwise added for the running daemon only. */
+  persisted: boolean
+  startup: 'background' | 'eager'
+  source: 'file' | 'manual' | 'model'
+  status: McpStatus
+  /** The policy of tools that have none of their own. */
+  approval: McpApproval
+  allow_external_users: boolean
+  auth: 'none' | 'bearer' | 'headers' | 'oauth'
+  last_error?: { at: number; message: string }
+  last_ready_at?: number
+  next_retry_at?: number
+  diagnostics?: string[]
+  tools: { total: number; hidden: number; needs_review: number }
+  instructions_changed?: boolean
+  usage?: McpUsage
+  settings: Record<string, Json>
+}
+
+export interface McpToolView {
+  /** The name the model calls it by; hidden tools have none. */
+  name?: string
+  remote_name: string
+  title?: string
+  description?: string
+  /** Hints from the server: untrusted, and they grant nothing. */
+  annotations: {
+    read_only?: boolean
+    destructive?: boolean
+    idempotent?: boolean
+    open_world?: boolean
+  }
+  hidden: boolean
+  approval?: McpApproval
+  review?: McpReview
+}
+
+export interface McpServerDetail extends Omit<McpServerView, 'tools'> {
+  instructions?: string
+  /** The reviewed instructions, while they differ from `instructions`. */
+  reviewed_instructions?: string
+  tools: McpToolView[]
+}
+
+export interface McpSnapshot {
+  config_path: string
+  revision: string
+  config_changed_on_disk: boolean
+  running: boolean
+  diagnostics?: string[]
+  servers: McpServerView[]
+}
+
+export interface McpReceipt {
+  revision: string
+  added?: string[]
+  removed?: string[]
+  rebuilt?: string[]
+  connected?: string[]
+  reviewed?: string[]
+  secrets_removed?: string[]
+  failed?: { id: string; message: string }[]
+  warnings?: string[]
+}
+
+export interface McpTestReport {
+  status: McpStatus
+  error?: string
+  instructions?: string
+  tools: McpToolView[]
+}
+
+export interface McpToolDiff {
+  server_id: string
+  tool: string
+  review: McpReview
+  reviewed_at?: number
+  changes: { field: string; before: Json; after: Json }[]
+}
+
+/** A stored secret, by name only: values never leave the daemon. */
+export interface McpSecretView {
+  name: string
+  is_set: boolean
+  updated_at?: number
+  used_by: string[]
+}
+
+/** An mcp.json entry with its `id`. */
+export type McpEntry = { id: string } & Record<string, Json>
+
+export type McpChange =
+  | { op: 'add'; server: McpEntry; persist?: boolean }
+  | { op: 'update'; server: McpEntry }
+  | { op: 'remove'; id: string; keep_credentials?: boolean }
+  | { op: 'set_enabled'; id: string; enabled: boolean }
+  | { op: 'set_tool_visible'; id: string; tool: string; visible: boolean }
+  | { op: 'set_approval'; id: string; tool?: string | null; approval: McpApproval | null }
+  | { op: 'set_external_users'; id: string; allowed: boolean }
+  | { op: 'mark_reviewed'; id: string; tools?: string[] }
+  | { op: 'set_secret'; name: string; value: string | null }
+
+export interface McpSignIn {
+  status: 'connected' | 'authorization_required'
+  server_id: string
+  authorization_url?: string
 }

@@ -5,6 +5,9 @@
 //! setting it again.
 
 use serde_json::{Map, Value, json};
+use std::collections::BTreeSet;
+
+use crate::config::secret_references;
 
 const REDACTED: &str = "[redacted]";
 
@@ -119,7 +122,8 @@ pub(crate) fn redact_args(args: &[String]) -> Vec<String> {
     redacted
 }
 
-/// One mcp.json entry with every secret replaced by `{"redacted": true}`.
+/// One mcp.json entry with every secret replaced by `{"redacted": true}`,
+/// which also names the stored secrets (`${secret:NAME}`) a value uses.
 /// Works on the raw JSON, so an entry that failed to parse is shown safely too.
 pub(crate) fn redact_entry(entry: &Value) -> Value {
     let Value::Object(entry) = entry else {
@@ -131,13 +135,13 @@ pub(crate) fn redact_entry(entry: &Value) -> Value {
             "env" | "environment" | "headers" => match value {
                 Value::Object(values) => Value::Object(
                     values
-                        .keys()
-                        .map(|name| (name.clone(), redacted_value()))
+                        .iter()
+                        .map(|(name, value)| (name.clone(), redacted_secret(value)))
                         .collect(),
                 ),
                 _ => redacted_value(),
             },
-            "bearer_token" => redacted_value(),
+            "bearer_token" => redacted_secret(value),
             "args" => match value {
                 Value::Array(args) if args.iter().all(Value::is_string) => {
                     let args: Vec<String> = args
@@ -164,6 +168,20 @@ pub(crate) fn redact_entry(entry: &Value) -> Value {
 
 fn redacted_value() -> Value {
     json!({ "redacted": true })
+}
+
+/// A redacted value, naming the stored secrets it references: those are
+/// names, not secrets, and say which secret to set to change it.
+fn redacted_secret(value: &Value) -> Value {
+    let mut names = BTreeSet::new();
+    if let Some(text) = value.as_str() {
+        secret_references(text, &mut names);
+    }
+    if names.is_empty() {
+        redacted_value()
+    } else {
+        json!({ "redacted": true, "secrets": names })
+    }
 }
 
 /// A tool call's arguments for an approval card: values under a secret-like
@@ -251,6 +269,21 @@ mod tests {
         }
         assert_eq!(redacted["repo"], "ldclabs/anda-bot");
         assert_eq!(redacted["options"]["draft"], true);
+    }
+
+    #[test]
+    fn redacted_values_name_the_secrets_they_use() {
+        let redacted = redact_entry(&json!({
+            "headers": { "Authorization": "Bearer ${secret:GITHUB_PAT}" },
+            "bearer_token": "${secret:TOKEN}",
+            "env": { "PLAIN": "plain-secret" }
+        }));
+        assert_eq!(
+            redacted["headers"]["Authorization"],
+            json!({ "redacted": true, "secrets": ["GITHUB_PAT"] })
+        );
+        assert_eq!(redacted["bearer_token"]["secrets"], json!(["TOKEN"]));
+        assert_eq!(redacted["env"]["PLAIN"], json!({ "redacted": true }));
     }
 
     #[test]

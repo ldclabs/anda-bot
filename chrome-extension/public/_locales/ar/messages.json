@@ -1783,5 +1783,515 @@
   },
   "chatgptRequestFailed": {
     "message": "فشل طلب ChatGPT ($1)."
+  },
+  "actionAlwaysAllow": {
+    "message": "السماح دائمًا"
+  },
+  "actionDetailServer": {
+    "message": "الخادم"
+  },
+  "actionDetailTool": {
+    "message": "الأداة"
+  },
+  "actionDetailDescription": {
+    "message": "الوصف"
+  },
+  "actionDetailServerHints": {
+    "message": "تلميحات الخادم"
+  },
+  "actionDetailReview": {
+    "message": "المراجعة"
+  },
+  "actionDetailArguments": {
+    "message": "الوسائط"
+  },
+  "mcpToolApprovalTitle": {
+    "message": "تشغيل أداة MCP: $1"
+  },
+  "dashboardMcpDetail": {
+    "message": "الأدوات والاتصالات"
+  },
+  "dashboardMcpCrumb": {
+    "message": "الخوادم"
+  },
+  "mcpTitle": {
+    "message": "MCP"
+  },
+  "mcpSubtitle": {
+    "message": "الأدوات والاتصالات"
+  },
+  "mcpSearchPlaceholder": {
+    "message": "البحث في الخوادم"
+  },
+  "mcpFilter": {
+    "message": "عرض الخوادم"
+  },
+  "mcpFilterAll": {
+    "message": "كل الخوادم"
+  },
+  "mcpFilterAttention": {
+    "message": "تحتاج إلى انتباه"
+  },
+  "mcpFilterReady": {
+    "message": "متصلة"
+  },
+  "mcpFilterDisabled": {
+    "message": "معطلة"
+  },
+  "mcpReload": {
+    "message": "تطبيق mcp.json من القرص"
+  },
+  "mcpReloaded": {
+    "message": "تم تطبيق mcp.json."
+  },
+  "mcpAddServer": {
+    "message": "إضافة خادم"
+  },
+  "mcpEmpty": {
+    "message": "لا توجد خوادم MCP بعد."
+  },
+  "mcpEmptyDetail": {
+    "message": "أضف خادم MCP لتمنح Anda أدوات جديدة: الصق إعدادات من تطبيق آخر، أو عنوان URL بعيدًا، أو أمرًا محليًا."
+  },
+  "mcpNoMatch": {
+    "message": "لا توجد خوادم مطابقة."
+  },
+  "mcpSelectServer": {
+    "message": "اختر خادمًا."
+  },
+  "mcpNotConnected": {
+    "message": "اتصل بخدمة Anda لإدارة خوادم MCP."
+  },
+  "mcpLocal": {
+    "message": "محلي"
+  },
+  "mcpRemote": {
+    "message": "بعيد"
+  },
+  "mcpToolCount": {
+    "message": "$1 أداة"
+  },
+  "mcpHiddenCount": {
+    "message": "$1 مخفية"
+  },
+  "mcpNeedsReviewCount": {
+    "message": "$1 للمراجعة"
+  },
+  "mcpStatusDisabled": {
+    "message": "معطل"
+  },
+  "mcpStatusInvalid": {
+    "message": "خطأ في الإعدادات"
+  },
+  "mcpStatusConnecting": {
+    "message": "جارٍ الاتصال"
+  },
+  "mcpStatusReady": {
+    "message": "متصل"
+  },
+  "mcpStatusNeedsAuth": {
+    "message": "يلزم تسجيل الدخول"
+  },
+  "mcpStatusFailed": {
+    "message": "فشل الاتصال"
+  },
+  "mcpStatusDisconnected": {
+    "message": "غير متصل"
+  },
+  "mcpStatusUnknown": {
+    "message": "غير معروف"
+  },
+  "mcpSourceFile": {
+    "message": "من mcp.json"
+  },
+  "mcpSourceManual": {
+    "message": "أضفته أنت"
+  },
+  "mcpSourceModel": {
+    "message": "أضافه Anda"
+  },
+  "mcpSourceRuntime": {
+    "message": "لهذا التشغيل من الخدمة فقط"
+  },
+  "mcpReconnect": {
+    "message": "إعادة الاتصال"
+  },
+  "mcpReconnected": {
+    "message": "تمت إعادة اتصال $1."
+  },
+  "mcpSignIn": {
+    "message": "تسجيل الدخول"
+  },
+  "mcpReauthorize": {
+    "message": "تسجيل الدخول مجددًا"
+  },
+  "mcpSignOut": {
+    "message": "تسجيل الخروج"
+  },
+  "mcpSignedIn": {
+    "message": "تم تسجيل الدخول إلى $1."
+  },
+  "mcpSignedOut": {
+    "message": "تم تسجيل الخروج من $1."
+  },
+  "mcpSignInWaiting": {
+    "message": "أكمل تسجيل الدخول إلى $1 في متصفحك. ستتحدث هذه الصفحة عند الانتهاء."
+  },
+  "mcpOpenSignIn": {
+    "message": "فتح صفحة تسجيل الدخول"
+  },
+  "mcpEnable": {
+    "message": "تمكين"
+  },
+  "mcpDisable": {
+    "message": "تعطيل"
+  },
+  "mcpEnabled": {
+    "message": "تم تمكين $1."
+  },
+  "mcpDisabledNotice": {
+    "message": "تم تعطيل $1، مع الاحتفاظ بإعداداته."
+  },
+  "mcpRemove": {
+    "message": "حذف"
+  },
+  "mcpRemoveTitle": {
+    "message": "حذف $1؟"
+  },
+  "mcpRemoveConfirm": {
+    "message": "سيُحذف الخادم من mcp.json مع تسجيل دخوله المحفوظ والأسرار التي يستخدمها وحده."
+  },
+  "mcpRemoved": {
+    "message": "تم حذف $1."
+  },
+  "mcpSecretsRemoved": {
+    "message": "الأسرار المحذوفة: $1."
+  },
+  "mcpApprovalNotice": {
+    "message": "أصبحت أدوات MCP تطلب الإذن قبل تشغيلها، إلا إذا كانت للقراءة فقط ولم تتغير منذ مراجعتك لها، أو كانت للمحادثة صلاحية وصول كاملة. لتشغيل أدوات خادم دون سؤال، افتح تبويب الأدوات الخاص به واختر السماح دائمًا."
+  },
+  "mcpDismiss": {
+    "message": "إغلاق"
+  },
+  "mcpChangedOnDisk": {
+    "message": "تم تعديل mcp.json خارج Anda. طبّقه قبل إجراء تغييرات هنا."
+  },
+  "mcpApplyFile": {
+    "message": "تطبيق"
+  },
+  "mcpTabOverview": {
+    "message": "نظرة عامة"
+  },
+  "mcpTabTools": {
+    "message": "الأدوات"
+  },
+  "mcpTabAccess": {
+    "message": "الوصول"
+  },
+  "mcpTabConfig": {
+    "message": "الإعدادات"
+  },
+  "mcpLastError": {
+    "message": "آخر خطأ"
+  },
+  "mcpNextRetry": {
+    "message": "إعادة المحاولة في $1"
+  },
+  "mcpStatus": {
+    "message": "الحالة"
+  },
+  "mcpLastReady": {
+    "message": "آخر اتصال: $1"
+  },
+  "mcpCommand": {
+    "message": "الأمر"
+  },
+  "mcpEndpoint": {
+    "message": "URL"
+  },
+  "mcpSource": {
+    "message": "المصدر"
+  },
+  "mcpStartupEager": {
+    "message": "يبدأ مع الخدمة"
+  },
+  "mcpStartupBackground": {
+    "message": "يتصل في الخلفية"
+  },
+  "mcpUsage": {
+    "message": "الاستخدام"
+  },
+  "mcpUsageCalls": {
+    "message": "$1 استدعاء، فشل منها $2"
+  },
+  "mcpUsageNone": {
+    "message": "لم يُستخدم بعد"
+  },
+  "mcpLastUsed": {
+    "message": "آخر استخدام: $1"
+  },
+  "mcpDefaultApproval": {
+    "message": "الافتراضي للأدوات"
+  },
+  "mcpServerDescription": {
+    "message": "الوصف"
+  },
+  "mcpInstructions": {
+    "message": "تعليمات للنموذج"
+  },
+  "mcpFromServer": {
+    "message": "من الخادم، غير موثّقة"
+  },
+  "mcpShowInstructions": {
+    "message": "عرض التعليمات"
+  },
+  "mcpReviewedVersion": {
+    "message": "المراجَعة"
+  },
+  "mcpCurrentVersion": {
+    "message": "الحالية"
+  },
+  "mcpNone": {
+    "message": "(لا شيء)"
+  },
+  "mcpApprovalAuto": {
+    "message": "تلقائي"
+  },
+  "mcpApprovalAsk": {
+    "message": "السؤال في كل مرة"
+  },
+  "mcpApprovalAllow": {
+    "message": "السماح دائمًا"
+  },
+  "mcpApprovalInherit": {
+    "message": "افتراضي الخادم ($1)"
+  },
+  "mcpApprovalAutoDetail": {
+    "message": "يسأل ما لم تكن الأداة للقراءة فقط ومراجَعة، أو كانت للمحادثة صلاحية وصول كاملة."
+  },
+  "mcpApprovalAskDetail": {
+    "message": "يسأل قبل كل استدعاء، حتى مع صلاحية الوصول الكاملة."
+  },
+  "mcpApprovalAllowDetail": {
+    "message": "يعمل دون سؤال ما دامت الأداة لم تتغير منذ المراجعة."
+  },
+  "mcpApprovalHelp": {
+    "message": "إعداد الأداة نفسها مقدَّم على افتراضي الخادم. الأداة التي تغيرت منذ مراجعتك تسأل من جديد."
+  },
+  "mcpAcceptAll": {
+    "message": "تعليم الكل كمُراجَع"
+  },
+  "mcpAccept": {
+    "message": "تعليم كمُراجَع"
+  },
+  "mcpReviewed": {
+    "message": "تم التعليم كمُراجَع."
+  },
+  "mcpReviewNew": {
+    "message": "جديدة"
+  },
+  "mcpReviewChanged": {
+    "message": "تغيّرت"
+  },
+  "mcpShowChanges": {
+    "message": "عرض التغييرات"
+  },
+  "mcpHideChanges": {
+    "message": "إخفاء التغييرات"
+  },
+  "mcpHintReadOnly": {
+    "message": "للقراءة فقط"
+  },
+  "mcpHintDestructive": {
+    "message": "مُتلِفة"
+  },
+  "mcpHintIdempotent": {
+    "message": "متكررة النتيجة"
+  },
+  "mcpHintOpenWorld": {
+    "message": "تصل إلى الخارج"
+  },
+  "mcpToolApproval": {
+    "message": "متى يُسأل قبل $1"
+  },
+  "mcpHideTool": {
+    "message": "إخفاء عن Anda"
+  },
+  "mcpShowTool": {
+    "message": "إظهار لـ Anda"
+  },
+  "mcpHiddenTools": {
+    "message": "الأدوات المخفية"
+  },
+  "mcpToolHidden": {
+    "message": "تم إخفاء $1 عن Anda."
+  },
+  "mcpToolShown": {
+    "message": "أصبحت $1 متاحة لـ Anda مجددًا."
+  },
+  "mcpToolsWhenConnected": {
+    "message": "تظهر الأدوات بعد اتصال الخادم."
+  },
+  "mcpNoTools": {
+    "message": "لا يقدم هذا الخادم أي أدوات."
+  },
+  "mcpPolicySaved": {
+    "message": "تم الحفظ."
+  },
+  "mcpRuntimeReadOnly": {
+    "message": "أُضيف هذا الخادم للخدمة العاملة فقط، لذلك لا يمكن حفظ إعداداته. أضفه إلى mcp.json للاحتفاظ بها."
+  },
+  "mcpSignInTitle": {
+    "message": "تسجيل الدخول"
+  },
+  "mcpOAuthNeeded": {
+    "message": "يحتاج هذا الخادم إلى تسجيل دخولك."
+  },
+  "mcpOAuthSignedIn": {
+    "message": "تم تسجيل الدخول عبر OAuth."
+  },
+  "mcpAuthNone": {
+    "message": "لا يوجد تسجيل دخول مُعَد."
+  },
+  "mcpAuthHeaders": {
+    "message": "يسجل الدخول بالترويسات الموجودة في إعداداته."
+  },
+  "mcpServerSecrets": {
+    "message": "الأسرار"
+  },
+  "mcpNoServerSecrets": {
+    "message": "لا يستخدم هذا الخادم أي أسرار محفوظة."
+  },
+  "mcpExternalUsers": {
+    "message": "السماح لمستخدمي المراسلة الخارجيين باستخدام هذا الخادم"
+  },
+  "mcpExternalUsersHelp": {
+    "message": "يمكن للمهام التي تُشغَّل لأشخاص تحادثهم عبر قنوات المراسلة استدعاء أدواته التي لا تحتاج إلى موافقة. ولا يمكنهم أبدًا الموافقة على استدعاء نيابةً عنك."
+  },
+  "mcpConfigHelp": {
+    "message": "مُدخل الخادم في $1 مع إخفاء الأسرار. عدّل الملف يدويًا ثم طبّقه."
+  },
+  "mcpSecrets": {
+    "message": "الأسرار"
+  },
+  "mcpSecretsDetail": {
+    "message": "قيم يشير إليها mcp.json بالصيغة ${secret:NAME}"
+  },
+  "mcpSecretsHelp": {
+    "message": "تُبقي الأسرار الرموز المميزة خارج mcp.json: أشر إلى السر بالصيغة ${secret:NAME} في ترويسة أو متغير بيئة أو عنوان URL. تُحفظ القيم على هذا الحاسوب ولا تُعرض مرة أخرى."
+  },
+  "mcpNoSecrets": {
+    "message": "لا توجد أسرار بعد."
+  },
+  "mcpNewSecret": {
+    "message": "سر جديد"
+  },
+  "mcpSecretName": {
+    "message": "اسم السر"
+  },
+  "mcpSecretValue": {
+    "message": "القيمة"
+  },
+  "mcpSecretValueFor": {
+    "message": "قيمة $1"
+  },
+  "mcpSecretReplace": {
+    "message": "قيمة جديدة"
+  },
+  "mcpSecretSet": {
+    "message": "عُيّن في $1"
+  },
+  "mcpSecretNotSet": {
+    "message": "غير معيّن"
+  },
+  "mcpSecretUsedBy": {
+    "message": "يستخدمه: $1"
+  },
+  "mcpSecretUnused": {
+    "message": "غير مستخدم"
+  },
+  "mcpSecretDelete": {
+    "message": "حذف السر"
+  },
+  "mcpSecretSaved": {
+    "message": "تم حفظ السر $1."
+  },
+  "mcpSecretDeleted": {
+    "message": "تم حذف السر $1."
+  },
+  "mcpSecretReferenceHelp": {
+    "message": "تتكون الأسماء من أحرف وأرقام و_."
+  },
+  "mcpAddDescription": {
+    "message": "يختبر Anda الخادم قبل إضافته. يُشغَّل الأمر المحلي على هذا الحاسوب، فتحقق منه أولًا."
+  },
+  "mcpAddRemote": {
+    "message": "عنوان URL بعيد"
+  },
+  "mcpAddLocal": {
+    "message": "أمر محلي"
+  },
+  "mcpAddJson": {
+    "message": "لصق JSON"
+  },
+  "mcpHeaders": {
+    "message": "الترويسات، سطر لكل Name: value"
+  },
+  "mcpEnvironment": {
+    "message": "البيئة، سطر لكل KEY=value"
+  },
+  "mcpPasteJson": {
+    "message": "إعدادات من تطبيق آخر"
+  },
+  "mcpServerId": {
+    "message": "الاسم"
+  },
+  "mcpIdForEntry": {
+    "message": "الاسم، لمُدخل واحد"
+  },
+  "mcpStoreAsSecrets": {
+    "message": "حفظ الرموز المميزة كأسرار"
+  },
+  "mcpStoreAsSecretsHelp": {
+    "message": "تذهب قيم الترويسات والبيئة إلى مخزن الأسرار، ولا يحتفظ mcp.json إلا بإشارة إليها."
+  },
+  "mcpJsonInvalid": {
+    "message": "هذا ليس JSON صالحًا."
+  },
+  "mcpJsonNoServers": {
+    "message": "لم يُعثر على خوادم. الصق كائن mcpServers، أو مُدخلًا واحدًا يحتوي command أو url."
+  },
+  "mcpJsonNeedsId": {
+    "message": "أعطِ هذا المُدخل اسمًا."
+  },
+  "mcpIdTaken": {
+    "message": "يوجد خادم باسم $1 بالفعل."
+  },
+  "mcpLocalWarning": {
+    "message": "سيُشغَّل هذا الأمر على هذا الحاسوب."
+  },
+  "mcpValueSecret": {
+    "message": "السر $1"
+  },
+  "mcpValuePlain": {
+    "message": "محفوظ في mcp.json"
+  },
+  "mcpTestConnection": {
+    "message": "اختبار"
+  },
+  "mcpTestReady": {
+    "message": "متصل · $1 أداة"
+  },
+  "mcpTestNeedsAuth": {
+    "message": "يلزم تسجيل الدخول"
+  },
+  "mcpTestFailed": {
+    "message": "فشل"
+  },
+  "mcpAdd": {
+    "message": "إضافة"
+  },
+  "mcpAdded": {
+    "message": "تمت إضافة $1."
   }
 }

@@ -1,6 +1,8 @@
 //! The owner's MCP API: WebSocket methods `mcp_*` for the apps, and
 //! `POST /daemon/mcp/v1` with `{method, params}` for the CLI. Both decode into
 //! one [`McpRequest`] and reply with the shared `ToolResponse` envelope.
+//! Parameters are one object; the apps, which send every RPC's parameters as
+//! a list, may wrap it in a one-element list.
 //!
 //! It is a dedicated RPC rather than a registered tool because the engine
 //! cannot hide a tool from the model: removing a server or changing what it
@@ -23,7 +25,7 @@ use std::sync::Arc;
 
 use super::{McpChange, McpError, McpManager, manager::SignIn, state::McpSource};
 use crate::{
-    config::{McpApproval, McpServerSettings, McpSettings},
+    config::{McpApproval, McpSecretValues, McpServerSettings, McpSettings},
     engine::memory_api::error,
     runtime_admission::Admission,
     util::tool_response::ToolResponse,
@@ -57,7 +59,7 @@ enum McpRequest {
         id: String,
         tool: String,
     },
-    Test(McpServerSettings),
+    Test(McpServerSettings, McpSecretValues),
     Apply {
         change: McpChange,
         expected_revision: Option<String>,
@@ -66,6 +68,7 @@ enum McpRequest {
     SignIn(SignIn),
     SignOut(String),
     Reload,
+    Secrets,
 }
 
 #[derive(Deserialize)]
@@ -92,6 +95,10 @@ struct OptionalIdParams {
 #[serde(deny_unknown_fields)]
 struct TestParams {
     server: Value,
+    /// Values for secrets the server references that are not stored yet,
+    /// used for this test only.
+    #[serde(default)]
+    secrets: McpSecretValues,
 }
 
 #[derive(Deserialize)]
@@ -145,6 +152,11 @@ enum ChangeParams {
         #[serde(default)]
         tools: Vec<String>,
     },
+    /// `value: null` removes the secret.
+    SetSecret {
+        name: String,
+        value: Option<String>,
+    },
 }
 
 fn default_true() -> bool {
@@ -183,9 +195,10 @@ impl McpRequest {
                 let ToolParams { id, tool } = params_of(method, params)?;
                 Self::ToolDiff { id, tool }
             }
-            "mcp_test" => Self::Test(parse_server(
-                params_of::<TestParams>(method, params)?.server,
-            )?),
+            "mcp_test" => {
+                let TestParams { server, secrets } = params_of(method, params)?;
+                Self::Test(parse_server(server)?, secrets)
+            }
             "mcp_apply" => {
                 let ApplyParams {
                     change,
@@ -221,6 +234,7 @@ impl McpRequest {
                     ChangeParams::MarkReviewed { id, tools } => {
                         McpChange::MarkReviewed { id, tools }
                     }
+                    ChangeParams::SetSecret { name, value } => McpChange::SetSecret { name, value },
                 };
                 Self::Apply {
                     change,
@@ -241,6 +255,10 @@ impl McpRequest {
                 no_params(method, &params)?;
                 Self::Reload
             }
+            "mcp_secrets" => {
+                no_params(method, &params)?;
+                Self::Secrets
+            }
             _ => {
                 return Err(error(
                     "unsupported_capability",
@@ -253,7 +271,11 @@ impl McpRequest {
 
 /// Whether `method` changes anything, so that it waits for admission.
 pub(crate) fn is_write_method(method: &str) -> bool {
-    method.starts_with("mcp_") && !matches!(method, "mcp_list" | "mcp_get" | "mcp_tool_diff")
+    method.starts_with("mcp_")
+        && !matches!(
+            method,
+            "mcp_list" | "mcp_get" | "mcp_tool_diff" | "mcp_secrets"
+        )
 }
 
 /// A server parameter: an mcp.json entry, with its `id` alongside.
@@ -287,6 +309,11 @@ impl McpApiState {
                 error("payload_too_large", "MCP requests are limited to 64 KiB."),
             );
         }
+        // The apps' RPC transport sends parameters as a list.
+        let params = match params {
+            Value::Array(mut items) if items.len() == 1 && items[0].is_object() => items.remove(0),
+            params => params,
+        };
         match McpRequest::parse(method, params) {
             Ok(request) => self.execute(request).await,
             Err(error) => (StatusCode::BAD_REQUEST, error),
@@ -299,7 +326,7 @@ impl McpApiState {
             McpRequest::List => ok(manager.snapshot().await),
             McpRequest::Get(id) => respond(manager.server(&id).await),
             McpRequest::ToolDiff { id, tool } => respond(manager.tool_diff(&id, &tool)),
-            McpRequest::Test(server) => respond(manager.test(server).await),
+            McpRequest::Test(server, secrets) => respond(manager.test(server, secrets).await),
             McpRequest::Apply {
                 change,
                 expected_revision,
@@ -318,6 +345,7 @@ impl McpApiState {
                     .map(|()| json!({ "signed_out": id })),
             ),
             McpRequest::Reload => respond(manager.reload().await),
+            McpRequest::Secrets => ok(manager.secrets()),
         }
     }
 }
@@ -549,10 +577,16 @@ mod tests {
                 "invalid_request",
             ),
             (
-                "mcp_secrets",
+                "mcp_import_scan",
                 json!({}),
                 StatusCode::BAD_REQUEST,
                 "unsupported_capability",
+            ),
+            (
+                "mcp_apply",
+                json!({ "change": { "op": "set_secret", "name": "bad-name", "value": "x" } }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
             ),
             (
                 "mcp_tool_diff",
@@ -645,9 +679,51 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn secrets_are_set_and_listed_by_name_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (owner, other) = (Ed25519Key::new([101; 32]), Ed25519Key::new([102; 32]));
+        let state = state(dir.path(), &owner, &other).await;
+        let owner = || headers(&owner);
+        // The apps wrap the parameters in a list.
+        let add = json!([{ "change": { "op": "add", "server": {
+            "id": "docs", "type": "http", "url": "http://127.0.0.1:9/mcp", "enabled": false,
+            "headers": { "Authorization": "Bearer ${secret:DOCS_TOKEN}" }
+        } } }]);
+        assert_eq!(
+            call(&state, owner(), "mcp_apply", add).await.0,
+            StatusCode::OK
+        );
+        let (_, body) = call(&state, owner(), "mcp_secrets", json!([])).await;
+        assert_eq!(
+            body["result"],
+            json!([{ "name": "DOCS_TOKEN", "is_set": false, "used_by": ["docs"] }])
+        );
+
+        let set = json!({ "change": { "op": "set_secret", "name": "DOCS_TOKEN", "value": "tok-secret" } });
+        let (status, body) = call(&state, owner(), "mcp_apply", set).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (_, body) = call(&state, owner(), "mcp_secrets", json!({})).await;
+        assert_eq!(body["result"][0]["is_set"], true);
+        assert!(body["result"][0]["updated_at"].is_u64());
+        let (_, detail) = call(&state, owner(), "mcp_get", json!({ "id": "docs" })).await;
+        assert_eq!(
+            detail["result"]["settings"]["headers"]["Authorization"]["secrets"],
+            json!(["DOCS_TOKEN"])
+        );
+        assert!(!format!("{body}{detail}").contains("tok-secret"));
+
+        // Removing the server takes the secret only it used.
+        let remove = json!({ "change": { "op": "remove", "id": "docs" } });
+        let (_, body) = call(&state, owner(), "mcp_apply", remove).await;
+        assert_eq!(body["result"]["secrets_removed"], json!(["DOCS_TOKEN"]));
+        let (_, body) = call(&state, owner(), "mcp_secrets", json!({})).await;
+        assert_eq!(body["result"], json!([]));
+    }
+
     #[test]
-    fn only_list_get_and_diffs_are_reads() {
-        for method in ["mcp_list", "mcp_get", "mcp_tool_diff"] {
+    fn only_reads_skip_admission() {
+        for method in ["mcp_list", "mcp_get", "mcp_tool_diff", "mcp_secrets"] {
             assert!(!is_write_method(method));
         }
         for method in [

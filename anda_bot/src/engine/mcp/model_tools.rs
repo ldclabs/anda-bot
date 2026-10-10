@@ -800,6 +800,7 @@ mod tests {
                                 approve: Some(true),
                                 choice_id: None,
                                 choice_text: None,
+                                remember: None,
                             },
                         )
                         .await;
