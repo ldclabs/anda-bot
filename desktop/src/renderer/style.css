@@ -1300,96 +1300,306 @@ button.primary {
   border-radius: 7px;
 }
 
-/* Automations */
+/* Automations: the list beside the selected automation, as on the MCP page. */
 .automation-page {
-  max-width: 950px;
-  margin: auto;
-  padding: 32px;
+  display: grid;
+  grid-template-columns: minmax(210px, 264px) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
 }
-.page-heading {
+.automation-list {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  border-inline-end: 1px solid var(--desk-border);
+  background: color-mix(in srgb, var(--desk-side) 55%, var(--desk-bg));
+}
+.automation-list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 15px;
-  margin-bottom: 25px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--desk-border);
+}
+.automation-list-head h1 {
+  font-size: 14px;
+  font-weight: 600;
 }
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
 }
-.jobs-list {
+.automation-list-body {
   display: grid;
-  gap: 13px;
+  align-content: start;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 12px;
 }
-.event-automations {
-  margin-top: 36px;
-}
-.event-automations .page-heading {
-  align-items: flex-start;
-  margin-bottom: 15px;
-}
-.event-automations .page-heading p {
-  font-size: 12px;
+.automation-list-body > h2 {
+  padding: 12px 8px 5px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--desk-muted);
-  margin-top: 4px;
 }
-.job-card {
-  border: 1px solid var(--desk-border);
-  border-radius: 10px;
-  background: var(--desk-input);
+.automation-list-body > p {
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--desk-muted);
 }
-.job-main {
+.automation-item {
   display: flex;
-  text-align: start;
   align-items: flex-start;
-  gap: 15px;
-  padding: 20px;
+  gap: 9px;
   width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  text-align: start;
 }
-.job-main > svg {
-  color: var(--desk-muted);
-  margin-top: 3px;
+.automation-item > svg {
   flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--desk-icon);
 }
-.job-main h2 {
-  font-size: 14px;
+.automation-item > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.automation-item strong,
+.automation-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.automation-item strong {
+  font-size: 13px;
   font-weight: 550;
 }
-.job-main p {
-  font-size: 12px;
-  color: var(--desk-muted);
-  max-height: 3em;
-  overflow: hidden;
-  margin: 6px 0 9px;
-}
-.job-main span {
-  font:
-    10px ui-monospace,
-    monospace;
+.automation-item small {
+  font-size: 11px;
   color: var(--desk-muted);
 }
-.job-footer {
+.automation-item:hover {
+  background: var(--desk-hover);
+}
+.automation-item.active {
+  border-color: var(--desk-border);
+  background: var(--desk-input);
+  box-shadow: 0 1px 2px #0000000a;
+}
+.automation-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--desk-faint);
+}
+.automation-dot[data-tone='success'] {
+  background: var(--desk-success);
+}
+.automation-dot[data-tone='warning'] {
+  background: var(--desk-warning);
+}
+.automation-dot[data-tone='danger'] {
+  background: var(--desk-danger);
+}
+.automation-add {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 9px 16px;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px dashed var(--desk-border-strong);
+  border-radius: 8px;
+  color: var(--desk-muted);
+  font-size: 12px;
+}
+.automation-add:hover {
+  color: var(--desk-text);
+}
+.automation-list-foot {
+  padding: 8px;
   border-top: 1px solid var(--desk-border);
-  font-size: 10px;
+}
+.automation-list-foot button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--desk-muted);
+  font-size: 12px;
+}
+.automation-list-foot button:hover {
+  background: var(--desk-hover);
+  color: var(--desk-text);
+}
+.automation-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.automation-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-height: 56px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--desk-border);
+}
+.automation-detail-head > div:first-child {
+  min-width: 0;
+}
+.automation-detail-head h2 {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.automation-detail-head p {
+  margin-top: 2px;
+  font-size: 12px;
   color: var(--desk-muted);
 }
-.job-footer > span {
+.automation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.automation-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+.automation-detail-body {
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px;
+  container-type: inline-size;
+}
+/* The prompt and the runs share the pane once it is wide enough. */
+.automation-columns {
+  display: grid;
+  gap: 24px;
+}
+@container (min-width: 760px) {
+  .automation-columns {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 32px;
+  }
+}
+.automation-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.automation-facts > div {
+  padding: 10px 12px;
+  border: 1px solid var(--desk-border);
+  border-radius: 8px;
+  background: var(--desk-input);
+}
+.automation-facts dt {
+  font-size: 11px;
+  color: var(--desk-muted);
+}
+.automation-facts dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.automation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: -8px 0 18px;
+  font-size: 11px;
+  color: var(--desk-muted);
+}
+.automation-section + .automation-section,
+.job-error + .automation-section,
+.job-warning + .automation-section {
+  margin-top: 20px;
+}
+.automation-section h3 {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.automation-text {
+  max-height: 460px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--desk-border);
+  border-radius: 8px;
+  background: var(--desk-input);
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.automation-section code {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  color: var(--desk-muted);
+}
+.automation-runs > p {
+  font-size: 12px;
+  color: var(--desk-muted);
+}
+.automation-runs article {
+  padding: 10px 0;
+  border-top: 1px solid var(--desk-border);
+}
+.automation-runs time {
+  font-size: 11px;
+  color: var(--desk-muted);
+}
+.automation-runs pre {
+  max-height: 160px;
+  overflow: auto;
+  margin-top: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.automation-runs pre.failed {
+  color: var(--desk-danger);
 }
 .job-error {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--desk-danger) 7%, transparent);
   color: var(--desk-danger);
   font-size: 12px;
-  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .job-warning {
+  margin-bottom: 12px;
   color: var(--desk-warning);
   font-size: 12px;
-  padding: 0 10px 10px;
 }
 .empty-automations {
   display: grid;
@@ -1401,13 +1611,19 @@ button.primary {
 .empty-automations h2 {
   font-size: 16px;
 }
-.empty-automations button {
-  text-decoration: underline;
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
 }
 .automation-editor {
   width: 520px;
   max-height: 78vh;
   overflow-y: auto;
+}
+.automation-editor .job-error {
+  margin: 0;
 }
 .automation-editor label {
   display: grid;
@@ -1419,22 +1635,6 @@ button.primary {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px;
-}
-.run-history {
-  padding-top: 25px;
-}
-.run-history article {
-  padding: 15px 0;
-  border-bottom: 1px solid var(--desk-border);
-}
-.run-history time {
-  font-size: 11px;
-  color: var(--desk-muted);
-}
-.run-history pre {
-  white-space: pre-wrap;
-  font-size: 12px;
-  margin-top: 9px;
 }
 
 /* Workbench panel */

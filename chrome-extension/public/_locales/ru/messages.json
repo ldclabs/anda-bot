@@ -1016,9 +1016,6 @@
   "memoryService": {
     "message": "Сервис памяти"
   },
-  "memoryOpenInbox": {
-    "message": "Открыть входящие"
-  },
   "memoryTry": {
     "message": "Попробуйте сохранить предпочтение"
   },
@@ -1702,9 +1699,6 @@
   },
   "memoryEntitySearchLabel": {
     "message": "Найти человека, проект или тему"
-  },
-  "memoryEntitySearchPlaceholder": {
-    "message": "Миграция платежей"
   },
   "memoryEntitySearch": {
     "message": "Найти"

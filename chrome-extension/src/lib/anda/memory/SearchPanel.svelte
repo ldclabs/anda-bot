@@ -62,7 +62,7 @@
   })
 </script>
 
-<section class="my-7 border-b border-border pb-6" aria-label={getMessage('memorySearch')}>
+<section class="mb-2 border-b border-border pb-6" aria-label={getMessage('memorySearch')}>
   <form onsubmit={search}>
     <label for="memory-search" class="text-sm font-semibold">{getMessage('memorySearch')}</label>
     <div class="mt-3 flex gap-2">

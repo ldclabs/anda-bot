@@ -1016,9 +1016,6 @@
   "memoryService": {
     "message": "خدمة الذاكرة"
   },
-  "memoryOpenInbox": {
-    "message": "فتح الوارد"
-  },
   "memoryTry": {
     "message": "جرّب تفضيلاً"
   },
@@ -1702,9 +1699,6 @@
   },
   "memoryEntitySearchLabel": {
     "message": "ابحث عن شخص أو مشروع أو موضوع"
-  },
-  "memoryEntitySearchPlaceholder": {
-    "message": "ترحيل المدفوعات"
   },
   "memoryEntitySearch": {
     "message": "بحث"

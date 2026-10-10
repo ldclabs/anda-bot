@@ -1016,9 +1016,6 @@
   "memoryService": {
     "message": "Service de mémoire"
   },
-  "memoryOpenInbox": {
-    "message": "Ouvrir la boîte de réception"
-  },
   "memoryTry": {
     "message": "Essayez une préférence"
   },
@@ -1702,9 +1699,6 @@
   },
   "memoryEntitySearchLabel": {
     "message": "Trouver une personne, un projet ou un sujet"
-  },
-  "memoryEntitySearchPlaceholder": {
-    "message": "Migration des paiements"
   },
   "memoryEntitySearch": {
     "message": "Trouver"

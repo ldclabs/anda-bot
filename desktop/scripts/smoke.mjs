@@ -796,14 +796,20 @@ try {
   await page.waitForTimeout(500)
   await page.locator('.sidebar-navigation').getByText('Automations', { exact: true }).click()
   await page.getByRole('heading', { name: 'Automations', exact: true }).waitFor()
-  await page.getByRole('heading', { name: 'Long automation', exact: true }).click()
+  // The first automation opens in the detail pane, which reads the full job:
+  // the list only carries a preview of the prompt.
+  await page.getByRole('heading', { name: 'Long automation', exact: true }).waitFor()
+  await page
+    .locator('.automation-detail')
+    .getByRole('button', { name: 'Edit', exact: true })
+    .click()
   const automationEditor = page.getByRole('dialog')
   await automationEditor.waitFor()
   assert.equal(await automationEditor.locator('textarea').inputValue(), automation.job)
+  assert.equal(automationReads, 1)
   await automationEditor.getByLabel('Name', { exact: true }).fill('Renamed automation')
   await automationEditor.getByRole('button', { name: 'Save', exact: true }).click()
   await automationEditor.waitFor({ state: 'hidden' })
-  assert.equal(automationReads, 1)
   assert.equal(updatedAutomation.name, 'Renamed automation')
   assert.equal(updatedAutomation.job, automation.job)
   await app.evaluate(({ dialog }, path) => {

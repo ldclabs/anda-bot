@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { LoaderCircle } from '@lucide/svelte'
+  import { LoaderCircle, Search } from '@lucide/svelte'
   import { getMessage } from '$lib/i18n'
   import Modal from '../Modal.svelte'
   import { badgeClass, buttonClass, inputClass } from '../ui'
@@ -12,9 +12,7 @@
     onopen
   }: {
     api: MemoryApi
-    /** A null id opens the page about the caller; `$self` and `$system` the
-     * Brain's own actors. */
-    onopen: (id: string | null, label: string) => void
+    onopen: (id: string, label: string) => void
   } = $props()
 
   let query = $state('')
@@ -52,53 +50,34 @@
   })
 </script>
 
-<section class="my-7 border-b border-border pb-6" aria-labelledby="memory-entities">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <h2 id="memory-entities" class="text-sm font-semibold">{getMessage('memoryEntities')}</h2>
-    <div class="flex flex-wrap gap-2">
-      <button
-        class={buttonClass('outline', 'sm')}
-        onclick={() => onopen(null, getMessage('memoryYou'))}>{getMessage('memoryAboutYou')}</button
-      >
-      <button
-        class={buttonClass('outline', 'sm')}
-        onclick={() => onopen('$self', getMessage('memoryBrainSelf'))}
-        >{getMessage('memoryBrainSelf')}</button
-      >
-      <button
-        class={buttonClass('outline', 'sm')}
-        onclick={() => onopen('$system', getMessage('memoryBrainSystem'))}
-        >{getMessage('memoryBrainSystem')}</button
-      >
-    </div>
-  </div>
-  <form class="mt-4" onsubmit={search}>
-    <label for="memory-entity-search" class="text-xs text-muted-foreground"
-      >{getMessage('memoryEntitySearchLabel')}</label
-    >
-    <div class="mt-2 flex gap-2">
+<form class="mt-2 grid gap-1.5 px-0.5" onsubmit={search}>
+  <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+    <div class="relative min-w-0">
+      <Search
+        class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+      />
       <input
-        id="memory-entity-search"
-        class={inputClass('min-w-0 flex-1')}
+        class={inputClass('h-8 pl-8 text-xs')}
         bind:value={query}
         required
         maxlength="200"
-        placeholder={getMessage('memoryEntitySearchPlaceholder')}
+        placeholder={getMessage('memoryEntitySearchLabel')}
+        aria-label={getMessage('memoryEntitySearchLabel')}
       />
-      <button class={buttonClass('outline', 'sm')} disabled={busy || !query.trim()}
-        >{getMessage('memoryEntitySearch')}</button
-      >
     </div>
-    <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-      {getMessage('memoryEntitySearchHint')}
-    </p>
-    {#if !open && (busy || results || error)}<button
-        type="button"
-        class={buttonClass('ghost', 'xs', 'mt-2')}
-        onclick={() => (open = true)}>{getMessage('memoryShowResults')}</button
-      >{/if}
-  </form>
-</section>
+    <button class={buttonClass('outline', 'sm', 'h-8')} disabled={busy || !query.trim()}
+      >{getMessage('memoryEntitySearch')}</button
+    >
+  </div>
+  <p class="px-0.5 text-[11px] leading-relaxed text-muted-foreground">
+    {getMessage('memoryEntitySearchHint')}
+  </p>
+  {#if !open && (busy || results || error)}<button
+      type="button"
+      class={buttonClass('ghost', 'xs', 'justify-self-start')}
+      onclick={() => (open = true)}>{getMessage('memoryShowResults')}</button
+    >{/if}
+</form>
 
 <Modal bind:open title={getMessage('memoryEntities')} description={searched}>
   <div aria-live="polite">

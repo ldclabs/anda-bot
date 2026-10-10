@@ -1016,9 +1016,6 @@
   "memoryService": {
     "message": "记忆服务"
   },
-  "memoryOpenInbox": {
-    "message": "查看待确认事项"
-  },
   "memoryTry": {
     "message": "从一条偏好开始"
   },
@@ -1702,9 +1699,6 @@
   },
   "memoryEntitySearchLabel": {
     "message": "查找人物、项目或主题"
-  },
-  "memoryEntitySearchPlaceholder": {
-    "message": "支付迁移"
   },
   "memoryEntitySearch": {
     "message": "查找"

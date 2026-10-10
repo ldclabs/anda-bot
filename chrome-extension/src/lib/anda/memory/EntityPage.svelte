@@ -61,6 +61,10 @@
   const groups = $derived(groupClaims(claims))
   const name = $derived(entity ? entityName(entity) : '')
   const current = $derived(claims.filter(isCurrent).length)
+  /** Whether the graph draws anything: a claim that links to another entity. */
+  const graphed = $derived(
+    !!entity && claims.some((claim) => claim.other.id && claim.other.id !== entity?.id)
+  )
 
   async function load(next: string | null) {
     controller?.abort()
@@ -133,9 +137,9 @@
   </RecordCard>
 {/snippet}
 
-<section class="mx-auto max-w-3xl" aria-busy={busy} aria-label={name || getMessage('memoryTitle')}>
+<section class="mx-auto max-w-6xl" aria-busy={busy} aria-label={name || getMessage('memoryTitle')}>
   {#if entity}
-    <header>
+    <header class="max-w-3xl">
       <p class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span class={badgeClass('outline')}>{entity.type}</span>
         {#if entity.about_owner}<span>{getMessage('memoryAboutYou')}</span>{/if}
@@ -148,46 +152,62 @@
           {getMessage('memoryEntityShown', [String(claims.length), String(current)])}
         </p>{/if}
     </header>
-    <EntityGraph {entity} {claims} {onopen} />
-    {#each groups as group (group.key)}
-      <section class="my-7" aria-label={group.predicate}>
-        <h2 class="text-sm font-semibold">
-          {group.direction === 'outgoing'
-            ? `${name} · ${group.predicate}`
-            : `… · ${group.predicate} · ${name}`}
-        </h2>
-        {#each group.current as claim (claim.record.id)}{@render card(claim)}{/each}
-        {#if group.earlier.length}
-          <details class="mt-3" open={!group.current.length}>
-            <summary class="cursor-pointer text-xs text-muted-foreground"
-              >{getMessage('memoryEntityEarlier', String(group.earlier.length))}</summary
-            >
-            {#each group.earlier as claim (claim.record.id)}{@render card(claim)}{/each}
-          </details>
-        {/if}
-      </section>
-    {/each}
-    {#if !claims.length && !busy}<p class="my-7 text-sm text-muted-foreground">
-        {getMessage(entity.about_owner ? 'memoryEntitySelfEmpty' : 'memoryEntityNotFound')}
-      </p>{/if}
-    {#if partial}<p class="mt-3 text-xs text-muted-foreground">
-        {#if partial === 'response_size_limit'}
-          {getMessage('memoryPageSizeLimit')}
-        {:else if partial === 'scan_limit'}
-          {getMessage('memoryEntityScanLimit')}
-        {:else}
-          {getMessage('memorySourceUnavailable')}
-        {/if}
-      </p>{/if}
-    {#if cursor}<button
-        class={buttonClass('outline', 'sm', 'mt-4')}
-        disabled={busy}
-        onclick={() => load(cursor)}>{getMessage('brainNextPage')}</button
-      >{/if}
-    <details class="mt-8 text-xs text-muted-foreground">
-      <summary class="cursor-pointer">{getMessage('memoryBeliefTitle')}</summary>
-      <p class="mt-2 leading-relaxed">{getMessage('memoryBeliefHint')}</p>
-    </details>
+    <!-- The graph sits beside the claims once the pane is wide enough (the
+         workspace's scroll pane is the container); otherwise above them. -->
+    <div
+      class={graphed
+        ? 'grid gap-x-8 @4xl:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]'
+        : 'max-w-3xl'}
+    >
+      {#if graphed}
+        <div
+          class="min-w-0 @4xl:sticky @4xl:top-0 @4xl:col-start-2 @4xl:row-start-1 @4xl:self-start"
+        >
+          <EntityGraph {entity} {claims} {onopen} />
+        </div>
+      {/if}
+      <div class="min-w-0 @4xl:col-start-1 @4xl:row-start-1">
+        {#each groups as group (group.key)}
+          <section class="my-7" aria-label={group.predicate}>
+            <h2 class="text-sm font-semibold">
+              {group.direction === 'outgoing'
+                ? `${name} · ${group.predicate}`
+                : `… · ${group.predicate} · ${name}`}
+            </h2>
+            {#each group.current as claim (claim.record.id)}{@render card(claim)}{/each}
+            {#if group.earlier.length}
+              <details class="mt-3" open={!group.current.length}>
+                <summary class="cursor-pointer text-xs text-muted-foreground"
+                  >{getMessage('memoryEntityEarlier', String(group.earlier.length))}</summary
+                >
+                {#each group.earlier as claim (claim.record.id)}{@render card(claim)}{/each}
+              </details>
+            {/if}
+          </section>
+        {/each}
+        {#if !claims.length && !busy}<p class="my-7 text-sm text-muted-foreground">
+            {getMessage(entity.about_owner ? 'memoryEntitySelfEmpty' : 'memoryEntityNotFound')}
+          </p>{/if}
+        {#if partial}<p class="mt-3 text-xs text-muted-foreground">
+            {#if partial === 'response_size_limit'}
+              {getMessage('memoryPageSizeLimit')}
+            {:else if partial === 'scan_limit'}
+              {getMessage('memoryEntityScanLimit')}
+            {:else}
+              {getMessage('memorySourceUnavailable')}
+            {/if}
+          </p>{/if}
+        {#if cursor}<button
+            class={buttonClass('outline', 'sm', 'mt-4')}
+            disabled={busy}
+            onclick={() => load(cursor)}>{getMessage('brainNextPage')}</button
+          >{/if}
+        <details class="mt-8 text-xs text-muted-foreground">
+          <summary class="cursor-pointer">{getMessage('memoryBeliefTitle')}</summary>
+          <p class="mt-2 leading-relaxed">{getMessage('memoryBeliefHint')}</p>
+        </details>
+      </div>
+    </div>
   {:else if missing}
     <p class="text-sm text-muted-foreground">
       {getMessage(id === null ? 'memoryEntitySelfEmpty' : 'memoryEntityNotFound')}
