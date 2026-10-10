@@ -543,7 +543,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].webContents.send('anda:event', {
       type: 'update-status',
-      value: { phase: 'running', message: 'Checking Anda Desktop updates…' }
+      value: { phase: 'running', operation: 'check', message: 'Checking Anda Desktop updates…' }
     })
   })
   await updateDialog.getByText('Checking for updates…', { exact: true }).waitFor()
@@ -555,7 +555,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].webContents.send('anda:event', {
       type: 'update-status',
-      value: { phase: 'complete', message: 'Anda Desktop is up to date.' }
+      value: { phase: 'complete', operation: 'check', message: 'Anda Desktop is up to date.' }
     })
   })
   await updateDialog.getByText('Update result', { exact: true }).waitFor()
@@ -586,14 +586,43 @@ try {
   await page.screenshot({ path: join(screenshotDir, '17-update-download.png') })
   await sendEvent({
     type: 'update-status',
-    value: { phase: 'running', message: 'Downloading update: 42%' }
+    value: { phase: 'running', operation: 'download', message: 'Downloading update: 42%' }
   })
   await updateRow.getByText('Downloading update: 42%', { exact: true }).waitFor()
-  await sendEvent({ type: 'update-status', value: { phase: 'complete', message: 'Downloaded.' } })
+  await sendEvent({
+    type: 'update-status',
+    value: { phase: 'complete', operation: 'download', message: 'Downloaded.' }
+  })
   await sendEvent({ type: 'update-offer', value: { version: 'v0.15.0', ready: true } })
   await updateRow.getByText('Restart to update', { exact: true }).waitFor()
   await updateRow.getByText('Anda 0.15.0', { exact: true }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '18-update-restart.png') })
+  // The restart reports its own progress, not a check for updates.
+  await sendEvent({
+    type: 'update-status',
+    value: {
+      phase: 'running',
+      operation: 'install',
+      message: 'Waiting for active tasks to finish…'
+    }
+  })
+  await sendEvent({ type: 'menu', value: 'updates' })
+  const restartDialog = page.getByRole('dialog', { name: 'Restart to update' })
+  await restartDialog.getByText('Installing update…', { exact: true }).waitFor()
+  await restartDialog.getByText('Waiting for active tasks to finish…', { exact: true }).waitFor()
+  await page.screenshot({ path: join(screenshotDir, '19-update-installing.png') })
+  // A restart that did not go through offers itself again.
+  await sendEvent({
+    type: 'update-status',
+    value: { phase: 'error', operation: 'install', message: 'Code signature mismatch' }
+  })
+  await restartDialog.getByText('Update failed', { exact: true }).waitFor()
+  await restartDialog.getByRole('button', { name: 'Restart to update', exact: true }).waitFor()
+  assert.equal(
+    await restartDialog.getByRole('button', { name: 'Check for updates', exact: true }).count(),
+    0
+  )
+  await restartDialog.getByRole('button', { name: 'Close', exact: true }).click()
   await sendEvent({ type: 'update-offer', value: null })
   await updateRow.waitFor({ state: 'detached' })
   const editor = page.locator('.composer-container textarea').first()

@@ -1,3 +1,4 @@
+import type { UpdateOperation } from '../shared/contract'
 import { modelSetupMessages } from './model-setup-labels'
 
 const en = {
@@ -66,6 +67,8 @@ const en = {
   checkingUpdates: 'Checking for updates…',
   checkingRuntime: 'Checking Anda runtime updates and downloading any new release…',
   checkingDesktop: 'Checking Anda Desktop updates…',
+  downloadingUpdate: 'Downloading update…',
+  installingUpdate: 'Installing update…',
   updateResult: 'Update result',
   updateFailed: 'Update failed',
   updateBackground:
@@ -202,6 +205,12 @@ const en = {
   loginHint: 'Start Anda Desktop and the service when you log in.'
 }
 export type Label = keyof typeof en
+/** Each update operation's dialog title and the heading while it runs. */
+export const updateOperationLabels: Record<UpdateOperation, { title: Label; progress: Label }> = {
+  check: { title: 'update', progress: 'checkingUpdates' },
+  download: { title: 'downloadUpdate', progress: 'downloadingUpdate' },
+  install: { title: 'restartToUpdate', progress: 'installingUpdate' }
+}
 
 export const desktopMessages: Record<string, Record<Label, string>> = {
   en,
@@ -269,7 +278,9 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     checkingUpdates: '正在检查更新…',
     checkingRuntime: '正在检查 Anda 服务更新，如有新版本会下载到本地…',
     checkingDesktop: '正在检查 Anda 桌面客户端更新…',
-    updateResult: '检查结果',
+    downloadingUpdate: '正在下载更新…',
+    installingUpdate: '正在安装更新…',
+    updateResult: '更新结果',
     updateFailed: '更新失败',
     updateBackground: '关闭此弹窗后，更新操作仍会在后台继续。',
     searchHint: '搜索标题，按 Enter 搜索聊天内容',
@@ -470,6 +481,8 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     checkingUpdates: 'Recherche de mises à jour…',
     checkingRuntime: 'Recherche et téléchargement des mises à jour du service Anda…',
     checkingDesktop: 'Recherche de mises à jour d’Anda Desktop…',
+    downloadingUpdate: 'Téléchargement de la mise à jour…',
+    installingUpdate: 'Installation de la mise à jour…',
     updateResult: 'Résultat de la mise à jour',
     updateFailed: 'Échec de la mise à jour',
     updateBackground: 'Vous pouvez fermer cette fenêtre. L’opération continuera en arrière-plan.',
@@ -676,6 +689,8 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     checkingUpdates: 'Buscando actualizaciones…',
     checkingRuntime: 'Buscando y descargando actualizaciones del servicio Anda…',
     checkingDesktop: 'Buscando actualizaciones de Anda Desktop…',
+    downloadingUpdate: 'Descargando actualización…',
+    installingUpdate: 'Instalando actualización…',
     updateResult: 'Resultado de la actualización',
     updateFailed: 'Error de actualización',
     updateBackground: 'Puedes cerrar esta ventana. La operación continuará en segundo plano.',
@@ -879,6 +894,8 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     checkingUpdates: 'Проверка обновлений…',
     checkingRuntime: 'Проверка и загрузка обновлений службы Anda…',
     checkingDesktop: 'Проверка обновлений Anda Desktop…',
+    downloadingUpdate: 'Загрузка обновления…',
+    installingUpdate: 'Установка обновления…',
     updateResult: 'Результат обновления',
     updateFailed: 'Ошибка обновления',
     updateBackground: 'Можно закрыть это окно. Операция продолжится в фоновом режиме.',
@@ -1081,6 +1098,8 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     checkingUpdates: 'جارٍ البحث عن تحديثات…',
     checkingRuntime: 'جارٍ البحث عن تحديثات خدمة Anda وتنزيلها…',
     checkingDesktop: 'جارٍ البحث عن تحديثات Anda Desktop…',
+    downloadingUpdate: 'جارٍ تنزيل التحديث…',
+    installingUpdate: 'جارٍ تثبيت التحديث…',
     updateResult: 'نتيجة التحديث',
     updateFailed: 'فشل التحديث',
     updateBackground: 'يمكنك إغلاق هذه النافذة. ستستمر العملية في الخلفية.',

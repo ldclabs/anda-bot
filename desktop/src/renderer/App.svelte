@@ -40,7 +40,7 @@
     X
   } from '@lucide/svelte'
   import type { DesktopClient } from './client.svelte'
-  import { defaultPreferences, type ChatEntry } from '../shared/contract'
+  import { defaultPreferences, type ChatEntry, type UpdateOperation } from '../shared/contract'
   import type { GitBranchInfo } from '../shared/workbench'
   import { shortcutLabel, type MenuAction } from '../shared/shortcuts'
   import type { ChatAttachment, ChatMessage, Conversation, RpcOutput } from '$lib/anda/client/types'
@@ -87,20 +87,26 @@
     } catch (error) {
       client.updateStatus = {
         phase: 'error',
+        operation: 'check',
         message: error instanceof Error ? error.message : String(error)
       }
     }
   }
   /** The status bar's update button: a download stays inline, a restart shows its progress. */
   async function continueUpdate(): Promise<void> {
+    const offer = client.updateOffer
     const running = client.updateStatus?.phase === 'running'
-    if (running || client.updateOffer?.ready) client.updateDialogOpen = true
+    if (running || offer?.ready) client.updateDialogOpen = true
     if (running) return
+    const operation: UpdateOperation = offer ? (offer.ready ? 'install' : 'download') : 'check'
+    // Until the updater reports, the dialog shows this step rather than an earlier result.
+    client.updateStatus = { phase: 'running', operation, message: '' }
     try {
       if ((await window.anda.continueUpdate())?.phase === 'error') client.updateDialogOpen = true
     } catch (error) {
       client.updateStatus = {
         phase: 'error',
+        operation,
         message: error instanceof Error ? error.message : String(error)
       }
       client.updateDialogOpen = true
@@ -1317,9 +1323,11 @@
 {#if client.updateDialogOpen}
   <UpdateDialog
     status={client.updateStatus}
+    offer={client.updateOffer}
     language={client.preferences.language}
     onclose={() => (client.updateDialogOpen = false)}
     oncheck={() => void checkUpdate()}
+    oncontinue={() => void continueUpdate()}
   />
 {/if}
 {#if client.modelSetupOpen && !client.updateDialogOpen}

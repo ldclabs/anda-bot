@@ -76,8 +76,11 @@ export interface Bootstrap {
   updateRequested: boolean
   fullScreen: boolean
 }
+/** What the user asked for: checking both channels, or the status bar's download or restart step. */
+export type UpdateOperation = 'check' | 'download' | 'install'
 export interface UpdateStatus {
   phase: 'running' | 'complete' | 'error'
+  operation: UpdateOperation
   message: string
 }
 /** The status bar's update step: download a found release, or restart into a downloaded one. */

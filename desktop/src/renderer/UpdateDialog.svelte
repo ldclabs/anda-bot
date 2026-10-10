@@ -1,22 +1,29 @@
 <script lang="ts">
   import { RefreshCw } from '@lucide/svelte'
-  import type { UpdateStatus } from '../shared/contract'
+  import type { UpdateOffer, UpdateStatus } from '../shared/contract'
   import { focusDialog } from './dialog'
-  import { label, type Label } from './labels'
+  import { label, updateOperationLabels, type Label } from './labels'
 
   let {
     status,
+    offer,
     language,
     onclose,
-    oncheck
+    oncheck,
+    oncontinue
   }: {
     status: UpdateStatus | null
+    offer: UpdateOffer | null
     language: string
     onclose: () => void
     oncheck: () => void
+    oncontinue: () => void
   } = $props()
   const t = (key: Label) => label(language, key)
   const running = $derived(!status || status.phase === 'running')
+  const labels = $derived(updateOperationLabels[status?.operation ?? 'check'])
+  // A download or restart that did not go through repeats the status bar's step.
+  const retry = $derived(status?.operation !== 'check' ? offer : null)
 </script>
 
 <div class="modal-backdrop">
@@ -29,17 +36,21 @@
     aria-describedby="update-message"
     tabindex="-1"
   >
-    <h2 id="update-title">{t('update')}</h2>
+    <h2 id="update-title">{t(labels.title)}</h2>
     <p class="update-heading" class:error={status?.phase === 'error'}>
       {#if running}<RefreshCw size={17} class="update-spinner" />{/if}
-      {t(running ? 'checkingUpdates' : status?.phase === 'error' ? 'updateFailed' : 'updateResult')}
+      {t(running ? labels.progress : status?.phase === 'error' ? 'updateFailed' : 'updateResult')}
     </p>
     <p id="update-message" role="status" aria-live="polite">
-      {status?.message || t('checkingUpdates')}
+      {status?.message || t(labels.progress)}
     </p>
     {#if running}<p class="update-hint">{t('updateBackground')}</p>{/if}
     <div class="dialog-actions">
-      {#if !running}<button onclick={oncheck}>{t('update')}</button>{/if}
+      {#if !running}
+        {#if retry}<button onclick={oncontinue}
+            >{t(retry.ready ? 'restartToUpdate' : 'downloadUpdate')}</button
+          >{:else}<button onclick={oncheck}>{t('update')}</button>{/if}
+      {/if}
       <button class="primary" onclick={onclose}>{t('close')}</button>
     </div>
   </div>

@@ -175,10 +175,15 @@ it('publishes progress immediately and retains the final check result', async ()
     return { status: 'current', current_tag: 'v0.14.0' }
   })
   const checking = f.updater.check()
-  expect(f.updater.status).toEqual({ phase: 'running', message: 'Checking for updates…' })
+  expect(f.updater.status).toEqual({
+    phase: 'running',
+    operation: 'check',
+    message: 'Checking for updates…'
+  })
   await vi.advanceTimersByTimeAsync(0)
   expect(f.updater.status).toEqual({
     phase: 'running',
+    operation: 'check',
     message: expect.stringContaining('Checking Anda runtime')
   })
   // Repeated clicks keep the current operation and its progress intact.
@@ -192,9 +197,10 @@ it('publishes progress immediately and retains the final check result', async ()
   expect(message).toContain('only in release builds')
   expect(f.statuses).toContainEqual({
     phase: 'running',
+    operation: 'check',
     message: 'Checking Anda Desktop updates…'
   })
-  expect(f.updater.status).toEqual({ phase: 'complete', message })
+  expect(f.updater.status).toEqual({ phase: 'complete', operation: 'check', message })
 })
 
 it('retains check failures and allows retrying', async () => {
@@ -204,7 +210,7 @@ it('retains check failures and allows retrying', async () => {
   expect(message).toContain('Anda runtime: Release server unavailable')
   expect(message).toContain('Anda Desktop is up to date.')
   expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
-  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(f.updater.status).toEqual({ phase: 'error', operation: 'check', message })
   await f.updater.check()
   expect(f.updater.status?.phase).toBe('complete')
 })
@@ -252,7 +258,7 @@ it.each([0, 1])(
     })
     expect(f.store.save).toHaveBeenCalledTimes(1)
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledExactlyOnceWith(false, true)
-    expect(f.updater.status).toEqual({ phase: 'complete', message })
+    expect(f.updater.status).toEqual({ phase: 'complete', operation: 'check', message })
   }
 )
 
@@ -273,7 +279,7 @@ it('still offers a desktop update after a runtime installation fails and recover
   expect(message).toContain('Anda runtime: replacement failed')
   expect(message).toContain('Desktop update downloaded. Choose Check for updates')
   expect(f.updater.desktopRelease).toBe('0.15.0')
-  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(f.updater.status).toEqual({ phase: 'error', operation: 'check', message })
   expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
   expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
 })
@@ -287,7 +293,7 @@ it('keeps the successful runtime result visible when the desktop check fails', a
   expect(message).toContain('Anda v0.14.0 is installed.')
   expect(message).toContain('Anda Desktop: Desktop feed unavailable')
   expect(f.actions).toEqual(['install'])
-  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(f.updater.status).toEqual({ phase: 'error', operation: 'check', message })
 })
 
 it('reports both errors when neither update channel can be checked', async () => {
@@ -298,7 +304,7 @@ it('reports both errors when neither update channel can be checked', async () =>
 
   expect(message).toContain('Anda runtime: Runtime unavailable')
   expect(message).toContain('Anda Desktop: Desktop feed unavailable')
-  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(f.updater.status).toEqual({ phase: 'error', operation: 'check', message })
 })
 
 it('labels update failures in the UI language', async () => {
@@ -327,7 +333,7 @@ it('reports a failed check without installing the download it keeps', async () =
   // not ask before stopping the service, does not.
   expect(f.updater.runtimeRelease).toBe('v0.14.0')
   expect(f.updater.offer).toBeNull()
-  expect(f.updater.status).toEqual({ phase: 'error', message })
+  expect(f.updater.status).toEqual({ phase: 'error', operation: 'check', message })
 })
 
 it('looks up the desktop feed before the runtime check downloads a release', async () => {
@@ -352,7 +358,7 @@ it('explains manual desktop updates after installing the runtime in an unsigned 
   expect(message).toContain('Anda v0.14.0 is installed.')
   expect(message).toContain('no signed update channel')
   expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled()
-  expect(f.updater.status).toEqual({ phase: 'complete', message })
+  expect(f.updater.status).toEqual({ phase: 'complete', operation: 'check', message })
 })
 
 it('reports a downloaded release and preserves it when installation is postponed', async () => {
@@ -361,9 +367,10 @@ it('reports a downloaded release and preserves it when installation is postponed
   const result = await f.updater.installRuntime()
   expect(f.statuses).toContainEqual({
     phase: 'running',
+    operation: 'install',
     message: 'Anda v0.14.0 is ready to install.'
   })
-  expect(f.updater.status).toEqual({ phase: 'complete', message: result })
+  expect(f.updater.status).toEqual({ phase: 'complete', operation: 'install', message: result })
   expect(f.daemon.applyRuntimeUpdate).not.toHaveBeenCalled()
   expect(f.updater.runtimeRelease).toBe('v0.14.0')
 })
@@ -429,7 +436,11 @@ it('reports updater errors that arrive after an operation finished', async () =>
   f.updater.installing = true
   onError(new Error('Install failed'))
   expect(f.updater.installing).toBe(false)
-  expect(f.updater.status).toEqual({ phase: 'error', message: 'Install failed' })
+  expect(f.updater.status).toEqual({
+    phase: 'error',
+    operation: 'check',
+    message: 'Install failed'
+  })
   expect(f.emitted).toHaveBeenCalledExactlyOnceWith('Update failed: Install failed')
 })
 
@@ -569,7 +580,11 @@ it('brings the stopped service back when the app installation fails', async () =
   expect(f.actions).toEqual(['begin', 'renew', 'stop', 'start'])
   expect(f.daemon.view.connected).toBe(true)
   expect(f.updater.installing).toBe(false)
-  expect(f.updater.status).toEqual({ phase: 'error', message: 'Code signature mismatch' })
+  expect(f.updater.status).toEqual({
+    phase: 'error',
+    operation: 'check',
+    message: 'Code signature mismatch'
+  })
   onError(new Error('Later failure'))
   expect(f.daemon.startRuntime).toHaveBeenCalledTimes(1)
 })
@@ -669,9 +684,13 @@ it('offers a found desktop release for download, then a restart that asks nothin
   expect(f.updater.offer).toEqual({ version: '0.15.0', ready: false })
 
   const changes = f.changed.mock.calls.length
-  await expect(f.updater.continueUpdate()).resolves.toBe(
-    'Anda Desktop 0.15.0 is downloaded. Restart to update.'
-  )
+  const downloading = f.updater.continueUpdate()
+  expect(f.updater.status).toEqual({
+    phase: 'running',
+    operation: 'download',
+    message: 'Downloading update…'
+  })
+  await expect(downloading).resolves.toBe('Anda Desktop 0.15.0 is downloaded. Restart to update.')
   expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
   expect(f.changed.mock.calls.length).toBeGreaterThan(changes)
   expect(f.updater.offer).toEqual({ version: '0.15.0', ready: true })
@@ -679,8 +698,16 @@ it('offers a found desktop release for download, then a restart that asks nothin
   expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled()
 
   const restarting = f.updater.continueUpdate()
+  expect(f.updater.status).toEqual({
+    phase: 'running',
+    operation: 'install',
+    message: 'Installing update…'
+  })
   await vi.runAllTimersAsync()
   await expect(restarting).resolves.toBe('Installing update…')
+  expect(f.updater.status?.operation).toBe('install')
+  // Neither step reports itself as checking for updates.
+  expect(f.statuses.filter(({ message }) => message.startsWith('Checking'))).toEqual([])
   expect(dialog.showMessageBox).not.toHaveBeenCalled()
   expect(autoUpdater.downloadUpdate).toHaveBeenCalledTimes(1)
   expect(f.actions).toEqual(['begin', 'renew', 'stop'])
@@ -691,6 +718,11 @@ it('restarts into a downloaded runtime from the status bar without asking again'
   const f = fixture()
   expect(f.updater.offer).toEqual({ version: 'v0.14.0', ready: true })
   const installing = f.updater.continueUpdate()
+  expect(f.statuses[0]).toEqual({
+    phase: 'running',
+    operation: 'install',
+    message: 'Installing update…'
+  })
   await vi.runAllTimersAsync()
   await expect(installing).resolves.toBe('Anda v0.14.0 is installed.')
   expect(dialog.showMessageBox).not.toHaveBeenCalled()

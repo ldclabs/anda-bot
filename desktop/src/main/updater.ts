@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import { DaemonClient, downloadedRelease, type RuntimeUpdateState } from './daemon-client'
 import { DesktopStore } from './store'
 import { installRuntimeUpdate, isOlderRelease } from './update-machine'
-import type { UpdateOffer, UpdateStatus } from '../shared/contract'
-import { label, type Label } from '../renderer/labels'
+import type { UpdateOffer, UpdateOperation, UpdateStatus } from '../shared/contract'
+import { label, updateOperationLabels, type Label } from '../renderer/labels'
 
 const updateCheckInterval = 6 * 3600_000
 
@@ -30,6 +30,8 @@ export class DesktopUpdater {
   runtime?: RuntimeUpdateState
   status: UpdateStatus | null = null
   private busy = false
+  /** The operation the status reports, kept for errors that arrive after it finished. */
+  private operation: UpdateOperation = 'check'
   private downloaded?: string
   private availableApp?: string
   private notifiedApp = new Set<string>()
@@ -72,14 +74,18 @@ export class DesktopUpdater {
   private progress(message: string): void {
     this.setStatus({ phase: 'running', message })
   }
-  private setStatus(status: UpdateStatus): void {
-    this.status = status
-    this.statusChanged(status)
+  private setStatus(status: Omit<UpdateStatus, 'operation'>): void {
+    this.status = { ...status, operation: this.operation }
+    this.statusChanged(this.status)
   }
-  private async run(action: () => Promise<{ message: string; failed?: boolean }>): Promise<string> {
+  private async run(
+    operation: UpdateOperation,
+    action: () => Promise<{ message: string; failed?: boolean }>
+  ): Promise<string> {
     if (this.busy) return 'An update operation is already in progress.'
     this.busy = true
-    this.progress(this.t('checkingUpdates'))
+    this.operation = operation
+    this.progress(this.t(updateOperationLabels[operation].progress))
     try {
       // A user can open the dialog while the scheduled check is still running.
       // Finish that check before starting another check or an installation.
@@ -169,7 +175,7 @@ export class DesktopUpdater {
   }
   /** Settings and the tray: handle both channels, even if a runtime update fails. */
   async check(): Promise<string> {
-    return this.run(async () => {
+    return this.run('check', async () => {
       const messages: string[] = []
       let failed = false
       const fail = (key: 'runtimeUpdateError' | 'desktopUpdateError', error: unknown) => {
@@ -218,17 +224,16 @@ export class DesktopUpdater {
   async installRuntime(): Promise<string> {
     const release = this.runtimeRelease
     if (!release) return this.check()
-    return this.run(async () => ({ message: await this.promptRuntime(release) }))
+    return this.run('install', async () => ({ message: await this.promptRuntime(release) }))
   }
   /** Takes the offered step. The click is the consent, so no dialog asks again. */
   async continueUpdate(): Promise<string> {
     const offer = this.offer
     if (!offer) return this.check()
-    return this.run(async () => {
+    return this.run(offer.ready ? 'install' : 'download', async () => {
       const runtime = this.runtimeRelease
       if (offer.ready && !this.downloaded && runtime)
         return { message: await this.promptRuntime(runtime, true) }
-      this.progress(this.t('checkingDesktop'))
       const release = await this.findApp()
       if (offer.ready || !('version' in release))
         return { message: await this.installApp(release, true) }
@@ -238,7 +243,7 @@ export class DesktopUpdater {
   }
   /** Opens a known desktop update independently of the runtime's update state. */
   async checkDesktop(): Promise<string> {
-    return this.run(async () => {
+    return this.run('check', async () => {
       this.progress(this.t('checkingDesktop'))
       return { message: await this.installApp(await this.findApp()) }
     })
