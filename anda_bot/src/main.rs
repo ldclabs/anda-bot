@@ -119,6 +119,8 @@ pub enum Commands {
     Channel(cli::channel::ChannelCommand),
     /// Manage trusted users and Ed25519 keys.
     User(cli::user::UserCommand),
+    /// Manage the MCP servers in mcp.json.
+    Mcp(cli::mcp::McpCommand),
     /// Inspect currently active agent sessions in the daemon.
     Session(cli::session::SessionCommand),
     /// Start a continuous voice conversation with the agent.
@@ -428,6 +430,14 @@ async fn run() -> Result<(), BoxError> {
         Some(Commands::Autostart(cmd)) => run_autostart_command(&daemon, cmd).await?,
         Some(Commands::Channel(cmd)) => cli::channel::run(&daemon, cmd).await?,
         Some(Commands::User(cmd)) => cli::user::run(&daemon, cmd).await?,
+        Some(Commands::Mcp(cmd)) => {
+            let client = if cmd.needs_client(daemon.running_pid().await?.is_some()) {
+                Some(build_control_client(&daemon).await?)
+            } else {
+                None
+            };
+            cli::mcp::run(&daemon, client.as_ref(), cmd).await?;
+        }
         Some(Commands::Session(cmd)) => {
             let client = build_control_client(&daemon).await?;
             client.ensure_daemon_running(&daemon).await?;

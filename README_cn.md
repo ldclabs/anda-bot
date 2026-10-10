@@ -297,7 +297,7 @@ daemon 管理接口要求已配置的可信身份，未登记密钥的有效签�
 ### MCP 服务
 
 Anda Bot 可以连接 MCP 服务，并把远端工具暴露给 agent。把可移植 MCP 配置放到
-`~/.anda/mcp.json`，然后重启 daemon。`mcp.json` 同时支持 `mcpServers` 和
+`~/.anda/mcp.json`，然后运行 `anda mcp reload`（或重启 daemon）。`mcp.json` 同时支持 `mcpServers` 和
 `servers` 两种 root key，方便直接粘贴其它 MCP 工具里的配置。
 
 ```json
@@ -330,11 +330,29 @@ workspace 中启动。
 `PATH`，即使 daemon 作为登录服务运行也能找到 `npx` 和 `uvx`；登录服务看不到
 shell 配置文件中导出的变量。
 
+在终端中用 `anda mcp` 管理服务：
+
+```bash
+anda mcp list                                         # 每个服务的状态、工具数和最近错误
+anda mcp add context7 -- npx -y @upstash/context7-mcp
+anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
+anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
+anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth 登录
+anda mcp tool github delete_repository --hide         # 不让智能体使用某个工具
+anda mcp disable context7                             # 另有 enable、remove、reconnect、logout
+```
+
+daemon 运行时，修改立即生效，连接失败的服务会在后台重试；daemon 未运行时，命令
+只修改 `mcp.json`，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因。修改
+会保留 Anda 不读取的字段和 `${VAR}` 引用；`remove` 还会删除该服务已保存的登录凭据。
+
 智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
 表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，
 重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、
 `command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和
-`exclude`，另外再加 tool 专用的 `id` 和 `persist`。
+`exclude`，另外再加 tool 专用的 `id` 和 `persist`。`manage_mcp_server` 让智能体
+查看各服务的状态和最近错误，并重连某个服务；启用、停用、删除或登出服务前会先请求
+你的批准。
 
 OAuth 服务可通过 `connect_mcp_server` 完成授权并保存连接。重新授权会保留工具允许/排除列表、自定义 headers、client ID 和传输设置，并保存更新后的 scopes。浏览器启动器失败时，工具会返回授权 URL，供手动打开。回调使用网关端口及相同 IP 地址族的回环地址；远程或绑定特定网卡的部署，需要将浏览器侧的该回环地址隧道转发到实际监听地址。
 

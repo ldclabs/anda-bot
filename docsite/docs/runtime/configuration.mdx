@@ -70,8 +70,8 @@ The unused `transcription.max_duration_secs`, `transcription.transcribe_non_ptt_
 ## MCP Servers
 
 Anda Bot can connect to MCP servers through stdio child processes or HTTP
-endpoints. Put a portable MCP configuration in `~/.anda/mcp.json`, then restart
-the daemon. The file accepts both `mcpServers` and `servers` as the root key so
+endpoints. Put a portable MCP configuration in `~/.anda/mcp.json`, then run
+`anda mcp reload` (or restart the daemon). The file accepts both `mcpServers` and `servers` as the root key so
 you can paste configs from other MCP-compatible tools with minimal changes.
 
 ```json
@@ -142,12 +142,43 @@ server into `~/.anda/mcp.json` for future restarts. Its server fields mirror one
 `mcp.json` entry: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
 `enabled`, `include`, and `exclude`, plus the tool-only `id` and `persist`
 fields. `startup`, `lifecycle` and `tasks` are operator knobs, so they are set by
-editing `mcp.json` rather than through the tool.
+editing `mcp.json` rather than through the tool. `manage_mcp_server` lets the
+agent list the servers with their status and last error and reconnect one;
+enabling, disabling, removing or signing out of a server asks for your approval
+first.
 
 For OAuth endpoints, `connect_mcp_server` runs the browser authorization and
 stores the tokens in the local credential store. Calling it again on a connected
 server only verifies the connection; pass `reauthorize: true` to sign out and
 consent again, which is what granting a different set of scopes requires.
+
+### Managing servers with `anda mcp`
+
+```bash
+anda mcp list                                         # status, tools and last error of each server
+anda mcp get github                                   # one server and its tools
+anda mcp add context7 -- npx -y @upstash/context7-mcp
+anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
+anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
+anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in; --no-browser prints the URL
+anda mcp tool github delete_repository --hide         # keep one tool from the agent
+anda mcp disable context7                             # also: enable, remove, reconnect, logout, reload
+```
+
+With the daemon running, every command goes through it, so a change applies at
+once: a server whose connection settings changed restarts, and one whose change
+the connection does not use (a field Anda does not read, say) keeps running.
+Failed servers are retried in the background, backing off from 30 seconds to 30
+minutes, and the reason is kept for `list`. Without the daemon, `add`,
+`add-json`, `remove`, `enable`, `disable`, `tool` and `logout` edit the files
+directly and take effect when the daemon starts. `list` also shows entries that
+were skipped and why, and `--json` prints any result as JSON.
+
+Edits keep the fields Anda does not read, your `${VAR}` references, and the root
+the file uses. `remove` also deletes the server's stored sign-in unless you pass
+`--keep-credentials`. Anda does not watch `mcp.json`: after editing it by hand,
+run `anda mcp reload`. Where each server came from and its last error are kept
+in `~/.anda/mcp_state.json`.
 
 ### Authorizing an MCP server over SSH
 
@@ -180,6 +211,7 @@ Anda call `connect_mcp_server` with that string as `redirect_url`.
 ~/.anda/
   config.yaml
   mcp.json
+  mcp_state.json
   anda-daemon.pid
   channels/
   credentials/ # local encrypted trusted-user credential store

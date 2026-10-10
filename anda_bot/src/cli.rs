@@ -3,6 +3,7 @@ pub mod auth;
 pub mod channel;
 pub mod installer;
 mod launcher_retirement;
+pub mod mcp;
 pub mod memory;
 pub mod memory_eval;
 pub mod session;

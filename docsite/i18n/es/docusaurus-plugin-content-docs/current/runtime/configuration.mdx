@@ -54,7 +54,7 @@ GLM_API_KEY
 
 ## Servidores MCP
 
-Anda Bot puede conectarse a servidores MCP a través de procesos secundarios stdio o puntos de conexión (endpoints) HTTP. Coloque una configuración MCP portable en `~/.anda/mcp.json`, luego reinicie el daemon. El archivo acepta tanto `mcpServers` como `servers` como clave raíz para que pueda pegar configuraciones de otras herramientas compatibles con MCP con cambios mínimos.
+Anda Bot puede conectarse a servidores MCP a través de procesos secundarios stdio o puntos de conexión (endpoints) HTTP. Coloque una configuración MCP portable en `~/.anda/mcp.json`, luego ejecute `anda mcp reload` (o reinicie el daemon). El archivo acepta tanto `mcpServers` como `servers` como clave raíz para que pueda pegar configuraciones de otras herramientas compatibles con MCP con cambios mínimos.
 
 ```json
 {
@@ -79,7 +79,22 @@ Las herramientas remotas de MCP aparecen como herramientas de Anda con nombres s
 
 Cada entrada se carga por separado y MCP nunca impide que el daemon arranque: una entrada inutilizable (una variable de entorno sin definir, un `type` no admitido como el obsoleto `sse`, un id repetido) se omite con una advertencia en el registro del daemon, y los demás servidores se cargan igualmente. Los servidores se conectan en segundo plano una vez iniciado el daemon, así que un endpoint lento o la primera descarga de `npx -y` no lo retrasan; añade `"startup": "eager"` a una entrada para descubrir sus herramientas antes de que el daemon indique que está listo. Los servidores stdio reciben el mismo `PATH` ampliado que la herramienta de shell, por lo que `npx`, `uvx` y los comandos de Homebrew se encuentran aunque el daemon se ejecute como servicio de inicio de sesión; ese servicio no ve las variables exportadas en el perfil de tu shell, así que las referencias `${VAR}` necesitan la variable en el entorno del propio daemon.
 
-El agente también puede agregar un servidor en runtime utilizando `add_mcp_server`. Establezca `persist: false` solo para el daemon actual, o `persist: true` para guardar el servidor en `~/.anda/mcp.json` para futuros reinicios. Sus campos de servidor reflejan una entrada de `mcp.json`: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`, `enabled`, `include` y `exclude`, además de los campos `id` y `persist` exclusivos de herramientas.
+El agente también puede agregar un servidor en runtime utilizando `add_mcp_server`. Establezca `persist: false` solo para el daemon actual, o `persist: true` para guardar el servidor en `~/.anda/mcp.json` para futuros reinicios. Sus campos de servidor reflejan una entrada de `mcp.json`: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`, `enabled`, `include` y `exclude`, además de los campos `id` y `persist` exclusivos de herramientas. `manage_mcp_server` permite al agente listar los servidores con su estado y su último error, y reconectar uno; habilitar, deshabilitar, eliminar un servidor o cerrar su sesión requiere primero su aprobación.
+
+### Administrar servidores con `anda mcp`
+
+```bash
+anda mcp list                                         # estado, herramientas y último error de cada servidor
+anda mcp get github                                   # un servidor y sus herramientas
+anda mcp add context7 -- npx -y @upstash/context7-mcp
+anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
+anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
+anda mcp login linear --url https://mcp.linear.app/mcp  # inicio de sesión OAuth; --no-browser imprime la URL
+anda mcp tool github delete_repository --hide         # ocultar una herramienta al agente
+anda mcp disable context7                             # también: enable, remove, reconnect, logout, reload
+```
+
+Con el daemon en ejecución, cada comando pasa por él y el cambio se aplica al instante: un servidor cuya configuración de conexión cambió se reinicia, y uno cuyo cambio no afecta a la conexión (un campo que Anda no lee, por ejemplo) sigue en marcha. Los servidores que fallan se reintentan en segundo plano, con esperas que van de 30 segundos a 30 minutos, y el motivo se conserva para `list`. Sin el daemon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool` y `logout` editan los archivos directamente y surten efecto cuando el daemon arranca. `list` también muestra las entradas omitidas y el motivo, y `--json` imprime cualquier resultado como JSON. Las ediciones conservan los campos que Anda no lee, las referencias `${VAR}` y la clave raíz del archivo; `remove` también borra el inicio de sesión guardado del servidor, salvo con `--keep-credentials`. Anda no vigila `mcp.json`: tras editarlo a mano, ejecute `anda mcp reload`. El origen de cada servidor y su último error se guardan en `~/.anda/mcp_state.json`.
 
 ## Estructura de directorios locales
 
@@ -87,6 +102,7 @@ El agente también puede agregar un servidor en runtime utilizando `add_mcp_serv
 ~/.anda/
   config.yaml
   mcp.json
+  mcp_state.json
   anda-daemon.pid
   channels/
   credentials/ # almacén local de credenciales cifradas para usuarios de confianza

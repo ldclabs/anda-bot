@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use rmcp::transport::auth::CredentialRefreshGuard;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use super::write_daemon_config_atomically;
+use crate::engine::write_daemon_config_atomically;
 use crate::util::fs::restrict_secret_dir_permissions;
 
 /// Directory name under ANDA_HOME holding per-server credential files.

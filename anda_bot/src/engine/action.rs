@@ -374,14 +374,16 @@ impl ActionSession {
             .map(|()| args)
     }
 
-    /// Requests user approval before an MCP server is added or connected.
-    /// Unlike shell commands there is no risk classification: outside
-    /// FullAccess mode these tools always require explicit confirmation,
-    /// because they spawn local processes or open connections to arbitrary
-    /// endpoints. Reached only through [`require_mcp_approval`].
+    /// Requests user approval before an MCP server is added, connected or
+    /// changed. Unlike shell commands there is no risk classification:
+    /// outside FullAccess mode these tools always require explicit
+    /// confirmation, because they spawn local processes, open connections to
+    /// arbitrary endpoints, or change what the agent can reach. Reached only
+    /// through [`require_mcp_approval`].
     async fn request_mcp_approval(
         &self,
         ctx: &BaseCtx,
+        request: McpApprovalKind,
         tool_name: &str,
         summary: String,
         details: Vec<ActionDetail>,
@@ -393,17 +395,24 @@ impl ActionSession {
                 "summary": &summary,
             }),
         };
+        let (title, message) = match request {
+            McpApprovalKind::Connect => (
+                "Approve MCP server connection",
+                "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
+            ),
+            McpApprovalKind::Change => (
+                "Approve MCP server change",
+                "The agent wants to change an MCP server you configured.",
+            ),
+        };
         let payload = ActionPayload {
             tool: Some(ActionToolRef::labeled(tool_name, "MCP server")),
-            message: Some(
-                "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint."
-                    .to_string(),
-            ),
+            message: Some(message.to_string()),
             summary: Some(summary),
             details: Some(details),
             approval: Some(ApprovalLabels::approve_deny()),
             metadata: Some(metadata),
-            ..self.new_payload(ctx, &kind, "Approve MCP server connection".to_string())
+            ..self.new_payload(ctx, &kind, title.to_string())
         };
         self.request_approval(payload, kind, "MCP server").await
     }
@@ -917,11 +926,21 @@ fn next_action_id() -> String {
     format!("act_{}", Xid::new())
 }
 
+/// What an MCP approval card asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpApprovalKind {
+    /// Adding or connecting a server.
+    Connect,
+    /// Enabling, disabling, removing or signing out of one.
+    Change,
+}
+
 /// Fail-closed approval gate for the MCP server tools: outside FullAccess mode
 /// the user must confirm, and when no [`ActionSession`] is available in the
 /// context (so no approval card can be shown) the call is rejected.
 pub(crate) async fn require_mcp_approval(
     ctx: &BaseCtx,
+    kind: McpApprovalKind,
     tool_name: &str,
     summary: String,
     details: Vec<ActionDetail>,
@@ -931,14 +950,17 @@ pub(crate) async fn require_mcp_approval(
         return Ok(());
     }
     let Some(session) = ctx.get_state::<ActionSession>() else {
-        return Err(
-            "adding or connecting an MCP server requires user approval, \
-             which is not available in this context"
-                .into(),
-        );
+        let what = match kind {
+            McpApprovalKind::Connect => "adding or connecting an MCP server",
+            McpApprovalKind::Change => "changing an MCP server",
+        };
+        return Err(format!(
+            "{what} requires user approval, which is not available in this context"
+        )
+        .into());
     };
     session
-        .request_mcp_approval(ctx, tool_name, summary, details, metadata)
+        .request_mcp_approval(ctx, kind, tool_name, summary, details, metadata)
         .await
 }
 
@@ -1201,6 +1223,7 @@ mod tests {
         // mode), the gate must fail closed instead of letting the tool run.
         let err = require_mcp_approval(
             &ctx,
+            McpApprovalKind::Connect,
             "add_mcp_server",
             "Run local MCP server: npx server".to_string(),
             vec![],
@@ -1231,6 +1254,7 @@ mod tests {
         let request = tokio::spawn(async move {
             require_mcp_approval(
                 &ctx2,
+                McpApprovalKind::Connect,
                 "add_mcp_server",
                 "Run local MCP server: npx server".to_string(),
                 vec![approval_detail("Command", "npx", "text")],

@@ -54,7 +54,7 @@ GLM_API_KEY
 
 ## خوادم MCP
 
-يمكن لـ Anda Bot الاتصال بخوادم MCP عبر عمليات stdio الفرعية أو نقاط نهاية HTTP. ضع تكوين MCP المحمول في `~/.anda/mcp.json` ، ثم أعد تشغيل daemon. يقبل الملف كلاً من المفاتيح الجذرية `mcpServers` و `servers` لمساعدتك في لصق التكوينات من الأدوات المتوافقة الأخرى مع MCP مع الحد الأدنى من التعديلات.
+يمكن لـ Anda Bot الاتصال بخوادم MCP عبر عمليات stdio الفرعية أو نقاط نهاية HTTP. ضع تكوين MCP المحمول في `~/.anda/mcp.json` ، ثم شغّل `anda mcp reload` (أو أعد تشغيل daemon). يقبل الملف كلاً من المفاتيح الجذرية `mcpServers` و `servers` لمساعدتك في لصق التكوينات من الأدوات المتوافقة الأخرى مع MCP مع الحد الأدنى من التعديلات.
 
 ```json
 {
@@ -79,7 +79,22 @@ GLM_API_KEY
 
 يُحمَّل كل إدخال على حدة، ولا يمنع MCP أبدًا بدء تشغيل الـ daemon: يُتخطّى الإدخال غير الصالح للاستخدام (متغير بيئة غير مُعرَّف، أو `type` غير مدعوم مثل `sse` المُهمَل، أو معرّف مكرر) مع تسجيل تحذير في سجل الـ daemon، وتُحمَّل الخوادم الأخرى كالمعتاد. تتصل الخوادم في الخلفية بعد بدء الـ daemon، لذلك لا تؤخره نقطة نهاية بطيئة أو أول تنزيل عبر `npx -y`؛ أضف `"startup": "eager"` إلى إدخال لاكتشاف أدواته قبل أن يُعلن الـ daemon جاهزيته. تحصل خوادم stdio على `PATH` الموسّع نفسه الذي تستخدمه أداة shell، لذا يُعثر على `npx` و`uvx` وأوامر Homebrew حتى عندما يعمل الـ daemon كخدمة تسجيل دخول؛ لكن هذه الخدمة لا ترى المتغيرات المُصدَّرة في ملف تعريف الـ shell لديك، لذا تحتاج مراجع `${VAR}` إلى وجود المتغير في بيئة الـ daemon نفسه.
 
-يمكن للوكيل أيضاً إضافة خادم إلى بيئة التشغيل باستخدام `add_mcp_server`. قم بتعيين `persist: false` للـ daemon الحالي فقط، أو `persist: true` لحفظ الخادم في `~/.anda/mcp.json` لإعادة التشغيل في المستقبل. تتطابق حقول الخادم مع إدخال `mcp.json` : `type` و `command` و `args` و `env` و `cwd` و `url` و `headers` و `enabled` و `include` و `exclude` ، بالإضافة إلى الحقول الخاصة بالأدوات `id` و `persist`.
+يمكن للوكيل أيضاً إضافة خادم إلى بيئة التشغيل باستخدام `add_mcp_server`. قم بتعيين `persist: false` للـ daemon الحالي فقط، أو `persist: true` لحفظ الخادم في `~/.anda/mcp.json` لإعادة التشغيل في المستقبل. تتطابق حقول الخادم مع إدخال `mcp.json` : `type` و `command` و `args` و `env` و `cwd` و `url` و `headers` و `enabled` و `include` و `exclude` ، بالإضافة إلى الحقول الخاصة بالأدوات `id` و `persist`. يتيح `manage_mcp_server` للوكيل عرض الخوادم مع حالتها وآخر خطأ فيها وإعادة الاتصال بأحدها؛ أما تفعيل خادم أو تعطيله أو إزالته أو تسجيل الخروج منه فيطلب موافقتك أولاً.
+
+### إدارة الخوادم باستخدام `anda mcp`
+
+```bash
+anda mcp list                                         # حالة كل خادم وأدواته وآخر خطأ فيه
+anda mcp get github                                   # خادم واحد وأدواته
+anda mcp add context7 -- npx -y @upstash/context7-mcp
+anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
+anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
+anda mcp login linear --url https://mcp.linear.app/mcp  # تسجيل الدخول عبر OAuth؛ يطبع --no-browser العنوان
+anda mcp tool github delete_repository --hide         # إخفاء أداة عن الوكيل
+anda mcp disable context7                             # وأيضاً: enable و remove و reconnect و logout و reload
+```
+
+عندما يعمل daemon يمر كل أمر عبره ويُطبَّق التغيير فوراً: يُعاد تشغيل الخادم الذي تغيّرت إعدادات اتصاله، ويستمر في العمل الخادم الذي لا يمس تغييره الاتصال (حقل لا يقرؤه Anda مثلاً). يُعاد الاتصال بالخوادم الفاشلة في الخلفية بفواصل تتدرج من 30 ثانية إلى 30 دقيقة، ويُحفظ السبب ليعرضه `list`. من دون daemon تعدّل الأوامر `add` و `add-json` و `remove` و `enable` و `disable` و `tool` و `logout` الملفات مباشرة، ويسري التغيير عند بدء daemon. يعرض `list` أيضاً الإدخالات التي تم تخطيها وسبب ذلك، ويطبع `--json` أي نتيجة بصيغة JSON. تحافظ التعديلات على الحقول التي لا يقرؤها Anda وعلى مراجع `${VAR}` والمفتاح الجذري للملف؛ ويحذف `remove` أيضاً بيانات تسجيل الدخول المحفوظة للخادم ما لم تمرّر `--keep-credentials`. لا يراقب Anda ملف `mcp.json`: بعد تعديله يدوياً شغّل `anda mcp reload`. يُحفظ مصدر كل خادم وآخر خطأ فيه في `~/.anda/mcp_state.json`.
 
 ## هيكل المجلد المحلي
 
@@ -87,6 +102,7 @@ GLM_API_KEY
 ~/.anda/
   config.yaml
   mcp.json
+  mcp_state.json
   anda-daemon.pid
   channels/
   credentials/ # مخزن أوراق الاعتماد المحلي المشفر للمستخدمين الموثوقين

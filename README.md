@@ -299,7 +299,8 @@ Daemon management requires a configured trusted identity; a valid signature from
 ### MCP Servers
 
 Anda Bot can connect to MCP servers and expose their tools to the agent. Put a
-portable MCP configuration in `~/.anda/mcp.json`, then restart the daemon.
+portable MCP configuration in `~/.anda/mcp.json`, then run `anda mcp reload` (or
+restart the daemon).
 `mcp.json` accepts both `mcpServers` and `servers` as the root key so you can
 paste configs from other MCP-compatible tools with minimal changes.
 
@@ -335,12 +336,32 @@ ready. Stdio servers get the same extended `PATH` as the shell tool, so `npx` an
 `uvx` are found even when the daemon runs as a login service, which does not see
 variables exported in your shell profile.
 
+Manage servers from the terminal with `anda mcp`:
+
+```bash
+anda mcp list                                         # status, tools and last error of each server
+anda mcp add context7 -- npx -y @upstash/context7-mcp
+anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
+anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
+anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth sign-in
+anda mcp tool github delete_repository --hide         # keep one tool from the agent
+anda mcp disable context7                             # also: enable, remove, reconnect, logout
+```
+
+With the daemon running, a change applies at once and failed servers are retried
+in the background; without it, the command edits `mcp.json` and the change
+applies when the daemon starts. `list` also shows entries that were skipped and
+why. Edits keep the fields Anda does not read and your `${VAR}` references, and
+`remove` deletes the server's stored sign-in too.
+
 The agent can also connect a new MCP server during a conversation by calling
 `add_mcp_server`. Use `persist: false` for the current daemon only, or
 `persist: true` to write the server to `~/.anda/mcp.json` for future restarts.
 Its server fields mirror one `mcp.json` entry: `type`, `command`, `args`,
 `env`, `cwd`, `url`, `headers`, `enabled`, `include`, and `exclude`, plus the
-tool-only `id` and `persist` fields.
+tool-only `id` and `persist` fields. `manage_mcp_server` lets the agent list the
+servers with their status and last error and reconnect one; enabling, disabling,
+removing or signing out of a server asks for your approval first.
 
 For OAuth servers, `connect_mcp_server` runs authorization and persists the connection. Reauthorization preserves tool allowlists/denylists, custom headers, client ID and transport settings, and saves updated scopes. If the browser opener fails, the tool returns the authorization URL for manual opening. The callback uses the gateway's port and loopback IP family; remote or specific-interface deployments need a tunnel from that browser-side loopback address to the actual listener.
 

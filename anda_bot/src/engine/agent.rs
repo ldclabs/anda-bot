@@ -57,7 +57,8 @@ use meta::{
 use session::{ConversationInput, Session};
 
 use super::{
-    ActionEvent, ActionRuntime, ActionSession, AskUserChoiceTool, CompletionHook, McpServerTool,
+    ActionEvent, ActionRuntime, ActionSession, AskUserChoiceTool, CompletionHook,
+    ManageMcpServerTool, McpServerTool,
     browser::ChromeBrowserTool,
     conversation::{AgentCaller, ConversationsTool, RequestState, SourceState},
     goal::{self, GoalTool, GoalToolState},
@@ -163,6 +164,7 @@ fn base_tool_dependencies() -> Vec<String> {
         WriteFileTool::NAME.to_string(),
         APPLY_PATCH_NAME.to_string(),
         McpServerTool::NAME.to_string(),
+        ManageMcpServerTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
         SkillsListTool::NAME.to_string(),
@@ -1622,6 +1624,8 @@ mod tests {
         assert!(!base_tools().contains(&GoalTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
         assert!(!base_tools().contains(&McpServerTool::NAME.to_string()));
+        assert!(base_tool_dependencies().contains(&ManageMcpServerTool::NAME.to_string()));
+        assert!(!base_tools().contains(&ManageMcpServerTool::NAME.to_string()));
     }
 
     #[test]
@@ -1833,16 +1837,10 @@ mod tests {
         );
         let bridge = Arc::new(BrowserBridge::new());
         let skills = SkillLibrary::for_test(home.clone());
-        let mcp_provider =
-            Arc::new(anda_engine::extension::mcp::McpToolProvider::new(Vec::new()).unwrap());
-        let add_mcp_server = Arc::new(McpServerTool::new(
-            mcp_provider.clone(),
-            home.clone(),
-            Some(home.join("workspace")),
-            crate::config::McpSettings::file_path(&home),
-            Arc::new(tokio::sync::Mutex::new(())),
-            Default::default(),
-        ));
+        let mcp_manager = super::super::mcp::McpManager::for_test(&home).await;
+        let mcp_provider = mcp_manager.provider().clone();
+        let add_mcp_server = Arc::new(McpServerTool::new(mcp_manager.clone()));
+        let manage_mcp_server = Arc::new(ManageMcpServerTool::new(mcp_manager));
         let cron_runtime = Arc::new(
             crate::cron::CronRuntime::connect(Arc::new(EngineRef::new()), db.clone())
                 .await
@@ -1950,6 +1948,8 @@ mod tests {
             .register_tool(skills.clone())
             .unwrap()
             .register_tool(add_mcp_server)
+            .unwrap()
+            .register_tool(manage_mcp_server)
             .unwrap()
             .register_tool(resource_store.clone())
             .unwrap()

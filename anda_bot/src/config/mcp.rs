@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::util::{command_path::command_path, text::read_text_file};
+use crate::util::command_path::command_path;
 
 use super::normalize_string;
 
@@ -66,22 +66,28 @@ impl McpSettings {
         home_dir.join(MCP_CONFIG_FILE_NAME)
     }
 
-    /// Reads mcp.json from `home_dir`. Never fails: a file that cannot be read
-    /// or parsed becomes a diagnostic and loads no servers.
-    pub async fn load(home_dir: &Path) -> Self {
-        let path = Self::file_path(home_dir);
-        let settings = match read_text_file(&path).await {
-            Ok(content) => Self::from_json_contents(&content),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
-            Err(err) => Err(err.into()),
-        };
-        settings.unwrap_or_else(|err| Self {
+    /// Parses the contents of the mcp.json at `path`. Never fails: a file that
+    /// cannot be parsed becomes a diagnostic and loads no servers.
+    pub fn from_file_contents(path: &Path, content: &str) -> Self {
+        Self::from_json_contents(content).unwrap_or_else(|err| Self::unreadable(path, err))
+    }
+
+    /// The settings of an mcp.json that could not be read: no servers, and a
+    /// diagnostic that says why.
+    pub fn unreadable(path: &Path, err: impl fmt::Display) -> Self {
+        Self {
             servers: Vec::new(),
             diagnostics: vec![McpDiagnostic::file(format!(
                 "{} was not loaded: {err}",
                 path.display()
             ))],
-        })
+        }
+    }
+
+    /// Parses one entry written the way mcp.json writes it under
+    /// `mcpServers`, for a server named `id`.
+    pub fn parse_entry(id: &str, entry: &Value) -> Result<McpServerSettings, BoxError> {
+        serde_json::from_value::<McpJsonServer>(entry.clone())?.into_settings(id.to_string())
     }
 
     /// Parses mcp.json contents. Only a file that is not a JSON object is an
@@ -146,10 +152,7 @@ impl McpSettings {
             None | Some(Value::Null) => {}
             Some(Value::Object(entries)) => {
                 for (id, entry) in entries {
-                    match serde_json::from_value::<McpJsonServer>(entry.clone())
-                        .map_err(BoxError::from)
-                        .and_then(|server| server.into_settings(id.clone()))
-                    {
+                    match Self::parse_entry(id, entry) {
                         Ok(server) => self.servers.push(server),
                         Err(err) => self.diagnostics.push(McpDiagnostic::server(id, err)),
                     }
@@ -1178,16 +1181,13 @@ mod tests {
         diagnostic_for(&settings, "servers[2]");
     }
 
-    #[tokio::test]
-    async fn load_never_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = McpSettings::load(dir.path()).await;
-        assert!(missing.servers.is_empty() && missing.diagnostics.is_empty());
+    #[test]
+    fn file_contents_never_fail_to_load() {
+        let path = Path::new("/tmp/anda-home/mcp.json");
+        let empty = McpSettings::from_file_contents(path, "");
+        assert!(empty.servers.is_empty() && empty.diagnostics.is_empty());
 
-        tokio::fs::write(McpSettings::file_path(dir.path()), "{ not json")
-            .await
-            .unwrap();
-        let unparsable = McpSettings::load(dir.path()).await;
+        let unparsable = McpSettings::from_file_contents(path, "{ not json");
         assert!(unparsable.servers.is_empty());
         assert_eq!(unparsable.diagnostics.len(), 1);
         assert_eq!(unparsable.diagnostics[0].server_id, None);

@@ -3,7 +3,7 @@ use anda_db::database::AndaDB;
 use anda_engine::{
     context::{AgentCtx, Web3SDK},
     engine::{Engine, EngineRef},
-    extension::{fs, mcp, shell, skill},
+    extension::{fs, mcp::McpToolProvider, shell, skill},
     management::{BaseManagement, Visibility},
     memory::Conversations,
     model::{Models, reqwest},
@@ -42,9 +42,7 @@ mod browser_ws;
 mod conversation;
 mod goal;
 mod idle;
-mod mcp_credentials;
-mod mcp_oauth;
-mod mcp_server;
+pub(crate) mod mcp;
 mod memory_api;
 mod multimodal;
 mod prompt;
@@ -69,8 +67,8 @@ use resources::record_artifacts;
 
 pub(crate) use action::{
     ActionApiOutput, ActionDetail, ActionEvent, ActionResponseArgs, ActionRuntime, ActionSession,
-    ActionStatus, ActionsTool, ActionsToolArgs, AskUserChoiceTool, action_id_from_message,
-    action_id_from_message_value, apply_action_resolution_to_chat_message,
+    ActionStatus, ActionsTool, ActionsToolArgs, AskUserChoiceTool, McpApprovalKind,
+    action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
     apply_action_resolution_to_message, approval_detail, is_action_message_value,
     payload_action_id, payload_is_pending, payload_responded_at, require_mcp_approval,
     update_action_payload_resolution,
@@ -84,8 +82,7 @@ pub use browser::*;
 pub use conversation::*;
 pub use goal::GoalTool;
 pub use idle::{BrainSleepIdleHook, IdleHook};
-pub(crate) use mcp_oauth::McpOAuthFlows;
-pub(crate) use mcp_server::{McpConnectTool, McpServerTool};
+pub(crate) use mcp::{ManageMcpServerTool, McpConnectTool, McpServerTool};
 pub use multimodal::MediaUnderstandingAgent;
 pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
@@ -98,7 +95,7 @@ const ACTIVE_MODEL_LABEL: &str = "";
 pub struct Engines {
     state: AppState,
     brain_admission_auth: AppState,
-    mcp_oauth_flows: McpOAuthFlows,
+    mcp: mcp::McpManager,
     bot: Arc<AndaBot>,
     brain: brain::Client,
     pub(crate) memory: brain::MemoryService,
@@ -129,7 +126,6 @@ pub struct EngineConfig {
     pub workspaces: Vec<PathBuf>,
     pub tts: config::TtsConfig,
     pub transcription: config::TranscriptionConfig,
-    pub mcp: config::McpSettings,
     pub https_proxy: Option<String>,
     /// The daemon's outbound client (model providers, TTS, transcription, Web3).
     pub http_client: reqwest::Client,
@@ -359,6 +355,7 @@ fn build_skill_registry(
             SkillLibrary::NAME,
             McpServerTool::NAME,
             McpConnectTool::NAME,
+            ManageMcpServerTool::NAME,
             ResourceStore::NAME,
             ConversationsTool::NAME,
             ActionsTool::NAME,
@@ -507,7 +504,6 @@ impl Engines {
         let cli_workspaces = shell_runtime::CliWorkspaceGrants::new(cfg.owner);
         let active_im_channels = channel_sender.channels();
         let config_path = config::Config::file_path(&cfg.home_dir);
-        let mcp_config_path = config::McpSettings::file_path(&cfg.home_dir);
         let config_write_lock = Arc::new(Mutex::new(()));
         let root_secret: [u8; 48] = {
             let mut hasher = Sha3_384::new();
@@ -683,41 +679,28 @@ impl Engines {
         let mcp_provider = {
             // OAuth refresh tokens persist here, so servers marked `oauth` in
             // mcp.json reconnect across restarts without a new browser flow.
-            let credential_store = Arc::new(mcp_credentials::FileMcpCredentialStore::new(
-                cfg.home_dir.join(mcp_credentials::MCP_CREDENTIALS_DIR_NAME),
+            let credential_store = Arc::new(mcp::FileMcpCredentialStore::new(
+                cfg.home_dir.join(mcp::MCP_CREDENTIALS_DIR_NAME),
             ));
             Arc::new(
-                mcp::McpToolProvider::builder()
+                McpToolProvider::builder()
                     .credential_store(credential_store)
                     .build()?,
             )
         };
-        let mcp_configs = mcp_server::register_mcp_servers(
-            &mcp_provider,
-            &cfg.mcp,
-            &cfg.home_dir,
-            &default_workspace,
-        );
-        let add_mcp_server_tool = Arc::new(McpServerTool::new(
-            mcp_provider.clone(),
-            cfg.home_dir.clone(),
-            Some(default_workspace.clone()),
-            mcp_config_path.clone(),
-            config_write_lock.clone(),
-            mcp_configs.clone(),
-        ));
-        let mcp_oauth_flows = McpOAuthFlows::new(
-            mcp_provider.clone(),
-            mcp_configs.clone(),
-            cfg.gateway_addr,
-            mcp_config_path,
-            config_write_lock.clone(),
-        );
-        let connect_mcp_server_tool = Arc::new(McpConnectTool::new(
-            mcp_provider.clone(),
-            mcp_oauth_flows.clone(),
-            mcp_configs,
-        ));
+        // Registers the mcp.json servers; the engine connects them while it
+        // initializes its providers.
+        let mcp_manager = mcp::McpManager::open(mcp::McpManagerConfig {
+            provider: mcp_provider.clone(),
+            home_dir: cfg.home_dir.clone(),
+            default_cwd: Some(default_workspace.clone()),
+            write_lock: config_write_lock.clone(),
+            gateway_addr: cfg.gateway_addr,
+        })
+        .await;
+        let add_mcp_server_tool = Arc::new(McpServerTool::new(mcp_manager.clone()));
+        let connect_mcp_server_tool = Arc::new(McpConnectTool::new(mcp_manager.clone()));
+        let manage_mcp_server_tool = Arc::new(ManageMcpServerTool::new(mcp_manager.clone()));
         use agent::memory_policy::{MemoryPolicyAgent, MemoryPolicyTool};
         let mut hooks = anda_engine::hook::Hooks::new();
         hooks.add(Box::new(agent::memory_policy::MemoryPolicyHook));
@@ -782,6 +765,7 @@ impl Engines {
             .register_tool(record_artifacts(skill_library.clone()))?
             .register_tool(record_artifacts(add_mcp_server_tool))?
             .register_tool(record_artifacts(connect_mcp_server_tool))?
+            .register_tool(record_artifacts(manage_mcp_server_tool))?
             .register_tool(record_artifacts(resource_store.clone()))?
             .register_tool(record_artifacts(conversations_tool.clone()))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(
@@ -850,6 +834,7 @@ impl Engines {
             log::error!("failed to load skills, continuing without them: {err}");
         }
         engine.sub_agents_manager().insert(skills_tool);
+        mcp_manager.start_supervisor();
 
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
@@ -869,7 +854,7 @@ impl Engines {
         Ok(Self {
             state,
             brain_admission_auth,
-            mcp_oauth_flows,
+            mcp: mcp_manager,
             chatgpt: cfg.chatgpt,
             bot,
             brain: brain_client,
@@ -921,8 +906,15 @@ impl Engines {
             config_write_lock: self.config_write_lock.clone(),
             cli_workspaces: self.cli_workspaces.clone(),
         };
+        let mcp_api_state = mcp::McpApiState {
+            app: self.state.clone(),
+            owner: self.cli_workspaces.owner(),
+            admission: self.bot.admission(),
+            manager: self.mcp.clone(),
+        };
         let browser_ws_state = BrowserWebSocketState {
             admission: self.bot.admission(),
+            mcp: mcp_api_state.clone(),
             app_protocol: false,
             events: self.bot.events(),
             submissions: app_protocol::Submissions::new(&self.home_dir),
@@ -961,14 +953,15 @@ impl Engines {
             .with_state(daemon_control_route_state);
 
         // Unauthenticated by necessity: a browser following the authorization
-        // server's redirect carries no daemon credentials. See `mcp_oauth` for
+        // server's redirect carries no daemon credentials. See `mcp::oauth` for
         // what makes that safe.
         let mcp_oauth_router = Router::new()
-            .route(
-                mcp_oauth::CALLBACK_PATH,
-                routing::get(mcp_oauth::mcp_oauth_callback),
-            )
-            .with_state(self.mcp_oauth_flows);
+            .route(mcp::CALLBACK_PATH, routing::get(mcp::mcp_oauth_callback))
+            .with_state(self.mcp);
+        let mcp_api_router = Router::new()
+            .route("/daemon/mcp/v1", routing::post(mcp::mcp_route))
+            .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+            .with_state(mcp_api_state);
 
         let chatgpt_router = self
             .chatgpt
@@ -1013,6 +1006,7 @@ impl Engines {
             .merge(auto_update_router)
             .merge(daemon_control_router)
             .merge(mcp_oauth_router)
+            .merge(mcp_api_router)
             .merge(chatgpt_router);
         app
     }

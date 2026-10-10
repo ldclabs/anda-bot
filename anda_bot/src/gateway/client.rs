@@ -143,6 +143,30 @@ impl Client {
         }
     }
 
+    /// Calls one method of the owner's MCP API (`anda mcp`).
+    pub async fn mcp<T>(&self, method: &str, params: serde_json::Value) -> Result<T, BoxError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let response = self
+            .request(reqwest::Method::POST, "/daemon/mcp/v1")
+            .json(&serde_json::json!({ "method": method, "params": params }))
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        // Refusals come in the same envelope, whatever the status code.
+        match serde_json::from_slice::<ToolResponse>(&body) {
+            Ok(ToolResponse::Ok { result, .. }) => Ok(serde_json::from_value(result)?),
+            Ok(ToolResponse::Err { error, .. }) => Err(error.message.into()),
+            Err(_) => Err(format!(
+                "[GatewayClient] request failed, status: {status}, body: {}",
+                body_excerpt(&body)
+            )
+            .into()),
+        }
+    }
+
     pub async fn auto_update_check(&self) -> Result<AutoUpdateState, BoxError> {
         self.post_json("/auto_update/check", &()).await
     }

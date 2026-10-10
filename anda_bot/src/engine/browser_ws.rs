@@ -47,6 +47,7 @@ pub struct BrowserWebSocketState {
     pub(super) submissions: Arc<super::app_protocol::Submissions>,
     pub(super) app_protocol: bool,
     pub(super) memory: super::memory_api::MemoryApiState,
+    pub(super) mcp: super::mcp::McpApiState,
     pub(super) auth_headers: HeaderMap,
     /// When the connection's bearer expires. The signature is verified once at
     /// the upgrade; a live socket only rechecks the clock.
@@ -467,15 +468,17 @@ async fn dispatch_browser_ws_request(
         return Err("jsonrpc must be 2.0".into());
     }
     // Daemon lifecycle and machine-wide settings belong to the local owner.
-    if matches!(
+    if (matches!(
         method,
         "pick_workspace" | "register_workspace" | "reload_models" | "set_model"
-    ) && !connection.is_owner()
+    ) || method.starts_with("mcp_"))
+        && !connection.is_owner()
     {
         return Err("Only the local owner may control the daemon".into());
     }
     let _permit = if method.starts_with("memory_")
         || method.starts_with("brain_")
+        || super::mcp::is_write_method(method)
         || matches!(method, "set_model" | "reload_models" | "register_workspace")
     {
         Some(state.admission.enter().map_err(str::to_string)?)
@@ -521,6 +524,9 @@ async fn dispatch_browser_ws_request(
             params,
         ))
         .await),
+        method if method.starts_with("mcp_") => {
+            Ok(boxed(state.mcp.websocket_dispatch(method, params)).await)
+        }
         "brain_kip_readonly" => boxed(handle_brain_kip_readonly(params, state)).await,
         "brain_attention" | "brain_respond" | "brain_runtime_status" => {
             boxed(handle_brain_runtime(method, params, connection)).await
@@ -1024,6 +1030,12 @@ mod tests {
                 owner: auth_key.id(),
                 service: brain::MemoryService::new(brain.clone()),
             },
+            mcp: super::super::mcp::McpApiState {
+                app: app.clone(),
+                owner: auth_key.id(),
+                admission: Arc::new(crate::runtime_admission::Admission::default()),
+                manager: super::super::mcp::McpManager::for_test(&home).await,
+            },
             auth_headers: {
                 let mut headers = HeaderMap::new();
                 headers.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
@@ -1152,8 +1164,15 @@ mod tests {
             "Only the local owner may control the daemon"
         );
 
-        // Other daemon controls are owner-only as well.
-        for method in ["pick_workspace", "reload_models", "set_model"] {
+        // Other daemon controls are owner-only as well, MCP management
+        // included, reads too: they show the owner's servers.
+        for method in [
+            "pick_workspace",
+            "reload_models",
+            "set_model",
+            "mcp_list",
+            "mcp_reload",
+        ] {
             let request =
                 serde_json::from_value(json!({"id":1,"method":method,"params":["m"]})).unwrap();
             handle_browser_ws_request(request, &stranger).await;
@@ -1179,6 +1198,31 @@ mod tests {
                 .unwrap()
                 .contains("cannot resolve workspace")
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_methods_answer_the_owner_in_the_tool_response_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _, key) = build_ws_state(dir.path().to_path_buf()).await;
+        let (owner, mut write_rx, _) = connect(&state, key.id());
+        for (method, params) in [
+            ("mcp_list", json!({})),
+            ("mcp_get", json!({ "id": "missing" })),
+            ("mcp_apply", json!({ "change": { "op": "rename" } })),
+        ] {
+            let request =
+                serde_json::from_value(json!({"id": 1, "method": method, "params": params}))
+                    .unwrap();
+            handle_browser_ws_request(request, &owner).await;
+        }
+
+        let list: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(list["result"]["result"]["running"], true);
+        assert_eq!(list["result"]["result"]["servers"], json!([]));
+        let missing: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(missing["result"]["error"]["code"], "not_found");
+        let invalid: Value = serde_json::from_str(&write_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(invalid["result"]["error"]["code"], "invalid_request");
     }
 
     /// The WebSocket base for a mock server started by `spawn_http_mock`,
