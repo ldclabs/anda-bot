@@ -124,6 +124,7 @@ Optional per-server fields tune how Anda talks to the endpoint and runs the serv
 | `concurrency` | Which of the server's tools may run at the same time: `serial` (default), `read_only_parallel` for tools the server marks read-only, or `parallel`. |
 | `limits` | `{"output_text_bytes": <bytes>}`: the text the agent gets from one result, between 256 and 1048576 (default 32768). |
 | `inherit_env` | Local servers only. `true` (default) gives the process the daemon's whole environment; `false` gives it only the platform's essentials (`PATH`, `HOME`, `TMPDIR` and the like) and its own `env`, so no other secret in the daemon's environment reaches it. |
+| `events` | `{"webhook_ingress": true}` makes this server (dMsg) receive webhooks for [event automations](#event-automations) whose events only a webhook delivers. One server can be the ingress. |
 
 ```json
 {
@@ -174,6 +175,8 @@ anda mcp disable context7                             # also: enable, remove, re
 anda mcp options github --call-timeout 900            # advanced settings; `default` clears one
 anda mcp import --dry-run                             # servers set up in other apps
 anda mcp import github notes=work-notes --from cursor # import them; no names imports every new one
+anda mcp events github                                # the events a server reports
+anda mcp triggers                                     # event automations; also: add, get, pause, resume, delete
 ```
 
 With the daemon running, every command goes through it, so a change applies at
@@ -329,6 +332,60 @@ approve on your behalf.
 Skills written for other agents can name MCP tools as `mcp__<server>__<tool>`,
 and Anda resolves those names to the same tools. A wildcard such as
 `mcp__github__*` is not resolved: list each tool.
+
+### Event automations
+
+Servers that support the MCP Events extension report events, such as a new
+issue or a new comment. An automation runs the agent on your instructions when
+one arrives. Create one on a server's Events tab on the MCP page, with
+`anda mcp triggers add`, or by asking the agent, whose `create_event_trigger`
+asks for your approval first:
+
+```bash
+anda mcp events github                         # event types, how each is delivered, its arguments
+anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
+    --instructions "Label each new issue and summarize it" --batch-window 60
+anda mcp triggers get 3                        # its state, latest runs and events
+anda mcp triggers pause 3                      # also: resume, delete
+```
+
+- **Where results go.** An automation created on the MCP page or with the CLI
+  replies in a conversation of yours, which later runs continue; one the agent
+  created replies where it was asked, in that conversation or IM chat.
+- **Batching and limits.** Events that arrive within the batch window (30
+  seconds by default, up to an hour) are handled in one run of up to 20 events.
+  An automation pauses itself when it would run more often than its hourly
+  limit (`max_runs_per_hour`, 12 by default), which also stops a feedback loop
+  such as replying to an issue and receiving that comment as a new event, and
+  after five failed runs in a row. Resume it when ready.
+- **Trust.** Event data comes from the server and is untrusted: runs show it to
+  the model as data, not instructions, and do not record it as yours. These runs
+  do not get the full access scheduled jobs have: they can call read-only tools
+  and tools set to `allow`, and anything that needs approval (a write tool under
+  `auto`, a risky shell command) is refused.
+- **Delivery.** Anda keeps a push stream open, or polls, as the event type
+  allows, and keeps the position it reached, so events that arrived while the
+  daemon was stopped are replayed when the server supports it; an event already
+  seen is not run twice. When the server says events were lost, the automation
+  shows it. An automation whose server is disabled, removed or failing waits,
+  one whose server needs sign-in says so, and both resume when the server is back.
+- **Webhooks through dMsg.** Some servers deliver events only by webhook, and
+  Anda listens on no public port. Mark dMsg's entry with
+  `"events": {"webhook_ingress": true}`: for each such automation Anda creates an
+  endpoint there, subscribes the server to it and renews the subscription before
+  it expires, and dMsg relays the deliveries it verified. Without an ingress the
+  automation waits in the `needs_ingress` state.
+
+```json
+{
+  "mcpServers": {
+    "dmsg": { "command": "dmsg", "args": ["mcp"], "events": { "webhook_ingress": true } }
+  }
+}
+```
+
+Automations, the events they received and their runs are kept in the daemon's
+database; an endpoint's signing secret is kept in the MCP secret store.
 
 ### Authorizing an MCP server over SSH
 

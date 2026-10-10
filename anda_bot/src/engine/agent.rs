@@ -754,12 +754,14 @@ impl AndaBot {
             PromptCommand::Stop { .. } | PromptCommand::Cancel { .. }
         );
         // A user writing in chat answers any choice card the agent is
-        // waiting on; scheduled prompts are not the user's answer.
+        // waiting on; scheduled and event-triggered prompts are not the
+        // user's answer.
         let answers_choices = matches!(
             input.command,
             PromptCommand::Plain { .. } | PromptCommand::Steer { .. }
         ) && input.cron_receipt.is_none()
-            && !input.extra.contains_key(keys::CRON_JOB_ID);
+            && !input.extra.contains_key(keys::CRON_JOB_ID)
+            && !input.extra.contains_key(keys::MCP_TRIGGER_ID);
         if let Some(receipt) = &mut input.cron_receipt {
             session.bind_cron_receipt(receipt);
         }

@@ -51,6 +51,7 @@ const ENTRY_FIELDS: &[&str] = &[
     "timeouts",
     "concurrency",
     "limits",
+    "events",
 ];
 
 /// Fields of an entry in the older list form.
@@ -68,6 +69,7 @@ const LIST_ENTRY_FIELDS: &[&str] = &[
     "timeouts",
     "concurrency",
     "limits",
+    "events",
 ];
 
 /// mcp.json as it was read.
@@ -507,6 +509,9 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
     }
     if !server.limits.is_empty() {
         object.insert("limits".into(), json!(server.limits));
+    }
+    if let Some(events) = &server.events {
+        object.insert("events".into(), json!(events));
     }
     object
 }

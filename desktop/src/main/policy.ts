@@ -132,7 +132,11 @@ const mcpMethods = new Set([
   'mcp_reload',
   'mcp_import_scan',
   'mcp_import',
-  'mcp_registry_search'
+  'mcp_registry_search',
+  'mcp_events_list',
+  'mcp_triggers_list',
+  'mcp_trigger_get',
+  'mcp_trigger_apply'
 ])
 
 export function validateRpc(method: unknown, params: unknown): asserts params is unknown[] {

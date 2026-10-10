@@ -43,6 +43,14 @@ pub mod keys {
     pub const CRON_JOB_NAME: &str = "cron_job_name";
     /// Job kind (`"agent"`, `"shell"`, ...) of the firing cron job. Transient.
     pub const CRON_JOB_KIND: &str = "cron_job_kind";
+    /// Id of the MCP event trigger whose events started this request. Marks
+    /// the run as unattended, without the full access cron runs get: the
+    /// events are untrusted. Transient.
+    pub const MCP_TRIGGER_ID: &str = "mcp_trigger_id";
+    /// The trigger's run. Transient.
+    pub const MCP_TRIGGER_RUN_ID: &str = "mcp_trigger_run_id";
+    /// Human-readable name of the trigger. Transient.
+    pub const MCP_TRIGGER_NAME: &str = "mcp_trigger_name";
 }
 
 /// Reads `key` from `meta.extra`, falling back to the legacy nested

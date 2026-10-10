@@ -734,6 +734,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn event_automation_runs_use_only_read_only_and_allowed_tools() {
+        let mock = fixture(
+            json!({}),
+            vec![test_server::read_only_tool("search"), write_tool("delete")],
+        )
+        .await;
+        let automation = || ctx(&[("mcp_trigger_id", json!(5u64))]);
+        // The events are untrusted, so the run gets no full access: the
+        // write tool needs approval, which nobody can give.
+        assert!(ran(&mock.call(automation(), "mcp_mock_search").await));
+        let (asking, cards) = answering(automation(), true);
+        let result = mock.call(asking, "mcp_mock_delete").await;
+        assert_eq!(refused(&result).as_deref(), Some("approval_required"));
+        assert!(cards.lock().is_empty());
+
+        mock.manager
+            .apply(
+                McpChange::SetApproval {
+                    id: "mock".into(),
+                    tool: Some("delete".into()),
+                    approval: Some(McpApproval::Allow),
+                },
+                None,
+                McpSource::Manual,
+            )
+            .await
+            .unwrap();
+        assert!(ran(&mock.call(automation(), "mcp_mock_delete").await));
+    }
+
+    #[tokio::test]
     async fn other_agents_tool_names_reach_the_tool() {
         let mock = fixture(
             json!({}),

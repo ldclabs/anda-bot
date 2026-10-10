@@ -401,6 +401,26 @@ Anda 会记住服务第一次提供的每个工具定义：之后发生变化的
 `anda mcp external-users <id> on` 之后才能使用该服务，而且不能调用需要审批的工具。
 为其他智能体编写的技能可以用 `mcp__<server>__<tool>` 指代工具。
 
+支持 MCP Events 的服务会上报事件，例如新的 issue 或新的评论。自动化会在事件到来时
+按你的指令运行智能体，回复出现在你的一个对话中，或回到创建它的 IM 聊天里。可以在
+MCP 页面服务的“事件”标签页、用 `anda mcp triggers add`，或让智能体
+（`create_event_trigger`，会先请求你的批准）创建自动化：
+
+```bash
+anda mcp events github                                # 服务上报哪些事件
+anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
+    --instructions "给每个新 issue 加标签并写一段摘要"
+anda mcp triggers                                     # 另有：get、pause、resume、delete
+```
+
+在自动化的批处理窗口（默认 30 秒）内到达的事件会合并到一次运行中处理。事件数据来自
+服务，属于不可信内容，所以这些运行不像定时任务那样拥有完全访问权限：只能使用只读工具
+和设为 `allow` 的工具，需要审批的操作一律拒绝。运行次数超过每小时上限（默认 12 次）
+或连续失败五次的自动化会自行暂停。Anda 通过推送或轮询接收事件。只通过 webhook 投递
+的事件需要 dMsg 代为接收：在 `mcp.json` 中加入 dMsg 并设置
+`"events": {"webhook_ingress": true}`，Anda 会为每个这样的自动化在 dMsg 上创建端点，
+并让服务向它投递。
+
 智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
 表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，
 重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、

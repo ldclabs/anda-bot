@@ -2527,5 +2527,164 @@
   },
   "mcpOptionsSaved": {
     "message": "Settings saved."
+  },
+  "mcpTabEvents": {
+    "message": "Events"
+  },
+  "mcpEventsHelp": {
+    "message": "Events this server can report. An automation runs the agent on your instructions when one arrives; its replies appear in a conversation of yours."
+  },
+  "mcpEventsReload": {
+    "message": "List the events again"
+  },
+  "mcpEventsError": {
+    "message": "The events could not be listed: $1"
+  },
+  "mcpEventsUnsupported": {
+    "message": "This server does not report events (MCP Events)."
+  },
+  "mcpEventsNone": {
+    "message": "This server reports no events."
+  },
+  "mcpEventsCreate": {
+    "message": "Create automation"
+  },
+  "mcpEventsWebhookOnly": {
+    "message": "Only a webhook delivers this event; $1 (dMsg) receives it."
+  },
+  "mcpEventsNoIngress": {
+    "message": "Only a webhook delivers this event. To receive it, add dMsg to mcp.json with \"events\": {\"webhook_ingress\": true}."
+  },
+  "mcpTriggersTitle": {
+    "message": "Automations"
+  },
+  "mcpTriggersNone": {
+    "message": "No automations run on this server's events yet."
+  },
+  "mcpTriggerStateStarting": {
+    "message": "Starting"
+  },
+  "mcpTriggerStateActive": {
+    "message": "Active"
+  },
+  "mcpTriggerStateRetrying": {
+    "message": "Retrying"
+  },
+  "mcpTriggerStatePaused": {
+    "message": "Paused"
+  },
+  "mcpTriggerStateWaiting": {
+    "message": "Waiting for the server"
+  },
+  "mcpTriggerStateNeedsAuth": {
+    "message": "Needs sign-in"
+  },
+  "mcpTriggerStateNeedsIngress": {
+    "message": "Needs dMsg"
+  },
+  "mcpTriggerStateEnded": {
+    "message": "Ended"
+  },
+  "mcpTriggerByModel": {
+    "message": "Created by the agent"
+  },
+  "mcpTriggerPause": {
+    "message": "Pause $1"
+  },
+  "mcpTriggerResume": {
+    "message": "Resume $1"
+  },
+  "mcpTriggerDelete": {
+    "message": "Delete $1"
+  },
+  "mcpTriggerDeleteTitle": {
+    "message": "Delete $1?"
+  },
+  "mcpTriggerDeleteConfirm": {
+    "message": "The automation stops for good, and the events waiting for it are dropped. Its past runs stay in their conversation."
+  },
+  "mcpTriggerDeleteAction": {
+    "message": "Delete"
+  },
+  "mcpTriggerStats": {
+    "message": "$1 events · $2 runs"
+  },
+  "mcpTriggerPending": {
+    "message": "$1 waiting"
+  },
+  "mcpTriggerLastRun": {
+    "message": "last run $1"
+  },
+  "mcpTriggerMissed": {
+    "message": "The server reported lost events ($1)."
+  },
+  "mcpTriggerRuns": {
+    "message": "Latest runs"
+  },
+  "mcpTriggerNoRuns": {
+    "message": "No runs yet."
+  },
+  "mcpTriggerRunOk": {
+    "message": "$1 events"
+  },
+  "mcpTriggerRunFailed": {
+    "message": "$1 events · failed: $2"
+  },
+  "mcpTriggerCreated": {
+    "message": "Created the automation $1."
+  },
+  "mcpTriggerDeleted": {
+    "message": "Deleted the automation $1."
+  },
+  "mcpTriggerPausedNotice": {
+    "message": "Paused $1."
+  },
+  "mcpTriggerResumed": {
+    "message": "Resumed $1."
+  },
+  "mcpTriggerDialogTitle": {
+    "message": "Create an automation"
+  },
+  "mcpTriggerDialogDescription": {
+    "message": "Run the agent when $1 reports $2."
+  },
+  "mcpTriggerName": {
+    "message": "Name"
+  },
+  "mcpTriggerArguments": {
+    "message": "Subscription arguments"
+  },
+  "mcpTriggerNoArguments": {
+    "message": "This event takes no arguments."
+  },
+  "mcpTriggerArgumentsJson": {
+    "message": "The arguments, as a JSON object."
+  },
+  "mcpTriggerArgumentsInvalid": {
+    "message": "Check the argument $1."
+  },
+  "mcpTriggerArgumentsJsonInvalid": {
+    "message": "The arguments must be a JSON object."
+  },
+  "mcpTriggerUnset": {
+    "message": "Not set"
+  },
+  "mcpTriggerInstructions": {
+    "message": "Instructions"
+  },
+  "mcpTriggerInstructionsPlaceholder": {
+    "message": "What should the agent do with these events? For example: classify each new issue and add a label."
+  },
+  "mcpTriggerBatchWindow": {
+    "message": "Batch window (seconds)"
+  },
+  "mcpTriggerBatchWindowHelp": {
+    "message": "Events arriving within this time are handled in one run."
+  },
+  "mcpTriggerUnattended": {
+    "message": "Automations run on their own, and event data comes from the server, so it is untrusted. These runs can use read-only tools and tools set to Always allow; anything that needs your approval is refused."
+  },
+  "mcpTriggerCreate": {
+    "message": "Create"
   }
 }

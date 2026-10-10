@@ -3,6 +3,7 @@ import type {
   Json,
   McpChange,
   McpEntry,
+  McpEventsView,
   McpImportRequest,
   McpImportScan,
   McpImportSource,
@@ -16,7 +17,10 @@ import type {
   McpSignIn,
   McpSnapshot,
   McpTestReport,
-  McpToolDiff
+  McpToolDiff,
+  McpTrigger,
+  McpTriggerChange,
+  McpTriggerDetail
 } from './types'
 
 /** A refusal from the daemon's MCP API, with its stable code (`not_found`, `revision_conflict`, …). */
@@ -118,6 +122,30 @@ export class McpApi extends EventTarget {
   /** One page of the MCP Registry's servers, searched by name. */
   registrySearch(query: string, cursor?: string): Promise<McpRegistryPage> {
     return this.#call('mcp_registry_search', cursor ? { query, cursor } : { query })
+  }
+
+  /** A server's event types (MCP Events) and the automations that run on them. */
+  events(id: string): Promise<McpEventsView> {
+    return this.#call('mcp_events_list', { id })
+  }
+
+  /** The automations, or a server's only. */
+  triggers(serverId?: string): Promise<McpTrigger[]> {
+    return this.#call('mcp_triggers_list', serverId ? { server_id: serverId } : {})
+  }
+
+  /** One automation with its latest runs and events. */
+  trigger(id: number): Promise<McpTriggerDetail> {
+    return this.#call('mcp_trigger_get', { id })
+  }
+
+  /** Creates, changes, pauses, resumes or deletes an automation. */
+  async applyTrigger(change: McpTriggerChange): Promise<McpTriggerDetail | { deleted: number }> {
+    const result = await this.#call<McpTriggerDetail | { deleted: number }>('mcp_trigger_apply', {
+      change
+    })
+    this.notifyChanged()
+    return result
   }
 
   /** Applies mcp.json as it is on disk. */
@@ -714,4 +742,79 @@ const PACKAGE_RUNNERS: Record<string, Runner> = {
       args: [...runtimeArgs, spec, '--yes', ...(packageArgs.length ? ['--', ...packageArgs] : [])]
     }
   }
+}
+
+/** A subscription argument the automation form asks for. */
+export interface EventArgumentField {
+  name: string
+  type: 'string' | 'number' | 'integer' | 'boolean'
+  required: boolean
+  description?: string
+  /** The values an `enum` allows. */
+  options?: string[]
+}
+
+const FIELD_TYPES = ['string', 'number', 'integer', 'boolean'] as const
+
+/**
+ * The fields of an event's argument schema, for a form: each a flat property
+ * of a string, number, integer or boolean type, or a string enum. `null` when
+ * the schema is anything else, and the arguments are written as JSON instead.
+ */
+export function eventArgumentFields(schema: Json): EventArgumentField[] | null {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return null
+  const object = schema as Record<string, Json>
+  if (object.type !== undefined && object.type !== 'object') return null
+  const properties = object.properties ?? {}
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return null
+  const required = new Set(Array.isArray(object.required) ? object.required.map(String) : [])
+  const fields: EventArgumentField[] = []
+  for (const [name, value] of Object.entries(properties as Record<string, Json>)) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const property = value as Record<string, Json>
+    const type = property.type
+    const options = Array.isArray(property.enum) ? property.enum : undefined
+    if (options && !options.every((option) => typeof option === 'string')) return null
+    if (options && type !== undefined && type !== 'string') return null
+    if (!options && !FIELD_TYPES.includes(type as (typeof FIELD_TYPES)[number])) return null
+    fields.push({
+      name,
+      type: options ? 'string' : (type as EventArgumentField['type']),
+      required: required.has(name),
+      ...(typeof property.description === 'string' ? { description: property.description } : {}),
+      ...(options ? { options: options as string[] } : {})
+    })
+  }
+  return fields
+}
+
+/**
+ * Arguments from the form's text values. Empty fields are left out; numbers
+ * and booleans are parsed. Throws naming the field that is missing or wrong.
+ */
+export function eventArguments(
+  fields: EventArgumentField[],
+  values: Record<string, string>
+): Record<string, Json> {
+  const result: Record<string, Json> = {}
+  for (const field of fields) {
+    const text = (values[field.name] ?? '').trim()
+    if (!text) {
+      if (field.required) throw new Error(field.name)
+      continue
+    }
+    if (field.type === 'boolean') {
+      if (text !== 'true' && text !== 'false') throw new Error(field.name)
+      result[field.name] = text === 'true'
+    } else if (field.type === 'number' || field.type === 'integer') {
+      const number = Number(text)
+      if (!Number.isFinite(number) || (field.type === 'integer' && !Number.isInteger(number))) {
+        throw new Error(field.name)
+      }
+      result[field.name] = number
+    } else {
+      result[field.name] = text
+    }
+  }
+  return result
 }

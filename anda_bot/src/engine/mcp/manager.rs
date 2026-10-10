@@ -397,6 +397,44 @@ impl McpManager {
             .collect()
     }
 
+    /// The engine's MCP provider, for the event runtime's own requests.
+    pub(crate) fn provider(&self) -> &Arc<McpToolProvider> {
+        &self.inner.provider
+    }
+
+    /// The enabled mcp.json server marked to receive webhooks for event
+    /// automations (`events.webhook_ingress`).
+    pub(crate) fn webhook_ingress(&self) -> Option<String> {
+        let view = self.inner.view.read();
+        view.file
+            .settings
+            .servers
+            .iter()
+            .find(|server| {
+                !server.disabled
+                    && server
+                        .events
+                        .as_ref()
+                        .is_some_and(|events| events.webhook_ingress)
+            })
+            .map(|server| server.id.clone())
+    }
+
+    /// The value of a stored secret, for the event runtime's webhook
+    /// endpoints. It never leaves the daemon.
+    pub(crate) fn secret_value(&self, name: &str) -> Option<String> {
+        self.inner.secrets.values().remove(name)
+    }
+
+    /// Stores, or with `None` removes, a secret no mcp.json entry uses.
+    pub(crate) async fn store_secret(
+        &self,
+        name: &str,
+        value: Option<&str>,
+    ) -> Result<(), BoxError> {
+        self.inner.secrets.set(name, value).await.map(|_| ())
+    }
+
     /// Makes one change and applies it.
     pub async fn apply(
         &self,
@@ -2107,10 +2145,6 @@ fn retry_delay_ms(failures: u32) -> u64 {
 
 #[cfg(test)]
 impl McpManager {
-    pub(crate) fn provider(&self) -> &Arc<McpToolProvider> {
-        &self.inner.provider
-    }
-
     /// A manager over `home_dir`, with a provider of its own.
     pub(crate) async fn for_test(home_dir: &std::path::Path) -> Self {
         Self::open(McpManagerConfig {

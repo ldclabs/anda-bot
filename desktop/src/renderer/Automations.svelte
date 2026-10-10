@@ -1,9 +1,10 @@
 <script lang="ts">
   import { focusDialog } from './dialog'
   import { onMount } from 'svelte'
-  import { Plus, Clock3, Play, Pause, Trash2, RefreshCw, X } from '@lucide/svelte'
+  import { Plus, Clock3, Play, Pause, Trash2, RefreshCw, X, Zap } from '@lucide/svelte'
   import type { DesktopClient } from './client.svelte'
-  import type { RpcOutput } from '$lib/anda/client/types'
+  import type { McpTrigger, McpTriggerState, RpcOutput } from '$lib/anda/client/types'
+  import { getMessage } from '$lib/i18n'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { label, type Label } from './labels'
   let { client }: { client: DesktopClient } = $props()
@@ -28,6 +29,18 @@
     error?: string
   }
   let jobs = $state<Job[]>([])
+  // Automations that run on MCP server events; created on the MCP page.
+  let triggers = $state<McpTrigger[]>([])
+  const triggerStates: Record<McpTriggerState, string> = {
+    starting: getMessage('mcpTriggerStateStarting'),
+    active: getMessage('mcpTriggerStateActive'),
+    retrying: getMessage('mcpTriggerStateRetrying'),
+    paused: getMessage('mcpTriggerStatePaused'),
+    waiting: getMessage('mcpTriggerStateWaiting'),
+    needs_auth: getMessage('mcpTriggerStateNeedsAuth'),
+    needs_ingress: getMessage('mcpTriggerStateNeedsIngress'),
+    ended: getMessage('mcpTriggerStateEnded')
+  }
   let runs = $state<Run[]>([])
   let busy = $state(false)
   let error = $state('')
@@ -57,6 +70,7 @@
       jobs =
         (await client.toolCall<RpcOutput<Job[]>>('list_cron_jobs', { limit: 100, cursor: null }))
           .output.result || []
+      triggers = await client.mcp.triggers().catch(() => triggers)
     } catch (e) {
       error = String(e)
     } finally {
@@ -123,6 +137,19 @@
     if (action === 'remove' && !confirm(`${t('remove')} “${job.name || job._id}”?`)) return
     try {
       await client.toolCall('manage_cron_job', { id: job._id, action })
+      await load()
+    } catch (e) {
+      error = String(e)
+    }
+  }
+  async function manageTrigger(trigger: McpTrigger, action: 'pause' | 'resume' | 'delete') {
+    if (action === 'delete' && !confirm(`${t('remove')} “${trigger.name}”?`)) return
+    try {
+      await client.mcp.applyTrigger(
+        action === 'delete'
+          ? { op: 'delete', id: trigger.id }
+          : { op: 'set_enabled', id: trigger.id, enabled: action === 'resume' }
+      )
       await load()
     } catch (e) {
       error = String(e)
@@ -197,6 +224,48 @@
       <h2>{t('noJobs')}</h2>
       <button onclick={() => edit()}>{t('newJob')}</button>
     </div>{/if}
+  <section class="event-automations">
+    <div class="page-heading">
+      <div>
+        <h2>{t('eventAutomations')}</h2>
+        <p>{t('eventAutomationsHint')}</p>
+      </div>
+      <button onclick={() => (client.view = 'mcp')}>{t('openMcp')}</button>
+    </div>
+    <div class="jobs-list">
+      {#each triggers as trigger (trigger.id)}<article class="job-card">
+          <div class="job-main">
+            <Zap size={20} />
+            <div>
+              <h2>{trigger.name}</h2>
+              <p>{trigger.instructions}</p>
+              <span
+                >{trigger.event} · {trigger.server_id} · {triggerStates[trigger.state] ||
+                  trigger.state}</span
+              >
+            </div>
+          </div>
+          <div class="job-footer">
+            <span
+              >{getMessage('mcpTriggerStats', [
+                String(trigger.events_received),
+                String(trigger.runs)
+              ])}</span
+            ><button
+              class="icon-button"
+              title={trigger.enabled ? t('pause') : t('resume')}
+              onclick={() => void manageTrigger(trigger, trigger.enabled ? 'pause' : 'resume')}
+              >{#if trigger.enabled}<Pause size={15} />{:else}<Play size={15} />{/if}</button
+            ><button
+              class="icon-button"
+              title={t('remove')}
+              onclick={() => void manageTrigger(trigger, 'delete')}><Trash2 size={15} /></button
+            >
+          </div>
+          {#if trigger.last_error}<p class="job-error">{trigger.last_error}</p>{/if}
+        </article>{/each}
+    </div>
+  </section>
   {#if selected}<section class="run-history">
       <div class="page-heading">
         <h2>{t('runHistory')}</h2>

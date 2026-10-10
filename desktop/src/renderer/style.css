@@ -1322,6 +1322,18 @@ button.primary {
   display: grid;
   gap: 13px;
 }
+.event-automations {
+  margin-top: 36px;
+}
+.event-automations .page-heading {
+  align-items: flex-start;
+  margin-bottom: 15px;
+}
+.event-automations .page-heading p {
+  font-size: 12px;
+  color: var(--desk-muted);
+  margin-top: 4px;
+}
 .job-card {
   border: 1px solid var(--desk-border);
   border-radius: 10px;

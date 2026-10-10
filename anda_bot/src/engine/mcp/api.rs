@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    McpChange, McpError, McpManager,
+    McpChange, McpError, McpEventRuntime, McpManager, TriggerInput, TriggerPatch,
     import::{McpImportContext, McpImportRequest, McpImportSource},
     manager::SignIn,
     registry::{self, McpRegistryQuery},
@@ -32,6 +32,7 @@ use super::{
 };
 use crate::{
     config::{McpApproval, McpSecretValues, McpServerOptions, McpServerSettings, McpSettings},
+    cron::CronJobOrigin,
     engine::memory_api::error,
     runtime_admission::Admission,
     util::tool_response::ToolResponse,
@@ -49,6 +50,7 @@ pub(crate) struct McpApiState {
     /// The daemon's outbound client, for the MCP Registry.
     pub http: reqwest::Client,
     pub registry_url: String,
+    pub events: McpEventRuntime,
 }
 
 /// The HTTP body: one method and its parameters.
@@ -82,6 +84,40 @@ enum McpRequest {
     ImportScan(ImportScanParams),
     Import(McpImportRequest),
     RegistrySearch(McpRegistryQuery),
+    /// A server's event types and its automations.
+    EventsList(String),
+    TriggersList(Option<String>),
+    TriggerGet(u64),
+    TriggerApply(TriggerChange),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggersParams {
+    #[serde(default)]
+    server_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggerIdParams {
+    id: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriggerApplyParams {
+    change: TriggerChange,
+}
+
+/// A change to the event automations.
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum TriggerChange {
+    Create { trigger: TriggerInput },
+    Update { id: u64, changes: TriggerPatch },
+    SetEnabled { id: u64, enabled: bool },
+    Delete { id: u64 },
 }
 
 #[derive(Default, Deserialize)]
@@ -333,6 +369,16 @@ impl McpRequest {
             } else {
                 params_of(method, params)?
             }),
+            "mcp_events_list" => Self::EventsList(params_of::<IdParams>(method, params)?.id),
+            "mcp_triggers_list" => Self::TriggersList(if params.is_null() {
+                None
+            } else {
+                params_of::<TriggersParams>(method, params)?.server_id
+            }),
+            "mcp_trigger_get" => Self::TriggerGet(params_of::<TriggerIdParams>(method, params)?.id),
+            "mcp_trigger_apply" => {
+                Self::TriggerApply(params_of::<TriggerApplyParams>(method, params)?.change)
+            }
             _ => {
                 return Err(error(
                     "unsupported_capability",
@@ -354,6 +400,9 @@ pub(crate) fn is_write_method(method: &str) -> bool {
                 | "mcp_secrets"
                 | "mcp_import_scan"
                 | "mcp_registry_search"
+                | "mcp_events_list"
+                | "mcp_triggers_list"
+                | "mcp_trigger_get"
         )
 }
 
@@ -437,7 +486,35 @@ impl McpApiState {
             McpRequest::RegistrySearch(query) => {
                 respond(registry::search(&self.http, &self.registry_url, &query).await)
             }
+            McpRequest::EventsList(id) => respond(self.events.server_events(&id).await),
+            McpRequest::TriggersList(server_id) => {
+                respond(self.events.trigger_views(server_id.as_deref()).await)
+            }
+            McpRequest::TriggerGet(id) => respond(self.events.trigger_detail(id).await),
+            McpRequest::TriggerApply(change) => respond(self.apply_trigger(change).await),
         }
+    }
+
+    async fn apply_trigger(&self, change: TriggerChange) -> Result<Value, BoxError> {
+        let events = &self.events;
+        let id = match change {
+            TriggerChange::Create { trigger } => {
+                // The owner, from an app: runs reply in a conversation of
+                // their own, kept from one run to the next.
+                let origin = CronJobOrigin {
+                    caller: Some(self.owner.to_text()),
+                    ..Default::default()
+                };
+                events.create(trigger, Some(origin), "owner").await?._id
+            }
+            TriggerChange::Update { id, changes } => events.update(id, changes).await?._id,
+            TriggerChange::SetEnabled { id, enabled } => events.set_enabled(id, enabled).await?._id,
+            TriggerChange::Delete { id } => {
+                events.delete(id).await?;
+                return Ok(json!({ "deleted": id }));
+            }
+        };
+        events.trigger_detail(id).await
     }
 
     /// The current user's directories, with the workspaces asked for and the
@@ -545,6 +622,7 @@ mod tests {
     }
 
     async fn state(home: &std::path::Path, owner: &Ed25519Key, other: &Ed25519Key) -> McpApiState {
+        let manager = McpManager::for_test(home).await;
         McpApiState {
             app: AppState {
                 engines: Arc::new(BTreeMap::new()),
@@ -555,7 +633,8 @@ mod tests {
             },
             owner: owner.id(),
             admission: Arc::new(Admission::default()),
-            manager: McpManager::for_test(home).await,
+            events: McpEventRuntime::for_test(manager.clone()).await,
+            manager,
             http: reqwest::Client::builder().no_proxy().build().unwrap(),
             registry_url: "http://127.0.0.1:9".to_string(),
         }
@@ -677,7 +756,7 @@ mod tests {
                 "invalid_request",
             ),
             (
-                "mcp_events_list",
+                "mcp_events_subscribe",
                 json!({}),
                 StatusCode::BAD_REQUEST,
                 "unsupported_capability",
@@ -885,6 +964,95 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn event_automations_are_managed_through_the_api() {
+        let mock = super::super::test_server::EventsMock::default();
+        *mock.events.write() = vec![json!({
+            "name": "issue.opened", "description": "A new issue", "delivery": ["poll"],
+            "inputSchema": {"type": "object", "properties": {"repo": {"type": "string"}}}
+        })];
+        let url = super::super::test_server::serve_events(mock).await;
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(
+            McpSettings::file_path(dir.path()),
+            json!({"mcpServers": {"gh": {"type": "http", "url": url}}}).to_string(),
+        )
+        .await
+        .unwrap();
+        let (owner, other) = (Ed25519Key::new([105; 32]), Ed25519Key::new([106; 32]));
+        let state = state(dir.path(), &owner, &other).await;
+        let owner = || headers(&owner);
+
+        let (status, body) =
+            call(&state, owner(), "mcp_events_list", json!([{ "id": "gh" }])).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["supported"], true);
+        assert_eq!(body["result"]["events"][0]["name"], "issue.opened");
+        assert_eq!(body["result"]["events"][0]["webhook_only"], false);
+        assert_eq!(body["result"]["ingress"]["available"], false);
+
+        let create = json!({ "change": { "op": "create", "trigger": {
+            "server_id": "gh", "event": "issue.opened", "arguments": {"repo": "ldclabs/anda"},
+            "instructions": "Label it.", "batch_window_secs": 60
+        } } });
+        let (status, body) = call(&state, owner(), "mcp_trigger_apply", create).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let id = body["result"]["id"].as_u64().unwrap();
+        assert_eq!(body["result"]["name"], "issue.opened on gh");
+        assert_eq!(body["result"]["created_by"], "owner");
+        assert_eq!(body["result"]["batch_window_secs"], 60);
+        assert_eq!(body["result"]["runs_recent"], json!([]));
+
+        let update = json!({ "change": { "op": "update", "id": id,
+            "changes": { "instructions": "Label and triage it.", "max_runs_per_hour": 4 } } });
+        let (status, body) = call(&state, owner(), "mcp_trigger_apply", update).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["instructions"], "Label and triage it.");
+        let pause = json!({ "change": { "op": "set_enabled", "id": id, "enabled": false } });
+        let (_, body) = call(&state, owner(), "mcp_trigger_apply", pause).await;
+        assert_eq!(
+            (
+                body["result"]["enabled"].clone(),
+                body["result"]["state"].clone()
+            ),
+            (json!(false), json!("paused"))
+        );
+        let (_, body) = call(
+            &state,
+            owner(),
+            "mcp_triggers_list",
+            json!({ "server_id": "gh" }),
+        )
+        .await;
+        assert_eq!(body["result"].as_array().unwrap().len(), 1);
+
+        for (params, code) in [
+            (
+                json!({ "change": { "op": "create", "trigger": {
+                    "server_id": "nope", "event": "x", "instructions": "y" } } }),
+                "not_found",
+            ),
+            (
+                json!({ "change": { "op": "create", "trigger": {
+                    "server_id": "gh", "event": "issue.opened", "instructions": "" } } }),
+                "invalid_request",
+            ),
+            (
+                json!({ "change": { "op": "update", "id": id, "changes": { "max_runs_per_hour": 0 } } }),
+                "invalid_request",
+            ),
+        ] {
+            let (_, body) = call(&state, owner(), "mcp_trigger_apply", params).await;
+            assert_eq!(body["error"]["code"], code, "{body}");
+        }
+
+        let delete = json!({ "change": { "op": "delete", "id": id } });
+        let (status, body) = call(&state, owner(), "mcp_trigger_apply", delete).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = call(&state, owner(), "mcp_trigger_get", json!({ "id": id })).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+
     #[test]
     fn only_reads_skip_admission() {
         for method in [
@@ -894,6 +1062,9 @@ mod tests {
             "mcp_secrets",
             "mcp_import_scan",
             "mcp_registry_search",
+            "mcp_events_list",
+            "mcp_triggers_list",
+            "mcp_trigger_get",
         ] {
             assert!(!is_write_method(method));
         }
@@ -905,6 +1076,7 @@ mod tests {
             "mcp_sign_out",
             "mcp_reload",
             "mcp_import",
+            "mcp_trigger_apply",
         ] {
             assert!(is_write_method(method));
         }

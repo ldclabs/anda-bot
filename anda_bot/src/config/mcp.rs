@@ -189,6 +189,7 @@ impl McpSettings {
     /// stay as written: nothing starts them, so nothing checks them.
     fn drop_unusable_servers(&mut self) {
         let mut seen_ids = BTreeSet::new();
+        let mut ingress: Option<String> = None;
         for server in std::mem::take(&mut self.servers) {
             if server.disabled {
                 self.servers.push(server);
@@ -205,6 +206,22 @@ impl McpSettings {
                     "the id is declared more than once; only the first entry is used",
                 ));
             } else {
+                if server
+                    .events
+                    .as_ref()
+                    .is_some_and(|events| events.webhook_ingress)
+                {
+                    match &ingress {
+                        Some(first) => self.diagnostics.push(McpDiagnostic::server(
+                            &id,
+                            format!(
+                                "events.webhook_ingress is set on more than one server; {first} \
+                                 receives the webhooks"
+                            ),
+                        )),
+                        None => ingress = Some(id.clone()),
+                    }
+                }
                 self.servers.push(server);
             }
         }
@@ -259,6 +276,8 @@ struct McpJsonServer {
     concurrency: Option<String>,
     #[serde(default)]
     limits: McpLimitSettings,
+    #[serde(default)]
+    events: Option<McpEventSettings>,
 }
 
 impl McpJsonServer {
@@ -286,6 +305,7 @@ impl McpJsonServer {
             timeouts,
             concurrency,
             limits,
+            events,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
@@ -381,6 +401,7 @@ impl McpJsonServer {
             timeouts,
             concurrency,
             limits,
+            events,
         })
     }
 }
@@ -445,6 +466,19 @@ pub struct McpServerSettings {
     /// Bounds that override the engine's.
     #[serde(default, skip_serializing_if = "McpLimitSettings::is_empty")]
     pub limits: McpLimitSettings,
+    /// How the server takes part in MCP event automations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events: Option<McpEventSettings>,
+}
+
+/// An entry's `events` settings.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct McpEventSettings {
+    /// This server (dMsg) receives webhooks for event automations whose
+    /// events are delivered only by webhook, and relays them to Anda. Only
+    /// one server can be the ingress.
+    #[serde(default)]
+    pub webhook_ingress: bool,
 }
 
 /// The longest a timeout may be: a day, as the engine allows.
@@ -1824,6 +1858,37 @@ mod tests {
         assert_eq!(
             expand_config_string("$ANDA_HOME:$ANDA_WORKSPACE", &validation, "field").unwrap(),
             ":"
+        );
+    }
+
+    #[test]
+    fn one_server_receives_the_webhooks_of_event_automations() {
+        let settings = McpSettings::from_json_contents(
+            &serde_json::json!({"mcpServers": {
+                "dmsg": {"command": "dmsg", "args": ["mcp"], "events": {"webhook_ingress": true}},
+                "relay2": {"command": "relay", "events": {"webhook_ingress": true}},
+                "docs": {"command": "docs-mcp"}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let ingress: Vec<_> = settings
+            .servers
+            .iter()
+            .filter(|server| server.events.as_ref().is_some_and(|e| e.webhook_ingress))
+            .map(|server| server.id.as_str())
+            .collect();
+        // Both stay usable servers; the second is told it is not the ingress.
+        assert_eq!(ingress, ["dmsg", "relay2"]);
+        assert!(
+            diagnostic_for(&settings, "relay2")
+                .message
+                .contains("dmsg receives the webhooks")
+        );
+        let dmsg = settings.servers.iter().find(|s| s.id == "dmsg").unwrap();
+        assert_eq!(
+            crate::engine::mcp::config_store::entry_json(dmsg)["events"],
+            serde_json::json!({"webhook_ingress": true})
         );
     }
 

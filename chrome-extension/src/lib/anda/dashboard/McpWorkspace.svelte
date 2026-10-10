@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
    * The owner's MCP servers: their state, their tools and when the agent asks
-   * before calling them, their sign-in and secrets, and adding new ones.
+   * before calling them, the automations that run on their events, their
+   * sign-in and secrets, and adding new ones.
    * Shared by the extension dashboard (`#mcp`) and Anda Desktop.
    *
    * Everything goes through the daemon's owner-only `mcp_*` methods; secret
@@ -37,6 +38,7 @@
   } from '$lib/anda/client/types'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import Modal from '$lib/anda/Modal.svelte'
+  import McpEventsPanel from './McpEventsPanel.svelte'
   import McpImportDialog from './McpImportDialog.svelte'
   import McpOptionsForm from './McpOptionsForm.svelte'
   import McpRegistryDialog from './McpRegistryDialog.svelte'
@@ -79,7 +81,7 @@
   const andaClient = useAndaClient()
   const mcp = andaClient.mcp
 
-  type DetailTab = 'overview' | 'tools' | 'access' | 'config'
+  type DetailTab = 'overview' | 'tools' | 'events' | 'access' | 'config'
   type ListFilter = 'all' | 'attention' | 'ready' | 'disabled'
   type AddMode = 'url' | 'command' | 'json'
   type AddAction = 'add' | 'import' | 'registry'
@@ -177,6 +179,7 @@
   const detailTabs: { value: DetailTab; label: string }[] = [
     { value: 'overview', label: getMessage('mcpTabOverview') },
     { value: 'tools', label: getMessage('mcpTabTools') },
+    { value: 'events', label: getMessage('mcpTabEvents') },
     { value: 'access', label: getMessage('mcpTabAccess') },
     { value: 'config', label: getMessage('mcpTabConfig') }
   ]
@@ -1084,6 +1087,8 @@
               {@render overview(selected, detail)}
             {:else if activeTab === 'tools'}
               {@render toolsPane(selected, detail)}
+            {:else if activeTab === 'events'}
+              <McpEventsPanel server={selected} />
             {:else if activeTab === 'access'}
               {@render accessPane(selected)}
             {:else}

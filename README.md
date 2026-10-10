@@ -422,6 +422,31 @@ only after `anda mcp external-users <id> on`, and never a tool that needs
 approval. Skills written for other agents can name tools as
 `mcp__<server>__<tool>`.
 
+Servers that support MCP Events report events such as a new issue or a new
+comment. An automation runs the agent on your instructions when one arrives, and
+its reply appears in a conversation of yours, or back in the IM chat it was
+created from. Create one on a server's Events tab on the MCP page, with `anda mcp
+triggers add`, or by asking the agent (`create_event_trigger`, which asks for
+your approval first):
+
+```bash
+anda mcp events github                                # the events a server reports
+anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
+    --instructions "Label each new issue and summarize it"
+anda mcp triggers                                     # also: get, pause, resume, delete
+```
+
+Events that arrive within an automation's batch window (30 seconds by default)
+are handled in one run. Event data comes from the server and is untrusted, so
+these runs do not get the full access scheduled jobs have: they can use
+read-only tools and tools set to `allow`, and anything that needs approval is
+refused. An automation that runs more often than its hourly limit (12 by
+default), or fails five times in a row, pauses itself. Anda receives events by
+push or by polling. An event that only a webhook delivers needs dMsg, which
+receives webhooks on Anda's behalf: add it to `mcp.json` with
+`"events": {"webhook_ingress": true}`, and Anda creates an endpoint there for
+each such automation and subscribes the server to it.
+
 The agent can also connect a new MCP server during a conversation by calling
 `add_mcp_server`. Use `persist: false` for the current daemon only, or
 `persist: true` to write the server to `~/.anda/mcp.json` for future restarts.

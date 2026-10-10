@@ -75,3 +75,114 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
     );
     format!("{}/mcp", crate::test_support::spawn_http_mock(app).await)
 }
+
+/// What an MCP Events mock serves, and what it was asked.
+#[derive(Clone, Default)]
+pub(crate) struct EventsMock {
+    /// The event types `events/list` returns.
+    pub events: Arc<RwLock<Vec<Value>>>,
+    /// `events/poll` results, one per poll; when none are left a poll gets
+    /// no events at the last cursor.
+    pub pages: Arc<parking_lot::Mutex<std::collections::VecDeque<Value>>>,
+    /// Structured results of the tools it offers, by name.
+    pub tools: Arc<RwLock<std::collections::BTreeMap<String, Value>>>,
+    /// The `events/subscribe` result.
+    pub subscription: Arc<RwLock<Value>>,
+    /// Every request, as `{method, params}`.
+    pub requests: Arc<parking_lot::Mutex<Vec<Value>>>,
+}
+
+impl EventsMock {
+    /// The params of each request for `method`, in order.
+    pub(crate) fn calls(&self, method: &str) -> Vec<Value> {
+        self.requests
+            .lock()
+            .iter()
+            .filter(|request| request["method"] == method)
+            .map(|request| request["params"].clone())
+            .collect()
+    }
+
+    /// The arguments of each call to the tool `name`.
+    pub(crate) fn tool_calls(&self, name: &str) -> Vec<Value> {
+        self.calls("tools/call")
+            .into_iter()
+            .filter(|params| params["name"] == name)
+            .map(|params| params["arguments"].clone())
+            .collect()
+    }
+}
+
+/// Serves an MCP server with MCP Events from `mock` and returns its URL.
+pub(crate) async fn serve_events(mock: EventsMock) -> String {
+    let last_cursor = Arc::new(RwLock::new(Value::Null));
+    let app = axum::Router::new().route(
+        "/mcp",
+        routing::post(move |Json(request): Json<Value>| {
+            let mock = mock.clone();
+            let last_cursor = last_cursor.clone();
+            async move {
+                let Some(id) = request.get("id").cloned() else {
+                    return StatusCode::ACCEPTED.into_response();
+                };
+                let params = request["params"].clone();
+                mock.requests
+                    .lock()
+                    .push(json!({"method": request["method"], "params": params}));
+                let result = match request["method"].as_str().unwrap_or_default() {
+                    "initialize" => json!({
+                        "protocolVersion": params["protocolVersion"],
+                        "capabilities": { "tools": {} },
+                        "serverInfo": { "name": "events-mock", "version": "1.0.0" }
+                    }),
+                    "tools/list" => {
+                        let tools: Vec<Value> = mock
+                            .tools
+                            .read()
+                            .keys()
+                            .map(|name| read_only_tool(name))
+                            .collect();
+                        json!({ "tools": tools })
+                    }
+                    "tools/call" => {
+                        let name = params["name"].as_str().unwrap_or_default();
+                        match mock.tools.read().get(name) {
+                            Some(result) => json!({
+                                "content": [{"type": "text", "text": result.to_string()}],
+                                "structuredContent": result,
+                            }),
+                            None => json!({
+                                "content": [{"type": "text", "text": format!("no tool {name}")}],
+                                "isError": true,
+                            }),
+                        }
+                    }
+                    "events/list" => json!({ "events": mock.events.read().clone() }),
+                    "events/poll" => match mock.pages.lock().pop_front() {
+                        Some(page) => {
+                            if !page["cursor"].is_null() {
+                                *last_cursor.write() = page["cursor"].clone();
+                            }
+                            page
+                        }
+                        None => json!({
+                            "events": [], "cursor": *last_cursor.read(),
+                            "hasMore": false, "nextPollMs": 60_000
+                        }),
+                    },
+                    "events/subscribe" => mock.subscription.read().clone(),
+                    "events/unsubscribe" => json!({}),
+                    _ => {
+                        return Json(json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": { "code": -32601, "message": "Method not found" }
+                        }))
+                        .into_response();
+                    }
+                };
+                Json(json!({ "jsonrpc": "2.0", "id": id, "result": result })).into_response()
+            }
+        }),
+    );
+    format!("{}/mcp", crate::test_support::spawn_http_mock(app).await)
+}

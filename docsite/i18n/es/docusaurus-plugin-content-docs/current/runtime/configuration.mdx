@@ -98,6 +98,8 @@ anda mcp disable context7                             # también: enable, remove
 anda mcp options github --call-timeout 900            # ajustes avanzados; `default` borra uno
 anda mcp import --dry-run                             # servidores configurados en otras aplicaciones
 anda mcp import github notes=work-notes --from cursor # los importa; sin nombres, importa todos los nuevos
+anda mcp events github                                # los eventos que notifica un servidor
+anda mcp triggers                                     # automatizaciones por eventos; también: add, get, pause, resume, delete
 ```
 
 Con el daemon en ejecución, cada comando pasa por él y el cambio se aplica al instante: un servidor cuya configuración de conexión cambió se reinicia, y uno cuyo cambio no afecta a la conexión (un campo que Anda no lee, por ejemplo) sigue en marcha. Los servidores que fallan se reintentan en segundo plano, con esperas que van de 30 segundos a 30 minutos, y el motivo se conserva para `list`. Sin el daemon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users`, `secret`, `options`, `import` y `logout` editan los archivos directamente y surten efecto cuando el daemon arranca. `list` también muestra las entradas omitidas y el motivo, y `--json` imprime cualquier resultado como JSON. Las ediciones conservan los campos que Anda no lee, las referencias `${VAR}` y la clave raíz del archivo; `remove` también borra el inicio de sesión guardado del servidor, salvo con `--keep-credentials`. Anda no vigila `mcp.json`: tras editarlo a mano, ejecute `anda mcp reload`. El origen de cada servidor, su último error, las definiciones de herramientas e instrucciones que usted revisó y cuántas veces se llamaron sus herramientas se guardan en `~/.anda/mcp_state.json`.
@@ -173,6 +175,34 @@ Anda guarda la definición de cada herramienta tal como el servidor la ofreció 
 Las solicitudes de usuarios externos de IM solo pueden llamar a las herramientas de un servidor que lo permita (`"allow_external_users": true`, o `anda mcp external-users github on`), y nunca a una herramienta que requiera aprobación: un usuario externo no puede aprobar en su nombre.
 
 Las skills escritas para otros agentes pueden nombrar herramientas MCP como `mcp__<server>__<tool>`, y Anda resuelve esos nombres a las mismas herramientas. Un comodín como `mcp__github__*` no se resuelve: enumere cada herramienta.
+
+### Automatizaciones por eventos
+
+Los servidores compatibles con la extensión MCP Events notifican eventos, como una issue o un comentario nuevos. Una automatización ejecuta el agente con tus instrucciones cuando llega uno. Créala en la pestaña Eventos de un servidor en la página MCP, con `anda mcp triggers add`, o pidiéndoselo al agente, cuyo `create_event_trigger` solicita antes tu aprobación:
+
+```bash
+anda mcp events github                         # tipos de evento, cómo se entrega cada uno y sus argumentos
+anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
+    --instructions "Etiqueta cada issue nueva y resúmela" --batch-window 60
+anda mcp triggers get 3                        # su estado, sus últimas ejecuciones y eventos
+anda mcp triggers pause 3                      # también: resume, delete
+```
+
+- **Dónde van los resultados.** Una automatización creada en la página MCP o con la CLI responde en una conversación tuya, que las ejecuciones siguientes continúan; una creada por el agente responde donde se le pidió, en esa conversación o chat de IM.
+- **Agrupación y límites.** Los eventos que llegan dentro de la ventana de agrupación (30 segundos por defecto, hasta una hora) se procesan en una ejecución de hasta 20 eventos. Una automatización se pausa sola cuando superaría su límite por hora (`max_runs_per_hour`, 12 por defecto), lo que también corta un bucle de retroalimentación, como responder a una issue y recibir ese comentario como evento nuevo, y tras cinco ejecuciones fallidas seguidas. Reanúdala cuando quieras.
+- **Confianza.** Los datos del evento vienen del servidor y no son de confianza: las ejecuciones los muestran al modelo como datos, no como instrucciones, y no los registran como tuyos. Estas ejecuciones no tienen el acceso completo de las tareas programadas: pueden llamar herramientas de solo lectura y las marcadas como `allow`, y se rechaza todo lo que necesite aprobación (una herramienta de escritura en `auto`, un comando de shell arriesgado).
+- **Entrega.** Anda mantiene abierto un flujo push, o consulta periódicamente, según admita el tipo de evento, y guarda la posición alcanzada, así que los eventos llegados mientras el daemon estaba detenido se reproducen si el servidor lo permite; un evento ya visto no se ejecuta dos veces. Cuando el servidor dice que se perdieron eventos, la automatización lo muestra. Una automatización cuyo servidor está desactivado, eliminado o fallando espera; si el servidor requiere iniciar sesión, lo indica; ambas continúan cuando vuelve.
+- **Webhooks a través de dMsg.** Algunos servidores solo entregan eventos por webhook, y Anda no escucha en ningún puerto público. Marca la entrada de dMsg con `"events": {"webhook_ingress": true}`: para cada automatización así, Anda crea un endpoint allí, suscribe el servidor a él y renueva la suscripción antes de que caduque, y dMsg reenvía las entregas que verificó. Sin receptor, la automatización espera en el estado `needs_ingress`.
+
+```json
+{
+  "mcpServers": {
+    "dmsg": { "command": "dmsg", "args": ["mcp"], "events": { "webhook_ingress": true } }
+  }
+}
+```
+
+Las automatizaciones, los eventos recibidos y sus ejecuciones se guardan en la base de datos del daemon; el secreto de firma de un endpoint, en el almacén de secretos MCP.
 
 ## Estructura de directorios locales
 

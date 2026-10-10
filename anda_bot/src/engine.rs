@@ -97,6 +97,7 @@ pub struct Engines {
     state: AppState,
     brain_admission_auth: AppState,
     mcp: mcp::McpManager,
+    mcp_events: mcp::McpEventRuntime,
     bot: Arc<AndaBot>,
     brain: brain::Client,
     pub(crate) memory: brain::MemoryService,
@@ -699,6 +700,13 @@ impl Engines {
             gateway_addr: cfg.gateway_addr,
         })
         .await;
+        // MCP event automations run like cron jobs, under the same admission.
+        let mcp_events = mcp::McpEventRuntime::new(mcp::McpEventRuntimeConfig {
+            store: mcp::TriggerStore::connect(db.clone()).await?,
+            manager: mcp_manager.clone(),
+            engine: engine_ref.clone(),
+            admission: cron_runtime.admission.clone(),
+        });
         let add_mcp_server_tool = Arc::new(McpServerTool::new(mcp_manager.clone()));
         let connect_mcp_server_tool = Arc::new(McpConnectTool::new(mcp_manager.clone()));
         let manage_mcp_server_tool = Arc::new(ManageMcpServerTool::new(mcp_manager.clone()));
@@ -767,6 +775,15 @@ impl Engines {
             .register_tool(record_artifacts(add_mcp_server_tool))?
             .register_tool(record_artifacts(connect_mcp_server_tool))?
             .register_tool(record_artifacts(manage_mcp_server_tool))?
+            .register_tool(record_artifacts(Arc::new(mcp::ListMcpEventsTool::new(
+                mcp_events.clone(),
+            ))))?
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
+                mcp::CreateEventTriggerTool::new(mcp_events.clone()),
+            )))))?
+            .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(Arc::new(
+                mcp::ManageEventTriggerTool::new(mcp_events.clone()),
+            )))))?
             .register_tool(record_artifacts(resource_store.clone()))?
             .register_tool(record_artifacts(conversations_tool.clone()))?
             .register_tool(record_artifacts(Arc::new(MemoryPolicyTool::new(
@@ -840,6 +857,7 @@ impl Engines {
         }
         engine.sub_agents_manager().insert(skills_tool);
         mcp_manager.start_supervisor();
+        mcp_events.start();
 
         let default_engine = engine.id();
         let mut engines = BTreeMap::new();
@@ -860,6 +878,7 @@ impl Engines {
             state,
             brain_admission_auth,
             mcp: mcp_manager,
+            mcp_events,
             chatgpt: cfg.chatgpt,
             bot,
             brain: brain_client,
@@ -918,6 +937,7 @@ impl Engines {
             manager: self.mcp.clone(),
             http: self.runtime_models.http_client.clone(),
             registry_url: mcp::MCP_REGISTRY_URL.to_string(),
+            events: self.mcp_events.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
             admission: self.bot.admission(),

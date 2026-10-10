@@ -988,6 +988,14 @@ fn completion_message(
         let kind = request_meta_extra_as::<String>(meta, keys::CRON_JOB_KIND).unwrap_or_default();
         msg.push_str(&format!("Cron Job ({kind}): {name}\n\n"));
     }
+    if let Some(trigger_id) = request_meta_extra_as::<u64>(meta, keys::MCP_TRIGGER_ID) {
+        let mut name =
+            request_meta_extra_as::<String>(meta, keys::MCP_TRIGGER_NAME).unwrap_or_default();
+        if name.is_empty() {
+            name = trigger_id.to_string();
+        }
+        msg.push_str(&format!("MCP Event: {name}\n\n"));
+    }
     msg.push_str(&output.content);
     SendMessage::new(msg, route.reply_target)
         .in_thread(route.thread)

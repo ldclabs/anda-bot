@@ -2527,5 +2527,164 @@
   },
   "mcpOptionsSaved": {
     "message": "设置已保存。"
+  },
+  "mcpTabEvents": {
+    "message": "事件"
+  },
+  "mcpEventsHelp": {
+    "message": "此服务器可以上报的事件。事件到来时，自动化会按你的指令运行智能体，回复出现在你的对话中。"
+  },
+  "mcpEventsReload": {
+    "message": "重新列出事件"
+  },
+  "mcpEventsError": {
+    "message": "无法列出事件：$1"
+  },
+  "mcpEventsUnsupported": {
+    "message": "此服务器不上报事件（MCP Events）。"
+  },
+  "mcpEventsNone": {
+    "message": "此服务器没有可上报的事件。"
+  },
+  "mcpEventsCreate": {
+    "message": "创建自动化"
+  },
+  "mcpEventsWebhookOnly": {
+    "message": "此事件只通过 webhook 投递，由 $1（dMsg）接收。"
+  },
+  "mcpEventsNoIngress": {
+    "message": "此事件只通过 webhook 投递。要接收它，请在 mcp.json 中加入 dMsg，并设置 \"events\": {\"webhook_ingress\": true}。"
+  },
+  "mcpTriggersTitle": {
+    "message": "自动化"
+  },
+  "mcpTriggersNone": {
+    "message": "还没有基于此服务器事件的自动化。"
+  },
+  "mcpTriggerStateStarting": {
+    "message": "启动中"
+  },
+  "mcpTriggerStateActive": {
+    "message": "运行中"
+  },
+  "mcpTriggerStateRetrying": {
+    "message": "重试中"
+  },
+  "mcpTriggerStatePaused": {
+    "message": "已暂停"
+  },
+  "mcpTriggerStateWaiting": {
+    "message": "等待服务器"
+  },
+  "mcpTriggerStateNeedsAuth": {
+    "message": "需要登录"
+  },
+  "mcpTriggerStateNeedsIngress": {
+    "message": "需要 dMsg"
+  },
+  "mcpTriggerStateEnded": {
+    "message": "已结束"
+  },
+  "mcpTriggerByModel": {
+    "message": "由智能体创建"
+  },
+  "mcpTriggerPause": {
+    "message": "暂停 $1"
+  },
+  "mcpTriggerResume": {
+    "message": "恢复 $1"
+  },
+  "mcpTriggerDelete": {
+    "message": "删除 $1"
+  },
+  "mcpTriggerDeleteTitle": {
+    "message": "删除 $1？"
+  },
+  "mcpTriggerDeleteConfirm": {
+    "message": "自动化将永久停止，等待处理的事件会被丢弃。以往的运行记录仍保留在各自的对话中。"
+  },
+  "mcpTriggerDeleteAction": {
+    "message": "删除"
+  },
+  "mcpTriggerStats": {
+    "message": "$1 个事件 · $2 次运行"
+  },
+  "mcpTriggerPending": {
+    "message": "$1 个待处理"
+  },
+  "mcpTriggerLastRun": {
+    "message": "上次运行 $1"
+  },
+  "mcpTriggerMissed": {
+    "message": "服务器报告有事件丢失（$1）。"
+  },
+  "mcpTriggerRuns": {
+    "message": "最近运行"
+  },
+  "mcpTriggerNoRuns": {
+    "message": "尚未运行。"
+  },
+  "mcpTriggerRunOk": {
+    "message": "$1 个事件"
+  },
+  "mcpTriggerRunFailed": {
+    "message": "$1 个事件 · 失败：$2"
+  },
+  "mcpTriggerCreated": {
+    "message": "已创建自动化 $1。"
+  },
+  "mcpTriggerDeleted": {
+    "message": "已删除自动化 $1。"
+  },
+  "mcpTriggerPausedNotice": {
+    "message": "已暂停 $1。"
+  },
+  "mcpTriggerResumed": {
+    "message": "已恢复 $1。"
+  },
+  "mcpTriggerDialogTitle": {
+    "message": "创建自动化"
+  },
+  "mcpTriggerDialogDescription": {
+    "message": "当 $1 上报 $2 时运行智能体。"
+  },
+  "mcpTriggerName": {
+    "message": "名称"
+  },
+  "mcpTriggerArguments": {
+    "message": "订阅参数"
+  },
+  "mcpTriggerNoArguments": {
+    "message": "此事件不需要参数。"
+  },
+  "mcpTriggerArgumentsJson": {
+    "message": "参数，JSON 对象格式。"
+  },
+  "mcpTriggerArgumentsInvalid": {
+    "message": "请检查参数 $1。"
+  },
+  "mcpTriggerArgumentsJsonInvalid": {
+    "message": "参数必须是 JSON 对象。"
+  },
+  "mcpTriggerUnset": {
+    "message": "未设置"
+  },
+  "mcpTriggerInstructions": {
+    "message": "指令"
+  },
+  "mcpTriggerInstructionsPlaceholder": {
+    "message": "智能体应如何处理这些事件？例如：为每个新 issue 分类并添加标签。"
+  },
+  "mcpTriggerBatchWindow": {
+    "message": "批处理窗口（秒）"
+  },
+  "mcpTriggerBatchWindowHelp": {
+    "message": "在此时间内到达的事件会合并到一次运行中处理。"
+  },
+  "mcpTriggerUnattended": {
+    "message": "自动化无人值守运行，事件数据来自服务器，属于不可信内容。这些运行只能使用只读工具和设为“总是允许”的工具；需要你审批的操作一律拒绝。"
+  },
+  "mcpTriggerCreate": {
+    "message": "创建"
   }
 }

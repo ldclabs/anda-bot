@@ -850,3 +850,133 @@ export interface McpSignIn {
   server_id: string
   authorization_url?: string
 }
+
+/** How an MCP server delivers an event type. */
+export type McpEventDeliveryMode = 'poll' | 'push' | 'webhook'
+
+/** An event type a server can report (MCP Events). Server text is untrusted. */
+export interface McpEventDefinition {
+  name: string
+  description?: string | null
+  delivery: McpEventDeliveryMode[]
+  /** Only a webhook delivers it: Anda receives it through dMsg. */
+  webhook_only: boolean
+  input_schema: Json
+  payload_schema?: Json | null
+}
+
+export interface McpEventsView {
+  /** False when the server does not implement MCP Events. */
+  supported: boolean
+  events: McpEventDefinition[]
+  /** Why the events could not be listed. */
+  error?: string
+  /** The dMsg server that receives webhooks, or why there is none. */
+  ingress: { available: true; server_id: string } | { available: false; reason: string }
+  triggers: McpTrigger[]
+}
+
+export type McpTriggerDelivery = 'auto' | 'poll' | 'push' | 'webhook'
+
+export type McpTriggerState =
+  | 'starting'
+  | 'active'
+  | 'retrying'
+  | 'paused'
+  | 'waiting'
+  | 'needs_auth'
+  | 'needs_ingress'
+  | 'ended'
+
+/** An automation: an agent run on a server's events. */
+export interface McpTrigger {
+  id: number
+  name: string
+  server_id: string
+  event: string
+  arguments: Record<string, Json>
+  instructions: string
+  delivery: McpTriggerDelivery
+  /** The delivery mode in use. */
+  mode?: McpEventDeliveryMode | null
+  batch_window_secs: number
+  max_runs_per_hour: number
+  enabled: boolean
+  state: McpTriggerState
+  last_error?: string | null
+  last_event_at?: number | null
+  last_run_at?: number | null
+  /** When the server last said events were lost. */
+  missed_events_at?: number | null
+  events_received: number
+  runs: number
+  /** Events waiting for a run. */
+  pending: number
+  last_conversation_id?: number | null
+  webhook?: {
+    ingress: string
+    endpoint_id: string
+    subscribed: boolean
+    refresh_before?: number | null
+  } | null
+  created_by: 'owner' | 'model'
+  created_at: number
+  updated_at: number
+}
+
+export interface McpTriggerRun {
+  id: number
+  started_at: number
+  finished_at?: number | null
+  events: number
+  result?: string | null
+  error?: string | null
+  conversation_id?: number | null
+}
+
+export interface McpTriggerEvent {
+  event_id: string
+  name: string
+  timestamp: string
+  received_at: number
+  handled: boolean
+  verified?: 'v1' | 'v1a' | null
+  /** The event's data as JSON text, cut short. Untrusted. */
+  data: string
+}
+
+export interface McpTriggerDetail extends McpTrigger {
+  runs_recent: McpTriggerRun[]
+  events_recent: McpTriggerEvent[]
+}
+
+export interface McpTriggerInput {
+  server_id: string
+  event: string
+  arguments?: Record<string, Json>
+  instructions: string
+  name?: string
+  delivery?: McpTriggerDelivery
+  batch_window_secs?: number
+  max_runs_per_hour?: number
+}
+
+export type McpTriggerChange =
+  | { op: 'create'; trigger: McpTriggerInput }
+  | {
+      op: 'update'
+      id: number
+      changes: Partial<
+        Pick<
+          McpTriggerInput,
+          | 'name'
+          | 'arguments'
+          | 'instructions'
+          | 'delivery'
+          | 'batch_window_secs'
+          | 'max_runs_per_hour'
+        >
+      >
+    }
+  | { op: 'set_enabled'; id: number; enabled: boolean }
+  | { op: 'delete'; id: number }

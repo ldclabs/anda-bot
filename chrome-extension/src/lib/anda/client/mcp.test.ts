@@ -4,6 +4,8 @@ import {
   McpApi,
   McpApiError,
   defaultRegistryChoice,
+  eventArgumentFields,
+  eventArguments,
   isCredential,
   localEntry,
   moveCredentialsToSecrets,
@@ -86,6 +88,28 @@ describe('McpApi', () => {
       ['mcp_import', [{ items: [{ key: 'cursor:/c#docs' }], secrets: { TOKEN: 't' } }]],
       ['mcp_registry_search', [{ query: 'docs' }]],
       ['mcp_registry_search', [{ query: 'docs', cursor: 'next' }]]
+    ])
+    expect(changed).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads events and changes automations with one parameter object each', async () => {
+    const { daemon, rpc } = createDaemon({ result: { id: 3 } })
+    const api = new McpApi(daemon)
+    const changed = vi.fn()
+    api.addEventListener('mcp-changed', changed)
+
+    await api.events('github')
+    await api.triggers()
+    await api.triggers('github')
+    await api.trigger(3)
+    await api.applyTrigger({ op: 'set_enabled', id: 3, enabled: false })
+
+    expect(rpc.mock.calls).toEqual([
+      ['mcp_events_list', [{ id: 'github' }]],
+      ['mcp_triggers_list', [{}]],
+      ['mcp_triggers_list', [{ server_id: 'github' }]],
+      ['mcp_trigger_get', [{ id: 3 }]],
+      ['mcp_trigger_apply', [{ change: { op: 'set_enabled', id: 3, enabled: false } }]]
     ])
     expect(changed).toHaveBeenCalledTimes(1)
   })
@@ -397,5 +421,45 @@ describe('MCP Registry installs', () => {
       env: { FILES_ROOT: '/data' },
       inherit_env: false
     })
+  })
+})
+
+describe('event automation arguments', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      repo: { type: 'string', description: 'owner/name' },
+      state: { enum: ['open', 'closed'] },
+      limit: { type: 'integer' },
+      drafts: { type: 'boolean' }
+    },
+    required: ['repo']
+  }
+
+  it('turns a flat schema into fields', () => {
+    expect(eventArgumentFields(schema)).toEqual([
+      { name: 'repo', type: 'string', required: true, description: 'owner/name' },
+      { name: 'state', type: 'string', required: false, options: ['open', 'closed'] },
+      { name: 'limit', type: 'integer', required: false },
+      { name: 'drafts', type: 'boolean', required: false }
+    ])
+    expect(eventArgumentFields({ type: 'object' })).toEqual([])
+  })
+
+  it('leaves nested or mixed schemas to JSON', () => {
+    expect(eventArgumentFields({ properties: { filter: { type: 'object' } } })).toBeNull()
+    expect(eventArgumentFields({ properties: { ids: { type: 'array' } } })).toBeNull()
+    expect(eventArgumentFields({ properties: { n: { enum: [1, 2] } } })).toBeNull()
+    expect(eventArgumentFields({ type: 'string' })).toBeNull()
+    expect(eventArgumentFields(null)).toBeNull()
+  })
+
+  it('parses values and names the field that is wrong', () => {
+    const fields = eventArgumentFields(schema)!
+    expect(
+      eventArguments(fields, { repo: ' o/r ', limit: '5', drafts: 'false', state: '' })
+    ).toEqual({ repo: 'o/r', limit: 5, drafts: false })
+    expect(() => eventArguments(fields, {})).toThrow('repo')
+    expect(() => eventArguments(fields, { repo: 'o/r', limit: '1.5' })).toThrow('limit')
   })
 })

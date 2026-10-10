@@ -2527,5 +2527,164 @@
   },
   "mcpOptionsSaved": {
     "message": "Настройки сохранены."
+  },
+  "mcpTabEvents": {
+    "message": "События"
+  },
+  "mcpEventsHelp": {
+    "message": "События, о которых может сообщать этот сервер. Когда приходит событие, автоматизация запускает агента с вашими инструкциями; его ответы появляются в вашем разговоре."
+  },
+  "mcpEventsReload": {
+    "message": "Получить список событий заново"
+  },
+  "mcpEventsError": {
+    "message": "Не удалось получить список событий: $1"
+  },
+  "mcpEventsUnsupported": {
+    "message": "Этот сервер не сообщает о событиях (MCP Events)."
+  },
+  "mcpEventsNone": {
+    "message": "Этот сервер не сообщает ни о каких событиях."
+  },
+  "mcpEventsCreate": {
+    "message": "Создать автоматизацию"
+  },
+  "mcpEventsWebhookOnly": {
+    "message": "Это событие доставляется только через webhook; его принимает $1 (dMsg)."
+  },
+  "mcpEventsNoIngress": {
+    "message": "Это событие доставляется только через webhook. Чтобы получать его, добавьте dMsg в mcp.json с \"events\": {\"webhook_ingress\": true}."
+  },
+  "mcpTriggersTitle": {
+    "message": "Автоматизации"
+  },
+  "mcpTriggersNone": {
+    "message": "На событиях этого сервера пока не работает ни одна автоматизация."
+  },
+  "mcpTriggerStateStarting": {
+    "message": "Запуск"
+  },
+  "mcpTriggerStateActive": {
+    "message": "Работает"
+  },
+  "mcpTriggerStateRetrying": {
+    "message": "Повторная попытка"
+  },
+  "mcpTriggerStatePaused": {
+    "message": "Приостановлена"
+  },
+  "mcpTriggerStateWaiting": {
+    "message": "Ожидает сервер"
+  },
+  "mcpTriggerStateNeedsAuth": {
+    "message": "Нужен вход"
+  },
+  "mcpTriggerStateNeedsIngress": {
+    "message": "Нужен dMsg"
+  },
+  "mcpTriggerStateEnded": {
+    "message": "Завершена"
+  },
+  "mcpTriggerByModel": {
+    "message": "Создана агентом"
+  },
+  "mcpTriggerPause": {
+    "message": "Приостановить $1"
+  },
+  "mcpTriggerResume": {
+    "message": "Возобновить $1"
+  },
+  "mcpTriggerDelete": {
+    "message": "Удалить $1"
+  },
+  "mcpTriggerDeleteTitle": {
+    "message": "Удалить $1?"
+  },
+  "mcpTriggerDeleteConfirm": {
+    "message": "Автоматизация остановится навсегда, а ожидающие события будут отброшены. Прошлые запуски останутся в своём разговоре."
+  },
+  "mcpTriggerDeleteAction": {
+    "message": "Удалить"
+  },
+  "mcpTriggerStats": {
+    "message": "Событий: $1 · запусков: $2"
+  },
+  "mcpTriggerPending": {
+    "message": "ожидают: $1"
+  },
+  "mcpTriggerLastRun": {
+    "message": "последний запуск $1"
+  },
+  "mcpTriggerMissed": {
+    "message": "Сервер сообщил о потерянных событиях ($1)."
+  },
+  "mcpTriggerRuns": {
+    "message": "Последние запуски"
+  },
+  "mcpTriggerNoRuns": {
+    "message": "Запусков пока не было."
+  },
+  "mcpTriggerRunOk": {
+    "message": "Событий: $1"
+  },
+  "mcpTriggerRunFailed": {
+    "message": "Событий: $1 · ошибка: $2"
+  },
+  "mcpTriggerCreated": {
+    "message": "Автоматизация $1 создана."
+  },
+  "mcpTriggerDeleted": {
+    "message": "Автоматизация $1 удалена."
+  },
+  "mcpTriggerPausedNotice": {
+    "message": "$1 приостановлена."
+  },
+  "mcpTriggerResumed": {
+    "message": "$1 возобновлена."
+  },
+  "mcpTriggerDialogTitle": {
+    "message": "Создание автоматизации"
+  },
+  "mcpTriggerDialogDescription": {
+    "message": "Запускать агента, когда $1 сообщает о $2."
+  },
+  "mcpTriggerName": {
+    "message": "Название"
+  },
+  "mcpTriggerArguments": {
+    "message": "Аргументы подписки"
+  },
+  "mcpTriggerNoArguments": {
+    "message": "У этого события нет аргументов."
+  },
+  "mcpTriggerArgumentsJson": {
+    "message": "Аргументы в виде JSON-объекта."
+  },
+  "mcpTriggerArgumentsInvalid": {
+    "message": "Проверьте аргумент $1."
+  },
+  "mcpTriggerArgumentsJsonInvalid": {
+    "message": "Аргументы должны быть JSON-объектом."
+  },
+  "mcpTriggerUnset": {
+    "message": "Не задано"
+  },
+  "mcpTriggerInstructions": {
+    "message": "Инструкции"
+  },
+  "mcpTriggerInstructionsPlaceholder": {
+    "message": "Что агенту делать с этими событиями? Например: классифицировать каждую новую issue и добавить метку."
+  },
+  "mcpTriggerBatchWindow": {
+    "message": "Окно группировки (секунды)"
+  },
+  "mcpTriggerBatchWindowHelp": {
+    "message": "События, пришедшие за это время, обрабатываются за один запуск."
+  },
+  "mcpTriggerUnattended": {
+    "message": "Автоматизации работают сами по себе, а данные событий приходят от сервера, поэтому им нельзя доверять. В этих запусках доступны инструменты только для чтения и инструменты с настройкой «Всегда разрешать»; всё, что требует вашего одобрения, отклоняется."
+  },
+  "mcpTriggerCreate": {
+    "message": "Создать"
   }
 }

@@ -24,7 +24,8 @@ async-trait = "0.1"
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.16" }
-anda_engine = { version = "0.16" }
+# 0.16.10 brings the MCP Events client.
+anda_engine = { version = "0.16.10" }
 anda_engine_server = { version = "0.16" }
 anda_web3_client = { version = "0.16", features = ["client"] }
 anda_object_store = "0.14"
@@ -113,11 +114,10 @@ zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Brain 0.13.2 (Memory Interface, DB/KIP 0.14), Core 0.16.3 and Engine 0.16.5
-# (task-scoped inline attachments and mid-session tool offers) are published on
-# crates.io. The commented lines patch the shared stack from sibling checkouts
-# for development; keep one DB/KIP/Core type identity (verify with
-# `cargo metadata`).
+# Brain 0.13.2 (Memory Interface, DB/KIP 0.14), Core 0.16.3 and Engine 0.16.10
+# (the MCP Events client) are published on crates.io. The commented lines
+# patch the shared stack from sibling checkouts for development; keep one
+# DB/KIP/Core type identity (verify with `cargo metadata`).
 # anda_brain = { path = "../anda-brain/anda_brain" }
 # anda_core = { path = "../anda/anda_core" }
 # anda_engine = { path = "../anda/anda_engine" }

@@ -56,9 +56,10 @@ impl ApprovalMode {
         // Unattended runs have nobody on the other end of an approval card:
         // it would sit pending until ACTION_RESPONSE_TIMEOUT and then fail the
         // whole task. Grant full access instead so scheduled and autonomous
-        // work can complete.
+        // work can complete. Runs started by MCP events are not elevated:
+        // the events are untrusted, so whatever needs approval is refused.
         let declared = Self::from_meta(meta);
-        if let Some(reason) = unattended_run_reason(ctx, meta) {
+        if let Some(reason) = elevated_run_reason(ctx, meta) {
             if declared != Self::FullAccess {
                 log::debug!(
                     "Approval elevated from {} to full_access for an unattended run ({reason}); agent {}",
@@ -86,8 +87,9 @@ fn live_request_meta(ctx: &BaseCtx) -> RequestMeta {
         .unwrap_or_else(|| ctx.meta().clone())
 }
 
-/// Returns why the current run is unattended, or `None` when a human can answer.
-fn unattended_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
+/// Returns why the current run is unattended and runs with full access, or
+/// `None`.
+fn elevated_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
     if meta.get_extra_as::<u64>(keys::CRON_JOB_ID).is_some() {
         return Some("cron job");
     }
@@ -98,6 +100,15 @@ fn unattended_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static s
         return Some("goal mode");
     }
     None
+}
+
+/// Returns why the current run is unattended, or `None` when a human can answer.
+fn unattended_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
+    elevated_run_reason(ctx, meta).or_else(|| {
+        meta.get_extra_as::<u64>(keys::MCP_TRIGGER_ID)
+            .is_some()
+            .then_some("MCP event automation")
+    })
 }
 
 /// Returns why nobody can answer a choice card here, or `None` when one can be
@@ -315,6 +326,13 @@ impl ActionSession {
             ApprovalDecision::Allow => return Ok(args),
             ApprovalDecision::Ask(reason) => reason,
         };
+        if let Some(reason) = unattended_run_reason(ctx, &meta) {
+            return Err(format!(
+                "this shell command needs the user's approval ({approval_reason}), which nobody \
+                 can give in this {reason}, so it was NOT run"
+            )
+            .into());
+        }
         let approval_locale = language_hint.as_deref().unwrap_or("en");
         let mut details = Vec::new();
         if !workspace.is_empty() {
@@ -954,6 +972,8 @@ pub(crate) enum McpApprovalKind {
     Connect,
     /// Enabling, disabling, removing or signing out of one.
     Change,
+    /// Creating or changing an automation that runs on a server's events.
+    Automation,
 }
 
 /// The body of an MCP approval card.
@@ -975,13 +995,21 @@ pub(crate) async fn require_mcp_approval(
     details: Vec<ActionDetail>,
     metadata: Value,
 ) -> Result<(), BoxError> {
-    if ApprovalMode::from_ctx(ctx, &live_request_meta(ctx)) == ApprovalMode::FullAccess {
+    let meta = live_request_meta(ctx);
+    if ApprovalMode::from_ctx(ctx, &meta) == ApprovalMode::FullAccess {
         return Ok(());
+    }
+    if let Some(reason) = unattended_run_reason(ctx, &meta) {
+        return Err(format!(
+            "{tool_name} needs the user's approval, which nobody can give in this {reason}"
+        )
+        .into());
     }
     let Some(session) = ctx.get_state::<ActionSession>() else {
         let what = match kind {
             McpApprovalKind::Connect => "adding or connecting an MCP server",
             McpApprovalKind::Change => "changing an MCP server",
+            McpApprovalKind::Automation => "creating or changing an MCP event automation",
         };
         return Err(format!(
             "{what} requires user approval, which is not available in this context"
@@ -996,6 +1024,10 @@ pub(crate) async fn require_mcp_approval(
         McpApprovalKind::Change => (
             "Approve MCP server change",
             "The agent wants to change an MCP server you configured.",
+        ),
+        McpApprovalKind::Automation => (
+            "Approve MCP event automation",
+            "The agent wants to run on its own whenever an MCP server reports an event. Event data comes from the server and is untrusted; those runs cannot use tools that need approval.",
         ),
     };
     session
@@ -1203,6 +1235,56 @@ mod tests {
         ])));
 
         assert_eq!(approval_mode(&ctx), ApprovalMode::FullAccess);
+    }
+
+    #[tokio::test]
+    async fn event_automation_runs_are_unattended_without_full_access() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        ctx.set_state(SessionRequestMeta::new(meta_with(&[(
+            keys::MCP_TRIGGER_ID,
+            json!(3u64),
+        )])));
+        // Untrusted events must not buy full access; asks fail at once.
+        assert_eq!(approval_mode(&ctx), ApprovalMode::OnRisk);
+        assert_eq!(
+            approval_scope(&ctx).unanswerable,
+            Some("MCP event automation")
+        );
+
+        let (event_sender, mut event_rx) = mpsc::channel(4);
+        let session = ActionSession::new(
+            Arc::new(ActionRuntime::new()),
+            event_sender,
+            ctx.caller().to_text(),
+            "session_1".to_string(),
+            Arc::new(AtomicU64::new(1)),
+            Arc::new(Models::default()),
+            std::env::temp_dir(),
+        );
+        let err = session
+            .request_shell_approval(
+                &ctx,
+                CommandArgs {
+                    command: "rm -rf target".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("NOT run"), "{err}");
+        ctx.set_state(session);
+        let err = require_mcp_approval(
+            &ctx,
+            McpApprovalKind::Change,
+            "manage_mcp_server",
+            "Remove MCP server x".to_string(),
+            Vec::new(),
+            json!({}),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("nobody can give"), "{err}");
+        assert!(event_rx.try_recv().is_err(), "no card was shown");
     }
 
     #[test]

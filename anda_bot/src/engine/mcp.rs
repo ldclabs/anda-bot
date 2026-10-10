@@ -19,6 +19,7 @@ use std::fmt;
 mod api;
 pub(crate) mod config_store;
 mod credentials;
+mod events;
 mod gate;
 pub(crate) mod import;
 mod manager;
@@ -35,6 +36,10 @@ mod view;
 
 pub(crate) use api::{McpApiState, is_write_method, mcp_route};
 pub(crate) use credentials::{FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME};
+pub(crate) use events::{
+    CreateEventTriggerTool, ListMcpEventsTool, ManageEventTriggerTool, McpEventRuntime,
+    McpEventRuntimeConfig, TriggerInput, TriggerPatch, TriggerStore,
+};
 pub(crate) use gate::McpGate;
 pub(crate) use manager::{McpChange, McpManager, McpManagerConfig};
 pub(crate) use model_tools::{ManageMcpServerTool, McpConnectTool, McpServerTool};
@@ -44,7 +49,7 @@ pub(crate) use secrets::{
     MCP_SECRETS_FILE_NAME, McpSecretStore, orphaned_secrets, secret_views, secrets_in_use,
 };
 pub(crate) use state::{MCP_STATE_FILE_NAME, McpOrigin, McpSource, McpStateStore};
-pub(crate) use view::{McpServerView, offline_snapshot};
+pub(crate) use view::{McpServerView, McpStatus, offline_snapshot};
 
 /// A request the caller can correct, with a stable code for the API.
 pub(crate) struct McpError {
@@ -66,6 +71,11 @@ impl McpError {
 
     pub fn invalid(message: impl Into<String>) -> BoxError {
         Self::boxed("invalid_request", message)
+    }
+
+    /// Something other than a server was not found.
+    pub fn missing(message: impl Into<String>) -> BoxError {
+        Self::boxed("not_found", message)
     }
 
     pub fn already_exists(message: impl Into<String>) -> BoxError {

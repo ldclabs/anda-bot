@@ -126,11 +126,7 @@ impl CronRuntime {
         {
             return Err("External IM users cannot execute scheduled jobs".into());
         }
-        let caller = job
-            .origin
-            .as_ref()
-            .and_then(CronJobOrigin::caller_principal)
-            .unwrap_or(Principal::management_canister());
+        let caller = origin_caller(job.origin.as_ref());
         let meta = job.request_meta(run_id);
         match job.job_kind {
             JobKind::Agent => {
@@ -144,8 +140,7 @@ impl CronRuntime {
                         job.job
                     ),
                 );
-                self.run_agent(&engine, job, caller, meta, prompt, cancel)
-                    .await
+                run_unattended_agent(&engine, job.origin.as_ref(), meta, prompt, cancel).await
             }
             JobKind::Shell => {
                 let mut result = match run_shell(&engine, job, caller, meta.clone(), cancel).await {
@@ -153,17 +148,15 @@ impl CronRuntime {
                     Err(err) => err.into(),
                 };
                 if job.origin.is_some() && !cancel.is_cancelled() {
-                    let notification = self
-                        .run_agent(
-                            &engine,
-                            job,
-                            caller,
-                            meta,
-                            cron_shell_result_prompt(job, run_id, &result),
-                            cancel,
-                        )
-                        .await
-                        .unwrap_or_else(Into::into);
+                    let notification = run_unattended_agent(
+                        &engine,
+                        job.origin.as_ref(),
+                        meta,
+                        cron_shell_result_prompt(job, run_id, &result),
+                        cancel,
+                    )
+                    .await
+                    .unwrap_or_else(Into::into);
                     result.conversation_id = notification.conversation_id;
                     if let Some(error) = notification.error {
                         result.error = Some(format!(
@@ -175,44 +168,6 @@ impl CronRuntime {
                 Ok(result)
             }
         }
-    }
-
-    async fn run_agent(
-        &self,
-        engine: &Engine,
-        job: &CronJob,
-        caller: Principal,
-        meta: RequestMeta,
-        prompt: String,
-        cancel: &CancellationToken,
-    ) -> Result<CronJobResult, BoxError> {
-        let name = engine.default_agent();
-        let ctx = engine.ctx_with(caller, &name, &name, meta)?;
-        ctx.base.set_state(crate::runtime_admission::AdmittedCron);
-        let context_cancel = ctx.base.cancellation_token();
-        let cancel_on_drop = context_cancel.clone().drop_guard();
-        install_workspace_grant(&ctx.base, job, caller);
-        let (submission, receiver) = AgentSubmission::new();
-        let stop_on_drop = submission.cancellation_token().drop_guard();
-        ctx.base.set_state(submission.clone());
-        let (output, _) = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err("Cron scheduler stopped".into()),
-            output = ctx.agent_run(AgentInput::new(name, prompt)) => output?,
-        };
-        let result = if submission.was_claimed() {
-            wait_for_completion(receiver, cancel, || {
-                submission.cancellation_token().cancel();
-                context_cancel.cancel();
-            })
-            .await
-        } else {
-            // Other synchronous agents already return their final output.
-            Ok(output.into())
-        };
-        stop_on_drop.disarm();
-        cancel_on_drop.disarm();
-        result
     }
 
     pub async fn serve(
@@ -274,12 +229,56 @@ impl CronRuntime {
     }
 }
 
-fn install_workspace_grant(ctx: &BaseCtx, job: &CronJob, caller: Principal) {
-    if let Some(path) = job
-        .origin
-        .as_ref()
-        .and_then(|origin| origin.workspace_grant.as_ref())
-    {
+/// The principal an unattended run acts as: the one that saved the origin.
+fn origin_caller(origin: Option<&CronJobOrigin>) -> Principal {
+    origin
+        .and_then(CronJobOrigin::caller_principal)
+        .unwrap_or(Principal::management_canister())
+}
+
+/// Runs the default agent for an unattended request, a cron job or an MCP
+/// event trigger, on `origin`'s route and waits until the work it accepted
+/// is done. The caller holds the admission permit. `meta` carries the keys
+/// that mark the run as unattended.
+pub(crate) async fn run_unattended_agent(
+    engine: &Engine,
+    origin: Option<&CronJobOrigin>,
+    meta: RequestMeta,
+    prompt: String,
+    cancel: &CancellationToken,
+) -> Result<CronJobResult, BoxError> {
+    let caller = origin_caller(origin);
+    let name = engine.default_agent();
+    let ctx = engine.ctx_with(caller, &name, &name, meta)?;
+    ctx.base.set_state(crate::runtime_admission::AdmittedCron);
+    let context_cancel = ctx.base.cancellation_token();
+    let cancel_on_drop = context_cancel.clone().drop_guard();
+    install_workspace_grant(&ctx.base, origin, caller);
+    let (submission, receiver) = AgentSubmission::new();
+    let stop_on_drop = submission.cancellation_token().drop_guard();
+    ctx.base.set_state(submission.clone());
+    let (output, _) = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err("Cron scheduler stopped".into()),
+        output = ctx.agent_run(AgentInput::new(name, prompt)) => output?,
+    };
+    let result = if submission.was_claimed() {
+        wait_for_completion(receiver, cancel, || {
+            submission.cancellation_token().cancel();
+            context_cancel.cancel();
+        })
+        .await
+    } else {
+        // Other synchronous agents already return their final output.
+        Ok(output.into())
+    };
+    stop_on_drop.disarm();
+    cancel_on_drop.disarm();
+    result
+}
+
+fn install_workspace_grant(ctx: &BaseCtx, origin: Option<&CronJobOrigin>, caller: Principal) {
+    if let Some(path) = origin.and_then(|origin| origin.workspace_grant.as_ref()) {
         ctx.set_state(CronWorkspaceGrant {
             caller,
             path: path.into(),
@@ -320,7 +319,7 @@ async fn run_shell(
     let ctx = engine.ctx_with(caller, &name, &name, meta)?;
     let context_cancel = ctx.base.cancellation_token();
     let _cancel_on_drop = context_cancel.clone().drop_guard();
-    install_workspace_grant(&ctx.base, job, caller);
+    install_workspace_grant(&ctx.base, job.origin.as_ref(), caller);
     ctx.base.set_state(ShellSessionScope::new());
     let (sender, receiver) = oneshot::channel();
     let hook = Arc::new(ShellCompletion {

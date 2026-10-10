@@ -2527,5 +2527,164 @@
   },
   "mcpOptionsSaved": {
     "message": "تم حفظ الإعدادات."
+  },
+  "mcpTabEvents": {
+    "message": "الأحداث"
+  },
+  "mcpEventsHelp": {
+    "message": "الأحداث التي يمكن لهذا الخادم الإبلاغ عنها. عند وصول أحدها، تشغّل الأتمتة الوكيل وفق تعليماتك، وتظهر ردوده في محادثة خاصة بك."
+  },
+  "mcpEventsReload": {
+    "message": "إعادة سرد الأحداث"
+  },
+  "mcpEventsError": {
+    "message": "تعذّر سرد الأحداث: $1"
+  },
+  "mcpEventsUnsupported": {
+    "message": "لا يبلّغ هذا الخادم عن أحداث (MCP Events)."
+  },
+  "mcpEventsNone": {
+    "message": "لا يبلّغ هذا الخادم عن أي حدث."
+  },
+  "mcpEventsCreate": {
+    "message": "إنشاء أتمتة"
+  },
+  "mcpEventsWebhookOnly": {
+    "message": "لا يُسلَّم هذا الحدث إلا عبر webhook، ويستقبله $1 (dMsg)."
+  },
+  "mcpEventsNoIngress": {
+    "message": "لا يُسلَّم هذا الحدث إلا عبر webhook. لاستقباله، أضف dMsg إلى mcp.json مع \"events\": {\"webhook_ingress\": true}."
+  },
+  "mcpTriggersTitle": {
+    "message": "الأتمتة"
+  },
+  "mcpTriggersNone": {
+    "message": "لا توجد بعد أتمتة تعمل على أحداث هذا الخادم."
+  },
+  "mcpTriggerStateStarting": {
+    "message": "قيد البدء"
+  },
+  "mcpTriggerStateActive": {
+    "message": "نشطة"
+  },
+  "mcpTriggerStateRetrying": {
+    "message": "إعادة المحاولة"
+  },
+  "mcpTriggerStatePaused": {
+    "message": "متوقفة مؤقتًا"
+  },
+  "mcpTriggerStateWaiting": {
+    "message": "بانتظار الخادم"
+  },
+  "mcpTriggerStateNeedsAuth": {
+    "message": "تحتاج إلى تسجيل الدخول"
+  },
+  "mcpTriggerStateNeedsIngress": {
+    "message": "تحتاج إلى dMsg"
+  },
+  "mcpTriggerStateEnded": {
+    "message": "انتهت"
+  },
+  "mcpTriggerByModel": {
+    "message": "أنشأها الوكيل"
+  },
+  "mcpTriggerPause": {
+    "message": "إيقاف $1 مؤقتًا"
+  },
+  "mcpTriggerResume": {
+    "message": "استئناف $1"
+  },
+  "mcpTriggerDelete": {
+    "message": "حذف $1"
+  },
+  "mcpTriggerDeleteTitle": {
+    "message": "حذف $1؟"
+  },
+  "mcpTriggerDeleteConfirm": {
+    "message": "تتوقف الأتمتة نهائيًا وتُهمَل الأحداث التي تنتظرها. تبقى تشغيلاتها السابقة في محادثتها."
+  },
+  "mcpTriggerDeleteAction": {
+    "message": "حذف"
+  },
+  "mcpTriggerStats": {
+    "message": "الأحداث: $1 · التشغيلات: $2"
+  },
+  "mcpTriggerPending": {
+    "message": "بالانتظار: $1"
+  },
+  "mcpTriggerLastRun": {
+    "message": "آخر تشغيل $1"
+  },
+  "mcpTriggerMissed": {
+    "message": "أبلغ الخادم عن أحداث مفقودة ($1)."
+  },
+  "mcpTriggerRuns": {
+    "message": "أحدث التشغيلات"
+  },
+  "mcpTriggerNoRuns": {
+    "message": "لم تُشغَّل بعد."
+  },
+  "mcpTriggerRunOk": {
+    "message": "الأحداث: $1"
+  },
+  "mcpTriggerRunFailed": {
+    "message": "الأحداث: $1 · فشل: $2"
+  },
+  "mcpTriggerCreated": {
+    "message": "أُنشئت الأتمتة $1."
+  },
+  "mcpTriggerDeleted": {
+    "message": "حُذفت الأتمتة $1."
+  },
+  "mcpTriggerPausedNotice": {
+    "message": "أُوقفت $1 مؤقتًا."
+  },
+  "mcpTriggerResumed": {
+    "message": "استُؤنفت $1."
+  },
+  "mcpTriggerDialogTitle": {
+    "message": "إنشاء أتمتة"
+  },
+  "mcpTriggerDialogDescription": {
+    "message": "تشغيل الوكيل عندما يبلّغ $1 عن $2."
+  },
+  "mcpTriggerName": {
+    "message": "الاسم"
+  },
+  "mcpTriggerArguments": {
+    "message": "وسائط الاشتراك"
+  },
+  "mcpTriggerNoArguments": {
+    "message": "لا يأخذ هذا الحدث أي وسائط."
+  },
+  "mcpTriggerArgumentsJson": {
+    "message": "الوسائط على هيئة كائن JSON."
+  },
+  "mcpTriggerArgumentsInvalid": {
+    "message": "راجع الوسيط $1."
+  },
+  "mcpTriggerArgumentsJsonInvalid": {
+    "message": "يجب أن تكون الوسائط كائن JSON."
+  },
+  "mcpTriggerUnset": {
+    "message": "غير محدد"
+  },
+  "mcpTriggerInstructions": {
+    "message": "التعليمات"
+  },
+  "mcpTriggerInstructionsPlaceholder": {
+    "message": "ماذا يفعل الوكيل بهذه الأحداث؟ مثلًا: صنّف كل issue جديدة وأضف إليها تسمية."
+  },
+  "mcpTriggerBatchWindow": {
+    "message": "نافذة التجميع (بالثواني)"
+  },
+  "mcpTriggerBatchWindowHelp": {
+    "message": "تُعالَج الأحداث التي تصل خلال هذه المدة في تشغيل واحد."
+  },
+  "mcpTriggerUnattended": {
+    "message": "تعمل الأتمتة من تلقاء نفسها، وبيانات الأحداث تأتي من الخادم فلا يُوثق بها. يمكن لهذه التشغيلات استخدام أدوات القراءة فقط والأدوات المضبوطة على «السماح دائمًا»؛ ويُرفض كل ما يحتاج إلى موافقتك."
+  },
+  "mcpTriggerCreate": {
+    "message": "إنشاء"
   }
 }

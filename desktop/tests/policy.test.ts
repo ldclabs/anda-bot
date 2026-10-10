@@ -92,7 +92,11 @@ describe('desktop host boundaries', () => {
     expect(() => validateRpc('mcp_secrets', [{}])).not.toThrow()
     expect(() => validateRpc('mcp_import_scan', [{}])).not.toThrow()
     expect(() => validateRpc('mcp_registry_search', [{ query: 'x' }])).not.toThrow()
-    expect(() => validateRpc('mcp_events_list', [{}])).toThrow('not available')
+    expect(() => validateRpc('mcp_events_list', [{ id: 'github' }])).not.toThrow()
+    expect(() =>
+      validateRpc('mcp_trigger_apply', [{ change: { op: 'delete', id: 1 } }])
+    ).not.toThrow()
+    expect(() => validateRpc('mcp_events_subscribe', [{}])).toThrow('not available')
   })
   it('reads MCP install links into a configuration to check, never more', () => {
     const config = Buffer.from(JSON.stringify({ url: 'https://docs.test/mcp' })).toString(

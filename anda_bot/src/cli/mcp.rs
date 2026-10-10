@@ -205,6 +205,58 @@ enum McpSubcommand {
     },
     /// Apply mcp.json after editing it by hand.
     Reload,
+    /// List the events a server can report (MCP Events) and the automations
+    /// that run on them.
+    Events { id: String },
+    /// Manage MCP event automations: agent runs on a server's events, with
+    /// results in a conversation of your own. The daemon must be running.
+    ///
+    ///   anda mcp triggers                                   every automation
+    ///   anda mcp triggers add github issue.opened --args '{"repo":"o/r"}' \
+    ///       --instructions "Label each new issue"
+    ///   anda mcp triggers get 3                             with its latest runs
+    ///   anda mcp triggers pause 3 | resume 3 | delete 3
+    #[command(verbatim_doc_comment)]
+    Triggers {
+        #[command(subcommand)]
+        action: Option<TriggerAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TriggerAction {
+    /// List the automations.
+    List,
+    /// Show one automation with its latest runs and events.
+    Get { id: u64 },
+    /// Create an automation.
+    Add {
+        server: String,
+        event: String,
+        /// What to do with the events.
+        #[arg(long)]
+        instructions: String,
+        /// Subscription arguments, a JSON object.
+        #[arg(long = "args", value_name = "JSON")]
+        arguments: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        /// Seconds to collect events into one run (default 30).
+        #[arg(long = "batch-window", value_name = "SECS")]
+        batch_window_secs: Option<u64>,
+        /// Runs within an hour after which it pauses itself (default 12).
+        #[arg(long)]
+        max_runs_per_hour: Option<u64>,
+        /// auto (default), push, poll or webhook.
+        #[arg(long)]
+        delivery: Option<String>,
+    },
+    /// Stop an automation; it keeps its settings.
+    Pause { id: u64 },
+    /// Start a paused or ended automation again.
+    Resume { id: u64 },
+    /// Delete an automation and its waiting events.
+    Delete { id: u64 },
 }
 
 /// The settings `anda mcp options` changes; each takes `default` to clear it.
@@ -673,8 +725,108 @@ pub async fn run(
             let receipt = client.mcp("mcp_reload", json!({})).await?;
             report(json, &receipt, "mcp.json is applied; nothing changed.")?;
         }
+        McpSubcommand::Events { id } => {
+            let events: Value = require_running(live)?
+                .mcp("mcp_events_list", json!({ "id": id }))
+                .await?;
+            if json {
+                print_json(&events)?;
+            } else {
+                print_events(&id, &events);
+            }
+        }
+        McpSubcommand::Triggers { action } => {
+            triggers(
+                require_running(live)?,
+                json,
+                action.unwrap_or(TriggerAction::List),
+            )
+            .await?
+        }
     }
     Ok(())
+}
+
+async fn triggers(
+    client: &gateway::Client,
+    json: bool,
+    action: TriggerAction,
+) -> Result<(), BoxError> {
+    let apply = |change: Value| async move {
+        client
+            .mcp::<Value>("mcp_trigger_apply", json!({ "change": change }))
+            .await
+    };
+    let detail = match action {
+        TriggerAction::List => {
+            let triggers: Value = client.mcp("mcp_triggers_list", json!({})).await?;
+            if json {
+                return print_json(&triggers);
+            }
+            let triggers = triggers.as_array().cloned().unwrap_or_default();
+            if triggers.is_empty() {
+                println!(
+                    "No MCP event automations. `anda mcp events <server>` lists what a server reports."
+                );
+            }
+            for trigger in &triggers {
+                print_trigger_line(trigger);
+            }
+            return Ok(());
+        }
+        TriggerAction::Get { id } => client.mcp("mcp_trigger_get", json!({ "id": id })).await?,
+        TriggerAction::Add {
+            server,
+            event,
+            instructions,
+            arguments,
+            name,
+            batch_window_secs,
+            max_runs_per_hour,
+            delivery,
+        } => {
+            let arguments = match arguments.as_deref() {
+                None => json!({}),
+                Some(text) => match serde_json::from_str::<Value>(text) {
+                    Ok(value @ Value::Object(_)) => value,
+                    _ => return Err("--args must be a JSON object".into()),
+                },
+            };
+            let mut trigger = json!({
+                "server_id": server, "event": event, "instructions": instructions,
+                "arguments": arguments,
+            });
+            for (key, value) in [
+                ("name", name.map(Value::from)),
+                ("batch_window_secs", batch_window_secs.map(Value::from)),
+                ("max_runs_per_hour", max_runs_per_hour.map(Value::from)),
+                ("delivery", delivery.map(Value::from)),
+            ] {
+                if let Some(value) = value {
+                    trigger[key] = value;
+                }
+            }
+            apply(json!({ "op": "create", "trigger": trigger })).await?
+        }
+        TriggerAction::Pause { id } | TriggerAction::Resume { id } => {
+            let enabled = matches!(action, TriggerAction::Resume { .. });
+            apply(json!({ "op": "set_enabled", "id": id, "enabled": enabled })).await?
+        }
+        TriggerAction::Delete { id } => {
+            let result = apply(json!({ "op": "delete", "id": id })).await?;
+            if json {
+                return print_json(&result);
+            }
+            println!("Deleted automation {id}.");
+            return Ok(());
+        }
+    };
+    if json {
+        print_json(&detail)
+    } else {
+        print_trigger(&detail);
+        Ok(())
+    }
 }
 
 async fn add(
@@ -1633,6 +1785,92 @@ fn print_diff(diff: &Value) {
     println!("\nAccept it with `anda mcp review {id} {tool}`.");
 }
 
+fn print_events(id: &str, view: &Value) {
+    if view["supported"] != true {
+        match view["error"].as_str() {
+            Some(error) => println!("{id}: events could not be listed: {error}"),
+            None => println!("{id} does not report events (MCP Events)."),
+        }
+        return;
+    }
+    let events = view["events"].as_array().cloned().unwrap_or_default();
+    if events.is_empty() {
+        println!("{id} reports no events.");
+    }
+    for event in &events {
+        let delivery: Vec<&str> = event["delivery"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        println!("{}  [{}]", text(event, "name"), delivery.join(", "));
+        if let Some(description) = event["description"].as_str() {
+            println!("    {description}");
+        }
+        if event["webhook_only"] == true && view["ingress"]["available"] != true {
+            println!(
+                "    needs dMsg to receive it: {}",
+                text(&view["ingress"], "reason")
+            );
+        }
+    }
+    let triggers = view["triggers"].as_array().cloned().unwrap_or_default();
+    if !triggers.is_empty() {
+        println!();
+        for trigger in &triggers {
+            print_trigger_line(trigger);
+        }
+    }
+}
+
+fn print_trigger_line(trigger: &Value) {
+    println!(
+        "{:>4}  {}  {} on {}  {}{}",
+        trigger["id"],
+        text(trigger, "name"),
+        text(trigger, "event"),
+        text(trigger, "server_id"),
+        text(trigger, "state").replace('_', " "),
+        trigger["last_error"]
+            .as_str()
+            .map(|error| format!(" ({error})"))
+            .unwrap_or_default(),
+    );
+}
+
+fn print_trigger(trigger: &Value) {
+    print_trigger_line(trigger);
+    println!("  instructions: {}", text(trigger, "instructions"));
+    println!("  arguments:    {}", trigger["arguments"]);
+    println!(
+        "  delivery:     {}{}",
+        text(trigger, "delivery"),
+        trigger["mode"]
+            .as_str()
+            .map(|mode| format!(" (using {mode})"))
+            .unwrap_or_default()
+    );
+    println!(
+        "  batching:     {}s window, at most {} runs an hour",
+        trigger["batch_window_secs"], trigger["max_runs_per_hour"]
+    );
+    println!(
+        "  events:       {} received, {} waiting; {} runs",
+        trigger["events_received"], trigger["pending"], trigger["runs"]
+    );
+    if trigger["missed_events_at"].is_u64() {
+        println!("  ! the server reported lost events");
+    }
+    for run in trigger["runs_recent"].as_array().into_iter().flatten() {
+        let outcome = run["error"]
+            .as_str()
+            .map(|error| format!("failed: {error}"))
+            .unwrap_or_else(|| "ok".to_string());
+        println!("  run {}: {} events, {}", run["id"], run["events"], outcome);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1678,6 +1916,56 @@ mod tests {
         ] {
             assert!(entry_from_flags(url, Vec::new(), Vec::new(), None, false, command).is_err());
         }
+    }
+
+    #[test]
+    fn trigger_commands_parse() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            mcp: McpCommand,
+        }
+        let cli = Cli::try_parse_from([
+            "anda",
+            "triggers",
+            "add",
+            "github",
+            "issue.opened",
+            "--instructions",
+            "Label each new issue",
+            "--args",
+            r#"{"repo":"o/r"}"#,
+            "--batch-window",
+            "60",
+        ])
+        .unwrap();
+        let McpSubcommand::Triggers {
+            action:
+                Some(TriggerAction::Add {
+                    server,
+                    event,
+                    arguments,
+                    batch_window_secs,
+                    ..
+                }),
+        } = cli.mcp.command
+        else {
+            panic!("expected triggers add");
+        };
+        assert_eq!(
+            (server.as_str(), event.as_str()),
+            ("github", "issue.opened")
+        );
+        assert_eq!(arguments.as_deref(), Some(r#"{"repo":"o/r"}"#));
+        assert_eq!(batch_window_secs, Some(60));
+        let cli = Cli::try_parse_from(["anda", "triggers"]).unwrap();
+        assert!(matches!(
+            cli.mcp.command,
+            McpSubcommand::Triggers { action: None }
+        ));
+        let cli = Cli::try_parse_from(["anda", "events", "github", "--json"]).unwrap();
+        assert!(cli.mcp.json && matches!(cli.mcp.command, McpSubcommand::Events { .. }));
     }
 
     #[test]

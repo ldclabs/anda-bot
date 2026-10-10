@@ -8,3 +8,4 @@ pub use runtime::*;
 pub use tools::*;
 
 pub(crate) use execution::{AgentReceipt, AgentReceipts, AgentSubmission, CronWorkspaceGrant};
+pub(crate) use types::{CronJobOrigin, CronJobResult};

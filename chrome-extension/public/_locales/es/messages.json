@@ -2527,5 +2527,164 @@
   },
   "mcpOptionsSaved": {
     "message": "Ajustes guardados."
+  },
+  "mcpTabEvents": {
+    "message": "Eventos"
+  },
+  "mcpEventsHelp": {
+    "message": "Eventos que este servidor puede notificar. Una automatización ejecuta el agente con tus instrucciones cuando llega uno; sus respuestas aparecen en una conversación tuya."
+  },
+  "mcpEventsReload": {
+    "message": "Volver a listar los eventos"
+  },
+  "mcpEventsError": {
+    "message": "No se pudieron listar los eventos: $1"
+  },
+  "mcpEventsUnsupported": {
+    "message": "Este servidor no notifica eventos (MCP Events)."
+  },
+  "mcpEventsNone": {
+    "message": "Este servidor no notifica ningún evento."
+  },
+  "mcpEventsCreate": {
+    "message": "Crear automatización"
+  },
+  "mcpEventsWebhookOnly": {
+    "message": "Solo un webhook entrega este evento; lo recibe $1 (dMsg)."
+  },
+  "mcpEventsNoIngress": {
+    "message": "Solo un webhook entrega este evento. Para recibirlo, añade dMsg a mcp.json con \"events\": {\"webhook_ingress\": true}."
+  },
+  "mcpTriggersTitle": {
+    "message": "Automatizaciones"
+  },
+  "mcpTriggersNone": {
+    "message": "Todavía no hay automatizaciones sobre los eventos de este servidor."
+  },
+  "mcpTriggerStateStarting": {
+    "message": "Iniciando"
+  },
+  "mcpTriggerStateActive": {
+    "message": "Activa"
+  },
+  "mcpTriggerStateRetrying": {
+    "message": "Reintentando"
+  },
+  "mcpTriggerStatePaused": {
+    "message": "En pausa"
+  },
+  "mcpTriggerStateWaiting": {
+    "message": "Esperando al servidor"
+  },
+  "mcpTriggerStateNeedsAuth": {
+    "message": "Requiere inicio de sesión"
+  },
+  "mcpTriggerStateNeedsIngress": {
+    "message": "Requiere dMsg"
+  },
+  "mcpTriggerStateEnded": {
+    "message": "Finalizada"
+  },
+  "mcpTriggerByModel": {
+    "message": "Creada por el agente"
+  },
+  "mcpTriggerPause": {
+    "message": "Pausar $1"
+  },
+  "mcpTriggerResume": {
+    "message": "Reanudar $1"
+  },
+  "mcpTriggerDelete": {
+    "message": "Eliminar $1"
+  },
+  "mcpTriggerDeleteTitle": {
+    "message": "¿Eliminar $1?"
+  },
+  "mcpTriggerDeleteConfirm": {
+    "message": "La automatización se detiene definitivamente y se descartan los eventos que esperan. Sus ejecuciones anteriores siguen en su conversación."
+  },
+  "mcpTriggerDeleteAction": {
+    "message": "Eliminar"
+  },
+  "mcpTriggerStats": {
+    "message": "$1 eventos · $2 ejecuciones"
+  },
+  "mcpTriggerPending": {
+    "message": "$1 en espera"
+  },
+  "mcpTriggerLastRun": {
+    "message": "última ejecución $1"
+  },
+  "mcpTriggerMissed": {
+    "message": "El servidor informó de eventos perdidos ($1)."
+  },
+  "mcpTriggerRuns": {
+    "message": "Últimas ejecuciones"
+  },
+  "mcpTriggerNoRuns": {
+    "message": "Aún no se ha ejecutado."
+  },
+  "mcpTriggerRunOk": {
+    "message": "$1 eventos"
+  },
+  "mcpTriggerRunFailed": {
+    "message": "$1 eventos · falló: $2"
+  },
+  "mcpTriggerCreated": {
+    "message": "Se creó la automatización $1."
+  },
+  "mcpTriggerDeleted": {
+    "message": "Se eliminó la automatización $1."
+  },
+  "mcpTriggerPausedNotice": {
+    "message": "$1 está en pausa."
+  },
+  "mcpTriggerResumed": {
+    "message": "$1 se reanudó."
+  },
+  "mcpTriggerDialogTitle": {
+    "message": "Crear una automatización"
+  },
+  "mcpTriggerDialogDescription": {
+    "message": "Ejecutar el agente cuando $1 notifique $2."
+  },
+  "mcpTriggerName": {
+    "message": "Nombre"
+  },
+  "mcpTriggerArguments": {
+    "message": "Argumentos de la suscripción"
+  },
+  "mcpTriggerNoArguments": {
+    "message": "Este evento no admite argumentos."
+  },
+  "mcpTriggerArgumentsJson": {
+    "message": "Los argumentos, como un objeto JSON."
+  },
+  "mcpTriggerArgumentsInvalid": {
+    "message": "Revisa el argumento $1."
+  },
+  "mcpTriggerArgumentsJsonInvalid": {
+    "message": "Los argumentos deben ser un objeto JSON."
+  },
+  "mcpTriggerUnset": {
+    "message": "Sin definir"
+  },
+  "mcpTriggerInstructions": {
+    "message": "Instrucciones"
+  },
+  "mcpTriggerInstructionsPlaceholder": {
+    "message": "¿Qué debe hacer el agente con estos eventos? Por ejemplo: clasifica cada issue nueva y añade una etiqueta."
+  },
+  "mcpTriggerBatchWindow": {
+    "message": "Ventana de agrupación (segundos)"
+  },
+  "mcpTriggerBatchWindowHelp": {
+    "message": "Los eventos que llegan dentro de este tiempo se procesan en una sola ejecución."
+  },
+  "mcpTriggerUnattended": {
+    "message": "Las automatizaciones se ejecutan solas y los datos del evento vienen del servidor, así que no son de confianza. Estas ejecuciones pueden usar herramientas de solo lectura y las marcadas como Permitir siempre; todo lo que necesite tu aprobación se rechaza."
+  },
+  "mcpTriggerCreate": {
+    "message": "Crear"
   }
 }
