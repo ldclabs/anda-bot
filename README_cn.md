@@ -323,6 +323,13 @@ Anda Bot 可以连接 MCP 服务，并把远端工具暴露给 agent。把可移
 `ANDA_WORKSPACE` 是内置变量；未配置 `cwd` 时，stdio 服务默认在第一个 Anda
 workspace 中启动。
 
+每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（环境变量未设置、
+不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录
+警告。服务在 daemon 启动后于后台连接；如需在 daemon 报告就绪前完成工具发现，
+可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展
+`PATH`，即使 daemon 作为登录服务运行也能找到 `npx` 和 `uvx`；登录服务看不到
+shell 配置文件中导出的变量。
+
 智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
 表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，
 重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、

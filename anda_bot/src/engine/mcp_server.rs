@@ -34,6 +34,35 @@ use super::{
 // snapshots so reauthorization can preserve settings, including ephemeral adds.
 pub(super) type McpServerConfigs = Arc<parking_lot::RwLock<BTreeMap<String, McpServerConfig>>>;
 
+/// Registers the mcp.json servers with `provider` one at a time, so a server
+/// the engine rejects (an id that collides after normalization, a URL it
+/// cannot use) is skipped instead of failing the daemon. Every skipped entry
+/// is logged. Discovery runs later, when the engine initializes the provider.
+pub(super) fn register_mcp_servers(
+    provider: &McpToolProvider,
+    settings: &McpSettings,
+    home_dir: &Path,
+    default_workspace: &Path,
+) -> McpServerConfigs {
+    for diagnostic in &settings.diagnostics {
+        log::warn!("{diagnostic}");
+    }
+    let (servers, issues) = settings.server_configs(home_dir, Some(default_workspace));
+    for diagnostic in issues {
+        log::warn!("{diagnostic}");
+    }
+    let mut registered = BTreeMap::new();
+    for server in servers {
+        match provider.register_server(server.clone()) {
+            Ok(()) => {
+                registered.insert(server.id.clone(), server);
+            }
+            Err(err) => log::warn!("MCP server {:?} in mcp.json was skipped: {err}", server.id),
+        }
+    }
+    Arc::new(parking_lot::RwLock::new(registered))
+}
+
 const APPROVAL_REDACTED: &str = "[redacted]";
 
 fn approval_arg_name_is_sensitive(name: &str) -> bool {
@@ -285,17 +314,15 @@ impl McpServerTool {
             transport,
             include: normalize_string_set(include),
             exclude: normalize_string_set(exclude),
-            // Protocol-negotiation and tasks tuning stay operator knobs edited
-            // in mcp.json; a quick add takes the defaults.
+            // Protocol-negotiation, startup and tasks tuning stay operator
+            // knobs edited in mcp.json; a quick add takes the defaults.
             lifecycle: None,
+            startup: None,
             tasks: None,
         };
-        let issues = McpSettings {
-            servers: vec![server.clone()],
-        }
-        .setup_issues();
+        let issues = server.setup_issues();
         if !issues.is_empty() {
-            return Err(format!("invalid MCP server configuration: {}", issues.join(", ")).into());
+            return Err(format!("invalid MCP server configuration: {}", issues.join("; ")).into());
         }
         Ok(server)
     }
@@ -372,14 +399,8 @@ impl Tool<BaseCtx> for McpServerTool {
 
         let server_id = server.id.clone();
         if enabled {
-            let server_configs = McpSettings {
-                servers: vec![server.clone()],
-            }
-            .server_configs(&self.home_dir, self.default_cwd.as_deref())?;
-            let server_config = server_configs
-                .into_iter()
-                .next()
-                .ok_or("MCP server configuration was unexpectedly empty")?;
+            let server_config =
+                server.server_config(&self.home_dir, self.default_cwd.as_deref())?;
             self.provider.add_server(server_config.clone()).await?;
             self.configs
                 .write()
@@ -571,21 +592,11 @@ async fn write_mcp_config(
     write_daemon_config_atomically(config_path, next.as_bytes()).await
 }
 
-fn declares_server(settings: &McpSettings, id: &str) -> bool {
-    settings
-        .servers
-        .iter()
-        .any(|existing| existing.id.trim() == id)
-}
-
 /// Returns whether mcp.json already carries a server with this id. A missing
 /// or empty file simply means "no".
 async fn mcp_config_contains_server(config_path: &Path, id: &str) -> Result<bool, BoxError> {
     let content = read_mcp_config(config_path).await?.unwrap_or_default();
-    Ok(declares_server(
-        &McpSettings::from_json_contents(&content)?,
-        id,
-    ))
+    Ok(McpSettings::from_json_contents(&content)?.declares(id))
 }
 
 async fn persist_mcp_server_config(
@@ -600,17 +611,14 @@ async fn persist_mcp_server_config(
 }
 
 /// Appends `server` to mcp.json `content` (already parsed as `settings`),
-/// keeping whichever server root the file uses and everything else in it.
+/// keeping whichever server root the file uses and everything else in it,
+/// including entries that were skipped as invalid.
 fn append_mcp_server(
     content: &str,
     settings: &McpSettings,
     server: &McpServerSettings,
 ) -> Result<String, BoxError> {
-    let issues = settings.setup_issues();
-    if !issues.is_empty() {
-        return Err(format!("invalid mcp.json: {}", issues.join(", ")).into());
-    }
-    if declares_server(settings, &server.id) {
+    if settings.declares(&server.id) {
         return Err(format!("MCP server {} already exists in mcp.json", server.id).into());
     }
 
@@ -692,6 +700,9 @@ fn mcp_server_json(server: &McpServerSettings) -> Value {
 
     if let Some(lifecycle) = server.lifecycle {
         object.insert("lifecycle".into(), json!(lifecycle));
+    }
+    if let Some(startup) = server.startup {
+        object.insert("startup".into(), json!(startup));
     }
     if let Some(tasks) = &server.tasks {
         object.insert("tasks".into(), json!(tasks));
@@ -792,12 +803,22 @@ impl McpConnectTool {
             Some(id) => id,
             None => default_server_id_from_url(&parsed)?,
         };
-        let config = self
-            .configs
-            .read()
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| McpServerConfig::streamable_http(id.clone(), url.clone()));
+        let known = self.configs.read().get(&id).cloned();
+        if known.is_none() {
+            // An entry skipped as invalid still owns its id in mcp.json, and
+            // the grant would be written onto it after consent: say so now.
+            let content = read_mcp_config(self.flows.config_path())
+                .await?
+                .unwrap_or_default();
+            if let Some(skipped) = McpSettings::from_json_contents(&content)?.skipped(&id) {
+                return Err(format!(
+                    "{skipped}. Fix or remove that mcp.json entry, or connect with a different id"
+                )
+                .into());
+            }
+        }
+        let config =
+            known.unwrap_or_else(|| McpServerConfig::streamable_http(id.clone(), url.clone()));
         match &config.transport {
             McpTransportConfig::StreamableHttp(http) if http.url == url => {}
             _ => {
@@ -1011,7 +1032,7 @@ pub(super) async fn persist_oauth_server(
     let previous = read_mcp_config(config_path).await?;
     let content = previous.as_deref().unwrap_or_default();
     let settings = McpSettings::from_json_contents(content)?;
-    let (next, persisted) = if declares_server(&settings, id) {
+    let (next, persisted) = if settings.declares(id) {
         (update_persisted_oauth(content, id, &oauth)?, false)
     } else {
         let server = McpServerSettings {
@@ -1026,6 +1047,8 @@ pub(super) async fn persist_oauth_server(
             include: config.include.clone(),
             exclude: config.exclude.clone(),
             lifecycle: (config.lifecycle != McpLifecycle::default()).then_some(config.lifecycle),
+            // The Bot default (background discovery), not the engine's.
+            startup: None,
             tasks: config.tasks.clone(),
         };
         (append_mcp_server(content, &settings, &server)?, true)
@@ -1511,7 +1534,7 @@ mod tests {
         .await
         .unwrap();
 
-        let settings = McpSettings::from_file(dir.path()).await.unwrap();
+        let settings = McpSettings::load(dir.path()).await;
         assert_eq!(settings.servers.len(), 1);
         assert_eq!(settings.servers[0].id, "remote");
 
@@ -1566,8 +1589,119 @@ mod tests {
         assert_eq!(json["servers"]["existing"]["command"], "existing-mcp");
         assert_eq!(json["servers"]["remote"]["type"], "http");
 
-        let settings = McpSettings::from_file(dir.path()).await.unwrap();
+        let settings = McpSettings::load(dir.path()).await;
         assert_eq!(settings.servers.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn persist_mcp_server_config_writes_past_invalid_entries_but_not_over_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = McpSettings::file_path(dir.path());
+        let broken = r#"{
+  "mcpServers": {
+    "github": {
+      "command": "gh-mcp",
+      "env": { "GITHUB_TOKEN": "${ANDA_MCP_TEST_UNSET_VARIABLE}" }
+    }
+  }
+}
+"#;
+        tokio::fs::write(&config_path, broken).await.unwrap();
+        let server = |id: &str| McpServerSettings {
+            id: id.to_string(),
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: "https://mcp.example.test/mcp".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // The skipped entry still owns its id.
+        let err = persist_mcp_server_config(&config_path, server("github"))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+
+        // A broken neighbour does not block adding another server, and is
+        // written back exactly as the operator left it.
+        persist_mcp_server_config(&config_path, server("remote"))
+            .await
+            .unwrap();
+        let json: Value =
+            serde_json::from_str(&tokio::fs::read_to_string(&config_path).await.unwrap()).unwrap();
+        assert_eq!(
+            json["mcpServers"]["github"]["env"]["GITHUB_TOKEN"],
+            "${ANDA_MCP_TEST_UNSET_VARIABLE}"
+        );
+        assert_eq!(json["mcpServers"]["remote"]["type"], "http");
+        let settings = McpSettings::load(dir.path()).await;
+        assert_eq!(settings.servers.len(), 1);
+        assert_eq!(settings.servers[0].id, "remote");
+        assert_eq!(settings.diagnostics.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_does_not_wait_for_a_server_that_hangs() {
+        use anda_core::ToolProvider;
+
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(|| async {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+                ""
+            }),
+        );
+        let base_url = crate::test_support::spawn_http_mock(app).await;
+        let settings = McpSettings::from_json_contents(&format!(
+            r#"{{ "mcpServers": {{ "slow": {{ "url": "{base_url}/mcp" }} }} }}"#
+        ))
+        .unwrap();
+        let provider = McpToolProvider::new(Vec::new()).unwrap();
+        let home = Path::new("/tmp/anda-home");
+        register_mcp_servers(&provider, &settings, home, &home.join("workspace"));
+
+        // The engine initializes providers while it builds; with the default
+        // background startup that must not wait for discovery.
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        timeout(Duration::from_secs(5), provider.init(ctx))
+            .await
+            .expect("initialization waited for the MCP server")
+            .unwrap();
+        assert!(provider.contains_server("slow"));
+        assert!(provider.routes().is_empty());
+    }
+
+    #[test]
+    fn register_mcp_servers_skips_what_the_engine_rejects() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "docs.search": { "url": "https://docs.example.test/mcp" },
+                "docs_search": { "url": "https://other.example.test/mcp" },
+                "fs": { "command": "fs-mcp" }
+              }
+            }"#,
+        )
+        .unwrap();
+        assert!(settings.diagnostics.is_empty());
+
+        let provider = McpToolProvider::new(Vec::new()).unwrap();
+        let home = Path::new("/tmp/anda-home");
+        let configs = register_mcp_servers(&provider, &settings, home, &home.join("workspace"));
+
+        // The two ids normalize to the same tool-name part: the first keeps
+        // it, and the other is skipped rather than failing the provider.
+        let mut ids = provider.server_ids();
+        ids.sort();
+        assert_eq!(ids, ["docs.search", "fs"]);
+        assert_eq!(
+            configs
+                .read()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["docs.search", "fs"]
+        );
     }
 
     #[tokio::test]
@@ -1873,7 +2007,7 @@ mod tests {
         assert!(newly);
 
         // The entry re-parses with the oauth marker and no token material.
-        let settings = McpSettings::from_file(dir.path()).await.unwrap();
+        let settings = McpSettings::load(dir.path()).await;
         assert_eq!(settings.servers.len(), 1);
         match &settings.servers[0].transport {
             McpTransportSettings::StreamableHttp(http) => {
@@ -1987,6 +2121,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_refuses_an_id_owned_by_a_skipped_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = McpSettings::file_path(dir.path());
+        tokio::fs::write(
+            &config_path,
+            r#"{ "mcpServers": { "docs": { "command": "docs-mcp", "lifecycle": "handshake" } } }"#,
+        )
+        .await
+        .unwrap();
+        let tool = test_connect_tool(config_path.clone());
+
+        let err = tool
+            .connect(ConnectMcpServerArgs {
+                // Unroutable: the call must fail before any network activity.
+                url: "http://192.0.2.1/mcp".to_string(),
+                id: Some("docs".to_string()),
+                scopes: Vec::new(),
+                reauthorize: false,
+                redirect_url: None,
+            })
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("was skipped"), "{message}");
+        assert!(message.contains("lifecycle"), "{message}");
+        assert!(!tool.provider.contains_server("docs"));
+        assert!(
+            tokio::fs::read_to_string(&config_path)
+                .await
+                .unwrap()
+                .contains("handshake")
+        );
+    }
+
+    #[tokio::test]
     async fn reauthorization_preserves_runtime_and_persisted_operator_settings() {
         use anda_engine::extension::mcp::{McpLifecycle, McpTasksConfig};
         let dir = tempfile::tempdir().unwrap();
@@ -2016,12 +2185,11 @@ mod tests {
         }
         let lock = Mutex::new(());
         assert!(persist_oauth_server(&path, &lock, &config).await.unwrap());
-        let saved = McpSettings::from_file(dir.path())
+        let (mut saved, issues) = McpSettings::load(dir.path())
             .await
-            .unwrap()
-            .server_configs(dir.path(), None)
-            .unwrap()
-            .remove(0);
+            .server_configs(dir.path(), None);
+        assert!(issues.is_empty(), "{issues:?}");
+        let saved = saved.remove(0);
         assert_eq!(saved.include, config.include);
         assert_eq!(saved.exclude, config.exclude);
         assert_eq!(saved.lifecycle, McpLifecycle::Initialize);
@@ -2037,7 +2205,7 @@ mod tests {
         )
         .unwrap();
         assert!(!persist_oauth_server(&path, &lock, &config).await.unwrap());
-        let saved = McpSettings::from_file(dir.path()).await.unwrap();
+        let saved = McpSettings::load(dir.path()).await;
         let McpTransportSettings::StreamableHttp(http) = &saved.servers[0].transport else {
             panic!()
         };

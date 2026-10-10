@@ -326,6 +326,15 @@ Configured strings support `$VAR` and `${VAR}` environment expansion. `ANDA_HOME
 and `ANDA_WORKSPACE` are built in, and stdio servers default to the first Anda
 workspace as their working directory.
 
+Each entry is loaded on its own, and MCP never stops the daemon from starting:
+an entry that cannot be used (an unset environment variable, an unsupported
+`type` such as the deprecated `sse`, an id used twice) is skipped with a warning
+in the daemon log. Servers connect in the background once the daemon is up; set
+`"startup": "eager"` on an entry to discover its tools before the daemon reports
+ready. Stdio servers get the same extended `PATH` as the shell tool, so `npx` and
+`uvx` are found even when the daemon runs as a login service, which does not see
+variables exported in your shell profile.
+
 The agent can also connect a new MCP server during a conversation by calling
 `add_mcp_server`. Use `persist: false` for the current daemon only, or
 `persist: true` to write the server to `~/.anda/mcp.json` for future restarts.

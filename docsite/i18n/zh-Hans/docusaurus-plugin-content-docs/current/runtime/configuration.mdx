@@ -94,6 +94,8 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
 
 远端 MCP 工具会以 `mcp_<server_id>_<remote_tool>` 这样的 Anda 工具名出现。配置字符串支持 `$VAR` 和 `${VAR}` 环境变量展开；`ANDA_HOME` 和 `ANDA_WORKSPACE` 是内置变量。stdio 服务的 `command` 会直接启动，不经过 shell；未配置 `cwd` 时，会使用第一个 Anda workspace。未配置 `type` 时，Anda 会根据 `command` 推断为 `stdio`，或根据 `url` 推断为 `http`。
 
+每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（引用的环境变量未设置、不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录警告，其余服务照常加载。服务在 daemon 启动后于后台连接，较慢的端点或首次 `npx -y` 下载不会拖慢启动；如需在 daemon 报告就绪前完成工具发现，可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展 `PATH`，即使 daemon 作为登录服务运行，也能找到 `npx`、`uvx` 和 Homebrew 安装的命令；但登录服务看不到 shell 配置文件中导出的变量，`${VAR}` 引用的变量需要存在于 daemon 自身的环境中。
+
 智能体也可以通过 `add_mcp_server` 在运行时添加服务。`persist: false` 只对当前 daemon 生效；`persist: true` 会把服务保存到 `~/.anda/mcp.json`，重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、`command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和 `exclude`，另外再加 tool 专用的 `id` 和 `persist`。
 
 ## 本地目录结构

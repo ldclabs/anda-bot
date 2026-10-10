@@ -100,10 +100,22 @@ servers, `command` is spawned directly without a shell; when `cwd` is omitted,
 the first Anda workspace is used. If `type` is omitted, Anda infers `stdio` from
 `command` or `http` from `url`.
 
-Two optional per-server fields tune how Anda talks to the endpoint:
+Each entry is loaded on its own, and MCP never stops the daemon from starting:
+an entry that cannot be used (an environment variable it names is unset, an
+unsupported `type` such as the deprecated `sse`, an id used twice) is skipped
+with a warning in the daemon log, and the other servers still load. Servers
+connect in the background once the daemon is up, so a slow endpoint or a first
+`npx -y` download does not delay it. Stdio servers get the same extended `PATH`
+as the shell tool, so `npx`, `uvx` and Homebrew commands are found even when the
+daemon runs as a login service. Such a service does not see variables exported
+in your shell profile, so a `${VAR}` reference needs the variable in the
+daemon's own environment.
+
+Three optional per-server fields tune how Anda talks to the endpoint:
 
 | Field | Purpose |
 | --- | --- |
+| `startup` | When Anda discovers the server's tools. `background` (default) connects after the daemon is up; `eager` waits for discovery before the daemon reports ready. Either way an unreachable server is skipped, never fatal. |
 | `lifecycle` | How the protocol revision is negotiated. `auto` (default) probes the stateless `server/discover` lifecycle and falls back to the legacy `initialize` handshake. Use `discover` to require the newer one, or `initialize` to pin a server that mishandles unknown methods. |
 | `tasks` | Opts into the tasks extension, so a long-running tool can hand back a task Anda polls to completion instead of holding its response open. Takes `{"max_wait_secs": <seconds>}`, default `300`. Omit it and the server must answer every call inline. |
 
@@ -129,8 +141,8 @@ The agent can also add a server at runtime with `add_mcp_server`. Set
 server into `~/.anda/mcp.json` for future restarts. Its server fields mirror one
 `mcp.json` entry: `type`, `command`, `args`, `env`, `cwd`, `url`, `headers`,
 `enabled`, `include`, and `exclude`, plus the tool-only `id` and `persist`
-fields. `lifecycle` and `tasks` are operator knobs, so they are set by editing
-`mcp.json` rather than through the tool.
+fields. `startup`, `lifecycle` and `tasks` are operator knobs, so they are set by
+editing `mcp.json` rather than through the tool.
 
 For OAuth endpoints, `connect_mcp_server` runs the browser authorization and
 stores the tokens in the local credential store. Calling it again on a connected

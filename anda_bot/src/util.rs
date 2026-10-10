@@ -1,3 +1,4 @@
+pub mod command_path;
 pub mod file_uri;
 pub mod fs;
 pub mod http_client;

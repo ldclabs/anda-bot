@@ -680,16 +680,6 @@ impl Engines {
                 .map(|manager| manager.supported_audio_formats())
                 .unwrap_or_default(),
         };
-        let servers = cfg
-            .mcp
-            .server_configs(&cfg.home_dir, Some(default_workspace.as_path()))?;
-        let mcp_configs: mcp_server::McpServerConfigs = Arc::new(parking_lot::RwLock::new(
-            servers
-                .iter()
-                .cloned()
-                .map(|server| (server.id.clone(), server))
-                .collect(),
-        ));
         let mcp_provider = {
             // OAuth refresh tokens persist here, so servers marked `oauth` in
             // mcp.json reconnect across restarts without a new browser flow.
@@ -698,11 +688,16 @@ impl Engines {
             ));
             Arc::new(
                 mcp::McpToolProvider::builder()
-                    .servers(servers)
                     .credential_store(credential_store)
                     .build()?,
             )
         };
+        let mcp_configs = mcp_server::register_mcp_servers(
+            &mcp_provider,
+            &cfg.mcp,
+            &cfg.home_dir,
+            &default_workspace,
+        );
         let add_mcp_server_tool = Arc::new(McpServerTool::new(
             mcp_provider.clone(),
             cfg.home_dir.clone(),

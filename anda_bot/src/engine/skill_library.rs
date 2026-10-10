@@ -1457,6 +1457,11 @@ fn validate_skill_content(expected_name: Option<&str>, content: &str) -> SkillVa
 /// `resource-tags` select nothing, which looks like a restriction that is
 /// silently not applied. A delegated skill runs with exactly its declared
 /// tools, so each must be one this host provides.
+///
+/// MCP tools (`mcp_<server>_<tool>`) come from servers that connect after
+/// skills load, so they cannot be checked here. The `mcp__<server>__<tool>`
+/// form other agents use is not a name Anda resolves: the skill would run
+/// without that tool, so it is flagged with the Anda name to use instead.
 fn frontmatter_diagnostics(skill: &Skill, known_tools: &BTreeSet<String>) -> Vec<SkillDiagnostic> {
     if !skill.is_subagent() {
         if !skill.declares_resource_tags() {
@@ -1470,18 +1475,55 @@ fn frontmatter_diagnostics(skill: &Skill, known_tools: &BTreeSet<String>) -> Vec
     skill
         .tools
         .iter()
-        .filter(|tool| {
-            !known_tools.contains(tool.as_str())
-                && !tool.starts_with("mcp__")
-                && !tool.starts_with("plugin__")
-        })
-        .map(|tool| {
-            SkillDiagnostic::warning(
+        .filter_map(|tool| {
+            if tool.starts_with("mcp__") {
+                let hint = match anda_mcp_tool_name(tool) {
+                    Some(name) => format!("use the Anda name, such as {name}"),
+                    None => "list each tool by its Anda name, mcp_<server>_<tool>".to_string(),
+                };
+                return Some(SkillDiagnostic::warning(
+                    "unsupported_mcp_tool_name",
+                    format!(
+                        "allowed-tools names {tool} in the mcp__server__tool form, which Anda does not resolve; {hint}."
+                    ),
+                ));
+            }
+            if known_tools.contains(tool.as_str())
+                || tool.starts_with("mcp_")
+                || tool.starts_with("plugin__")
+            {
+                return None;
+            }
+            Some(SkillDiagnostic::warning(
                 "unknown_tool",
                 format!("allowed-tools includes unknown tool {tool}."),
-            )
+            ))
         })
         .collect()
+}
+
+/// The Anda name of an `mcp__<server>__<tool>` entry, normalized the way the
+/// engine names MCP tools (a name that collides or runs long gets a hash
+/// suffix there, which cannot be predicted here). `None` for a wildcard.
+fn anda_mcp_tool_name(name: &str) -> Option<String> {
+    let (server, tool) = name.strip_prefix("mcp__")?.split_once("__")?;
+    if tool.contains('*') {
+        return None;
+    }
+    let part = |part: &str| {
+        let normalized = part
+            .to_ascii_lowercase()
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>()
+            .join("_");
+        if normalized.is_empty() {
+            "x".to_string()
+        } else {
+            normalized
+        }
+    };
+    Some(format!("mcp_{}_{}", part(server), part(tool)))
 }
 
 fn diagnostic_summary(diagnostics: &[SkillDiagnostic]) -> String {
@@ -2095,7 +2137,7 @@ mod tests {
         write_skill_with_frontmatter(
             &personal,
             "delegated",
-            "execution: subagent\nallowed-tools: Bash shell\n",
+            "execution: subagent\nallowed-tools: Bash shell mcp_github_create_issue\n",
         );
 
         lib.reload().await.unwrap();
@@ -2103,6 +2145,7 @@ mod tests {
         let skills = lib.list_managed_skills(true);
         assert!(find(&skills, "personal:borrowed").diagnostics.is_empty());
         let delegated = find(&skills, "personal:delegated");
+        // MCP tools in Anda's own form connect later, so they pass unchecked.
         let unknown: Vec<&str> = delegated
             .diagnostics
             .iter()
@@ -2110,6 +2153,42 @@ mod tests {
             .map(|d| d.message.as_str())
             .collect();
         assert_eq!(unknown, ["allowed-tools includes unknown tool Bash."]);
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_in_another_agents_form_are_flagged_with_the_anda_name() {
+        let temp = tempdir().unwrap();
+        let lib = library(temp.path());
+        let personal = temp.path().join("skills");
+        write_skill_with_frontmatter(
+            &personal,
+            "delegated",
+            "execution: subagent\nallowed-tools: mcp__GitHub__create-issue mcp__github__*\n",
+        );
+
+        lib.reload().await.unwrap();
+
+        let skills = lib.list_managed_skills(true);
+        let delegated = find(&skills, "personal:delegated");
+        let flagged: Vec<&str> = delegated
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "unsupported_mcp_tool_name")
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(flagged.len(), 2, "{flagged:?}");
+        assert!(
+            flagged[0].contains("such as mcp_github_create_issue"),
+            "{}",
+            flagged[0]
+        );
+        assert!(flagged[1].contains("mcp_<server>_<tool>"), "{}", flagged[1]);
+        assert!(
+            !delegated
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "unknown_tool")
+        );
     }
 
     #[tokio::test]

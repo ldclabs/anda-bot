@@ -1,16 +1,18 @@
 use anda_core::BoxError;
 use anda_engine::extension::mcp::{
-    McpLifecycle, McpOAuthConfig, McpServerConfig, McpStdioTransport, McpStreamableHttpTransport,
-    McpTasksConfig, McpTransportConfig, OAuthAuthorizationCodeConfig,
+    McpLifecycle, McpOAuthConfig, McpServerConfig, McpStartup, McpStdioTransport,
+    McpStreamableHttpTransport, McpTasksConfig, McpTransportConfig, OAuthAuthorizationCodeConfig,
 };
 use http::{HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     path::{Path, PathBuf},
 };
 
-use crate::util::text::read_text_file;
+use crate::util::{command_path::command_path, text::read_text_file};
 
 use super::normalize_string;
 
@@ -22,6 +24,41 @@ pub struct McpSettings {
     /// MCP servers exposed as dynamic Anda tools.
     #[serde(default)]
     pub servers: Vec<McpServerSettings>,
+    /// Problems found while reading mcp.json. The entries they name are left
+    /// out of `servers`: MCP is optional, so a broken entry must cost neither
+    /// the other servers nor the daemon its start.
+    #[serde(skip)]
+    pub diagnostics: Vec<McpDiagnostic>,
+}
+
+/// A problem with mcp.json as a whole or with one of its entries.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpDiagnostic {
+    /// The entry it concerns, or `None` for the whole file.
+    pub server_id: Option<String>,
+    pub message: String,
+}
+
+impl McpDiagnostic {
+    fn file(message: impl Into<String>) -> Self {
+        Self {
+            server_id: None,
+            message: message.into(),
+        }
+    }
+
+    fn server(id: &str, problem: impl fmt::Display) -> Self {
+        Self {
+            server_id: Some(id.to_string()),
+            message: format!("MCP server {id:?} in mcp.json was skipped: {problem}"),
+        }
+    }
+}
+
+impl fmt::Display for McpDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
 }
 
 impl McpSettings {
@@ -29,109 +66,138 @@ impl McpSettings {
         home_dir.join(MCP_CONFIG_FILE_NAME)
     }
 
-    pub async fn from_file(home_dir: &Path) -> Result<Self, BoxError> {
+    /// Reads mcp.json from `home_dir`. Never fails: a file that cannot be read
+    /// or parsed becomes a diagnostic and loads no servers.
+    pub async fn load(home_dir: &Path) -> Self {
         let path = Self::file_path(home_dir);
-        let content = match read_text_file(&path).await {
-            Ok(content) => content,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(err) => return Err(err.into()),
+        let settings = match read_text_file(&path).await {
+            Ok(content) => Self::from_json_contents(&content),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Self::default(),
+            Err(err) => Err(err.into()),
         };
-        let settings = Self::from_json_contents(&content)
-            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-        let issues = settings.setup_issues();
-        if !issues.is_empty() {
-            return Err(format!(
-                "invalid MCP config {}: {}",
-                path.display(),
-                issues.join(", ")
-            )
-            .into());
-        }
-        Ok(settings)
+        settings.unwrap_or_else(|err| Self {
+            servers: Vec::new(),
+            diagnostics: vec![McpDiagnostic::file(format!(
+                "{} was not loaded: {err}",
+                path.display()
+            ))],
+        })
     }
 
+    /// Parses mcp.json contents. Only a file that is not a JSON object is an
+    /// error, since nothing in it can be read or edited; an entry that cannot
+    /// be used becomes a diagnostic instead.
     pub fn from_json_contents(content: &str) -> Result<Self, BoxError> {
         if content.trim().is_empty() {
             return Ok(Self::default());
         }
-        let file: McpJsonRoot = serde_json::from_str(content)?;
-        file.into_settings()
-    }
-
-    pub fn setup_issues(&self) -> Vec<String> {
-        let mut issues = Vec::new();
-        let mut seen_ids = BTreeSet::new();
-        let vars = McpExpansionVars::validation();
-
-        for (index, server) in self.servers.iter().enumerate() {
-            if server.disabled {
-                continue;
-            }
-
-            let base = format!("mcp.json.servers[{index}]");
-            let server_id = server.id.trim();
-            if server_id.is_empty() || !seen_ids.insert(server_id.to_string()) {
-                issues.push(format!("{base}.id"));
-            }
-
-            server.transport.setup_issues(&base, &vars, &mut issues);
+        let Value::Object(root) = serde_json::from_str(content)? else {
+            return Err("mcp.json root must be an object".into());
+        };
+        let mut settings = Self::default();
+        for key in ["mcpServers", "servers"] {
+            settings.read_servers(key, root.get(key));
         }
-
-        issues
+        settings.drop_unusable_servers();
+        Ok(settings)
     }
 
+    /// Whether mcp.json declares `id`, including an entry skipped as invalid.
+    pub fn declares(&self, id: &str) -> bool {
+        self.servers.iter().any(|server| server.id.trim() == id)
+            || self
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.server_id.as_deref().map(str::trim) == Some(id))
+    }
+
+    /// The diagnostic of an entry declared as `id` that was skipped as
+    /// invalid, when no usable entry has that id.
+    pub fn skipped(&self, id: &str) -> Option<&McpDiagnostic> {
+        if self.servers.iter().any(|server| server.id.trim() == id) {
+            return None;
+        }
+        self.diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.server_id.as_deref().map(str::trim) == Some(id))
+    }
+
+    /// Builds the engine configs for the enabled servers. An entry that cannot
+    /// be built (one naming an unset environment variable, say) is reported
+    /// in the returned diagnostics and left out.
     pub fn server_configs(
         &self,
         home_dir: &Path,
         default_cwd: Option<&Path>,
-    ) -> Result<Vec<McpServerConfig>, BoxError> {
-        let vars = McpExpansionVars::new(home_dir, default_cwd);
-        self.servers
-            .iter()
-            .enumerate()
-            .filter(|(_, server)| !server.disabled)
-            .map(|(index, server)| server.to_server_config(index, &vars, default_cwd))
-            .collect()
+    ) -> (Vec<McpServerConfig>, Vec<McpDiagnostic>) {
+        let mut configs = Vec::new();
+        let mut diagnostics = Vec::new();
+        for server in self.servers.iter().filter(|server| !server.disabled) {
+            match server.server_config(home_dir, default_cwd) {
+                Ok(config) => configs.push(config),
+                Err(err) => diagnostics.push(McpDiagnostic::server(server.id.trim(), err)),
+            }
+        }
+        (configs, diagnostics)
     }
-}
 
-#[derive(Debug, Default, Deserialize)]
-struct McpJsonRoot {
-    #[serde(default, rename = "mcpServers")]
-    mcp_servers: McpJsonServers,
-    #[serde(default)]
-    servers: McpJsonServers,
-}
-
-impl McpJsonRoot {
-    fn into_settings(self) -> Result<McpSettings, BoxError> {
-        let mut servers = self.mcp_servers.into_servers("mcpServers")?;
-        servers.extend(self.servers.into_servers("servers")?);
-        Ok(McpSettings { servers })
+    fn read_servers(&mut self, key: &str, value: Option<&Value>) {
+        match value {
+            None | Some(Value::Null) => {}
+            Some(Value::Object(entries)) => {
+                for (id, entry) in entries {
+                    match serde_json::from_value::<McpJsonServer>(entry.clone())
+                        .map_err(BoxError::from)
+                        .and_then(|server| server.into_settings(id.clone()))
+                    {
+                        Ok(server) => self.servers.push(server),
+                        Err(err) => self.diagnostics.push(McpDiagnostic::server(id, err)),
+                    }
+                }
+            }
+            Some(Value::Array(entries)) => {
+                for (index, entry) in entries.iter().enumerate() {
+                    match serde_json::from_value::<McpServerSettings>(entry.clone()) {
+                        Ok(server) => self.servers.push(server),
+                        Err(err) => {
+                            let id = entry["id"]
+                                .as_str()
+                                .map(str::to_string)
+                                .unwrap_or_else(|| format!("{key}[{index}]"));
+                            self.diagnostics.push(McpDiagnostic::server(&id, err));
+                        }
+                    }
+                }
+            }
+            Some(_) => self.diagnostics.push(McpDiagnostic::file(format!(
+                "mcp.json {key} must be an object of servers; it was ignored"
+            ))),
+        }
     }
-}
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum McpJsonServers {
-    Map(BTreeMap<String, McpJsonServer>),
-    LegacyList(Vec<McpServerSettings>),
-}
-
-impl Default for McpJsonServers {
-    fn default() -> Self {
-        Self::Map(BTreeMap::new())
-    }
-}
-
-impl McpJsonServers {
-    fn into_servers(self, root: &str) -> Result<Vec<McpServerSettings>, BoxError> {
-        match self {
-            Self::Map(servers) => servers
-                .into_iter()
-                .map(|(id, server)| server.into_settings(root, id))
-                .collect(),
-            Self::LegacyList(servers) => Ok(servers),
+    /// Moves enabled entries that cannot start (no id, an id declared twice,
+    /// or a field that does not validate) into `diagnostics`. Disabled entries
+    /// stay as written: nothing starts them, so nothing checks them.
+    fn drop_unusable_servers(&mut self) {
+        let mut seen_ids = BTreeSet::new();
+        for server in std::mem::take(&mut self.servers) {
+            if server.disabled {
+                self.servers.push(server);
+                continue;
+            }
+            let id = server.id.trim().to_string();
+            let issues = server.setup_issues();
+            if !issues.is_empty() {
+                self.diagnostics
+                    .push(McpDiagnostic::server(&id, issues.join("; ")));
+            } else if !seen_ids.insert(id.clone()) {
+                self.diagnostics.push(McpDiagnostic::server(
+                    &id,
+                    "the id is declared more than once; only the first entry is used",
+                ));
+            } else {
+                self.servers.push(server);
+            }
         }
     }
 }
@@ -164,17 +230,18 @@ struct McpJsonServer {
     include: BTreeSet<String>,
     #[serde(default)]
     exclude: BTreeSet<String>,
-    // Taken as a string rather than the enum: inside the untagged
-    // `McpJsonServers` a variant mismatch collapses into "data did not match
-    // any variant", so a mistyped mode has to be reported by name below.
+    // Taken as strings rather than the enums so a mistyped mode is reported
+    // by name instead of as a bare serde type error.
     #[serde(default)]
     lifecycle: Option<String>,
+    #[serde(default)]
+    startup: Option<String>,
     #[serde(default)]
     tasks: Option<McpTasksConfig>,
 }
 
 impl McpJsonServer {
-    fn into_settings(self, root: &str, id: String) -> Result<McpServerSettings, BoxError> {
+    fn into_settings(self, id: String) -> Result<McpServerSettings, BoxError> {
         let Self {
             transport_type,
             command,
@@ -190,50 +257,50 @@ impl McpJsonServer {
             include,
             exclude,
             lifecycle,
+            startup,
             tasks,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
-        let lifecycle = match lifecycle
-            .as_deref()
-            .and_then(normalize_string)
-            .map(|value| value.to_ascii_lowercase())
-            .as_deref()
-        {
+        let lifecycle = match normalized_mode(lifecycle).as_deref() {
             None => None,
             Some("auto") => Some(McpLifecycle::Auto),
             Some("discover") => Some(McpLifecycle::Discover),
             Some("initialize") => Some(McpLifecycle::Initialize),
             Some(other) => {
                 return Err(format!(
-                    "mcp.json.{root}.{id}.lifecycle has unsupported value {other:?}, expected auto, discover, or initialize"
+                    "lifecycle has unsupported value {other:?}, expected auto, discover, or initialize"
                 )
                 .into());
             }
         };
-        let transport_type = transport_type
-            .as_deref()
-            .and_then(normalize_string)
-            .map(|value| value.to_ascii_lowercase());
-        let is_set =
-            |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
-        let stdio = match transport_type.as_deref() {
-            Some("stdio") => true,
-            Some("http") | Some("streamable_http") => false,
+        let startup = match normalized_mode(startup).as_deref() {
+            None => None,
+            Some("background") => Some(McpStartup::Background),
+            Some("eager") => Some(McpStartup::Eager),
             Some(other) => {
                 return Err(format!(
-                    "mcp.json.{root}.{id}.type has unsupported transport {other:?}"
+                    "startup has unsupported value {other:?}, expected background or eager"
                 )
                 .into());
             }
+        };
+        let is_set =
+            |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
+        let stdio = match normalized_mode(transport_type).as_deref() {
+            Some("stdio") => true,
+            Some("http") | Some("streamable_http") | Some("streamable-http") => false,
+            Some("sse") => {
+                return Err(
+                    "type \"sse\" is not supported: the SSE transport is deprecated; \
+                     use type \"http\" if the server also offers Streamable HTTP"
+                        .into(),
+                );
+            }
+            Some(other) => return Err(format!("type has unsupported transport {other:?}").into()),
             None if is_set(&command) => true,
             None if is_set(&url) => false,
-            None => {
-                return Err(format!(
-                    "mcp.json.{root}.{id}.type is missing and transport cannot be inferred"
-                )
-                .into());
-            }
+            None => return Err("type is missing and neither command nor url is set".into()),
         };
         let transport = if stdio {
             McpTransportSettings::Stdio(McpStdioSettings {
@@ -258,9 +325,17 @@ impl McpJsonServer {
             include,
             exclude,
             lifecycle,
+            startup,
             tasks,
         })
     }
+}
+
+fn normalized_mode(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .and_then(normalize_string)
+        .map(|value| value.to_ascii_lowercase())
 }
 
 /// One MCP server entry.
@@ -287,6 +362,12 @@ pub struct McpServerSettings {
     /// methods. Left out of the file unless the operator set it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<McpLifecycle>,
+    /// When the daemon discovers this server's tools: `background` (default)
+    /// after the daemon is up, or `eager` before it reports ready. Either way
+    /// a server that cannot be reached is skipped rather than failing the
+    /// daemon. Left out of the file unless the operator set it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup: Option<McpStartup>,
     /// SEP-2663 tasks extension. Absent leaves it undeclared, so the server
     /// must answer `tools/call` inline; declaring it lets a long-running tool
     /// hand back a task the provider polls to completion.
@@ -295,18 +376,29 @@ pub struct McpServerSettings {
 }
 
 impl McpServerSettings {
-    fn to_server_config(
+    /// Problems that keep this entry from starting, named by their mcp.json
+    /// fields. Environment references are checked against the daemon's own
+    /// environment.
+    pub fn setup_issues(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+        if self.id.trim().is_empty() {
+            issues.push("id is empty".to_string());
+        }
+        self.transport
+            .setup_issues(&McpExpansionVars::validation(), &mut issues);
+        issues
+    }
+
+    /// Builds the engine config, expanding environment references.
+    pub fn server_config(
         &self,
-        index: usize,
-        vars: &McpExpansionVars,
+        home_dir: &Path,
         default_cwd: Option<&Path>,
     ) -> Result<McpServerConfig, BoxError> {
-        let base = format!("mcp.json.servers[{index}]");
+        let vars = McpExpansionVars::new(home_dir, default_cwd);
         Ok(McpServerConfig {
             id: self.id.trim().to_string(),
-            transport: self
-                .transport
-                .to_transport_config(&base, vars, default_cwd)?,
+            transport: self.transport.to_transport_config(&vars, default_cwd)?,
             include: self.include.clone(),
             exclude: self.exclude.clone(),
             lifecycle: self.lifecycle.unwrap_or_default(),
@@ -314,8 +406,12 @@ impl McpServerSettings {
             limits: Default::default(),
             timeouts: Default::default(),
             concurrency: Default::default(),
+            // Never `required`: an unreachable server must not stop the daemon.
             required: false,
-            startup: Default::default(),
+            // Discovery waits until after startup unless the entry asks for
+            // it, so a slow server (or an `npx -y` download) does not hold the
+            // daemon back.
+            startup: self.startup.unwrap_or(McpStartup::Background),
             elicitation: false,
             resources: false,
         })
@@ -335,25 +431,24 @@ pub enum McpTransportSettings {
 }
 
 impl McpTransportSettings {
-    fn setup_issues(&self, base: &str, vars: &McpExpansionVars, issues: &mut Vec<String>) {
+    fn setup_issues(&self, vars: &McpExpansionVars, issues: &mut Vec<String>) {
         match self {
-            Self::Stdio(stdio) => stdio.setup_issues(base, vars, issues),
-            Self::StreamableHttp(http) => http.setup_issues(base, vars, issues),
+            Self::Stdio(stdio) => stdio.setup_issues(vars, issues),
+            Self::StreamableHttp(http) => http.setup_issues(vars, issues),
         }
     }
 
     fn to_transport_config(
         &self,
-        base: &str,
         vars: &McpExpansionVars,
         default_cwd: Option<&Path>,
     ) -> Result<McpTransportConfig, BoxError> {
         match self {
             Self::Stdio(stdio) => stdio
-                .to_transport(base, vars, default_cwd)
+                .to_transport(vars, default_cwd)
                 .map(McpTransportConfig::Stdio),
             Self::StreamableHttp(http) => http
-                .to_transport(base, vars)
+                .to_transport(vars)
                 .map(McpTransportConfig::StreamableHttp),
         }
     }
@@ -383,73 +478,65 @@ pub struct McpStdioSettings {
 }
 
 impl McpStdioSettings {
-    fn setup_issues(&self, base: &str, vars: &McpExpansionVars, issues: &mut Vec<String>) {
+    fn setup_issues(&self, vars: &McpExpansionVars, issues: &mut Vec<String>) {
         if self.command.trim().is_empty() {
-            issues.push(format!("{base}.transport.command"));
+            issues.push("command is empty".to_string());
         }
-        push_expansion_issues(
-            &self.command,
-            &format!("{base}.transport.command"),
-            vars,
-            issues,
-        );
+        push_expansion_issues(&self.command, "command", vars, issues);
         for (arg_index, arg) in self.args.iter().enumerate() {
-            push_expansion_issues(
-                arg,
-                &format!("{base}.transport.args[{arg_index}]"),
-                vars,
-                issues,
-            );
+            push_expansion_issues(arg, &format!("args[{arg_index}]"), vars, issues);
         }
         for (name, value) in &self.env {
             if name.trim().is_empty() {
-                issues.push(format!("{base}.transport.env"));
+                issues.push("env has an empty variable name".to_string());
             }
-            push_expansion_issues(value, &format!("{base}.transport.env.{name}"), vars, issues);
+            push_expansion_issues(value, &format!("env.{name}"), vars, issues);
         }
         if let Some(cwd) = &self.cwd {
-            push_expansion_issues(cwd, &format!("{base}.transport.cwd"), vars, issues);
+            push_expansion_issues(cwd, "cwd", vars, issues);
         }
     }
 
     fn to_transport(
         &self,
-        base: &str,
         vars: &McpExpansionVars,
         default_cwd: Option<&Path>,
     ) -> Result<McpStdioTransport, BoxError> {
         let cwd = match self.cwd.as_deref().and_then(normalize_string) {
             Some(cwd) => Some(resolve_config_path(
-                &expand_config_string(&cwd, vars, &format!("{base}.transport.cwd"))?,
+                &expand_config_string(&cwd, vars, "cwd")?,
                 vars.home_dir,
             )),
             None => default_cwd.map(Path::to_path_buf),
         };
+        let mut env = self
+            .env
+            .iter()
+            .map(|(key, value)| {
+                Ok((
+                    key.trim().to_string(),
+                    expand_config_string(value, vars, &format!("env.{key}"))?,
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>, BoxError>>()?;
+        // A daemon started by launchd or systemd has a minimal PATH, which
+        // usually lacks `npx`, `uvx` and the like: give the child the same
+        // tool directories the shell tool gets.
+        if let Some(path) = command_path(env.get("PATH").map(String::as_str)) {
+            env.insert("PATH".to_string(), path);
+        }
 
         Ok(McpStdioTransport {
-            command: expand_config_string(
-                self.command.trim(),
-                vars,
-                &format!("{base}.transport.command"),
-            )?,
+            command: expand_config_string(self.command.trim(), vars, "command")?,
             args: self
                 .args
                 .iter()
                 .enumerate()
                 .map(|(arg_index, arg)| {
-                    expand_config_string(arg, vars, &format!("{base}.transport.args[{arg_index}]"))
+                    expand_config_string(arg, vars, &format!("args[{arg_index}]"))
                 })
                 .collect::<Result<_, _>>()?,
-            env: self
-                .env
-                .iter()
-                .map(|(key, value)| {
-                    Ok((
-                        key.trim().to_string(),
-                        expand_config_string(value, vars, &format!("{base}.transport.env.{key}"))?,
-                    ))
-                })
-                .collect::<Result<_, BoxError>>()?,
+            env,
             // Preserve Bot's existing stdio environment inheritance; `env`
             // contains overrides, not a complete child environment.
             inherit_env: true,
@@ -516,63 +603,51 @@ impl McpOAuthSettings {
 }
 
 impl McpStreamableHttpSettings {
-    fn setup_issues(&self, base: &str, vars: &McpExpansionVars, issues: &mut Vec<String>) {
+    fn setup_issues(&self, vars: &McpExpansionVars, issues: &mut Vec<String>) {
         if self.url.trim().is_empty() {
-            issues.push(format!("{base}.transport.url"));
+            issues.push("url is empty".to_string());
         }
-        push_expansion_issues(&self.url, &format!("{base}.transport.url"), vars, issues);
+        push_expansion_issues(&self.url, "url", vars, issues);
         if let Some(token) = &self.bearer_token {
-            push_expansion_issues(
-                token,
-                &format!("{base}.transport.bearer_token"),
-                vars,
-                issues,
-            );
+            push_expansion_issues(token, "bearer_token", vars, issues);
             if self.oauth.is_some() {
-                issues.push(format!("{base}.transport.oauth"));
+                issues.push("bearer_token cannot be combined with oauth".to_string());
             }
         }
         for (name, value) in &self.headers {
-            let field = format!("{base}.transport.headers.{name}");
+            let field = format!("headers.{name}");
             if HeaderName::from_bytes(name.as_bytes()).is_err() {
-                issues.push(field.clone());
+                issues.push(format!("{field} is not a valid header name"));
             }
             match expand_config_string(value, vars, &field) {
                 Ok(expanded) => {
                     if HeaderValue::from_str(&expanded).is_err() {
-                        issues.push(field);
+                        issues.push(format!("{field} is not a valid header value"));
                     }
                 }
-                Err(_) => issues.push(field),
+                Err(err) => issues.push(err.to_string()),
             }
         }
     }
 
     fn to_transport(
         &self,
-        base: &str,
         vars: &McpExpansionVars,
     ) -> Result<McpStreamableHttpTransport, BoxError> {
         Ok(McpStreamableHttpTransport {
-            url: expand_config_string(self.url.trim(), vars, &format!("{base}.transport.url"))?,
+            url: expand_config_string(self.url.trim(), vars, "url")?,
             bearer_token: self
                 .bearer_token
                 .as_deref()
                 .and_then(normalize_string)
-                .map(|token| {
-                    expand_config_string(&token, vars, &format!("{base}.transport.bearer_token"))
-                })
+                .map(|token| expand_config_string(&token, vars, "bearer_token"))
                 .transpose()?,
             headers: self
                 .headers
                 .iter()
                 .map(|(key, value)| {
                     HeaderName::from_bytes(key.as_bytes())?;
-                    let value = expand_config_string(
-                        value,
-                        vars,
-                        &format!("{base}.transport.headers.{key}"),
-                    )?;
+                    let value = expand_config_string(value, vars, &format!("headers.{key}"))?;
                     HeaderValue::from_str(&value)?;
                     Ok((key.clone(), value))
                 })
@@ -624,8 +699,8 @@ fn push_expansion_issues(
     vars: &McpExpansionVars<'_>,
     issues: &mut Vec<String>,
 ) {
-    if expand_config_string(value, vars, field).is_err() {
-        issues.push(field.to_string());
+    if let Err(err) = expand_config_string(value, vars, field) {
+        issues.push(err.to_string());
     }
 }
 
@@ -712,7 +787,7 @@ mod tests {
             let lock = LOCK
                 .get_or_init(|| std::sync::Mutex::new(()))
                 .lock()
-                .unwrap();
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let saved = MCP_TEST_ENV_VARS
                 .iter()
                 .map(|&name| (name, std::env::var_os(name)))
@@ -737,6 +812,22 @@ mod tests {
         }
     }
 
+    fn server_ids(settings: &McpSettings) -> Vec<&str> {
+        settings
+            .servers
+            .iter()
+            .map(|server| server.id.as_str())
+            .collect()
+    }
+
+    fn diagnostic_for<'a>(settings: &'a McpSettings, id: &str) -> &'a McpDiagnostic {
+        settings
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.server_id.as_deref() == Some(id))
+            .unwrap_or_else(|| panic!("no diagnostic for {id}: {:?}", settings.diagnostics))
+    }
+
     #[test]
     fn mcp_json_oauth_section_round_trips_into_authorization_code_config() {
         let settings = McpSettings::from_json_contents(
@@ -755,6 +846,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(settings.servers.len(), 1);
+        assert!(settings.diagnostics.is_empty());
         let http = match &settings.servers[0].transport {
             McpTransportSettings::StreamableHttp(http) => http,
             _ => panic!("expected HTTP"),
@@ -762,11 +854,9 @@ mod tests {
         let oauth = http.oauth.as_ref().expect("oauth section");
         assert_eq!(oauth.client_id, None);
         assert_eq!(oauth.scopes, vec!["events:read", "handles:read"]);
-        assert!(settings.setup_issues().is_empty());
 
-        let configs = settings
-            .server_configs(Path::new("/tmp/anda-home"), None)
-            .unwrap();
+        let (configs, issues) = settings.server_configs(Path::new("/tmp/anda-home"), None);
+        assert!(issues.is_empty());
         match &configs[0].transport {
             McpTransportConfig::StreamableHttp(http) => match &http.auth {
                 Some(McpOAuthConfig::AuthorizationCode(ac)) => {
@@ -781,7 +871,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_json_rejects_bearer_token_combined_with_oauth() {
+    fn mcp_json_skips_bearer_token_combined_with_oauth() {
         let settings = McpSettings::from_json_contents(
             r#"{
               "mcpServers": {
@@ -796,11 +886,16 @@ mod tests {
         )
         .unwrap();
 
-        let issues = settings.setup_issues();
+        assert!(settings.servers.is_empty());
+        let diagnostic = diagnostic_for(&settings, "alink");
         assert!(
-            issues.iter().any(|issue| issue.ends_with(".oauth")),
-            "expected an oauth conflict issue, got {issues:?}"
+            diagnostic
+                .message
+                .contains("bearer_token cannot be combined with oauth"),
+            "{diagnostic}"
         );
+        // The skipped entry still owns its id.
+        assert!(settings.declares("alink"));
     }
 
     #[test]
@@ -855,14 +950,15 @@ mod tests {
     }
 
     #[test]
-    fn mcp_json_lifecycle_and_tasks_reach_the_server_config() {
+    fn mcp_json_lifecycle_startup_and_tasks_reach_the_server_config() {
         let settings = McpSettings::from_json_contents(
             r#"{
               "mcpServers": {
                 "legacy": {
                   "type": "http",
                   "url": "https://legacy.example.com/mcp",
-                  "lifecycle": "initialize"
+                  "lifecycle": "initialize",
+                  "startup": "eager"
                 },
                 "slow": {
                   "type": "http",
@@ -878,7 +974,8 @@ mod tests {
         )
         .unwrap();
 
-        let configs = settings.server_configs(Path::new("/tmp"), None).unwrap();
+        let (configs, issues) = settings.server_configs(Path::new("/tmp"), None);
+        assert!(issues.is_empty());
         let by_id = |id: &str| {
             configs
                 .iter()
@@ -886,30 +983,54 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {id}"))
         };
         assert_eq!(by_id("legacy").lifecycle, McpLifecycle::Initialize);
+        assert_eq!(by_id("legacy").startup, McpStartup::Eager);
         assert!(by_id("legacy").tasks.is_none());
         assert_eq!(by_id("slow").tasks.as_ref().unwrap().max_wait_secs, 900);
-        // An entry that says nothing keeps the upstream defaults: probe the
-        // 2026-07-28 lifecycle, and leave the tasks extension undeclared so the
-        // server must answer `tools/call` inline.
-        assert_eq!(by_id("plain").lifecycle, McpLifecycle::Auto);
-        assert!(by_id("plain").tasks.is_none());
+        // An entry that says nothing probes the 2026-07-28 lifecycle, leaves
+        // the tasks extension undeclared, and is discovered after startup so
+        // it cannot hold the daemon back. None may fail the daemon.
+        let plain = by_id("plain");
+        assert_eq!(plain.lifecycle, McpLifecycle::Auto);
+        assert!(plain.tasks.is_none());
+        assert_eq!(plain.startup, McpStartup::Background);
+        assert!(configs.iter().all(|config| !config.required));
     }
 
     #[test]
-    fn mcp_json_rejects_an_unknown_lifecycle() {
-        let err = McpSettings::from_json_contents(
+    fn mcp_json_skips_unknown_modes_by_name() {
+        let settings = McpSettings::from_json_contents(
             r#"{
               "mcpServers": {
                 "broken": {
                   "type": "http",
                   "url": "https://example.com/mcp",
                   "lifecycle": "handshake"
+                },
+                "late": {
+                  "type": "http",
+                  "url": "https://example.com/mcp",
+                  "startup": "lazy"
+                },
+                "fine": {
+                  "type": "http",
+                  "url": "https://example.com/mcp"
                 }
               }
             }"#,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("lifecycle"), "{err}");
+        .unwrap();
+
+        assert_eq!(server_ids(&settings), ["fine"]);
+        assert!(
+            diagnostic_for(&settings, "broken")
+                .message
+                .contains("lifecycle has unsupported value \"handshake\"")
+        );
+        assert!(
+            diagnostic_for(&settings, "late")
+                .message
+                .contains("startup has unsupported value \"lazy\"")
+        );
     }
 
     #[test]
@@ -944,8 +1065,8 @@ mod tests {
     }
 
     #[test]
-    fn mcp_json_reports_unknown_transport() {
-        let err = McpSettings::from_json_contents(
+    fn mcp_json_explains_the_sse_transport() {
+        let settings = McpSettings::from_json_contents(
             r#"{
               "mcpServers": {
                 "legacy": {
@@ -955,9 +1076,126 @@ mod tests {
               }
             }"#,
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(err.to_string().contains("unsupported transport"));
+        assert!(settings.servers.is_empty());
+        let message = &diagnostic_for(&settings, "legacy").message;
+        assert!(message.contains("SSE transport is deprecated"), "{message}");
+    }
+
+    #[test]
+    fn a_broken_entry_does_not_cost_the_others() {
+        let _env = EnvGuard::new();
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "good": { "command": "good-mcp" },
+                "unset-env": {
+                  "command": "gh-mcp",
+                  "env": { "GITHUB_TOKEN": "${ANDA_MCP_TEST_TOKEN}" }
+                },
+                "bad-shape": { "command": "x", "args": "--not-a-list" },
+                "no-transport": {},
+                "": { "command": "nameless" },
+                "off": { "command": "${ANDA_MCP_TEST_TOKEN}", "enabled": false }
+              },
+              "servers": {
+                "good": { "url": "https://twice.example.test/mcp" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        // The disabled entry is kept as written: nothing starts it.
+        assert_eq!(server_ids(&settings), ["good", "off"]);
+        assert!(
+            diagnostic_for(&settings, "unset-env")
+                .message
+                .contains("env.GITHUB_TOKEN references missing environment variable"),
+        );
+        diagnostic_for(&settings, "bad-shape");
+        assert!(
+            diagnostic_for(&settings, "no-transport")
+                .message
+                .contains("neither command nor url")
+        );
+        assert!(
+            diagnostic_for(&settings, "")
+                .message
+                .contains("id is empty")
+        );
+        let duplicates: Vec<_> = settings
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.server_id.as_deref() == Some("good"))
+            .collect();
+        assert_eq!(duplicates.len(), 1, "{duplicates:?}");
+        assert!(duplicates[0].message.contains("declared more than once"));
+        // Skipped entries still own their ids, so nothing is persisted over them.
+        for id in ["good", "unset-env", "bad-shape", "no-transport", "off"] {
+            assert!(settings.declares(id), "{id}");
+        }
+        assert!(!settings.declares("missing"));
+    }
+
+    #[test]
+    fn mcp_json_reports_a_root_of_the_wrong_shape() {
+        let settings = McpSettings::from_json_contents(
+            r#"{ "mcpServers": 5, "servers": { "ok": { "command": "ok-mcp" } } }"#,
+        )
+        .unwrap();
+
+        assert_eq!(server_ids(&settings), ["ok"]);
+        assert_eq!(settings.diagnostics.len(), 1);
+        assert_eq!(settings.diagnostics[0].server_id, None);
+        assert!(settings.diagnostics[0].message.contains("mcpServers"));
+
+        assert!(McpSettings::from_json_contents("[]").is_err());
+        assert!(McpSettings::from_json_contents("{").is_err());
+        assert!(
+            McpSettings::from_json_contents(" \n")
+                .unwrap()
+                .servers
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn mcp_json_legacy_lists_report_entries_by_id() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "servers": [
+                { "id": "ok", "transport": { "type": "stdio", "command": "ok-mcp" } },
+                { "id": "bad", "transport": { "type": "carrier-pigeon" } },
+                { "transport": 7 }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(server_ids(&settings), ["ok"]);
+        diagnostic_for(&settings, "bad");
+        diagnostic_for(&settings, "servers[2]");
+    }
+
+    #[tokio::test]
+    async fn load_never_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = McpSettings::load(dir.path()).await;
+        assert!(missing.servers.is_empty() && missing.diagnostics.is_empty());
+
+        tokio::fs::write(McpSettings::file_path(dir.path()), "{ not json")
+            .await
+            .unwrap();
+        let unparsable = McpSettings::load(dir.path()).await;
+        assert!(unparsable.servers.is_empty());
+        assert_eq!(unparsable.diagnostics.len(), 1);
+        assert_eq!(unparsable.diagnostics[0].server_id, None);
+        assert!(
+            unparsable.diagnostics[0].message.contains("was not loaded"),
+            "{}",
+            unparsable.diagnostics[0]
+        );
     }
 
     #[test]
@@ -1000,13 +1238,20 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            ..Default::default()
         };
 
-        assert!(settings.setup_issues().is_empty());
+        assert!(
+            settings
+                .servers
+                .iter()
+                .all(|server| server.setup_issues().is_empty())
+        );
 
         let home = Path::new("/tmp/anda-home");
         let workspace = home.join("workspace");
-        let servers = settings.server_configs(home, Some(&workspace)).unwrap();
+        let (servers, issues) = settings.server_configs(home, Some(&workspace));
+        assert!(issues.is_empty());
         assert_eq!(servers.len(), 2);
 
         match &servers[0].transport {
@@ -1034,6 +1279,40 @@ mod tests {
         assert_eq!(servers[1].include, BTreeSet::from(["search".to_string()]));
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn stdio_children_get_the_shell_tool_path() {
+        let server = |env: BTreeMap<String, String>| McpServerSettings {
+            id: "fs".to_string(),
+            transport: McpTransportSettings::Stdio(McpStdioSettings {
+                command: "npx".to_string(),
+                env,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let path_of = |server: McpServerSettings| match server
+            .server_config(Path::new("/tmp/anda-home"), None)
+            .unwrap()
+            .transport
+        {
+            McpTransportConfig::Stdio(stdio) => stdio.env["PATH"].clone(),
+            _ => panic!("expected stdio transport"),
+        };
+
+        let inherited = path_of(server(BTreeMap::new()));
+        assert!(std::env::split_paths(&inherited).any(|dir| dir == Path::new("/usr/bin")));
+
+        // An explicit PATH keeps its order and only gains the tool directories.
+        let explicit = path_of(server(BTreeMap::from([(
+            "PATH".to_string(),
+            "/custom/bin".to_string(),
+        )])));
+        let dirs: Vec<_> = std::env::split_paths(&explicit).collect();
+        assert_eq!(dirs[0], Path::new("/custom/bin"));
+        assert!(dirs.iter().any(|dir| dir == Path::new("/usr/bin")));
+    }
+
     #[test]
     fn expand_config_string_keeps_literal_dollars() {
         let _env = EnvGuard::new();
@@ -1058,41 +1337,39 @@ mod tests {
     }
 
     #[test]
-    fn mcp_setup_issues_report_missing_fields_and_env_refs() {
+    fn mcp_setup_issues_name_the_mcp_json_fields() {
         let _env = EnvGuard::new();
-        let settings = McpSettings {
-            servers: vec![
-                McpServerSettings {
-                    transport: McpTransportSettings::Stdio(McpStdioSettings {
-                        command: "${ANDA_MCP_TEST_TOKEN}".to_string(),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                McpServerSettings {
-                    id: "remote".to_string(),
-                    transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-                        url: String::new(),
-                        headers: BTreeMap::from([("bad header".to_string(), "ok".to_string())]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            ],
+        let stdio = McpServerSettings {
+            transport: McpTransportSettings::Stdio(McpStdioSettings {
+                command: "${ANDA_MCP_TEST_TOKEN}".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
         };
+        assert_eq!(
+            stdio.setup_issues(),
+            [
+                "id is empty",
+                "command references missing environment variable ANDA_MCP_TEST_TOKEN",
+            ]
+        );
 
-        let issues = settings.setup_issues();
-        for expected in [
-            "mcp.json.servers[0].id",
-            "mcp.json.servers[0].transport.command",
-            "mcp.json.servers[1].transport.url",
-            "mcp.json.servers[1].transport.headers.bad header",
-        ] {
-            assert!(
-                issues.iter().any(|issue| issue == expected),
-                "missing issue {expected:?} in {issues:?}"
-            );
-        }
+        let http = McpServerSettings {
+            id: "remote".to_string(),
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: String::new(),
+                headers: BTreeMap::from([("bad header".to_string(), "ok".to_string())]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            http.setup_issues(),
+            [
+                "url is empty",
+                "headers.bad header is not a valid header name"
+            ]
+        );
     }
 
     #[test]
@@ -1102,14 +1379,10 @@ mod tests {
                 disabled: true,
                 ..Default::default()
             }],
+            ..Default::default()
         };
 
-        assert!(settings.setup_issues().is_empty());
-        assert!(
-            settings
-                .server_configs(Path::new("/tmp/anda-home"), None)
-                .unwrap()
-                .is_empty()
-        );
+        let (configs, issues) = settings.server_configs(Path::new("/tmp/anda-home"), None);
+        assert!(configs.is_empty() && issues.is_empty());
     }
 }

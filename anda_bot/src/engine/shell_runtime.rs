@@ -16,7 +16,10 @@ use std::{
 };
 
 use super::agent::SessionRequestMeta;
-use crate::{cron::CronWorkspaceGrant, util::request_meta::keys};
+use crate::{
+    cron::CronWorkspaceGrant,
+    util::{command_path::command_path, request_meta::keys},
+};
 
 const MAX_CLI_WORKSPACES: usize = 64;
 const CLI_WORKSPACE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
@@ -316,73 +319,11 @@ impl Executor for NativeShellRuntime {
     }
 }
 
-/// Tool directories a daemon's minimal PATH (launchd, systemd) usually lacks.
-#[cfg(not(target_os = "windows"))]
-static TOOL_PATH_CANDIDATES: std::sync::LazyLock<Vec<PathBuf>> =
-    std::sync::LazyLock::new(default_tool_path_candidates);
-
-#[cfg(not(target_os = "windows"))]
+/// Extends `PATH` with the tool directories a daemon's minimal PATH lacks.
 fn augment_command_path(envs: &mut HashMap<String, String>) {
-    let base_path = envs
-        .get("PATH")
-        .cloned()
-        .or_else(|| std::env::var("PATH").ok());
-
-    if let Some(path) = enriched_path_value(base_path.as_deref(), &TOOL_PATH_CANDIDATES) {
+    if let Some(path) = command_path(envs.get("PATH").map(String::as_str)) {
         envs.insert("PATH".to_string(), path);
     }
-}
-
-#[cfg(target_os = "windows")]
-fn augment_command_path(_envs: &mut HashMap<String, String>) {}
-
-#[cfg(not(target_os = "windows"))]
-fn default_tool_path_candidates() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
-    if let Ok(current_exe) = std::env::current_exe()
-        && let Some(dir) = current_exe.parent()
-    {
-        paths.push(dir.to_path_buf());
-    }
-
-    if let Some(home_dir) = std::env::home_dir() {
-        paths.push(home_dir.join(".local").join("bin"));
-        paths.push(home_dir.join(".cargo").join("bin"));
-    }
-
-    paths.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/opt/homebrew/sbin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/usr/local/sbin"),
-        PathBuf::from("/usr/bin"),
-        PathBuf::from("/bin"),
-        PathBuf::from("/usr/sbin"),
-        PathBuf::from("/sbin"),
-    ]);
-
-    paths
-}
-
-#[cfg(not(target_os = "windows"))]
-fn enriched_path_value(base_path: Option<&str>, candidates: &[PathBuf]) -> Option<String> {
-    let mut paths = base_path
-        .map(std::env::split_paths)
-        .into_iter()
-        .flatten()
-        .filter(|path| !path.as_os_str().is_empty())
-        .collect::<Vec<_>>();
-
-    for candidate in candidates {
-        if !candidate.as_os_str().is_empty() && !paths.contains(candidate) {
-            paths.push(candidate.clone());
-        }
-    }
-
-    std::env::join_paths(paths)
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -748,33 +689,6 @@ mod tests {
         assert!(
             err.to_string().contains("start a new conversation"),
             "{err}"
-        );
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn enriched_path_keeps_existing_entries_and_adds_tool_dirs() {
-        let path = enriched_path_value(
-            Some("/usr/bin:/bin"),
-            &[
-                PathBuf::from("/opt/homebrew/bin"),
-                PathBuf::from("/usr/bin"),
-                PathBuf::from("/Users/example/.cargo/bin"),
-            ],
-        )
-        .expect("path should join");
-
-        let paths = std::env::split_paths(&path).collect::<Vec<_>>();
-        assert_eq!(paths[0], PathBuf::from("/usr/bin"));
-        assert_eq!(paths[1], PathBuf::from("/bin"));
-        assert!(paths.contains(&PathBuf::from("/opt/homebrew/bin")));
-        assert!(paths.contains(&PathBuf::from("/Users/example/.cargo/bin")));
-        assert_eq!(
-            paths
-                .iter()
-                .filter(|path| path.as_path() == std::path::Path::new("/usr/bin"))
-                .count(),
-            1
         );
     }
 

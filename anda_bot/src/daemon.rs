@@ -358,7 +358,7 @@ impl Daemon {
             self.cfg
                 .models_with_chatgpt(outer_http_client.clone(), Some(chatgpt.clone())),
         );
-        let mcp = McpSettings::from_file(&self.home).await?;
+        let mcp = McpSettings::load(&self.home).await;
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_registry = self.cfg.user_registry(user_pubkey.clone())?;
         let default_user = user_registry.default_user();

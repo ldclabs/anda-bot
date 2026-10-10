@@ -114,6 +114,11 @@ impl McpOAuthFlows {
         &self.inner.redirect_uri
     }
 
+    /// The mcp.json the flows persist authorized servers to.
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.inner.config_path
+    }
+
     /// Records a started authorization so its redirect can be matched later.
     ///
     /// Returns a receiver that resolves when the redirect is handled, for a
