@@ -218,7 +218,6 @@ impl McpEventRuntime {
                 return;
             }
         };
-        let servers = self.inner.manager.snapshot().await.servers;
         let ids: HashSet<u64> = triggers.iter().map(|trigger| trigger._id).collect();
         let gone: Vec<_> = {
             let mut subscriptions = self.inner.subscriptions.lock();
@@ -235,6 +234,11 @@ impl McpEventRuntime {
             live.subscription.cancel().await;
         }
         self.inner.schedule.lock().retain(|id, _| ids.contains(id));
+        if triggers.is_empty() {
+            // Nothing needs the servers' state, which is not cheap to read.
+            return;
+        }
+        let servers = self.inner.manager.snapshot().await.servers;
         for trigger in &triggers {
             self.reconcile(trigger, &servers).await;
         }
@@ -370,8 +374,9 @@ impl McpEventRuntime {
             generation,
             relay: mode == McpEventDeliveryMode::Webhook,
         });
-        self.set_state(trigger._id, TriggerState::Starting, None)
-            .await;
+        // The state stays as it is until the subscription says how it went
+        // (`Active`, or an error): passing through `Starting` on every retry
+        // would make each failure a change, and tell the owner again.
         let subscription = if mode == McpEventDeliveryMode::Webhook {
             self.subscribe_webhook(trigger, sink).await?
         } else {
@@ -535,13 +540,14 @@ impl McpEventRuntime {
         server_id: &str,
         refresh: bool,
     ) -> Result<Option<Vec<McpEventDefinition>>, String> {
-        let mut catalogs = self.inner.catalogs.lock().await;
         if !refresh
-            && let Some((at, events)) = catalogs.get(server_id)
+            && let Some((at, events)) = self.inner.catalogs.lock().await.get(server_id)
             && at.elapsed() < CATALOG_TTL
         {
             return Ok(events.clone());
         }
+        // Listed without holding the cache: one slow server must hold up
+        // neither the others nor the MCP page's listing.
         let events = tokio::time::timeout(
             CATALOG_TIMEOUT,
             self.inner
@@ -552,7 +558,11 @@ impl McpEventRuntime {
         .await
         .map_err(|_| format!("MCP server {server_id} did not list its events in time"))?
         .map_err(|err| err.to_string())?;
-        catalogs.insert(server_id.to_string(), (Instant::now(), events.clone()));
+        self.inner
+            .catalogs
+            .lock()
+            .await
+            .insert(server_id.to_string(), (Instant::now(), events.clone()));
         Ok(events)
     }
 
@@ -1131,12 +1141,6 @@ impl McpEventRuntime {
         outcome: RelayOutcome,
         relay_cursor: Option<String>,
     ) -> Result<(), BoxError> {
-        if let Some(reason) = outcome.terminated {
-            self.set_state(trigger_id, TriggerState::Ended, Some(reason))
-                .await;
-            self.wake();
-            return Ok(());
-        }
         if outcome.missed {
             self.inner
                 .store
@@ -1149,6 +1153,8 @@ impl McpEventRuntime {
         for message in &outcome.rejected {
             log::warn!("MCP event automation {trigger_id}: {message}");
         }
+        // Stored with the relay's position also when the batch ends the
+        // subscription, so a resumed trigger does not read the end again.
         self.receive(
             trigger_id,
             outcome.events,
@@ -1156,7 +1162,21 @@ impl McpEventRuntime {
             relay_cursor.clone(),
         )
         .await?;
-        if outcome.refresh {
+        if let Some(reason) = outcome.terminated {
+            // The upstream subscription is gone: resuming makes a new one.
+            self.inner
+                .store
+                .modify(trigger_id, |trigger| {
+                    if let Some(webhook) = trigger.webhook.as_mut() {
+                        webhook.subscription_id = None;
+                    }
+                    Ok(())
+                })
+                .await?;
+            self.set_state(trigger_id, TriggerState::Ended, Some(reason))
+                .await;
+            self.wake();
+        } else if outcome.refresh {
             // Subscribe upstream again now: the relay asked, or a gap told
             // where to resume.
             if let Ok(trigger) = self.inner.store.get(trigger_id).await
@@ -1207,7 +1227,7 @@ pub(crate) mod tests {
     use crate::{
         config::McpSettings,
         engine::mcp::{
-            McpChange, McpSource, TriggerInput,
+            McpChange, McpSource, TriggerInput, TriggerPatch,
             test_server::{EventsMock, serve_events},
         },
     };
@@ -1722,6 +1742,78 @@ pub(crate) mod tests {
         let stored = runtime.store().get(trigger._id).await.unwrap();
         assert_eq!(stored.state, TriggerState::NeedsIngress);
         assert!(stored.last_error.unwrap().contains("webhook_ingress"));
+    }
+
+    #[tokio::test]
+    async fn an_ended_webhook_subscription_is_made_again_on_resume() {
+        let (runtime, _home) = runtime().await;
+        let mut trigger = super::super::store::tests::trigger("docs", "comment.created");
+        trigger.webhook = Some(WebhookState {
+            ingress: "dmsg".into(),
+            endpoint_id: "ep1".into(),
+            url: "https://hooks.example/ep1".into(),
+            secret_name: "S".into(),
+            subscription_id: Some("sub_1".into()),
+            relay_cursor: Some("r-1".into()),
+            ..Default::default()
+        });
+        let id = runtime.store().insert(trigger).await.unwrap()._id;
+        let outcome = RelayOutcome {
+            events: vec![NewEvent {
+                event_id: "u1".into(),
+                name: "comment.created".into(),
+                timestamp: "t".into(),
+                data: json!({"text": "the last one"}),
+                verified: Some("v1".into()),
+            }],
+            terminated: Some("webhook delivery ended: Access revoked".into()),
+            ..Default::default()
+        };
+        runtime
+            .relayed(id, outcome, Some("r-2".into()))
+            .await
+            .unwrap();
+
+        let stored = runtime.store().get(id).await.unwrap();
+        assert_eq!(stored.state, TriggerState::Ended);
+        // Past the end, so a resume does not read it again, and without the
+        // dead upstream subscription, so a resume subscribes anew.
+        let webhook = stored.webhook.unwrap();
+        assert_eq!(webhook.relay_cursor.as_deref(), Some("r-2"));
+        assert!(webhook.subscription_id.is_none());
+        // What arrived before the end is still handled.
+        assert_eq!(runtime.store().pending(id, 10).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_update_that_only_reorders_the_arguments_keeps_the_subscription() {
+        let (runtime, _home) = runtime().await;
+        let mut trigger = super::super::store::tests::trigger("gh", "issue.opened");
+        trigger.arguments = json!({"repo": "ldclabs/anda", "label": "bug"});
+        trigger.cursor = Some("c9".into());
+        let id = runtime.store().insert(trigger).await.unwrap()._id;
+        let stored = runtime.store().get(id).await.unwrap();
+        // The same arguments the other way round, as a form may write them.
+        let reordered: serde_json::Map<String, Value> =
+            stored.arguments().into_iter().rev().collect();
+        assert_ne!(
+            Value::Object(reordered.clone()).to_string(),
+            stored.arguments.to_string()
+        );
+        let updated = runtime
+            .update(
+                id,
+                TriggerPatch {
+                    arguments: Some(reordered),
+                    instructions: Some("Label and assign it.".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.instructions, "Label and assign it.");
+        assert_eq!(updated.subscription_key(), stored.subscription_key());
+        assert_eq!(updated.cursor.as_deref(), Some("c9"));
     }
 
     #[test]

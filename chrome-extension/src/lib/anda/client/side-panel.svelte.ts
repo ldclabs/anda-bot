@@ -78,9 +78,9 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       .set({ [skillsRevisionStorageKey]: crypto.randomUUID() })
       .catch(() => undefined)
   })
-  /** Bookmark verbs plus the star state the transcript renders. */
   /** The owner's MCP servers, and the `mcp-changed` event views listen on. */
   readonly mcp = new McpApi(this)
+  /** Bookmark verbs plus the star state the transcript renders. */
   readonly bookmarks = new BookmarksApi(this, {
     activeSource: () => this.activeSource || '',
     bookmarkRequestMeta: (bookmark) => this.requestMetaForBookmark(bookmark),

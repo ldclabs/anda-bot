@@ -250,7 +250,6 @@ export function actionDetailText(detail: ChatActionDetail): string {
   return value === null ? '' : JSON.stringify(value, null, 2)
 }
 
-/** True when the detail needs its own block rather than an inline run. */
 /** The link a `url` detail carries, when it is an http(s) one. */
 export function actionDetailUrl(detail: ChatActionDetail): string | undefined {
   return detail.format === 'url' && typeof detail.value === 'string'
@@ -269,6 +268,7 @@ export function safeLink(url: string | null | undefined): string | undefined {
   }
 }
 
+/** True when the detail needs its own block rather than an inline run. */
 export function actionDetailIsBlock(detail: ChatActionDetail): boolean {
   return detail.format === 'code' || detail.format === 'json' || detail.format === 'list'
 }

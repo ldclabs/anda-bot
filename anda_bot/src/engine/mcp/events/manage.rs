@@ -228,7 +228,12 @@ impl McpEventRuntime {
                 if let Some(instructions) = instructions {
                     trigger.instructions = instructions;
                 }
-                if let Some(arguments) = arguments {
+                // Compared as values: the same arguments in another key order
+                // (a form writes them in its schema's order) are no change,
+                // while the subscription key would read them as one.
+                if let Some(arguments) = arguments
+                    && arguments != trigger.arguments
+                {
                     trigger.arguments = arguments;
                 }
                 if let Some(delivery) = patch.delivery {

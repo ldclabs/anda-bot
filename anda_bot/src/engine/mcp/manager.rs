@@ -1255,6 +1255,16 @@ impl McpManager {
         persist: bool,
         source: McpSource,
     ) -> Result<bool, BoxError> {
+        // Connected as mcp.json will hold it (a bearer token becomes an
+        // Authorization header there), so saving it rebuilds nothing.
+        let server = if persist {
+            McpSettings::parse_entry(
+                &server.id,
+                &Value::Object(config_store::entry_json(&server)),
+            )?
+        } else {
+            server
+        };
         let id = server.id.clone();
         let config = match server.disabled {
             true => None,
@@ -2988,6 +2998,25 @@ mod tests {
         // Saved, it is no longer a runtime server, and a reload keeps it.
         assert!(manager.inner.view.read().runtime.is_empty());
         assert!(manager.reload().await.unwrap().rebuilt.is_empty());
+
+        // A bearer token is saved as the Authorization header. The server
+        // runs as saved, so saving it does not reconnect it and its tools
+        // are there when the call returns.
+        let mut bearer = http("bearer", &mock_mcp(&["echo"]).await);
+        if let McpTransportSettings::StreamableHttp(http) = &mut bearer.transport {
+            http.bearer_token = Some("t0k".to_string());
+        }
+        assert!(
+            manager
+                .add_connected(bearer, true, McpSource::Model)
+                .await
+                .unwrap()
+        );
+        assert_eq!(manager.server_tools("bearer").len(), 1);
+        assert_eq!(
+            read_config(home).await["mcpServers"]["bearer"]["headers"]["Authorization"],
+            "Bearer t0k"
+        );
     }
 
     #[tokio::test]

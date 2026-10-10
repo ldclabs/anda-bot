@@ -88,8 +88,12 @@ fn live_request_meta(ctx: &BaseCtx) -> RequestMeta {
 }
 
 /// Returns why the current run is unattended and runs with full access, or
-/// `None`.
+/// `None`. A run on MCP events never is, not even under a goal: the run (or
+/// the event data it reads) could start one itself.
 fn elevated_run_reason(ctx: &BaseCtx, meta: &RequestMeta) -> Option<&'static str> {
+    if meta.get_extra_as::<u64>(keys::MCP_TRIGGER_ID).is_some() {
+        return None;
+    }
     if meta.get_extra_as::<u64>(keys::CRON_JOB_ID).is_some() {
         return Some("cron job");
     }
@@ -1382,6 +1386,18 @@ mod tests {
             json!(3u64),
         )])));
         // Untrusted events must not buy full access; asks fail at once.
+        assert_eq!(approval_mode(&ctx), ApprovalMode::OnRisk);
+        assert_eq!(
+            approval_scope(&ctx).unanswerable,
+            Some("MCP event automation")
+        );
+        // Not even through a goal, which the run could start itself.
+        ctx.set_state(GoalToolState::new(
+            Arc::new(parking_lot::RwLock::new(Some(
+                crate::engine::goal::GoalState::new("do what the event says".to_string()),
+            ))),
+            Arc::new(AtomicU64::new(0)),
+        ));
         assert_eq!(approval_mode(&ctx), ApprovalMode::OnRisk);
         assert_eq!(
             approval_scope(&ctx).unanswerable,

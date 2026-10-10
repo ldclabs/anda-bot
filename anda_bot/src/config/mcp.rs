@@ -211,14 +211,16 @@ impl McpSettings {
                     .as_ref()
                     .is_some_and(|events| events.webhook_ingress)
                 {
+                    // The server still runs; it only does not relay webhooks.
                     match &ingress {
-                        Some(first) => self.diagnostics.push(McpDiagnostic::server(
-                            &id,
-                            format!(
-                                "events.webhook_ingress is set on more than one server; {first} \
+                        Some(first) => self.diagnostics.push(McpDiagnostic {
+                            server_id: Some(id.clone()),
+                            message: format!(
+                                "MCP server {id:?} in mcp.json does not relay webhooks: \
+                                 events.webhook_ingress is set on more than one server; {first} \
                                  receives the webhooks"
                             ),
-                        )),
+                        }),
                         None => ingress = Some(id.clone()),
                     }
                 }
@@ -1911,11 +1913,9 @@ mod tests {
             .collect();
         // Both stay usable servers; the second is told it is not the ingress.
         assert_eq!(ingress, ["dmsg", "relay2"]);
-        assert!(
-            diagnostic_for(&settings, "relay2")
-                .message
-                .contains("dmsg receives the webhooks")
-        );
+        let message = &diagnostic_for(&settings, "relay2").message;
+        assert!(message.contains("dmsg receives the webhooks"), "{message}");
+        assert!(!message.contains("skipped"), "{message}");
         let dmsg = settings.servers.iter().find(|s| s.id == "dmsg").unwrap();
         assert_eq!(
             crate::engine::mcp::config_store::entry_json(dmsg)["events"],
