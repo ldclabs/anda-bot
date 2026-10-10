@@ -5,6 +5,10 @@
 //! runtime-only server changes, and remembers how each connection went. The
 //! model tools, the owner API (WebSocket `mcp_*` and `POST /daemon/mcp/v1`),
 //! the `anda mcp` CLI and the OAuth callback all change servers through it.
+//!
+//! [`McpGate`] stands between the agent and the servers' tools: every call
+//! passes it, and it asks the owner first when the server's approval policy,
+//! the session's approval mode and the tool's reviewed definition say so.
 
 use anda_core::BoxError;
 use std::fmt;
@@ -12,15 +16,20 @@ use std::fmt;
 mod api;
 pub(crate) mod config_store;
 mod credentials;
+mod gate;
 mod manager;
 mod model_tools;
 mod oauth;
 mod redact;
+mod review;
 mod state;
+#[cfg(test)]
+mod test_server;
 mod view;
 
 pub(crate) use api::{McpApiState, is_write_method, mcp_route};
 pub(crate) use credentials::{FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME};
+pub(crate) use gate::McpGate;
 pub(crate) use manager::{McpChange, McpManager, McpManagerConfig};
 pub(crate) use model_tools::{ManageMcpServerTool, McpConnectTool, McpServerTool};
 pub(crate) use oauth::{CALLBACK_PATH, mcp_oauth_callback, open_in_browser};

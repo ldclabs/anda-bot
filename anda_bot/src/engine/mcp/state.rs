@@ -1,9 +1,15 @@
 //! mcp_state.json: what Anda records about each server that mcp.json does not
-//! say, namely where it came from and how its connection last went. Only the
-//! daemon writes it, so it never competes with edits to mcp.json.
+//! say: where it came from, how its connection last went, the tool
+//! definitions the owner reviewed, and how often its tools were called. Only
+//! the daemon writes it, so it never competes with edits to mcp.json.
 
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf};
+use serde_json::Value;
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use crate::engine::write_daemon_config_atomically;
 
@@ -41,6 +47,42 @@ pub(crate) struct McpServerState {
     /// reports only a status, so this is where the reason is kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<McpErrorRecord>,
+    /// When the server's tools were first pinned. Until then the first
+    /// catalog it serves is taken as reviewed (trust on first use).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_at: Option<u64>,
+    /// The reviewed definition of each tool, by remote name. A tool whose
+    /// definition differs, or that has none, needs review.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, McpToolPin>,
+    #[serde(default, skip_serializing_if = "McpUsage::is_empty")]
+    pub usage: McpUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct McpToolPin {
+    pub digest: String,
+    /// What the digest covers, kept to show what changed.
+    pub definition: Value,
+    pub reviewed_at: u64,
+}
+
+/// Calls the agent made to a server's tools.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub(crate) struct McpUsage {
+    #[serde(default)]
+    pub calls: u64,
+    /// Calls that failed or returned an error result.
+    #[serde(default)]
+    pub errors: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<u64>,
+}
+
+impl McpUsage {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -56,6 +98,8 @@ pub(crate) struct McpStateStore {
     servers: parking_lot::Mutex<BTreeMap<String, McpServerState>>,
     /// Serializes saves, so an older snapshot never lands after a newer one.
     save_lock: tokio::sync::Mutex<()>,
+    /// Set by changes left for the next [`McpStateStore::flush`].
+    unsaved: AtomicBool,
 }
 
 impl McpStateStore {
@@ -79,11 +123,18 @@ impl McpStateStore {
             path,
             servers: parking_lot::Mutex::new(servers),
             save_lock: tokio::sync::Mutex::new(()),
+            unsaved: AtomicBool::new(false),
         }
     }
 
     pub fn get(&self, id: &str) -> McpServerState {
         self.servers.lock().get(id).cloned().unwrap_or_default()
+    }
+
+    /// Reads the record of `id` in place, for callers that need only part of
+    /// it: a record holds every reviewed tool definition.
+    pub fn read<T>(&self, id: &str, read: impl FnOnce(Option<&McpServerState>) -> T) -> T {
+        read(self.servers.lock().get(id))
     }
 
     /// Changes the record of `id`, and returns whether anything changed.
@@ -103,6 +154,21 @@ impl McpStateStore {
         true
     }
 
+    /// Changes the record of `id` in place without saving it: for frequent
+    /// changes that always change something, such as call counts.
+    /// [`Self::flush`] saves them.
+    pub fn update_later(&self, id: &str, change: impl FnOnce(&mut McpServerState)) {
+        change(self.servers.lock().entry(id.to_string()).or_default());
+        self.unsaved.store(true, Ordering::Relaxed);
+    }
+
+    /// Saves the changes made with [`Self::update_later`], if any.
+    pub async fn flush(&self) {
+        if self.unsaved.load(Ordering::Relaxed) {
+            self.save().await;
+        }
+    }
+
     /// Forgets the servers `keep` rejects, and returns whether any were.
     pub fn retain(&self, keep: impl Fn(&str) -> bool) -> bool {
         let mut servers = self.servers.lock();
@@ -114,6 +180,7 @@ impl McpStateStore {
     /// Writes the state. Best effort: losing it costs only history.
     pub async fn save(&self) {
         let _guard = self.save_lock.lock().await;
+        self.unsaved.store(false, Ordering::Relaxed);
         let file = McpStateFile {
             version: STATE_VERSION,
             servers: self.servers.lock().clone(),
@@ -153,8 +220,13 @@ mod tests {
         }));
         store.save().await;
 
+        // Counted in memory, written by the next flush.
+        store.update_later("github", |state| state.usage.calls += 1);
+        store.flush().await;
+
         let reopened = McpStateStore::open(path.clone()).await;
         assert_eq!(reopened.get("github").source, McpSource::Model);
+        assert_eq!(reopened.get("github").usage.calls, 1);
         assert_eq!(
             reopened.get("docs").last_error.unwrap().message,
             "tools/list timed out"

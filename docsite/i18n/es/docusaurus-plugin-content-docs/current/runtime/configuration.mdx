@@ -94,7 +94,39 @@ anda mcp tool github delete_repository --hide         # ocultar una herramienta 
 anda mcp disable context7                             # también: enable, remove, reconnect, logout, reload
 ```
 
-Con el daemon en ejecución, cada comando pasa por él y el cambio se aplica al instante: un servidor cuya configuración de conexión cambió se reinicia, y uno cuyo cambio no afecta a la conexión (un campo que Anda no lee, por ejemplo) sigue en marcha. Los servidores que fallan se reintentan en segundo plano, con esperas que van de 30 segundos a 30 minutos, y el motivo se conserva para `list`. Sin el daemon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool` y `logout` editan los archivos directamente y surten efecto cuando el daemon arranca. `list` también muestra las entradas omitidas y el motivo, y `--json` imprime cualquier resultado como JSON. Las ediciones conservan los campos que Anda no lee, las referencias `${VAR}` y la clave raíz del archivo; `remove` también borra el inicio de sesión guardado del servidor, salvo con `--keep-credentials`. Anda no vigila `mcp.json`: tras editarlo a mano, ejecute `anda mcp reload`. El origen de cada servidor y su último error se guardan en `~/.anda/mcp_state.json`.
+Con el daemon en ejecución, cada comando pasa por él y el cambio se aplica al instante: un servidor cuya configuración de conexión cambió se reinicia, y uno cuyo cambio no afecta a la conexión (un campo que Anda no lee, por ejemplo) sigue en marcha. Los servidores que fallan se reintentan en segundo plano, con esperas que van de 30 segundos a 30 minutos, y el motivo se conserva para `list`. Sin el daemon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users` y `logout` editan los archivos directamente y surten efecto cuando el daemon arranca. `list` también muestra las entradas omitidas y el motivo, y `--json` imprime cualquier resultado como JSON. Las ediciones conservan los campos que Anda no lee, las referencias `${VAR}` y la clave raíz del archivo; `remove` también borra el inicio de sesión guardado del servidor, salvo con `--keep-credentials`. Anda no vigila `mcp.json`: tras editarlo a mano, ejecute `anda mcp reload`. El origen de cada servidor, su último error, las definiciones de herramientas que usted revisó y cuántas veces se llamaron sus herramientas se guardan en `~/.anda/mcp_state.json`.
+
+### Aprobar llamadas a herramientas MCP
+
+Cada llamada del agente a una herramienta MCP pasa por una comprobación de aprobación, como los comandos de shell. La decide la política `approval` del servidor, para todas sus herramientas o para una sola:
+
+| Política | Cuándo pregunta antes el agente |
+| --- | --- |
+| `auto` (predeterminada) | Salvo que la sesión tenga acceso completo. Las herramientas que el servidor marca como de solo lectura se ejecutan sin preguntar mientras su definición no cambie. |
+| `ask` | Siempre, incluso con acceso completo. |
+| `allow` | Nunca, mientras la definición de la herramienta no cambie. |
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "approval": { "default": "allow", "tools": { "merge_pull_request": "ask" } }
+}
+```
+
+```bash
+anda mcp approval github allow                              # todas las herramientas del servidor
+anda mcp approval github ask --tool merge_pull_request      # una herramienta
+anda mcp approval github inherit --tool merge_pull_request  # vuelve a la política del servidor
+```
+
+La política solo se lee al llamar a una herramienta, así que cambiarla nunca reconecta el servidor. Las tareas programadas y los objetivos se ejecutan con acceso completo, de modo que las herramientas `auto` también se ejecutan ahí. Donde nadie puede responder a una aprobación, como un chat de IM o una tarea programada que encuentra una herramienta `ask`, la llamada no se hace y el agente recibe cómo puede usted permitirla.
+
+Anda guarda la definición de cada herramienta tal como el servidor la ofreció por primera vez. Si después el servidor cambia la descripción o el esquema de una herramienta, o añade una, esa herramienta pierde lo que se había concedido a su definición anterior: se pregunta por ella, incluso con `allow`, hasta que usted apruebe una de sus llamadas o la acepte con `anda mcp review github` (todas las herramientas) o `anda mcp review github <tool>`. `anda mcp diff github <tool>` muestra qué cambió, y `anda mcp get github` marca las herramientas pendientes de revisión.
+
+Las solicitudes de usuarios externos de IM solo pueden llamar a las herramientas de un servidor que lo permita (`"allow_external_users": true`, o `anda mcp external-users github on`), y nunca a una herramienta que requiera aprobación: un usuario externo no puede aprobar en su nombre.
+
+Las skills escritas para otros agentes pueden nombrar herramientas MCP como `mcp__<server>__<tool>`, y Anda resuelve esos nombres a las mismas herramientas. Un comodín como `mcp__github__*` no se resuelve: enumere cada herramienta.
 
 ## Estructura de directorios locales
 

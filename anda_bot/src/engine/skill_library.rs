@@ -1,5 +1,7 @@
 use crate::util::tool_response::ToolResponse as Response;
-use anda_core::{BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage};
+use anda_core::{
+    BoxError, FunctionDefinition, Resource, Tool, ToolOutput, Usage, validate_function_name,
+};
 use anda_engine::{
     context::BaseCtx,
     extension::skill::{
@@ -1458,10 +1460,11 @@ fn validate_skill_content(expected_name: Option<&str>, content: &str) -> SkillVa
 /// silently not applied. A delegated skill runs with exactly its declared
 /// tools, so each must be one this host provides.
 ///
-/// MCP tools (`mcp_<server>_<tool>`) come from servers that connect after
-/// skills load, so they cannot be checked here. The `mcp__<server>__<tool>`
-/// form other agents use is not a name Anda resolves: the skill would run
-/// without that tool, so it is flagged with the Anda name to use instead.
+/// MCP tools come from servers that connect after skills load, so they
+/// cannot be checked here. Both the Anda name (`mcp_<server>_<tool>`) and the
+/// `mcp__<server>__<tool>` form other agents use reach a tool. A wildcard
+/// does not: a delegated skill may call only the names it lists, so a
+/// wildcard, or a name too long or odd to be a tool name, is flagged.
 fn frontmatter_diagnostics(skill: &Skill, known_tools: &BTreeSet<String>) -> Vec<SkillDiagnostic> {
     if !skill.is_subagent() {
         if !skill.declares_resource_tags() {
@@ -1477,15 +1480,16 @@ fn frontmatter_diagnostics(skill: &Skill, known_tools: &BTreeSet<String>) -> Vec
         .iter()
         .filter_map(|tool| {
             if tool.starts_with("mcp__") {
+                if validate_function_name(&tool.to_ascii_lowercase()).is_ok() {
+                    return None;
+                }
                 let hint = match anda_mcp_tool_name(tool) {
                     Some(name) => format!("use the Anda name, such as {name}"),
-                    None => "list each tool by its Anda name, mcp_<server>_<tool>".to_string(),
+                    None => "list each tool, as mcp__<server>__<tool>".to_string(),
                 };
                 return Some(SkillDiagnostic::warning(
                     "unsupported_mcp_tool_name",
-                    format!(
-                        "allowed-tools names {tool} in the mcp__server__tool form, which Anda does not resolve; {hint}."
-                    ),
+                    format!("allowed-tools names {tool}, which cannot be called; {hint}."),
                 ));
             }
             if known_tools.contains(tool.as_str())
@@ -2156,14 +2160,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_tools_in_another_agents_form_are_flagged_with_the_anda_name() {
+    async fn mcp_tools_in_another_agents_form_are_flagged_only_when_uncallable() {
         let temp = tempdir().unwrap();
         let lib = library(temp.path());
         let personal = temp.path().join("skills");
         write_skill_with_frontmatter(
             &personal,
             "delegated",
-            "execution: subagent\nallowed-tools: mcp__GitHub__create-issue mcp__github__*\n",
+            "execution: subagent\nallowed-tools: mcp__GitHub__create-issue mcp__docs__search.v2 mcp__github__*\n",
         );
 
         lib.reload().await.unwrap();
@@ -2176,13 +2180,19 @@ mod tests {
             .filter(|d| d.code == "unsupported_mcp_tool_name")
             .map(|d| d.message.as_str())
             .collect();
+        // The gate resolves mcp__GitHub__create-issue; the others cannot be
+        // called by a delegated skill.
         assert_eq!(flagged.len(), 2, "{flagged:?}");
         assert!(
-            flagged[0].contains("such as mcp_github_create_issue"),
+            flagged[0].contains("such as mcp_docs_search_v2"),
             "{}",
             flagged[0]
         );
-        assert!(flagged[1].contains("mcp_<server>_<tool>"), "{}", flagged[1]);
+        assert!(
+            flagged[1].contains("mcp__<server>__<tool>"),
+            "{}",
+            flagged[1]
+        );
         assert!(
             !delegated
                 .diagnostics

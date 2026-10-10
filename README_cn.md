@@ -190,7 +190,7 @@ anda --home /path/to/.anda
 
 ### 命令审批
 
-有风险的 Shell 命令和 MCP 服务连接会先弹出审批卡片：
+有风险的 Shell 命令、MCP 服务连接，以及需要你同意的 MCP 工具调用，会先弹出审批卡片：
 
 - 输入框为空时，按 `y` 批准，按 `n` 拒绝。
 - 输入框中已有内容时，这两个按键会被当作普通输入。此时输入 `y`/`yes` 或 `n`/`no` 再按 Enter 即可回应，也可以按 Ctrl+U 清空输入后继续用单键快捷方式。底部状态栏会提示当前可用的是哪一种。
@@ -345,6 +345,22 @@ anda mcp disable context7                             # 另有 enable、remove�
 daemon 运行时，修改立即生效，连接失败的服务会在后台重试；daemon 未运行时，命令
 只修改 `mcp.json`，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因。修改
 会保留 Anda 不读取的字段和 `${VAR}` 引用；`remove` 还会删除该服务已保存的登录凭据。
+
+每次调用 MCP 工具都要经过审批检查。在默认的 `auto` 策略下，没有完全访问权限的会话
+调用服务未标为只读的工具前会先询问；定时任务和目标模式以完全访问权限运行。可以为
+服务或其中某个工具设置策略：
+
+```bash
+anda mcp approval github allow                          # github 的工具都不再询问
+anda mcp approval github ask --tool merge_pull_request  # 总是询问，即使拥有完全访问权限
+anda mcp review github                                  # 确认审查后发生变化的工具
+```
+
+Anda 会记住服务第一次提供的每个工具定义：之后发生变化的工具或新增的工具，即使在
+`allow` 下也会重新询问，直到你批准它的一次调用，或用 `anda mcp review` 确认
+（`anda mcp diff <id> <tool>` 显示具体变化）。外部 IM 用户的请求只有在执行
+`anda mcp external-users <id> on` 之后才能使用该服务，而且不能调用需要审批的工具。
+为其他智能体编写的技能可以用 `mcp__<server>__<tool>` 指代工具。
 
 智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
 表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，

@@ -7,13 +7,13 @@
 
 use anda_core::BoxError;
 use anda_engine::extension::mcp::McpCredentialStore;
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{
-    config::McpSettings,
+    config::{McpApproval, McpSettings},
     daemon::Daemon,
     engine::mcp::{
         FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME,
@@ -123,8 +123,63 @@ enum McpSubcommand {
         #[arg(long)]
         show: bool,
     },
+    /// Set when the agent asks before calling a server's tools.
+    ///
+    ///   anda mcp approval github allow                  every tool of github
+    ///   anda mcp approval github ask --tool merge_pull_request
+    ///   anda mcp approval github inherit --tool create_issue
+    ///
+    /// `auto` asks unless the session has full access or the tool is
+    /// read-only and unchanged since review; `ask` always asks; `allow` never
+    /// asks while the tool is unchanged since review. `inherit` clears it.
+    #[command(verbatim_doc_comment)]
+    Approval {
+        id: String,
+        #[arg(value_enum)]
+        approval: ApprovalArg,
+        /// One tool, by the server's name for it, instead of the server.
+        #[arg(long)]
+        tool: Option<String>,
+    },
+    /// Let runs for external IM users call a server's tools, or not (the default).
+    ExternalUsers {
+        id: String,
+        #[arg(value_enum)]
+        setting: Switch,
+    },
+    /// Accept the current definitions of a server's tools as reviewed: all
+    /// of them, or the ones named.
+    Review { id: String, tools: Vec<String> },
+    /// Show what changed in a tool since it was reviewed.
+    Diff { id: String, tool: String },
     /// Apply mcp.json after editing it by hand.
     Reload,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ApprovalArg {
+    Auto,
+    Ask,
+    Allow,
+    /// Clear it: a tool follows the server, the server falls back to auto.
+    Inherit,
+}
+
+impl ApprovalArg {
+    fn policy(self) -> Option<McpApproval> {
+        match self {
+            Self::Auto => Some(McpApproval::Auto),
+            Self::Ask => Some(McpApproval::Ask),
+            Self::Allow => Some(McpApproval::Allow),
+            Self::Inherit => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Switch {
+    On,
+    Off,
 }
 
 impl McpCommand {
@@ -279,6 +334,69 @@ pub async fn run(
                 )
                 .await?;
                 report_offline(json, &done)?;
+            }
+        }
+        McpSubcommand::Approval { id, approval, tool } => {
+            let policy = approval.policy();
+            let target = match &tool {
+                Some(tool) => format!("{tool} on {id}"),
+                None => format!("the tools of {id}"),
+            };
+            let done = match policy {
+                Some(policy) => format!("Approval for {target} is {}.", policy.as_str()),
+                None => format!("Cleared the approval policy of {target}."),
+            };
+            if let Some(client) = live {
+                let change = json!({
+                    "op": "set_approval", "id": id, "tool": tool, "approval": policy,
+                });
+                report(json, &apply(client, change).await?, &done)?;
+            } else {
+                edit_offline(
+                    &daemon.home,
+                    McpFileEdit::SetApproval {
+                        id: &id,
+                        tool: tool.as_deref(),
+                        approval: policy,
+                    },
+                )
+                .await?;
+                report_offline(json, &done)?;
+            }
+        }
+        McpSubcommand::ExternalUsers { id, setting } => {
+            let allowed = matches!(setting, Switch::On);
+            let done = if allowed {
+                format!("External IM users' runs may call the tools of {id}.")
+            } else {
+                format!("External IM users' runs may not call the tools of {id}.")
+            };
+            if let Some(client) = live {
+                let change = json!({ "op": "set_external_users", "id": id, "allowed": allowed });
+                report(json, &apply(client, change).await?, &done)?;
+            } else {
+                edit_offline(&daemon.home, McpFileEdit::SetExternalUsers(&id, allowed)).await?;
+                report_offline(json, &done)?;
+            }
+        }
+        McpSubcommand::Review { id, tools } => {
+            let change = json!({ "op": "mark_reviewed", "id": id, "tools": tools });
+            let receipt = apply(require_running(live)?, change).await?;
+            if json {
+                print_json(&receipt)?;
+            } else {
+                let reviewed = receipt["reviewed"].as_array().map_or(0, Vec::len);
+                println!("Reviewed {reviewed} tools of {id}.");
+            }
+        }
+        McpSubcommand::Diff { id, tool } => {
+            let diff: Value = require_running(live)?
+                .mcp("mcp_tool_diff", json!({ "id": id, "tool": tool }))
+                .await?;
+            if json {
+                print_json(&diff)?;
+            } else {
+                print_diff(&diff);
             }
         }
         McpSubcommand::Reload => {
@@ -638,6 +756,21 @@ fn print_detail(detail: &Value) {
         text(detail, "startup"),
         text(detail, "auth"),
     );
+    println!(
+        "  approval: {} · external IM users: {}",
+        text(detail, "approval"),
+        if detail["allow_external_users"] == true {
+            "allowed"
+        } else {
+            "not allowed"
+        },
+    );
+    if let Some(calls) = detail["usage"]["calls"].as_u64() {
+        println!(
+            "  {calls} calls, {} failed",
+            detail["usage"]["errors"].as_u64().unwrap_or_default()
+        );
+    }
     if let Some(error) = detail["last_error"]["message"].as_str() {
         println!("  last error: {error}");
     }
@@ -660,16 +793,63 @@ fn print_tools(detail: &Value) {
         .unwrap_or_default();
     println!("  tools:");
     for tool in &tools {
+        // `auto` is the default: only a deliberate policy is worth a mark.
+        let approval = match text(tool, "approval") {
+            "" | "auto" => String::new(),
+            approval => format!("  [{approval}]"),
+        };
         if tool["hidden"] == true {
-            println!("    {:width$}  (hidden)", text(tool, "remote_name"));
-        } else {
             println!(
-                "    {:width$}  {}",
+                "    {:width$}  (hidden){approval}",
+                text(tool, "remote_name")
+            );
+        } else {
+            let review = match text(tool, "review") {
+                "new" => "  (new: not reviewed)",
+                "changed" => "  (changed since review)",
+                _ => "",
+            };
+            println!(
+                "    {:width$}  {}{approval}{review}",
                 text(tool, "remote_name"),
                 tool["title"].as_str().unwrap_or_else(|| text(tool, "name"))
             );
         }
     }
+    if tools
+        .iter()
+        .any(|tool| matches!(text(tool, "review"), "new" | "changed"))
+    {
+        println!(
+            "  Review with `anda mcp diff {id} <tool>`, then accept with `anda mcp review {id}`.",
+            id = text(detail, "id")
+        );
+    }
+}
+
+fn print_diff(diff: &Value) {
+    let (id, tool) = (text(diff, "server_id"), text(diff, "tool"));
+    match text(diff, "review") {
+        "trusted" => {
+            println!("{tool} on {id} is unchanged since it was reviewed.");
+            return;
+        }
+        "new" => println!("{tool} on {id} is new since the server was reviewed."),
+        _ => println!("{tool} on {id} changed since it was reviewed."),
+    }
+    for change in diff["changes"].as_array().into_iter().flatten() {
+        let show = |value: &Value| match value {
+            Value::Null => "(none)".to_string(),
+            Value::String(text) => text.clone(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+        };
+        println!("\n{}:", text(change, "field"));
+        if !change["before"].is_null() {
+            println!("- {}", show(&change["before"]).replace('\n', "\n- "));
+        }
+        println!("+ {}", show(&change["after"]).replace('\n', "\n+ "));
+    }
+    println!("\nAccept it with `anda mcp review {id} {tool}`.");
 }
 
 #[cfg(test)]
@@ -748,10 +928,27 @@ mod tests {
         .await
         .unwrap();
 
+        edit_offline(
+            home,
+            McpFileEdit::SetApproval {
+                id: "docs",
+                tool: None,
+                approval: ApprovalArg::Allow.policy(),
+            },
+        )
+        .await
+        .unwrap();
+        edit_offline(home, McpFileEdit::SetExternalUsers("docs", true))
+            .await
+            .unwrap();
+
         let server = offline_server(home, "docs").await.unwrap();
         assert_eq!(server["status"], "disabled");
         assert_eq!(server["persisted"], true);
         assert_eq!(server["settings"]["exclude"], json!(["delete"]));
+        assert_eq!(server["approval"], "allow");
+        assert_eq!(server["allow_external_users"], true);
+        assert!(ApprovalArg::Inherit.policy().is_none());
 
         edit_offline(home, McpFileEdit::Remove("docs"))
             .await

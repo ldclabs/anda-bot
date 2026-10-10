@@ -15,9 +15,10 @@ use std::{
 use super::{
     config_store::{self, McpConfigFile},
     redact::{display_url, redact_args, redact_entry},
-    state::{MCP_STATE_FILE_NAME, McpErrorRecord, McpSource, McpStateStore},
+    review::{self, McpReview},
+    state::{MCP_STATE_FILE_NAME, McpErrorRecord, McpSource, McpStateStore, McpUsage},
 };
-use crate::config::{McpServerSettings, McpSettings, McpTransportSettings};
+use crate::config::{McpApproval, McpServerSettings, McpSettings, McpTransportSettings};
 
 /// A server's state as one word.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub(crate) struct McpToolCounts {
     pub total: usize,
     /// Tools hidden through `exclude`.
     pub hidden: usize,
+    /// Tools that are new or changed since the server was reviewed.
+    pub needs_review: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -66,6 +69,10 @@ pub(crate) struct McpServerView {
     pub startup: McpStartup,
     pub source: McpSource,
     pub status: McpStatus,
+    /// The approval policy of tools that have none of their own.
+    pub approval: McpApproval,
+    /// Whether runs for external IM users may call its tools.
+    pub allow_external_users: bool,
     /// `none`, `bearer`, `headers` or `oauth`.
     pub auth: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,6 +84,8 @@ pub(crate) struct McpServerView {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
     pub tools: McpToolCounts,
+    #[serde(skip_serializing_if = "McpUsage::is_empty")]
+    pub usage: McpUsage,
     /// The mcp.json entry, redacted.
     pub settings: Value,
 }
@@ -107,6 +116,12 @@ pub(crate) struct McpToolView {
     /// Hints from the server. They are untrusted and grant nothing.
     pub annotations: McpToolHints,
     pub hidden: bool,
+    /// The approval policy that applies: its own, else the server's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval: Option<McpApproval>,
+    /// Whether its definition is the reviewed one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<McpReview>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -225,29 +240,34 @@ impl ViewSource<'_> {
 
     pub fn detail(&self, view: McpServerView) -> McpServerDetail {
         let id = view.id.as_str();
+        let settings = self.settings_of(id);
+        let approval =
+            |tool: &str| settings.map_or_else(McpApproval::default, |s| s.approval.for_tool(tool));
+        let reviews = self.reviews(id);
         let mut tools: Vec<McpToolView> = self
             .live
             .into_iter()
             .flat_map(|live| &live.routes)
             .filter(|route| route.server_id == id)
-            .map(tool_view)
+            .map(|route| McpToolView {
+                approval: Some(approval(&route.remote_name)),
+                review: reviews.get(&route.remote_name).copied(),
+                ..tool_view(route)
+            })
             .collect();
         tools.sort_by(|a, b| a.remote_name.cmp(&b.remote_name));
-        let hidden = self
-            .settings
-            .servers
-            .iter()
-            .chain(self.runtime.iter().copied())
-            .find(|server| server.id.trim() == id)
+        let hidden = settings
             .map(|server| server.exclude.clone())
             .unwrap_or_default();
         tools.extend(hidden.into_iter().map(|remote_name| McpToolView {
             name: None,
+            approval: Some(approval(&remote_name)),
             remote_name,
             title: None,
             description: None,
             annotations: McpToolHints::default(),
             hidden: true,
+            review: None,
         }));
         let instructions = self
             .live
@@ -258,6 +278,45 @@ impl ViewSource<'_> {
             instructions,
             tools,
         }
+    }
+
+    /// The settings of `id`: its enabled mcp.json entry, else any entry or
+    /// runtime server of that id.
+    fn settings_of(&self, id: &str) -> Option<&McpServerSettings> {
+        let declared = || {
+            self.settings
+                .servers
+                .iter()
+                .chain(self.runtime.iter().copied())
+                .filter(move |server| server.id.trim() == id)
+        };
+        declared()
+            .find(|server| !server.disabled)
+            .or_else(|| declared().next())
+    }
+
+    /// How each tool `id` offers compares with its reviewed definition. A
+    /// server not pinned yet is trusted as it is: it will be on first use.
+    fn reviews(&self, id: &str) -> BTreeMap<String, McpReview> {
+        let Some(live) = self.live else {
+            return BTreeMap::new();
+        };
+        let routes = live.routes.iter().filter(|route| route.server_id == id);
+        self.state.read(id, |state| {
+            let pinned = state.filter(|state| state.reviewed_at.is_some());
+            routes
+                .map(|route| {
+                    let review = match pinned {
+                        None => McpReview::Trusted,
+                        Some(state) => review::review(
+                            state.tools.get(&route.remote_name),
+                            &review::digest(&review::tool_definition(&route.tool)),
+                        ),
+                    };
+                    (route.remote_name.clone(), review)
+                })
+                .collect()
+        })
     }
 
     fn server_view(
@@ -315,6 +374,11 @@ impl ViewSource<'_> {
             (None, None) => json!({}),
         };
         let meta = self.live.and_then(|live| live.meta.get(id));
+        let needs_review = self
+            .reviews(id)
+            .values()
+            .filter(|review| **review != McpReview::Trusted)
+            .count();
         McpServerView {
             id: id.to_string(),
             title: meta.and_then(|meta| meta.title.clone()),
@@ -328,6 +392,10 @@ impl ViewSource<'_> {
                 .unwrap_or(McpStartup::Background),
             source: state.source,
             status,
+            approval: settings
+                .and_then(|server| server.approval.default)
+                .unwrap_or_default(),
+            allow_external_users: settings.is_some_and(|server| server.allow_external_users),
             auth,
             last_error: state.last_error.filter(|_| status != McpStatus::Ready),
             last_ready_at: state.last_ready_at,
@@ -350,7 +418,9 @@ impl ViewSource<'_> {
                         .and_then(Value::as_array)
                         .map_or(0, Vec::len),
                 },
+                needs_review,
             },
+            usage: state.usage,
             settings: entry,
         }
     }
@@ -375,6 +445,8 @@ impl ViewSource<'_> {
             startup: McpStartup::Background,
             source: state.source,
             status: McpStatus::NeedsAuth,
+            approval: McpApproval::default(),
+            allow_external_users: false,
             auth: "oauth",
             last_error: None,
             last_ready_at: None,
@@ -383,7 +455,9 @@ impl ViewSource<'_> {
             tools: McpToolCounts {
                 total: 0,
                 hidden: 0,
+                needs_review: 0,
             },
+            usage: state.usage,
             settings: json!({ "type": "http", "url": summary }),
         }
     }
@@ -517,5 +591,7 @@ pub(super) fn tool_view(route: &McpToolRoute) -> McpToolView {
             open_world: annotations.and_then(|hints| hints.open_world_hint),
         },
         hidden: false,
+        approval: None,
+        review: None,
     }
 }

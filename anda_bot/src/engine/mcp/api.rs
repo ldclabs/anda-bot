@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use super::{McpChange, McpError, McpManager, manager::SignIn, state::McpSource};
 use crate::{
-    config::{McpServerSettings, McpSettings},
+    config::{McpApproval, McpServerSettings, McpSettings},
     engine::memory_api::error,
     runtime_admission::Admission,
     util::tool_response::ToolResponse,
@@ -53,6 +53,10 @@ type Reply = (StatusCode, ToolResponse);
 enum McpRequest {
     List,
     Get(String),
+    ToolDiff {
+        id: String,
+        tool: String,
+    },
     Test(McpServerSettings),
     Apply {
         change: McpChange,
@@ -68,6 +72,13 @@ enum McpRequest {
 #[serde(deny_unknown_fields)]
 struct IdParams {
     id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolParams {
+    id: String,
+    tool: String,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +128,23 @@ enum ChangeParams {
         tool: String,
         visible: bool,
     },
+    /// `approval` is `auto`, `ask`, `allow`, or `null` to clear it.
+    SetApproval {
+        id: String,
+        #[serde(default)]
+        tool: Option<String>,
+        approval: Option<McpApproval>,
+    },
+    SetExternalUsers {
+        id: String,
+        allowed: bool,
+    },
+    /// No tools: every tool the server offers.
+    MarkReviewed {
+        id: String,
+        #[serde(default)]
+        tools: Vec<String>,
+    },
 }
 
 fn default_true() -> bool {
@@ -151,6 +179,10 @@ impl McpRequest {
                 Self::List
             }
             "mcp_get" => Self::Get(params_of::<IdParams>(method, params)?.id),
+            "mcp_tool_diff" => {
+                let ToolParams { id, tool } = params_of(method, params)?;
+                Self::ToolDiff { id, tool }
+            }
             "mcp_test" => Self::Test(parse_server(
                 params_of::<TestParams>(method, params)?.server,
             )?),
@@ -179,6 +211,15 @@ impl McpRequest {
                     }
                     ChangeParams::SetToolVisible { id, tool, visible } => {
                         McpChange::SetToolVisible { id, tool, visible }
+                    }
+                    ChangeParams::SetApproval { id, tool, approval } => {
+                        McpChange::SetApproval { id, tool, approval }
+                    }
+                    ChangeParams::SetExternalUsers { id, allowed } => {
+                        McpChange::SetExternalUsers { id, allowed }
+                    }
+                    ChangeParams::MarkReviewed { id, tools } => {
+                        McpChange::MarkReviewed { id, tools }
                     }
                 };
                 Self::Apply {
@@ -212,7 +253,7 @@ impl McpRequest {
 
 /// Whether `method` changes anything, so that it waits for admission.
 pub(crate) fn is_write_method(method: &str) -> bool {
-    method.starts_with("mcp_") && !matches!(method, "mcp_list" | "mcp_get")
+    method.starts_with("mcp_") && !matches!(method, "mcp_list" | "mcp_get" | "mcp_tool_diff")
 }
 
 /// A server parameter: an mcp.json entry, with its `id` alongside.
@@ -257,6 +298,7 @@ impl McpApiState {
         match request {
             McpRequest::List => ok(manager.snapshot().await),
             McpRequest::Get(id) => respond(manager.server(&id).await),
+            McpRequest::ToolDiff { id, tool } => respond(manager.tool_diff(&id, &tool)),
             McpRequest::Test(server) => respond(manager.test(server).await),
             McpRequest::Apply {
                 change,
@@ -507,10 +549,22 @@ mod tests {
                 "invalid_request",
             ),
             (
-                "mcp_tool_diff",
+                "mcp_secrets",
                 json!({}),
                 StatusCode::BAD_REQUEST,
                 "unsupported_capability",
+            ),
+            (
+                "mcp_tool_diff",
+                json!({ "id": "docs", "tool": "search" }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                "mcp_apply",
+                json!({ "change": { "op": "set_approval", "id": "docs", "approval": "never" } }),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
             ),
         ] {
             let (got, body) = call(&state, owner(), method, params).await;
@@ -546,9 +600,54 @@ mod tests {
         assert_eq!(err.to_string(), "MCP server missing is not configured");
     }
 
+    #[tokio::test]
+    async fn approval_policies_are_written_to_the_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (owner, other) = (Ed25519Key::new([99; 32]), Ed25519Key::new([100; 32]));
+        let state = state(dir.path(), &owner, &other).await;
+        let owner = || headers(&owner);
+        let add = json!({ "change": { "op": "add", "server": {
+            "id": "docs", "type": "http", "url": "http://127.0.0.1:9/mcp", "enabled": false
+        } } });
+        assert_eq!(
+            call(&state, owner(), "mcp_apply", add).await.0,
+            StatusCode::OK
+        );
+
+        for change in [
+            json!({ "op": "set_approval", "id": "docs", "approval": "allow" }),
+            json!({ "op": "set_approval", "id": "docs", "tool": "delete", "approval": "ask" }),
+            json!({ "op": "set_external_users", "id": "docs", "allowed": true }),
+        ] {
+            let (status, body) =
+                call(&state, owner(), "mcp_apply", json!({ "change": change })).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let (_, body) = call(&state, owner(), "mcp_get", json!({ "id": "docs" })).await;
+        assert_eq!(body["result"]["approval"], "allow");
+        assert_eq!(body["result"]["allow_external_users"], true);
+        assert_eq!(
+            body["result"]["settings"]["approval"],
+            json!({ "default": "allow", "tools": { "delete": "ask" } })
+        );
+
+        // `null` clears a policy.
+        let clear = json!({ "change": { "op": "set_approval", "id": "docs", "approval": null } });
+        assert_eq!(
+            call(&state, owner(), "mcp_apply", clear).await.0,
+            StatusCode::OK
+        );
+        let (_, body) = call(&state, owner(), "mcp_get", json!({ "id": "docs" })).await;
+        assert_eq!(body["result"]["approval"], "auto");
+        assert_eq!(
+            body["result"]["settings"]["approval"],
+            json!({ "tools": { "delete": "ask" } })
+        );
+    }
+
     #[test]
-    fn only_list_and_get_are_reads() {
-        for method in ["mcp_list", "mcp_get"] {
+    fn only_list_get_and_diffs_are_reads() {
+        for method in ["mcp_list", "mcp_get", "mcp_tool_diff"] {
             assert!(!is_write_method(method));
         }
         for method in [

@@ -170,15 +170,64 @@ once: a server whose connection settings changed restarts, and one whose change
 the connection does not use (a field Anda does not read, say) keeps running.
 Failed servers are retried in the background, backing off from 30 seconds to 30
 minutes, and the reason is kept for `list`. Without the daemon, `add`,
-`add-json`, `remove`, `enable`, `disable`, `tool` and `logout` edit the files
-directly and take effect when the daemon starts. `list` also shows entries that
+`add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users`
+and `logout` edit the files directly and take effect when the daemon starts. `list` also shows entries that
 were skipped and why, and `--json` prints any result as JSON.
 
 Edits keep the fields Anda does not read, your `${VAR}` references, and the root
 the file uses. `remove` also deletes the server's stored sign-in unless you pass
 `--keep-credentials`. Anda does not watch `mcp.json`: after editing it by hand,
-run `anda mcp reload`. Where each server came from and its last error are kept
-in `~/.anda/mcp_state.json`.
+run `anda mcp reload`. Where each server came from, its last error, the tool
+definitions you reviewed and how often its tools were called are kept in
+`~/.anda/mcp_state.json`.
+
+### Approving MCP tool calls
+
+Every call the agent makes to an MCP tool passes an approval check, as shell
+commands do. The server's `approval` policy decides it, for all of its tools or
+for one:
+
+| Policy | When the agent asks first |
+| --- | --- |
+| `auto` (default) | Unless the session runs with full access. Tools the server marks read-only run without asking while their definition is unchanged. |
+| `ask` | Always, even with full access. |
+| `allow` | Never, while the tool's definition is unchanged. |
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "approval": { "default": "allow", "tools": { "merge_pull_request": "ask" } }
+}
+```
+
+```bash
+anda mcp approval github allow                              # every tool of the server
+anda mcp approval github ask --tool merge_pull_request      # one tool
+anda mcp approval github inherit --tool merge_pull_request  # back to the server's policy
+```
+
+The policy is read only when a tool is called, so changing it never reconnects
+the server. Scheduled jobs and goals run with full access, so `auto` tools run
+there too. Where nobody can answer an approval, such as an IM chat or a
+scheduled job that meets an `ask` tool, the call is not made and the agent is
+told how you can allow it.
+
+Anda keeps each tool's definition as the server first served it. When a server
+later changes a tool's description or schema, or adds a tool, that tool loses
+what its old definition was granted: it is asked about, even under `allow`,
+until you approve one call of it or accept it with `anda mcp review github`
+(all tools) or `anda mcp review github <tool>`. `anda mcp diff github <tool>`
+shows what changed, and `anda mcp get github` marks the tools that need review.
+
+Requests from external IM users can call a server's tools only when the server
+allows them (`"allow_external_users": true`, or `anda mcp external-users github
+on`), and never a tool that would need approval: an external user cannot
+approve on your behalf.
+
+Skills written for other agents can name MCP tools as `mcp__<server>__<tool>`,
+and Anda resolves those names to the same tools. A wildcard such as
+`mcp__github__*` is not resolved: list each tool.
 
 ### Authorizing an MCP server over SSH
 

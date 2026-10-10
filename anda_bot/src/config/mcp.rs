@@ -241,6 +241,10 @@ struct McpJsonServer {
     startup: Option<String>,
     #[serde(default)]
     tasks: Option<McpTasksConfig>,
+    #[serde(default)]
+    approval: Option<McpJsonApproval>,
+    #[serde(default)]
+    allow_external_users: bool,
 }
 
 impl McpJsonServer {
@@ -262,9 +266,15 @@ impl McpJsonServer {
             lifecycle,
             startup,
             tasks,
+            approval,
+            allow_external_users,
         } = self;
 
         let disabled = disabled || enabled == Some(false);
+        let approval = approval
+            .map(McpJsonApproval::into_settings)
+            .transpose()?
+            .unwrap_or_default();
         let lifecycle = match normalized_mode(lifecycle).as_deref() {
             None => None,
             Some("auto") => Some(McpLifecycle::Auto),
@@ -330,6 +340,8 @@ impl McpJsonServer {
             lifecycle,
             startup,
             tasks,
+            approval,
+            allow_external_users,
         })
     }
 }
@@ -376,6 +388,104 @@ pub struct McpServerSettings {
     /// hand back a task the provider polls to completion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tasks: Option<McpTasksConfig>,
+    /// When the agent asks before it calls one of the server's tools. Only
+    /// the call gate reads it, so changing it never reconnects the server.
+    #[serde(default, skip_serializing_if = "McpApprovalSettings::is_empty")]
+    pub approval: McpApprovalSettings,
+    /// Whether runs for external IM users may call the server's tools. Off,
+    /// they can only use the owner's servers that allow it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_external_users: bool,
+}
+
+/// When the agent asks before it calls a tool.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpApproval {
+    /// Ask unless the session runs with full access, or the tool is a
+    /// read-only one whose definition was reviewed.
+    #[default]
+    Auto,
+    /// Always ask, even with full access.
+    Ask,
+    /// Never ask while the tool's definition is the reviewed one.
+    Allow,
+}
+
+impl McpApproval {
+    fn parse(value: &str, field: &str) -> Result<Self, BoxError> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "ask" => Ok(Self::Ask),
+            "allow" => Ok(Self::Allow),
+            other => Err(format!(
+                "{field} has unsupported value {other:?}, expected auto, ask, or allow"
+            )
+            .into()),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Ask => "ask",
+            Self::Allow => "allow",
+        }
+    }
+}
+
+/// A server's approval policy: a default, and overrides by remote tool name.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct McpApprovalSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<McpApproval>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, McpApproval>,
+}
+
+impl McpApprovalSettings {
+    pub fn is_empty(&self) -> bool {
+        self.default.is_none() && self.tools.is_empty()
+    }
+
+    /// The policy of `tool`: its own, else the server's, else `auto`.
+    pub fn for_tool(&self, tool: &str) -> McpApproval {
+        self.tools
+            .get(tool)
+            .or(self.default.as_ref())
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
+/// `approval` as mcp.json writes it, read as strings so a mistyped policy is
+/// reported by name.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct McpJsonApproval {
+    #[serde(default)]
+    default: Option<String>,
+    #[serde(default)]
+    tools: BTreeMap<String, String>,
+}
+
+impl McpJsonApproval {
+    fn into_settings(self) -> Result<McpApprovalSettings, BoxError> {
+        let default = self
+            .default
+            .as_deref()
+            .map(|value| McpApproval::parse(value, "approval.default"))
+            .transpose()?;
+        let mut tools = BTreeMap::new();
+        for (tool, value) in self.tools {
+            let approval = McpApproval::parse(&value, &format!("approval.tools.{tool}"))?;
+            let tool = tool.trim();
+            if tool.is_empty() {
+                return Err("approval.tools has an empty tool name".into());
+            }
+            tools.insert(tool.to_string(), approval);
+        }
+        Ok(McpApprovalSettings { default, tools })
+    }
 }
 
 impl McpServerSettings {
@@ -1033,6 +1143,61 @@ mod tests {
             diagnostic_for(&settings, "late")
                 .message
                 .contains("startup has unsupported value \"lazy\"")
+        );
+    }
+
+    #[test]
+    fn mcp_json_reads_approval_policies_and_external_users() {
+        let settings = McpSettings::from_json_contents(
+            r#"{
+              "mcpServers": {
+                "github": {
+                  "type": "http",
+                  "url": "https://example.com/mcp",
+                  "approval": { "default": "Allow", "tools": { "merge_pull_request": "ask" } },
+                  "allow_external_users": true
+                },
+                "plain": { "type": "http", "url": "https://example.com/mcp" },
+                "typo": {
+                  "type": "http",
+                  "url": "https://example.com/mcp",
+                  "approval": { "tools": { "delete": "never" } }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(server_ids(&settings), ["github", "plain"]);
+        let github = &settings.servers[0];
+        assert!(github.allow_external_users);
+        assert_eq!(github.approval.for_tool("create_issue"), McpApproval::Allow);
+        assert_eq!(
+            github.approval.for_tool("merge_pull_request"),
+            McpApproval::Ask
+        );
+        let plain = &settings.servers[1];
+        assert!(!plain.allow_external_users);
+        assert_eq!(plain.approval.for_tool("anything"), McpApproval::Auto);
+        assert!(
+            diagnostic_for(&settings, "typo")
+                .message
+                .contains("approval.tools.delete has unsupported value \"never\"")
+        );
+        // A policy changes nothing about the connection.
+        let home = Path::new("/tmp/anda-home");
+        assert_eq!(
+            serde_json::to_value(github.server_config(home, None).unwrap()).unwrap(),
+            serde_json::to_value(
+                McpServerSettings {
+                    approval: McpApprovalSettings::default(),
+                    allow_external_users: false,
+                    ..github.clone()
+                }
+                .server_config(home, None)
+                .unwrap()
+            )
+            .unwrap()
         );
     }
 

@@ -17,8 +17,10 @@ use std::{collections::HashSet, time::Duration};
 
 use crate::util::request_meta::keys;
 
+/// How much the session's user asked to be consulted. Shell commands and MCP
+/// tool calls both decide by it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ApprovalMode {
+pub(crate) enum ApprovalMode {
     RequestApproval,
     OnRisk,
     FullAccess,
@@ -39,7 +41,7 @@ impl ApprovalMode {
         }
     }
 
-    pub(super) fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::RequestApproval => "request_approval",
             Self::OnRisk => "on_risk",

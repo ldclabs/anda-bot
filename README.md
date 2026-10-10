@@ -192,7 +192,7 @@ Input preserves spaces in text and code. Cursor movement and deletion treat comb
 
 ### Command Approvals
 
-Risky shell commands and MCP server connections raise an approval card before they run:
+Risky shell commands, MCP server connections and MCP tool calls that need your consent raise an approval card before they run:
 
 - With an empty input box, press `y` to approve or `n` to deny.
 - If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
@@ -353,6 +353,25 @@ in the background; without it, the command edits `mcp.json` and the change
 applies when the daemon starts. `list` also shows entries that were skipped and
 why. Edits keep the fields Anda does not read and your `${VAR}` references, and
 `remove` deletes the server's stored sign-in too.
+
+Every MCP tool call passes an approval check. With the default `auto` policy, a
+session without full access asks before calling any tool the server does not
+mark read-only; scheduled jobs and goals run with full access. Set a policy for
+a server or one of its tools:
+
+```bash
+anda mcp approval github allow                          # never ask for github's tools
+anda mcp approval github ask --tool merge_pull_request  # always ask, even with full access
+anda mcp review github                                  # accept tools that changed since review
+```
+
+Anda keeps each tool's definition as the server first served it: a tool that
+changes later, or a new one, is asked about again, even under `allow`, until you
+approve a call of it or accept it with `anda mcp review` (`anda mcp diff <id>
+<tool>` shows what changed). Requests from external IM users can use a server
+only after `anda mcp external-users <id> on`, and never a tool that needs
+approval. Skills written for other agents can name tools as
+`mcp__<server>__<tool>`.
 
 The agent can also connect a new MCP server during a conversation by calling
 `add_mcp_server`. Use `persist: false` for the current daemon only, or

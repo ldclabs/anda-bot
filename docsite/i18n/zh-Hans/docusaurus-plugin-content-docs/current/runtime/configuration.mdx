@@ -111,7 +111,39 @@ anda mcp tool github delete_repository --hide         # 不让智能体使用某
 anda mcp disable context7                             # 另有 enable、remove、reconnect、logout、reload
 ```
 
-daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源和最近错误保存在 `~/.anda/mcp_state.json`。
+daemon 运行时，每条命令都经由 daemon 执行，修改立即生效：连接设置变化的服务会重启，只改了连接用不到的内容（例如 Anda 不读取的字段）的服务继续运行。连接失败的服务会在后台重试，间隔从 30 秒逐步退避到 30 分钟，失败原因会保留给 `list` 显示。daemon 未运行时，`add`、`add-json`、`remove`、`enable`、`disable`、`tool`、`approval`、`external-users` 和 `logout` 直接修改文件，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因，`--json` 以 JSON 输出结果。修改会保留 Anda 不读取的字段、`${VAR}` 引用和文件使用的 root key；`remove` 默认同时删除该服务已保存的登录凭据（`--keep-credentials` 可保留）。Anda 不监听 `mcp.json` 的变化：手动编辑后请运行 `anda mcp reload`。每个服务的来源、最近错误、你审查过的工具定义以及工具被调用的次数保存在 `~/.anda/mcp_state.json`。
+
+### 审批 MCP 工具调用
+
+和 shell 命令一样，智能体每次调用 MCP 工具都要经过审批检查。检查由服务的 `approval` 策略决定，可以作用于全部工具，也可以针对单个工具：
+
+| 策略 | 智能体何时先询问 |
+| --- | --- |
+| `auto`（默认） | 会话没有完全访问权限时询问。服务标为只读的工具，只要定义没有变化，就直接运行。 |
+| `ask` | 总是询问，即使拥有完全访问权限。 |
+| `allow` | 只要工具定义没有变化，就从不询问。 |
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "approval": { "default": "allow", "tools": { "merge_pull_request": "ask" } }
+}
+```
+
+```bash
+anda mcp approval github allow                              # 该服务的全部工具
+anda mcp approval github ask --tool merge_pull_request      # 单个工具
+anda mcp approval github inherit --tool merge_pull_request  # 恢复为服务的策略
+```
+
+策略只在调用工具时读取，修改它不会重连服务。定时任务和目标模式以完全访问权限运行，因此 `auto` 工具在其中也会直接运行。在无人能应答审批的场合（例如 IM 聊天，或遇到 `ask` 工具的定时任务），调用不会执行，智能体会得知你可以如何放行。
+
+Anda 会记住服务第一次提供的每个工具定义。之后如果服务修改了某个工具的描述或参数 schema，或新增了工具，该工具就失去旧定义获得的放行：即使在 `allow` 下也会询问，直到你批准它的一次调用，或用 `anda mcp review github`（全部工具）或 `anda mcp review github <tool>` 确认。`anda mcp diff github <tool>` 显示具体变化，`anda mcp get github` 会标出需要审查的工具。
+
+外部 IM 用户的请求只有在服务允许时（`"allow_external_users": true`，或 `anda mcp external-users github on`）才能调用它的工具，而且永远不能调用需要审批的工具：外部用户不能代你批准。
+
+为其他智能体编写的技能可以用 `mcp__<server>__<tool>` 指代 MCP 工具，Anda 会把这些名字解析到同一个工具。`mcp__github__*` 这样的通配符不会被解析，请逐个列出工具。
 
 ## 本地目录结构
 

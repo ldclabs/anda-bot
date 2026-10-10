@@ -160,6 +160,9 @@ fn server_settings(args: AddMcpServerArgs) -> Result<McpServerSettings, BoxError
         lifecycle: None,
         startup: None,
         tasks: None,
+        // The agent cannot choose how its own calls are approved.
+        approval: Default::default(),
+        allow_external_users: false,
     };
     let issues = server.setup_issues();
     if !issues.is_empty() {

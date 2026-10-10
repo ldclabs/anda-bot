@@ -94,7 +94,39 @@ anda mcp tool github delete_repository --hide         # masquer un outil à l'ag
 anda mcp disable context7                             # aussi : enable, remove, reconnect, logout, reload
 ```
 
-Quand le démon tourne, chaque commande passe par lui et la modification s'applique aussitôt : un serveur dont les paramètres de connexion ont changé redémarre, et celui dont la modification ne touche pas la connexion (un champ qu'Anda ne lit pas, par exemple) continue de tourner. Les serveurs en échec sont relancés en arrière-plan, avec un délai qui passe de 30 secondes à 30 minutes, et la raison est conservée pour `list`. Sans le démon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool` et `logout` modifient directement les fichiers et prennent effet au démarrage du démon. `list` affiche aussi les entrées ignorées et pourquoi, et `--json` imprime tout résultat en JSON. Les modifications conservent les champs qu'Anda ne lit pas, vos références `${VAR}` et la clé racine du fichier ; `remove` supprime aussi la connexion enregistrée du serveur, sauf avec `--keep-credentials`. Anda ne surveille pas `mcp.json` : après une modification manuelle, exécutez `anda mcp reload`. L'origine de chaque serveur et sa dernière erreur sont conservées dans `~/.anda/mcp_state.json`.
+Quand le démon tourne, chaque commande passe par lui et la modification s'applique aussitôt : un serveur dont les paramètres de connexion ont changé redémarre, et celui dont la modification ne touche pas la connexion (un champ qu'Anda ne lit pas, par exemple) continue de tourner. Les serveurs en échec sont relancés en arrière-plan, avec un délai qui passe de 30 secondes à 30 minutes, et la raison est conservée pour `list`. Sans le démon, `add`, `add-json`, `remove`, `enable`, `disable`, `tool`, `approval`, `external-users` et `logout` modifient directement les fichiers et prennent effet au démarrage du démon. `list` affiche aussi les entrées ignorées et pourquoi, et `--json` imprime tout résultat en JSON. Les modifications conservent les champs qu'Anda ne lit pas, vos références `${VAR}` et la clé racine du fichier ; `remove` supprime aussi la connexion enregistrée du serveur, sauf avec `--keep-credentials`. Anda ne surveille pas `mcp.json` : après une modification manuelle, exécutez `anda mcp reload`. L'origine de chaque serveur, sa dernière erreur, les définitions d'outils que vous avez revues et le nombre d'appels de ses outils sont conservés dans `~/.anda/mcp_state.json`.
+
+### Approuver les appels d'outils MCP
+
+Chaque appel de l'agent à un outil MCP passe par une vérification d'approbation, comme les commandes shell. C'est la politique `approval` du serveur qui décide, pour tous ses outils ou pour un seul :
+
+| Politique | Quand l'agent demande d'abord |
+| --- | --- |
+| `auto` (par défaut) | Sauf si la session dispose de l'accès complet. Les outils que le serveur marque en lecture seule s'exécutent sans demander tant que leur définition n'a pas changé. |
+| `ask` | Toujours, même avec l'accès complet. |
+| `allow` | Jamais, tant que la définition de l'outil n'a pas changé. |
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "approval": { "default": "allow", "tools": { "merge_pull_request": "ask" } }
+}
+```
+
+```bash
+anda mcp approval github allow                              # tous les outils du serveur
+anda mcp approval github ask --tool merge_pull_request      # un seul outil
+anda mcp approval github inherit --tool merge_pull_request  # revient à la politique du serveur
+```
+
+La politique n'est lue qu'à l'appel d'un outil : la modifier ne reconnecte jamais le serveur. Les tâches planifiées et les objectifs s'exécutent avec l'accès complet, donc les outils `auto` s'y exécutent aussi. Là où personne ne peut répondre à une approbation, comme une conversation IM ou une tâche planifiée qui rencontre un outil `ask`, l'appel n'est pas fait et l'agent apprend comment vous pouvez l'autoriser.
+
+Anda conserve la définition de chaque outil telle que le serveur l'a fournie la première fois. Si le serveur modifie ensuite la description ou le schéma d'un outil, ou en ajoute un, cet outil perd ce qui avait été accordé à son ancienne définition : l'agent demande avant de l'appeler, même avec `allow`, jusqu'à ce que vous approuviez un de ses appels ou que vous l'acceptiez avec `anda mcp review github` (tous les outils) ou `anda mcp review github <tool>`. `anda mcp diff github <tool>` montre ce qui a changé, et `anda mcp get github` signale les outils à revoir.
+
+Les requêtes des utilisateurs IM externes ne peuvent appeler les outils d'un serveur que s'il les y autorise (`"allow_external_users": true`, ou `anda mcp external-users github on`), et jamais un outil qui exigerait une approbation : un utilisateur externe ne peut pas approuver à votre place.
+
+Les skills écrites pour d'autres agents peuvent nommer des outils MCP sous la forme `mcp__<server>__<tool>`, et Anda résout ces noms vers les mêmes outils. Un joker comme `mcp__github__*` n'est pas résolu : listez chaque outil.
 
 ## Structure des répertoires locaux
 

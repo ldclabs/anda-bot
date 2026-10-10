@@ -67,10 +67,11 @@ use resources::record_artifacts;
 
 pub(crate) use action::{
     ActionApiOutput, ActionDetail, ActionEvent, ActionResponseArgs, ActionRuntime, ActionSession,
-    ActionStatus, ActionsTool, ActionsToolArgs, AskUserChoiceTool, McpApprovalKind,
-    action_id_from_message, action_id_from_message_value, apply_action_resolution_to_chat_message,
-    apply_action_resolution_to_message, approval_detail, is_action_message_value,
-    payload_action_id, payload_is_pending, payload_responded_at, require_mcp_approval,
+    ActionStatus, ActionsTool, ActionsToolArgs, ApprovalMode, AskUserChoiceTool, McpApprovalCard,
+    McpApprovalKind, action_id_from_message, action_id_from_message_value,
+    apply_action_resolution_to_chat_message, apply_action_resolution_to_message, approval_detail,
+    approval_scope, is_action_message_value, payload_action_id, payload_is_pending,
+    payload_responded_at, request_mcp_tool_approval, require_mcp_approval,
     update_action_payload_resolution,
 };
 pub(crate) use agent::memory_policy::{MemoryMode, MemoryPolicy};
@@ -799,8 +800,12 @@ impl Engines {
                     channel::ListImChannelsTool::new(channel_sender),
                 )))?;
         }
-        engine_builder = engine_builder
-            .register_tool_provider(Arc::new(resources::ArtifactProvider(mcp_provider)))?;
+        // Every agent call to an MCP tool passes the gate, which asks first
+        // when the server's policy says so.
+        engine_builder =
+            engine_builder.register_tool_provider(Arc::new(resources::ArtifactProvider(
+                Arc::new(mcp::McpGate::new(mcp_provider, mcp_manager.clone())),
+            )))?;
         for agent in media_agents {
             let label = agent.model_label().to_string();
             engine_builder = engine_builder.register_agent(

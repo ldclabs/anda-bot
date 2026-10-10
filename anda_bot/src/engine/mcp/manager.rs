@@ -8,6 +8,10 @@
 //! reconciles. A supervisor retries failed servers with backoff and records
 //! why they failed, which the engine's status alone does not say.
 //!
+//! The manager also answers the call gate: which approval policy applies to a
+//! tool, and whether the tool's definition is the one that was reviewed. A
+//! server's first catalog is pinned as reviewed when it is first seen.
+//!
 //! mcp.json is not watched. A hand edit takes effect on `reload`, or with the
 //! next change Anda writes, which always starts from the file as it is on
 //! disk; the snapshot tells the UI when the two differ.
@@ -16,7 +20,7 @@ use anda_core::BoxError;
 use anda_engine::{
     extension::mcp::{
         McpAuthorizationRequired, McpOAuthConfig, McpServerConfig, McpServerStatus, McpStartup,
-        McpToolProvider, McpTransportConfig,
+        McpToolProvider, McpToolRoute, McpTransportConfig,
     },
     unix_ms,
 };
@@ -36,6 +40,7 @@ use super::{
     McpError,
     config_store::{self, McpConfigFile, McpFileEdit},
     oauth::{McpOAuthFlows, configure_authorization, default_server_id_from_url, open_in_browser},
+    review::{self, McpReview, McpToolDiff},
     state::{MCP_STATE_FILE_NAME, McpErrorRecord, McpSource, McpStateStore},
     view::{
         LiveState, McpServerDetail, McpSnapshot, McpStatus, McpToolView, ServerMeta, ViewSource,
@@ -43,7 +48,7 @@ use super::{
     },
 };
 use crate::config::{
-    McpOAuthSettings, McpServerSettings, McpSettings, McpStreamableHttpSettings,
+    McpApproval, McpOAuthSettings, McpServerSettings, McpSettings, McpStreamableHttpSettings,
     McpTransportSettings, normalize_string,
 };
 
@@ -99,6 +104,31 @@ pub(crate) enum McpChange {
         tool: String,
         visible: bool,
     },
+    /// Sets when the agent asks before calling one tool, or with no tool
+    /// every tool without its own policy. `None` clears it.
+    SetApproval {
+        id: String,
+        tool: Option<String>,
+        approval: Option<McpApproval>,
+    },
+    /// Lets runs for external IM users call the server's tools, or not.
+    SetExternalUsers {
+        id: String,
+        allowed: bool,
+    },
+    /// Accepts the current definitions of the named tools, or of every tool
+    /// the server offers, as reviewed.
+    MarkReviewed {
+        id: String,
+        tools: Vec<String>,
+    },
+}
+
+/// What the call gate applies to one tool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct McpToolPolicy {
+    pub approval: McpApproval,
+    pub allow_external_users: bool,
 }
 
 /// What a change did.
@@ -115,6 +145,9 @@ pub(crate) struct McpReceipt {
     pub rebuilt: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub connected: Vec<String>,
+    /// Tools whose definitions were accepted as reviewed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reviewed: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub failed: Vec<McpFailure>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -480,7 +513,255 @@ impl McpManager {
                     Ok(self.reconcile_locked(true).await)
                 }
             }
+            McpChange::SetApproval { id, tool, approval } => {
+                let tool = tool
+                    .map(|tool| {
+                        normalize_string(&tool)
+                            .ok_or_else(|| McpError::invalid("the tool name cannot be empty"))
+                    })
+                    .transpose()?;
+                if self.declared_in_file(&id) {
+                    self.commit_locked(
+                        expected_revision,
+                        McpFileEdit::SetApproval {
+                            id: &id,
+                            tool: tool.as_deref(),
+                            approval,
+                        },
+                    )
+                    .await
+                } else {
+                    self.change_runtime(&id, |server| {
+                        let policy = &mut server.approval;
+                        match (tool, approval) {
+                            (None, approval) => policy.default = approval,
+                            (Some(tool), Some(approval)) => {
+                                policy.tools.insert(tool, approval);
+                            }
+                            (Some(tool), None) => {
+                                policy.tools.remove(&tool);
+                            }
+                        }
+                    })
+                }
+            }
+            McpChange::SetExternalUsers { id, allowed } => {
+                if self.declared_in_file(&id) {
+                    self.commit_locked(
+                        expected_revision,
+                        McpFileEdit::SetExternalUsers(&id, allowed),
+                    )
+                    .await
+                } else {
+                    self.change_runtime(&id, |server| server.allow_external_users = allowed)
+                }
+            }
+            McpChange::MarkReviewed { id, tools } => self.mark_reviewed_locked(&id, tools).await,
         }
+    }
+
+    /// The approval policy and external-user setting for `tool` of server
+    /// `id`, from the settings the server runs with.
+    pub fn tool_policy(&self, id: &str, tool: &str) -> McpToolPolicy {
+        let view = self.inner.view.read();
+        let server = running_settings(&view, id);
+        McpToolPolicy {
+            approval: server.map_or_else(McpApproval::default, |server| {
+                server.approval.for_tool(tool)
+            }),
+            allow_external_users: server.is_some_and(|server| server.allow_external_users),
+        }
+    }
+
+    /// How `route`'s definition compares with the reviewed one, and its
+    /// digest. A server seen with tools for the first time has its catalog
+    /// pinned as it is.
+    pub async fn review(&self, route: &McpToolRoute) -> (McpReview, String) {
+        self.pin_first_catalog(&route.server_id).await;
+        let digest = review::digest(&review::tool_definition(&route.tool));
+        let review = self.inner.state.read(&route.server_id, |state| {
+            review::review(
+                state.and_then(|state| state.tools.get(&route.remote_name)),
+                &digest,
+            )
+        });
+        (review, digest)
+    }
+
+    /// Accepts `route`'s current definition as reviewed: the user approved a
+    /// call whose card said it was new or changed.
+    pub async fn accept_definition(&self, route: &McpToolRoute) {
+        let now = unix_ms();
+        if self.inner.state.update(&route.server_id, |state| {
+            state.reviewed_at.get_or_insert(now);
+            state
+                .tools
+                .insert(route.remote_name.clone(), review::pin(&route.tool, now));
+        }) {
+            self.inner.state.save().await;
+        }
+    }
+
+    /// What changed in `tool` of server `id` since it was reviewed.
+    pub fn tool_diff(&self, id: &str, tool: &str) -> Result<McpToolDiff, BoxError> {
+        let route = self
+            .inner
+            .provider
+            .routes()
+            .into_iter()
+            .find(|route| route.server_id == id && route.remote_name == tool)
+            .ok_or_else(|| {
+                if self.is_declared(id) {
+                    McpError::invalid(format!("MCP server {id} offers no tool {tool} now"))
+                } else {
+                    McpError::not_found(id)
+                }
+            })?;
+        let current = review::tool_definition(&route.tool);
+        let digest = review::digest(&current);
+        Ok(self.inner.state.read(id, |state| {
+            let pinned = state.and_then(|state| state.tools.get(tool));
+            // Not pinned yet: it will be as it is.
+            let review = match state.and_then(|state| state.reviewed_at) {
+                None => McpReview::Trusted,
+                Some(_) => review::review(pinned, &digest),
+            };
+            McpToolDiff {
+                server_id: id.to_string(),
+                tool: tool.to_string(),
+                review,
+                reviewed_at: pinned.map(|pin| pin.reviewed_at),
+                changes: match review {
+                    McpReview::Trusted => Vec::new(),
+                    _ => review::changes(pinned.map(|pin| &pin.definition), &current),
+                },
+            }
+        }))
+    }
+
+    /// Counts one call the agent made to a server's tool. Saved with the
+    /// supervisor's next round, since a call is too frequent to write each.
+    pub fn record_call(&self, id: &str, failed: bool) {
+        let now = unix_ms();
+        self.inner.state.update_later(id, |state| {
+            state.usage.calls += 1;
+            if failed {
+                state.usage.errors += 1;
+            }
+            state.usage.last_used_at = Some(now);
+        });
+    }
+
+    async fn mark_reviewed_locked(
+        &self,
+        id: &str,
+        tools: Vec<String>,
+    ) -> Result<McpReceipt, BoxError> {
+        let routes: Vec<McpToolRoute> = self
+            .inner
+            .provider
+            .routes()
+            .into_iter()
+            .filter(|route| route.server_id == id)
+            .collect();
+        if routes.is_empty() {
+            return Err(if self.is_declared(id) {
+                McpError::invalid(format!(
+                    "MCP server {id} offers no tools now; connect it first"
+                ))
+            } else {
+                McpError::not_found(id)
+            });
+        }
+        let named: BTreeSet<String> = tools
+            .iter()
+            .filter_map(|tool| normalize_string(tool))
+            .collect();
+        if let Some(missing) = named
+            .iter()
+            .find(|tool| !routes.iter().any(|route| &route.remote_name == *tool))
+        {
+            return Err(McpError::invalid(format!(
+                "MCP server {id} offers no tool {missing} now"
+            )));
+        }
+        self.pin_first_catalog(id).await;
+        let now = unix_ms();
+        let reviewed: Vec<&McpToolRoute> = routes
+            .iter()
+            .filter(|route| named.is_empty() || named.contains(&route.remote_name))
+            .collect();
+        if self.inner.state.update(id, |state| {
+            state.reviewed_at.get_or_insert(now);
+            // Reviewing them all also forgets the tools the server dropped.
+            if named.is_empty() {
+                state.tools.clear();
+            }
+            for route in &reviewed {
+                state
+                    .tools
+                    .insert(route.remote_name.clone(), review::pin(&route.tool, now));
+            }
+        }) {
+            self.inner.state.save().await;
+        }
+        Ok(McpReceipt {
+            revision: self.inner.view.read().file.revision.clone(),
+            reviewed: reviewed
+                .into_iter()
+                .map(|route| route.remote_name.clone())
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    /// Pins the catalog of a server that has none pinned yet: the first one
+    /// it serves is trusted, as adding the server trusted it.
+    async fn pin_first_catalog(&self, id: &str) {
+        if self.inner.state.read(id, |state| {
+            state.is_some_and(|state| state.reviewed_at.is_some())
+        }) {
+            return;
+        }
+        let routes: Vec<McpToolRoute> = self
+            .inner
+            .provider
+            .routes()
+            .into_iter()
+            .filter(|route| route.server_id == id)
+            .collect();
+        let now = unix_ms();
+        if self.inner.state.update(id, |state| {
+            // Another caller may have pinned it meanwhile.
+            if state.reviewed_at.is_none() {
+                state.reviewed_at = Some(now);
+                state.tools = routes
+                    .iter()
+                    .map(|route| (route.remote_name.clone(), review::pin(&route.tool, now)))
+                    .collect();
+            }
+        }) {
+            self.inner.state.save().await;
+        }
+    }
+
+    /// Changes a setting the connection does not use of a server added for
+    /// this daemon only.
+    fn change_runtime(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut McpServerSettings),
+    ) -> Result<McpReceipt, BoxError> {
+        let mut view = self.inner.view.write();
+        let server = view
+            .runtime
+            .get_mut(id)
+            .ok_or_else(|| McpError::not_found(id))?;
+        change(&mut server.settings);
+        Ok(McpReceipt {
+            revision: view.file.revision.clone(),
+            ..Default::default()
+        })
     }
 
     /// Re-reads mcp.json and applies it.
@@ -882,6 +1163,8 @@ impl McpManager {
             // The Bot default (background discovery), not the engine's.
             startup: None,
             tasks: config.tasks.clone(),
+            // A server authorized for this daemon only had no policy to keep.
+            ..Default::default()
         };
         self.commit_locked(None, McpFileEdit::Add(&server)).await?;
         Ok(true)
@@ -1092,6 +1375,11 @@ impl McpManager {
             self.reconcile_locked(true).await;
         }
         let statuses = self.inner.provider.server_statuses().await;
+        let ready: Vec<String> = statuses
+            .iter()
+            .filter(|(_, status)| **status == McpServerStatus::Ready)
+            .map(|(id, _)| id.clone())
+            .collect();
         let now = unix_ms();
         let due: Vec<String> = {
             let view = self.inner.view.read();
@@ -1111,6 +1399,10 @@ impl McpManager {
         for id in due {
             self.spawn_refresh(id);
         }
+        for id in ready {
+            self.pin_first_catalog(&id).await;
+        }
+        self.inner.state.flush().await;
     }
 
     /// Edits mcp.json, then applies what it says now.
@@ -1311,6 +1603,9 @@ impl McpManager {
         if changed {
             self.inner.state.save().await;
         }
+        if error.is_none() {
+            self.pin_first_catalog(id).await;
+        }
     }
 
     async fn record_added(&self, id: &str, source: McpSource) {
@@ -1436,6 +1731,17 @@ enum SignInStart {
     },
 }
 
+/// The settings a server runs with: its enabled mcp.json entry, else the
+/// runtime server of that id.
+fn running_settings<'a>(view: &'a View, id: &str) -> Option<&'a McpServerSettings> {
+    view.file
+        .settings
+        .servers
+        .iter()
+        .find(|server| !server.disabled && server.id.trim() == id)
+        .or_else(|| view.runtime.get(id).map(|server| &server.settings))
+}
+
 /// mcp.json's enabled entries, then the runtime servers it does not declare.
 fn desired(view: &View) -> BTreeMap<String, McpServerConfig> {
     let mut desired = view.file.configs.clone();
@@ -1513,56 +1819,19 @@ impl McpManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::mcp::{FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME};
+    use crate::engine::mcp::{FileMcpCredentialStore, MCP_CREDENTIALS_DIR_NAME, test_server};
     use anda_core::ToolProvider;
     use anda_engine::extension::mcp::{McpCredentialStore, McpLifecycle, StoredCredentials};
-    use axum::{Json, http::StatusCode, response::IntoResponse, routing};
+    use axum::{Json, http::StatusCode, routing};
     use std::path::Path;
 
-    /// A Streamable HTTP MCP server offering `tools`, answering JSON.
+    /// A Streamable HTTP MCP server offering read-only `tools`.
     async fn mock_mcp(tools: &[&str]) -> String {
-        let tools: Vec<Value> = tools
+        let catalog = tools
             .iter()
-            .map(|name| {
-                json!({
-                    "name": name,
-                    "description": format!("The {name} tool"),
-                    "inputSchema": { "type": "object" },
-                    "annotations": { "readOnlyHint": true }
-                })
-            })
+            .map(|name| test_server::read_only_tool(name))
             .collect();
-        let app = axum::Router::new().route(
-            "/mcp",
-            routing::post(move |Json(request): Json<Value>| {
-                let tools = tools.clone();
-                async move {
-                    let Some(id) = request.get("id").cloned() else {
-                        return StatusCode::ACCEPTED.into_response();
-                    };
-                    let reply = match request["method"].as_str() {
-                        Some("initialize") => json!({
-                            "jsonrpc": "2.0", "id": id,
-                            "result": {
-                                "protocolVersion": request["params"]["protocolVersion"],
-                                "capabilities": { "tools": {} },
-                                "serverInfo": { "name": "mock", "title": "Mock Server", "version": "1.0.0" },
-                                "instructions": "Use the mock."
-                            }
-                        }),
-                        Some("tools/list") => json!({
-                            "jsonrpc": "2.0", "id": id, "result": { "tools": tools }
-                        }),
-                        _ => json!({
-                            "jsonrpc": "2.0", "id": id,
-                            "error": { "code": -32601, "message": "Method not found" }
-                        }),
-                    };
-                    Json(reply).into_response()
-                }
-            }),
-        );
-        format!("{}/mcp", crate::test_support::spawn_http_mock(app).await)
+        test_server::serve(Arc::new(parking_lot::RwLock::new(catalog))).await
     }
 
     async fn write_config(home: &Path, content: &str) {
@@ -2085,6 +2354,51 @@ mod tests {
         // The record survives a restart, so the UI can say what went wrong.
         let reopened = McpStateStore::open(home.join(MCP_STATE_FILE_NAME)).await;
         assert!(reopened.get("down").last_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn connecting_pins_the_first_catalog_and_removing_forgets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let url = mock_mcp(&["echo", "search"]).await;
+        write_config(
+            home,
+            &json!({ "mcpServers": { "docs": { "url": url } } }).to_string(),
+        )
+        .await;
+        let manager = McpManager::for_test(home).await;
+        assert!(manager.inner.state.get("docs").reviewed_at.is_none());
+        manager.reconnect(Some("docs")).await.unwrap();
+
+        let state = manager.inner.state.get("docs");
+        assert!(state.reviewed_at.is_some());
+        assert_eq!(state.tools.keys().collect::<Vec<_>>(), ["echo", "search"]);
+        // Reviewing a tool the server does not offer is refused.
+        let err = manager
+            .apply(
+                McpChange::MarkReviewed {
+                    id: "docs".into(),
+                    tools: vec!["missing".into()],
+                },
+                None,
+                McpSource::Manual,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("offers no tool missing"), "{err}");
+
+        manager
+            .apply(
+                McpChange::Remove {
+                    id: "docs".into(),
+                    keep_credentials: false,
+                },
+                None,
+                McpSource::Manual,
+            )
+            .await
+            .unwrap();
+        assert_eq!(manager.inner.state.get("docs"), Default::default());
     }
 
     #[tokio::test]

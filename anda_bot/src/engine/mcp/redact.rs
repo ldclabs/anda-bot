@@ -1,5 +1,5 @@
 //! Keeps secrets out of everything Anda shows about an MCP server: approval
-//! cards, the owner API and the CLI. Env values, header values and bearer
+//! cards (including a tool call's arguments), the owner API and the CLI. Env values, header values and bearer
 //! tokens are never shown, and argv and URLs lose the parts that carry
 //! credentials. Even the owner gets no plaintext back: a secret is changed by
 //! setting it again.
@@ -166,6 +166,33 @@ fn redacted_value() -> Value {
     json!({ "redacted": true })
 }
 
+/// A tool call's arguments for an approval card: values under a secret-like
+/// key, and strings that carry a credential, are replaced. The model wrote
+/// them, but they can still hold a token it read somewhere.
+pub(crate) fn redact_json(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| {
+                    let value = if arg_name_is_sensitive(key) {
+                        json!(REDACTED)
+                    } else {
+                        redact_json(value)
+                    };
+                    (key.clone(), value)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(redact_json).collect()),
+        Value::String(text) => match redact_args(std::slice::from_ref(text)).pop() {
+            Some(redacted) => json!(redacted),
+            None => json!(REDACTED),
+        },
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +227,30 @@ mod tests {
         assert_eq!(redacted["args"][2], "--verbose");
         assert_eq!(redacted["approval"]["default"], "ask");
         assert_eq!(redacted["command"], "gh-mcp");
+    }
+
+    #[test]
+    fn call_arguments_lose_secret_values() {
+        let args = json!({
+            "repo": "ldclabs/anda-bot",
+            "api_key": "key-secret",
+            "options": {"Authorization": "Bearer header-secret", "draft": true},
+            "links": ["https://bob:url-password@example.com/x?token=query-secret"],
+            "note": "Bearer inline-secret"
+        });
+        let redacted = redact_json(&args);
+        let rendered = redacted.to_string();
+        for secret in [
+            "key-secret",
+            "header-secret",
+            "url-password",
+            "query-secret",
+            "inline-secret",
+        ] {
+            assert!(!rendered.contains(secret), "leaked {secret}: {rendered}");
+        }
+        assert_eq!(redacted["repo"], "ldclabs/anda-bot");
+        assert_eq!(redacted["options"]["draft"], true);
     }
 
     #[test]

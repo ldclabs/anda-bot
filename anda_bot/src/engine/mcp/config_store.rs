@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 
 use super::McpError;
 use crate::{
-    config::{McpOAuthSettings, McpServerSettings, McpSettings, McpTransportSettings},
+    config::{McpApproval, McpOAuthSettings, McpServerSettings, McpSettings, McpTransportSettings},
     engine::{backup_daemon_config, daemon_config_revision, write_daemon_config_atomically},
     util::text::read_text_file,
 };
@@ -42,6 +42,8 @@ const ENTRY_FIELDS: &[&str] = &[
     "lifecycle",
     "startup",
     "tasks",
+    "approval",
+    "allow_external_users",
 ];
 
 /// Fields of an entry in the older list form.
@@ -54,6 +56,8 @@ const LIST_ENTRY_FIELDS: &[&str] = &[
     "lifecycle",
     "startup",
     "tasks",
+    "approval",
+    "allow_external_users",
 ];
 
 /// mcp.json as it was read.
@@ -114,6 +118,15 @@ pub(crate) enum McpFileEdit<'a> {
     },
     /// Records the OAuth marker of an authorized server.
     SetOAuth(&'a str, &'a McpOAuthSettings),
+    /// Sets the approval policy of one tool, or with no tool the server's
+    /// default. `None` removes it, so the tool follows the server's default
+    /// and the server falls back to `auto`.
+    SetApproval {
+        id: &'a str,
+        tool: Option<&'a str>,
+        approval: Option<McpApproval>,
+    },
+    SetExternalUsers(&'a str, bool),
 }
 
 /// Reads mcp.json, applies `edit`, and writes the result atomically, backing
@@ -248,11 +261,53 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
             transport.insert("oauth".into(), serde_json::to_value(oauth)?);
             transport.remove("bearer_token");
         }
+        McpFileEdit::SetApproval { id, tool, approval } => {
+            let (entry, _) = entry_mut(&mut root, id)?;
+            let mut policy = match entry.remove("approval") {
+                Some(Value::Object(policy)) => policy,
+                _ => Map::new(),
+            };
+            match tool {
+                None => set_or_remove(&mut policy, "default", approval),
+                Some(tool) => {
+                    let mut tools = match policy.remove("tools") {
+                        Some(Value::Object(tools)) => tools,
+                        _ => Map::new(),
+                    };
+                    set_or_remove(&mut tools, tool, approval);
+                    if !tools.is_empty() {
+                        policy.insert("tools".into(), Value::Object(tools));
+                    }
+                }
+            }
+            if !policy.is_empty() {
+                entry.insert("approval".into(), Value::Object(policy));
+            }
+        }
+        McpFileEdit::SetExternalUsers(id, allowed) => {
+            let (entry, _) = entry_mut(&mut root, id)?;
+            if allowed {
+                entry.insert("allow_external_users".into(), json!(true));
+            } else {
+                entry.remove("allow_external_users");
+            }
+        }
     }
 
     let mut content = serde_json::to_string_pretty(&root)?;
     content.push('\n');
     Ok(content)
+}
+
+fn set_or_remove(object: &mut Map<String, Value>, key: &str, approval: Option<McpApproval>) {
+    match approval {
+        Some(approval) => {
+            object.insert(key.to_string(), json!(approval));
+        }
+        None => {
+            object.remove(key);
+        }
+    }
 }
 
 /// Shows or hides one remote tool through a server's `include`/`exclude`
@@ -357,6 +412,12 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
     }
     if let Some(tasks) = &server.tasks {
         object.insert("tasks".into(), json!(tasks));
+    }
+    if !server.approval.is_empty() {
+        object.insert("approval".into(), json!(server.approval));
+    }
+    if server.allow_external_users {
+        object.insert("allow_external_users".into(), json!(true));
     }
     object
 }
@@ -537,15 +598,19 @@ mod tests {
 
     #[test]
     fn replace_keeps_unknown_fields_and_the_list_form() {
-        let content = r#"{"mcpServers":{"docs":{"url":"https://old.test/mcp","approval":{"default":"ask"},"description":"Docs"}}}"#;
-        let json = edited(
-            content,
-            McpFileEdit::Replace(&http("docs", "https://new.test/mcp")),
-        );
+        let content = r#"{"mcpServers":{"docs":{"url":"https://old.test/mcp","timeouts":{"call_secs":600},"approval":{"default":"ask"},"description":"Docs"}}}"#;
+        let mut server = http("docs", "https://new.test/mcp");
+        server
+            .approval
+            .tools
+            .insert("search".into(), McpApproval::Allow);
+        let json = edited(content, McpFileEdit::Replace(&server));
         let entry = &json["mcpServers"]["docs"];
         assert_eq!(entry["url"], "https://new.test/mcp");
-        assert_eq!(entry["approval"]["default"], "ask");
+        assert_eq!(entry["timeouts"]["call_secs"], 600);
         assert_eq!(entry["description"], "Docs");
+        // The policy is a field Anda reads, so it is the one replaced with.
+        assert_eq!(entry["approval"], json!({ "tools": { "search": "allow" } }));
 
         let content = r#"{"servers":[{"id":"docs","transport":{"type":"http","url":"https://old.test/mcp"},"note":"kept"}]}"#;
         let json = edited(
@@ -564,6 +629,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("not configured"), "{err}");
+    }
+
+    #[test]
+    fn approval_edits_keep_the_rest_of_the_policy() {
+        let content = r#"{"mcpServers":{"docs":{"url":"https://x.test/mcp","approval":{"default":"ask","note":"kept"}}},
+"servers":[{"id":"legacy","transport":{"type":"http","url":"https://y.test/mcp"}}]}"#;
+        let set = |content: &str, id, tool, approval| {
+            apply_edit(content, McpFileEdit::SetApproval { id, tool, approval }).unwrap()
+        };
+        let content = set(content, "docs", Some("delete"), Some(McpApproval::Ask));
+        let content = set(&content, "docs", None, Some(McpApproval::Allow));
+        let content = set(&content, "legacy", Some("search"), Some(McpApproval::Allow));
+        let json: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            json["mcpServers"]["docs"]["approval"],
+            json!({ "default": "allow", "note": "kept", "tools": { "delete": "ask" } })
+        );
+        assert_eq!(
+            json["servers"][0]["approval"],
+            json!({ "tools": { "search": "allow" } })
+        );
+        let settings = McpSettings::from_json_contents(&content).unwrap();
+        let docs = &settings.servers[0];
+        assert_eq!(docs.approval.for_tool("delete"), McpApproval::Ask);
+        assert_eq!(docs.approval.for_tool("search"), McpApproval::Allow);
+        assert_eq!(
+            settings.servers[1].approval.for_tool("search"),
+            McpApproval::Allow
+        );
+
+        // Clearing the last policy removes the section.
+        let content = set(&content, "legacy", Some("search"), None);
+        let content = apply_edit(&content, McpFileEdit::SetExternalUsers("legacy", true)).unwrap();
+        let json: Value = serde_json::from_str(&content).unwrap();
+        assert!(json["servers"][0].get("approval").is_none(), "{json}");
+        assert_eq!(json["servers"][0]["allow_external_users"], true);
+        let content = apply_edit(&content, McpFileEdit::SetExternalUsers("legacy", false)).unwrap();
+        let json: Value = serde_json::from_str(&content).unwrap();
+        assert!(json["servers"][0].get("allow_external_users").is_none());
     }
 
     #[test]

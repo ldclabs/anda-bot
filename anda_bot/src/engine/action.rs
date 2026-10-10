@@ -28,9 +28,9 @@ use crate::util::request_meta::keys;
 
 mod shell_policy;
 
+pub(crate) use shell_policy::ApprovalMode;
 use shell_policy::{
-    ApprovalDecision, ApprovalMode, ShellRiskCache, shell_approval_decision_with_model,
-    shell_risk_language_hint,
+    ApprovalDecision, ShellRiskCache, shell_approval_decision_with_model, shell_risk_language_hint,
 };
 
 mod protocol;
@@ -374,45 +374,39 @@ impl ActionSession {
             .map(|()| args)
     }
 
-    /// Requests user approval before an MCP server is added, connected or
-    /// changed. Unlike shell commands there is no risk classification:
-    /// outside FullAccess mode these tools always require explicit
-    /// confirmation, because they spawn local processes, open connections to
-    /// arbitrary endpoints, or change what the agent can reach. Reached only
-    /// through [`require_mcp_approval`].
+    /// Shows an MCP approval card and waits for the answer: one for adding,
+    /// connecting or changing a server ([`require_mcp_approval`]), or for one
+    /// call of a server's tool ([`request_mcp_tool_approval`]).
     async fn request_mcp_approval(
         &self,
         ctx: &BaseCtx,
-        request: McpApprovalKind,
-        tool_name: &str,
-        summary: String,
-        details: Vec<ActionDetail>,
-        metadata: Value,
+        tool: ActionToolRef,
+        title: String,
+        card: McpApprovalCard,
     ) -> Result<(), BoxError> {
+        let McpApprovalCard {
+            message,
+            summary,
+            details,
+            metadata,
+        } = card;
+        let tool_name = match &tool {
+            ActionToolRef::Labeled { name, .. } | ActionToolRef::Name(name) => name.clone(),
+        };
         let kind = PendingActionKind::Approval {
             approved_payload: json!({
                 "tool": tool_name,
                 "summary": &summary,
             }),
         };
-        let (title, message) = match request {
-            McpApprovalKind::Connect => (
-                "Approve MCP server connection",
-                "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
-            ),
-            McpApprovalKind::Change => (
-                "Approve MCP server change",
-                "The agent wants to change an MCP server you configured.",
-            ),
-        };
         let payload = ActionPayload {
-            tool: Some(ActionToolRef::labeled(tool_name, "MCP server")),
-            message: Some(message.to_string()),
+            tool: Some(tool),
+            message: Some(message),
             summary: Some(summary),
             details: Some(details),
             approval: Some(ApprovalLabels::approve_deny()),
             metadata: Some(metadata),
-            ..self.new_payload(ctx, &kind, title.to_string())
+            ..self.new_payload(ctx, &kind, title)
         };
         self.request_approval(payload, kind, "MCP server").await
     }
@@ -935,6 +929,14 @@ pub(crate) enum McpApprovalKind {
     Change,
 }
 
+/// The body of an MCP approval card.
+pub(crate) struct McpApprovalCard {
+    pub message: String,
+    pub summary: String,
+    pub details: Vec<ActionDetail>,
+    pub metadata: Value,
+}
+
 /// Fail-closed approval gate for the MCP server tools: outside FullAccess mode
 /// the user must confirm, and when no [`ActionSession`] is available in the
 /// context (so no approval card can be shown) the call is rejected.
@@ -959,8 +961,86 @@ pub(crate) async fn require_mcp_approval(
         )
         .into());
     };
+    let (title, message) = match kind {
+        McpApprovalKind::Connect => (
+            "Approve MCP server connection",
+            "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
+        ),
+        McpApprovalKind::Change => (
+            "Approve MCP server change",
+            "The agent wants to change an MCP server you configured.",
+        ),
+    };
     session
-        .request_mcp_approval(ctx, kind, tool_name, summary, details, metadata)
+        .request_mcp_approval(
+            ctx,
+            ActionToolRef::labeled(tool_name, "MCP server"),
+            title.to_string(),
+            McpApprovalCard {
+                message: message.to_string(),
+                summary,
+                details,
+                metadata,
+            },
+        )
+        .await
+}
+
+/// Who answers an approval for the request being served.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ApprovalScope {
+    /// The approval mode; unattended runs (cron, goals) have full access.
+    pub mode: ApprovalMode,
+    /// The request comes from an external IM user, who cannot approve on
+    /// the owner's behalf.
+    pub external_user: bool,
+    /// Why nobody can answer an approval card here, when nobody can.
+    pub unanswerable: Option<&'static str>,
+}
+
+pub(crate) fn approval_scope(ctx: &BaseCtx) -> ApprovalScope {
+    let meta = live_request_meta(ctx);
+    let mode = ApprovalMode::from_ctx(ctx, &meta);
+    // Either the request or the session it joined: an IM thread can carry
+    // the owner and external users alike.
+    let external_user = [&meta, ctx.meta()]
+        .iter()
+        .any(|meta| meta.get_extra_as::<bool>(keys::EXTERNAL_USER) == Some(true));
+    let unanswerable = if external_user {
+        Some("request from an external user")
+    } else {
+        choice_unanswerable_reason(ctx, &meta).or_else(|| {
+            ctx.get_state::<ActionSession>()
+                .is_none()
+                .then_some("context without approval cards")
+        })
+    };
+    ApprovalScope {
+        mode,
+        external_user,
+        unanswerable,
+    }
+}
+
+/// Asks the user before the agent calls `tool_name`, a tool of an MCP
+/// server. The caller decides that it must ask and checks with
+/// [`approval_scope`] that someone can answer.
+pub(crate) async fn request_mcp_tool_approval(
+    ctx: &BaseCtx,
+    tool_name: &str,
+    title: String,
+    card: McpApprovalCard,
+) -> Result<(), BoxError> {
+    let session = ctx
+        .get_state::<ActionSession>()
+        .ok_or("calling this MCP tool requires user approval, which is not available here")?;
+    session
+        .request_mcp_approval(
+            ctx,
+            ActionToolRef::labeled(tool_name, "MCP tool"),
+            title,
+            card,
+        )
         .await
 }
 
