@@ -6,6 +6,7 @@
   import pandaLogo from '../../../anda_bot/assets/logo.png'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import ActionDock from '$lib/anda/ActionDock.svelte'
   import { displayMessages } from '$lib/anda/chat/message-display'
   import { actionPending } from '$lib/anda/chat/action-view'
   import { firstLine, toolCallStatus, toolCallSummary } from '$lib/anda/chat/tool-view'
@@ -42,13 +43,7 @@
   import { defaultPreferences, type ChatEntry } from '../shared/contract'
   import type { GitBranchInfo } from '../shared/workbench'
   import { shortcutLabel, type MenuAction } from '../shared/shortcuts'
-  import type {
-    ChatAction,
-    ChatAttachment,
-    ChatMessage,
-    Conversation,
-    RpcOutput
-  } from '$lib/anda/client/types'
+  import type { ChatAttachment, ChatMessage, Conversation, RpcOutput } from '$lib/anda/client/types'
   import { label, type Label } from './labels'
   import { chatWorkspace, folderName, groupChats, isUnread, type ChatState } from './chat-list'
   import {
@@ -72,7 +67,6 @@
   import Sidebar, { type RuntimeActions } from './Sidebar.svelte'
   import WorkbenchPanel, { type FileRequest, type PanelTab } from './WorkbenchPanel.svelte'
   import SettingsPage, { type SettingsCategory } from './SettingsPage.svelte'
-  import ApprovalDock from './ApprovalDock.svelte'
   import EditedFiles from './EditedFiles.svelte'
   import TurnIndex from './TurnIndex.svelte'
   import UpdateDialog from './UpdateDialog.svelte'
@@ -131,7 +125,7 @@
   let confirmStopOpen = $state(false)
   let dark = $state(document.documentElement.classList.contains('dark'))
   let panel = $state<WorkbenchPanel | null>(null)
-  let dock = $state<ApprovalDock | null>(null)
+  let dock = $state<ActionDock | null>(null)
   let fileRequest = $state<FileRequest | null>(null)
   let changeFocus = $state<{ id: number; path: string } | null>(null)
   let requestId = 0
@@ -206,11 +200,7 @@
     client.preferences.chats.filter((c) => c.title.toLowerCase().includes(query.toLowerCase()))
   )
   const pendingActions = $derived(
-    messages.flatMap((message) =>
-      (message.actions || [])
-        .filter(actionPending)
-        .map((action) => ({ action, messageId: message.id }))
-    )
+    messages.flatMap((message) => (message.actions || []).filter(actionPending))
   )
   const prompts = $derived(
     transcriptGroups.flatMap((group) =>
@@ -680,13 +670,6 @@
     if (isUnread(chat)) return status === 'failed' ? 'failed' : 'unread'
     return 'idle'
   }
-  async function respondAction(action: ChatAction, approve: boolean) {
-    try {
-      await client.respondAction({ actionId: action.id, approve })
-    } catch (error) {
-      client.fail(error)
-    }
-  }
   function jumpTo(id: string) {
     following = false
     document
@@ -1078,14 +1061,11 @@
         >{/if}
       <footer class="composer-footer">
         <div class="composer-container">
-          <ApprovalDock
+          <ActionDock
             bind:this={dock}
             pending={pendingActions}
-            disabled={client.readOnly}
-            platform={client.platform}
-            {t}
-            onRespond={respondAction}
-            onJump={jumpTo}
+            onReply={currentPending.length ? undefined : (text) => send({ text, attachments: [] })}
+            shortcuts={{ approve: keys('approve'), deny: keys('deny') }}
           />
           {#key client.activeSource}<ChatComposer
               disabled={(!client.authorized && !client.needsModelSetup) ||

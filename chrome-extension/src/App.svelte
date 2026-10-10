@@ -8,6 +8,8 @@
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
+  import ActionDock from '$lib/anda/ActionDock.svelte'
+  import { actionPending } from '$lib/anda/chat/action-view'
   import { displayMessages } from '$lib/anda/chat/message-display'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
@@ -95,6 +97,12 @@
   const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
   const sideMessageCount = $derived(sideMessages.length)
   const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
+  const pendingActions = $derived(
+    [
+      ...(andaClient.activeChannel?.messageGroups || []).flatMap((group) => group.messages),
+      ...sideMessages
+    ].flatMap((message) => (message.actions || []).filter(actionPending))
+  )
   const channels = $derived(andaClient.channelList)
   const activeSource = $derived(andaClient.activeSource)
 
@@ -678,6 +686,10 @@
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatGptUsage model={andaClient.modelState.activeModel} />
+      <ActionDock
+        pending={pendingActions}
+        onReply={(text) => sendPrompt({ text, attachments: [] })}
+      />
       <ChatComposer
         placeholder={andaClient.settings.token
           ? getMessage('placeholderMessage')

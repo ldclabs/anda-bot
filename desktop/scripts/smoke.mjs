@@ -36,6 +36,7 @@ const sources = {}
 const conversations = new Map()
 let next = 1
 let approvals = 0
+let lastChoice = null
 let lastWorkspace = null
 const project = join(directory, 'smoke-project')
 await mkdir(project)
@@ -290,6 +291,32 @@ wsServer.on('connection', (ws, request) => {
           ],
           timestamp: Date.now() + 2
         })
+      if (prompt === 'Choice check')
+        c.messages.push({
+          role: 'assistant',
+          name: '$action',
+          content: [
+            {
+              type: 'Action',
+              name: 'anda.user_choice',
+              payload: {
+                id: 'choice-test',
+                kind: 'choice',
+                title: 'Which branch should the fix land on?',
+                message: 'Both are fine; main ships sooner.',
+                status: 'pending',
+                choices: [
+                  { id: 'main', label: 'main', description: 'The release branch' },
+                  { id: 'dev', label: 'dev' }
+                ],
+                default_choice_id: 'main',
+                created_at: Date.now(),
+                expires_at: Date.now() + 180_000
+              }
+            }
+          ],
+          timestamp: Date.now() + 2
+        })
       conversations.set(cid, c)
       sources[source] = { c: cid, s: 'idle', t: Date.now() }
       result = { conversation: cid, content: '', usage }
@@ -298,13 +325,20 @@ wsServer.on('connection', (ws, request) => {
         approvals++
         const cid = input.meta.conversation
         const c = conversations.get(cid)
-        const action = c.messages.flatMap((m) => m.content).find((part) => part.type === 'Action')
-        action.payload.status = 'approved'
+        const action = c.messages
+          .flatMap((m) => m.content)
+          .find((part) => part.type === 'Action' && part.payload.id === input.args.action_id)
+        const choice = input.args.choice_id
+        if (choice) lastChoice = choice
+        action.payload.status = choice ? 'selected' : input.args.approve ? 'approved' : 'denied'
+        action.payload.response = choice
+          ? { choice_id: choice, label: choice, value: choice }
+          : true
         const output = {
           action_id: input.args.action_id,
           conversation: cid,
-          status: 'approved',
-          response: true,
+          status: action.payload.status,
+          response: action.payload.response,
           responded_at: Date.now()
         }
         ws.send(JSON.stringify({ id, result: { output, usage } }))
@@ -755,7 +789,7 @@ try {
   )
   await page.locator('.composer-container textarea').fill('Approval check')
   await page.locator('.composer-container textarea').press('Enter')
-  const dock = page.locator('.approval-dock')
+  const dock = page.locator('.action-dock')
   await dock.getByRole('button', { name: 'Approve', exact: true }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '04-approval.png') })
   // The docked approval answers its shortcut, even from the composer.
@@ -767,6 +801,22 @@ try {
   assert.equal(await page.locator('.composer-container textarea').inputValue(), '')
   assert.equal(approvals, 1)
   assert.equal(lastWorkspace, project)
+  // A docked choice answers with its number key once the dock has focus, and
+  // the transcript keeps the answer as its record.
+  await page.locator('.composer-container textarea').fill('Choice check')
+  await page.locator('.composer-container textarea').press('Enter')
+  const recommended = dock.getByRole('button', { name: /^main/ })
+  await recommended.waitFor()
+  await dock.getByText(/Picks “main” in \d:\d\d/).waitFor()
+  await page.screenshot({ path: join(screenshotDir, '04-choice.png') })
+  await recommended.focus()
+  // Rows ignore a press in the first moments after a question appears.
+  await page.waitForTimeout(400)
+  await page.keyboard.press('2')
+  await page.locator('.chat-action-choice-selected').filter({ hasText: 'dev' }).waitFor()
+  await dock.waitFor({ state: 'detached' })
+  assert.equal(lastChoice, 'dev')
+  assert.equal(approvals, 2)
   // A chat's menu closes on a click elsewhere, and Rename keeps focus in its
   // inline field after the menu finishes closing.
   const approvalRow = page.locator('.chat-row').filter({ hasText: 'Approval check' })
@@ -1128,7 +1178,7 @@ try {
   }
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, approvals, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, docked approvals and choices, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   failed = true

@@ -908,57 +908,6 @@ kbd {
   background: var(--desk-hover);
   color: var(--desk-text);
 }
-.approval-dock {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-  padding: 9px 10px 9px 12px;
-  border: 1px solid color-mix(in srgb, var(--desk-warning) 40%, var(--desk-border));
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--desk-warning) 7%, var(--desk-input));
-  font-size: 12px;
-}
-.approval-dock-icon {
-  display: grid;
-  place-items: center;
-  color: var(--desk-warning);
-}
-.approval-dock-text {
-  display: grid;
-  flex: 1;
-  min-width: 0;
-  gap: 2px;
-}
-.approval-dock-text strong,
-.approval-dock-text code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.approval-dock-text code {
-  color: var(--desk-muted);
-  font-size: 11px;
-}
-.approval-dock-more {
-  color: var(--desk-muted);
-  white-space: nowrap;
-}
-.approval-dock > button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-  padding: 6px 11px;
-  border: 1px solid var(--desk-border);
-  border-radius: 8px;
-  background: var(--desk-input);
-}
-.approval-dock > button.primary {
-  border-color: var(--desk-text);
-  background: var(--desk-text);
-  color: var(--desk-bg);
-}
 .status-banner {
   display: flex;
   align-items: center;

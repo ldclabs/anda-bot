@@ -350,6 +350,45 @@
   "actionChoiceSubmit": {
     "message": "提交"
   },
+  "actionWaiting": {
+    "message": "等待你的回答"
+  },
+  "actionStatusAutoSelected": {
+    "message": "已按默认选择"
+  },
+  "actionStatusAnsweredInChat": {
+    "message": "已在聊天中回复"
+  },
+  "actionDockMore": {
+    "message": "还有 $1 项"
+  },
+  "actionDockCollapse": {
+    "message": "收起"
+  },
+  "actionDockExpand": {
+    "message": "展开"
+  },
+  "actionDockShortcuts": {
+    "message": "$1 批准 · $2 拒绝"
+  },
+  "actionChoiceRecommended": {
+    "message": "推荐"
+  },
+  "actionChoiceAutoSelect": {
+    "message": "$2 后将自动选择“$1”"
+  },
+  "actionChoiceOther": {
+    "message": "其他"
+  },
+  "actionChoiceOtherPlaceholder": {
+    "message": "输入你自己的回答"
+  },
+  "actionDenyWithReply": {
+    "message": "拒绝，并说明该怎么做"
+  },
+  "actionDenyWithReplyPlaceholder": {
+    "message": "改为怎么做？"
+  },
   "actionFailed": {
     "message": "操作失败"
   },

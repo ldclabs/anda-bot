@@ -6,33 +6,18 @@
   import { getClientPlatform } from '$lib/anda/client/platform'
   import { useAndaClient } from '$lib/anda/client/context'
   const andaClient = useAndaClient()
-  import type {
-    ChatAction,
-    ChatActionChoice,
-    ChatActionDetail,
-    ChatAttachment,
-    ChatMessage
-  } from '$lib/anda/client/types'
+  import type { ChatAttachment, ChatMessage } from '$lib/anda/client/types'
   import {
-    actionApproveLabel,
-    actionChoiceId,
-    actionChoiceInputKey,
-    actionChoiceSelected,
     actionChoiceText,
-    actionDenyLabel,
     actionDetailIsBlock,
     actionDetailLabel,
     actionDetailText,
     actionKindLabel,
     actionMessage,
     actionPending,
-    actionResponseLabel,
+    actionSelectedChoice,
     actionStatusLabel,
     actionTitle,
-    actionToolLabel,
-    choiceHasInput,
-    choiceInputPlaceholder,
-    choiceInputRequired,
     isApprovalAction,
     isPaymentApproval,
     isShellApproval
@@ -74,7 +59,6 @@
     BrainCircuit,
     Check,
     CircleCheck,
-    CircleX,
     Clipboard,
     Copy,
     CreditCard,
@@ -121,9 +105,6 @@
   let disposed = false
   let richCopied = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
-  let respondingActionIds = $state(new Set<string>())
-  let actionErrors = $state(new Map<string, string>())
-  let choiceInputValues = $state(new Map<string, string>())
   let resourceBlobs = $state(new Map<number, string>())
   let resourceObjectUrls = $state(new Map<string, string>())
   // What the attachment presenters need to resolve bytes for this message.
@@ -343,85 +324,6 @@
           ? getMessage('toolOutput')
           : 'stderr'
     return section.meta ? `${label} · ${section.meta}` : label
-  }
-
-  function choiceInputValue(action: ChatAction, choiceId: string): string {
-    return choiceInputValues.get(actionChoiceInputKey(action, choiceId)) || ''
-  }
-
-  function setChoiceInputValue(action: ChatAction, choiceId: string, value: string) {
-    const next = new Map(choiceInputValues)
-    next.set(actionChoiceInputKey(action, choiceId), value)
-    choiceInputValues = next
-  }
-
-  function choiceInputDisabled(action: ChatAction, choice: ChatActionChoice): boolean {
-    return (
-      respondingActionIds.has(action.id) ||
-      (choiceInputRequired(choice) && !choiceInputValue(action, choice.id).trim())
-    )
-  }
-
-  function setActionResponding(actionId: string, value: boolean) {
-    const next = new Set(respondingActionIds)
-    if (value) {
-      next.add(actionId)
-    } else {
-      next.delete(actionId)
-    }
-    respondingActionIds = next
-  }
-
-  function setActionError(actionId: string, error: string | null) {
-    const next = new Map(actionErrors)
-    if (error) {
-      next.set(actionId, error)
-    } else {
-      next.delete(actionId)
-    }
-    actionErrors = next
-  }
-
-  function errorLabel(error: unknown): string {
-    return error instanceof Error ? error.message : String(error || getMessage('actionFailed'))
-  }
-
-  async function respondApprovalAction(action: ChatAction, approve: boolean) {
-    if (!actionPending(action) || respondingActionIds.has(action.id)) {
-      return
-    }
-    setActionResponding(action.id, true)
-    setActionError(action.id, null)
-    try {
-      await andaClient.respondAction({ actionId: action.id, approve })
-    } catch (error) {
-      setActionError(action.id, errorLabel(error))
-    } finally {
-      setActionResponding(action.id, false)
-    }
-  }
-
-  async function selectChoiceAction(action: ChatAction, choiceId: string, choiceText?: string) {
-    if (!actionPending(action) || respondingActionIds.has(action.id)) {
-      return
-    }
-    setActionResponding(action.id, true)
-    setActionError(action.id, null)
-    try {
-      await andaClient.respondAction({ actionId: action.id, choiceId, choiceText })
-    } catch (error) {
-      setActionError(action.id, errorLabel(error))
-    } finally {
-      setActionResponding(action.id, false)
-    }
-  }
-
-  function inputValueFromEvent(event: Event): string {
-    const target = event.currentTarget
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-      return target.value
-    }
-    return ''
   }
 
   function attachmentSaveTitle(attachment: ChatAttachment): string {
@@ -736,8 +638,12 @@
         {#if message.actions?.length}
           <div class="{hasMainText || hasAttachments ? 'mt-2' : ''} grid min-w-0 gap-2">
             {#each message.actions as action (action.id)}
+              {@const pending = actionPending(action)}
+              {@const selectedChoice = actionSelectedChoice(action)}
+              <!-- The record of an action; a pending one is answered in the dock above the composer. -->
               <div
                 class="chat-action-card grid min-w-0 gap-2 rounded-lg border px-3 py-2 text-xs shadow-2xs"
+                class:chat-action-card-pending={pending}
               >
                 <div class="flex min-w-0 items-center gap-2">
                   <div
@@ -761,10 +667,9 @@
                       {actionTitle(action) || actionKindLabel(action)}
                     </div>
                     <div class="chat-action-meta truncate">
-                      {actionKindLabel(action)} · {actionStatusLabel(action)}
-                      {#if actionResponseLabel(action)}
-                        · {actionResponseLabel(action)}
-                      {/if}
+                      {actionKindLabel(action)} · {pending
+                        ? getMessage('actionWaiting')
+                        : actionStatusLabel(action)}
                     </div>
                   </div>
                 </div>
@@ -777,193 +682,67 @@
                   </div>
                 {/if}
 
-                {#if action.summary}
-                  <div class="chat-action-summary rounded-md border px-2 py-1.5 wrap-break-word">
-                    {action.summary}
-                  </div>
-                {/if}
-
-                {#if action.details?.length}
-                  <div class="grid min-w-0 gap-1.5">
-                    {#each action.details as detail, detailIndex (`${action.id}-${detail.label}-${detailIndex}`)}
-                      <div class="chat-action-detail min-w-0 rounded-md border px-2 py-1.5">
-                        <div class="chat-action-meta mb-1 text-[10px] font-semibold uppercase">
-                          {actionDetailLabel(detail)}
-                        </div>
-                        {#if actionDetailIsBlock(detail)}
-                          <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code
-                              >{actionDetailText(detail)}</code
-                            ></pre>
-                        {:else}
-                          <div class="wrap-break-word">{actionDetailText(detail)}</div>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {:else if action.command}
-                  <pre
-                    class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code
-                      >{action.command}</code
-                    ></pre>
-                  {#if action.workspace}
-                    <div class="chat-action-meta truncate" title={action.workspace}>
-                      {action.workspace}
-                      {#if action.background}
-                        · {getMessage('actionBackground')}
-                      {/if}
+                {#if !pending}
+                  {#if action.summary}
+                    <div class="chat-action-summary rounded-md border px-2 py-1.5 wrap-break-word">
+                      {action.summary}
                     </div>
                   {/if}
-                {/if}
 
-                {#if actionErrors.has(action.id)}
-                  <div class="chat-action-error rounded-md px-2 py-1">
-                    {actionErrors.get(action.id)}
-                  </div>
-                {/if}
-
-                {#if actionPending(action) && isApprovalAction(action)}
-                  <div class="flex min-w-0 flex-wrap gap-2">
-                    <button
-                      type="button"
-                      class={buttonClass('default', 'xs', 'chat-action-approve')}
-                      disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
-                      onclick={() => respondApprovalAction(action, true)}
-                    >
-                      {#if respondingActionIds.has(action.id)}
-                        <LoaderCircle class="size-3 animate-spin" />
-                      {:else}
-                        <CircleCheck class="size-3" />
-                      {/if}
-                      <span>{actionApproveLabel(action)}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class={buttonClass('outline', 'xs', 'chat-action-deny')}
-                      disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
-                      onclick={() => respondApprovalAction(action, false)}
-                    >
-                      <CircleX class="size-3" />
-                      <span>{actionDenyLabel(action)}</span>
-                    </button>
-                  </div>
-                {:else if action.choices?.length}
-                  <div class="grid min-w-0 gap-1.5">
-                    {#each action.choices as choice (choice.id)}
-                      {#if actionPending(action)}
-                        {#if choiceHasInput(choice)}
-                          <div
-                            class="chat-action-choice-input grid min-w-0 gap-1.5 rounded-md border px-2 py-1.5"
-                          >
-                            <div class="min-w-0">
-                              <span class="block font-medium">{choice.label}</span>
-                              {#if choice.description}
-                                <span class="chat-action-meta block text-xs font-normal">
-                                  {choice.description}
-                                </span>
-                              {/if}
-                            </div>
-                            {#if choice.input?.multiline}
-                              <textarea
-                                class="chat-action-choice-input-control min-h-18 w-full resize-y rounded-md border px-2 py-1.5 text-xs leading-relaxed outline-hidden"
-                                value={choiceInputValue(action, choice.id)}
-                                placeholder={choiceInputPlaceholder(choice)}
-                                aria-label={choice.label}
-                                disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
-                                rows="3"
-                                oninput={(event) =>
-                                  setChoiceInputValue(
-                                    action,
-                                    choice.id,
-                                    inputValueFromEvent(event)
-                                  )}></textarea>
-                            {:else}
-                              <input
-                                class="chat-action-choice-input-control w-full rounded-md border px-2 py-1.5 text-xs outline-hidden"
-                                type="text"
-                                value={choiceInputValue(action, choice.id)}
-                                placeholder={choiceInputPlaceholder(choice)}
-                                aria-label={choice.label}
-                                disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
-                                oninput={(event) =>
-                                  setChoiceInputValue(
-                                    action,
-                                    choice.id,
-                                    inputValueFromEvent(event)
-                                  )}
-                              />
-                            {/if}
-                            <div class="flex justify-end">
-                              <button
-                                type="button"
-                                class={buttonClass('default', 'xs', 'chat-action-choice-submit')}
-                                disabled={choiceInputDisabled(action, choice)}
-                                onclick={() =>
-                                  selectChoiceAction(
-                                    action,
-                                    choice.id,
-                                    choiceInputValue(action, choice.id)
-                                  )}
-                              >
-                                {#if respondingActionIds.has(action.id)}
-                                  <LoaderCircle class="size-3 animate-spin" />
-                                {:else}
-                                  <Check class="size-3" />
-                                {/if}
-                                <span>{getMessage('actionChoiceSubmit')}</span>
-                              </button>
-                            </div>
+                  {#if action.details?.length}
+                    <div class="grid min-w-0 gap-1.5">
+                      {#each action.details as detail, detailIndex (`${action.id}-${detail.label}-${detailIndex}`)}
+                        <div class="chat-action-detail min-w-0 rounded-md border px-2 py-1.5">
+                          <div class="chat-action-meta mb-1 text-[10px] font-semibold uppercase">
+                            {actionDetailLabel(detail)}
                           </div>
-                        {:else}
-                          <button
-                            type="button"
-                            class={buttonClass(
-                              'outline',
-                              'sm',
-                              'chat-action-choice-button h-auto min-w-0 justify-start px-2 py-1.5 text-left whitespace-normal'
-                            )}
-                            disabled={andaClient.readOnly || respondingActionIds.has(action.id)}
-                            onclick={() => selectChoiceAction(action, choice.id)}
-                          >
-                            <span class="min-w-0">
-                              <span class="block font-medium">{choice.label}</span>
-                              {#if choice.description}
-                                <span class="chat-action-meta block text-xs font-normal">
-                                  {choice.description}
-                                </span>
-                              {/if}
-                            </span>
-                          </button>
-                        {/if}
-                      {:else}
-                        <div
-                          class="chat-action-choice-item flex min-w-0 items-start gap-2 rounded-md border px-2 py-1.5"
-                          class:chat-action-choice-selected={actionChoiceSelected(
-                            action,
-                            choice.id
-                          )}
-                        >
-                          {#if actionChoiceSelected(action, choice.id)}
-                            <CircleCheck class="mt-0.5 size-3.5 shrink-0" />
+                          {#if actionDetailIsBlock(detail)}
+                            <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code
+                                >{actionDetailText(detail)}</code
+                              ></pre>
+                          {:else}
+                            <div class="wrap-break-word">{actionDetailText(detail)}</div>
                           {/if}
-                          <span class="min-w-0">
-                            <span class="block font-medium">{choice.label}</span>
-                            {#if choice.description}
-                              <span class="chat-action-meta block text-xs font-normal">
-                                {choice.description}
-                              </span>
-                            {/if}
-                            {#if actionChoiceSelected(action, choice.id) && actionChoiceText(action)}
-                              <span
-                                class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal wrap-break-word whitespace-pre-wrap"
-                              >
-                                {actionChoiceText(action)}
-                              </span>
-                            {/if}
-                          </span>
                         </div>
-                      {/if}
-                    {/each}
-                  </div>
+                      {/each}
+                    </div>
+                  {:else if action.command}
+                    <pre
+                      class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code
+                        >{action.command}</code
+                      ></pre>
+                    {#if action.workspace}
+                      <div class="chat-action-meta truncate" title={action.workspace}>
+                        {action.workspace}
+                        {#if action.background}
+                          · {getMessage('actionBackground')}
+                        {/if}
+                      </div>
+                    {/if}
+                  {/if}
+
+                  {#if selectedChoice}
+                    <div
+                      class="chat-action-choice-selected flex min-w-0 items-start gap-2 rounded-md border px-2 py-1.5"
+                    >
+                      <CircleCheck class="mt-0.5 size-3.5 shrink-0" />
+                      <span class="min-w-0">
+                        <span class="block font-medium">{selectedChoice.label}</span>
+                        {#if selectedChoice.description}
+                          <span class="chat-action-meta block text-xs font-normal">
+                            {selectedChoice.description}
+                          </span>
+                        {/if}
+                        {#if actionChoiceText(action)}
+                          <span
+                            class="chat-action-choice-text mt-1 block rounded-md border px-2 py-1.5 text-xs font-normal wrap-break-word whitespace-pre-wrap"
+                          >
+                            {actionChoiceText(action)}
+                          </span>
+                        {/if}
+                      </span>
+                    </div>
+                  {/if}
                 {/if}
               </div>
             {/each}
@@ -1235,6 +1014,11 @@
     color: var(--message-text, #171717);
   }
 
+  /* Waiting on the dock above the composer. */
+  .chat-action-card-pending {
+    border-style: dashed;
+  }
+
   .chat-action-detail,
   .chat-action-summary,
   .chat-action-icon,
@@ -1257,60 +1041,10 @@
     color: color-mix(in srgb, var(--message-text, #171717) 88%, transparent);
   }
 
-  .chat-action-approve {
-    background: #047857;
-    color: #ffffff;
-  }
-
-  .chat-action-approve:hover {
-    background: #065f46;
-  }
-
-  .chat-action-deny {
-    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 70%, #991b1b);
-    color: #991b1b;
-  }
-
-  .chat-action-error {
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 70%, #fee2e2);
-    color: #991b1b;
-  }
-
-  .chat-action-choice-button {
-    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
-  }
-
-  .chat-action-choice-input {
-    border-color: color-mix(in srgb, var(--message-border, #e6e6e6) 82%, #047857);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 78%, var(--message-surface, #f7f7f7));
-  }
-
-  .chat-action-choice-input-control {
-    border-color: var(--message-border, #e6e6e6);
-    background: var(--message-bg, #ffffff);
-    color: var(--message-text, #171717);
-  }
-
-  .chat-action-choice-input-control:focus {
-    border-color: #0f766e;
-    box-shadow: 0 0 0 2px color-mix(in srgb, #0f766e 22%, transparent);
-  }
-
-  .chat-action-choice-submit {
-    background: #047857;
-    color: #ffffff;
-  }
-
   .chat-action-choice-text {
     border-color: var(--message-border, #e6e6e6);
     background: color-mix(in srgb, var(--message-bg, #ffffff) 74%, var(--message-surface, #f7f7f7));
     color: color-mix(in srgb, var(--message-text, #171717) 90%, transparent);
-  }
-
-  .chat-action-choice-item {
-    border-color: var(--message-border, #e6e6e6);
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 72%, var(--message-surface, #f7f7f7));
-    color: color-mix(in srgb, var(--message-text, #171717) 88%, transparent);
   }
 
   .chat-action-choice-selected {
@@ -1380,44 +1114,10 @@
     background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
   }
 
-  :global(.dark) .chat-action-approve {
-    background: #059669;
-  }
-
-  :global(.dark) .chat-action-approve:hover {
-    background: #047857;
-  }
-
-  :global(.dark) .chat-action-deny {
-    color: #fca5a5;
-    border-color: rgba(248, 113, 113, 0.28);
-  }
-
-  :global(.dark) .chat-action-error {
-    background: rgba(127, 29, 29, 0.35);
-    color: #fecaca;
-  }
-
-  :global(.dark) .chat-action-choice-input {
-    border-color: rgba(45, 212, 191, 0.24);
-    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 76%, #064e3b);
-  }
-
-  :global(.dark) .chat-action-choice-input-control {
-    border-color: rgba(255, 255, 255, 0.14);
-    background: rgba(15, 23, 42, 0.36);
-    color: var(--message-text, #f5f5f5);
-  }
-
   :global(.dark) .chat-action-choice-text {
     border-color: rgba(255, 255, 255, 0.12);
     background: rgba(15, 23, 42, 0.28);
     color: #d1fae5;
-  }
-
-  :global(.dark) .chat-action-choice-item {
-    border-color: rgba(255, 255, 255, 0.1);
-    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
   }
 
   :global(.dark) .chat-action-choice-selected {

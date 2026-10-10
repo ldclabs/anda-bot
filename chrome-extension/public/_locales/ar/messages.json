@@ -350,6 +350,45 @@
   "actionChoiceSubmit": {
     "message": "إرسال"
   },
+  "actionWaiting": {
+    "message": "بانتظار إجابتك"
+  },
+  "actionStatusAutoSelected": {
+    "message": "اختير افتراضيًا"
+  },
+  "actionStatusAnsweredInChat": {
+    "message": "تمت الإجابة في المحادثة"
+  },
+  "actionDockMore": {
+    "message": "+$1 أخرى"
+  },
+  "actionDockCollapse": {
+    "message": "طي"
+  },
+  "actionDockExpand": {
+    "message": "توسيع"
+  },
+  "actionDockShortcuts": {
+    "message": "$1 للموافقة · $2 للرفض"
+  },
+  "actionChoiceRecommended": {
+    "message": "موصى به"
+  },
+  "actionChoiceAutoSelect": {
+    "message": "سيُختار «$1» تلقائيًا بعد $2"
+  },
+  "actionChoiceOther": {
+    "message": "غير ذلك"
+  },
+  "actionChoiceOtherPlaceholder": {
+    "message": "اكتب إجابتك"
+  },
+  "actionDenyWithReply": {
+    "message": "لا، مع توضيح ما يجب فعله بدلًا من ذلك"
+  },
+  "actionDenyWithReplyPlaceholder": {
+    "message": "ما الذي يجب فعله بدلًا من ذلك؟"
+  },
   "actionFailed": {
     "message": "فشل الإجراء"
   },

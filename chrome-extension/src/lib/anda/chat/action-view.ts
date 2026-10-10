@@ -2,10 +2,10 @@ import { getMessage } from '$lib/i18n'
 import type { ChatAction, ChatActionChoice, ChatActionDetail } from '../client/types'
 
 /**
- * How an agent action reads in the transcript: its title, status, tool, and the
- * choice the user made.
+ * How an agent action reads in the transcript and in the dock above the
+ * composer: its title, status, tool, and the choice the user made.
  *
- * Every function here is pure, so the transcript component only renders. Two
+ * Every function here is pure, so both components only render. Two
  * concerns are folded in: localizing the daemon's English defaults (the daemon
  * ships fallback strings like "Approve shell command", which are replaced with
  * the viewer's locale, while a custom string from a skill is left alone), and
@@ -78,9 +78,17 @@ export function actionStatusLabel(action: ChatAction): string {
     case 'denied':
       return getMessage('actionStatusDenied')
     case 'selected':
-      return getMessage('actionStatusSelected')
+      return getMessage(
+        actionResponse(action)?.auto_selected === true
+          ? 'actionStatusAutoSelected'
+          : 'actionStatusSelected'
+      )
     case 'expired':
-      return getMessage('actionStatusExpired')
+      return getMessage(
+        actionResponse(action)?.answered_in_chat === true
+          ? 'actionStatusAnsweredInChat'
+          : 'actionStatusExpired'
+      )
     default:
       return action.status || getMessage('actionStatusUnknown')
   }
@@ -102,17 +110,33 @@ export function actionChoiceId(action: ChatAction): string {
   return typeof choiceId === 'string' ? choiceId : ''
 }
 
-export function actionChoiceSelected(action: ChatAction, choiceId: string): boolean {
-  return action.status === 'selected' && actionChoiceId(action) === choiceId
-}
-
-/** The label of the selected choice, for the answered summary line. */
-export function actionResponseLabel(action: ChatAction): string {
+/** The option that was picked, by the user or by default, once the action is answered. */
+export function actionSelectedChoice(action: ChatAction): ChatActionChoice | undefined {
   if (action.status !== 'selected') {
-    return ''
+    return undefined
   }
   const choiceId = actionChoiceId(action)
-  return action.choices?.find((choice) => choice.id === choiceId)?.label || choiceId
+  return action.choices?.find((choice) => choice.id === choiceId)
+}
+
+/**
+ * The option the agent recommends, or '' when it named none. The daemon picks
+ * it on its own when nobody answers before the action expires.
+ */
+export function actionDefaultChoiceId(action: ChatAction): string {
+  const choiceId = action.payload?.default_choice_id
+  return typeof choiceId === 'string' && action.choices?.some((choice) => choice.id === choiceId)
+    ? choiceId
+    : ''
+}
+
+/** Time left until `deadline` (epoch ms) as `m:ss`, or '' once it has passed. */
+export function countdownLabel(deadline: number | undefined, now: number): string {
+  const seconds = deadline ? Math.ceil((deadline - now) / 1000) : 0
+  if (seconds <= 0) {
+    return ''
+  }
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
 /**

@@ -350,6 +350,45 @@
   "actionChoiceSubmit": {
     "message": "Envoyer"
   },
+  "actionWaiting": {
+    "message": "En attente de votre réponse"
+  },
+  "actionStatusAutoSelected": {
+    "message": "Choisi par défaut"
+  },
+  "actionStatusAnsweredInChat": {
+    "message": "Réponse donnée dans la discussion"
+  },
+  "actionDockMore": {
+    "message": "+$1 de plus"
+  },
+  "actionDockCollapse": {
+    "message": "Réduire"
+  },
+  "actionDockExpand": {
+    "message": "Développer"
+  },
+  "actionDockShortcuts": {
+    "message": "$1 approuver · $2 refuser"
+  },
+  "actionChoiceRecommended": {
+    "message": "Recommandé"
+  },
+  "actionChoiceAutoSelect": {
+    "message": "« $1 » sera choisi dans $2 sans réponse"
+  },
+  "actionChoiceOther": {
+    "message": "Autre"
+  },
+  "actionChoiceOtherPlaceholder": {
+    "message": "Saisissez votre propre réponse"
+  },
+  "actionDenyWithReply": {
+    "message": "Non, et indiquer quoi faire à la place"
+  },
+  "actionDenyWithReplyPlaceholder": {
+    "message": "Que faire à la place ?"
+  },
   "actionFailed": {
     "message": "Échec de l’action"
   },

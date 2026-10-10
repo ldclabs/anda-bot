@@ -350,6 +350,45 @@
   "actionChoiceSubmit": {
     "message": "Submit"
   },
+  "actionWaiting": {
+    "message": "Waiting for your answer"
+  },
+  "actionStatusAutoSelected": {
+    "message": "Selected by default"
+  },
+  "actionStatusAnsweredInChat": {
+    "message": "Answered in chat"
+  },
+  "actionDockMore": {
+    "message": "+$1 more"
+  },
+  "actionDockCollapse": {
+    "message": "Collapse"
+  },
+  "actionDockExpand": {
+    "message": "Expand"
+  },
+  "actionDockShortcuts": {
+    "message": "$1 approve · $2 deny"
+  },
+  "actionChoiceRecommended": {
+    "message": "Recommended"
+  },
+  "actionChoiceAutoSelect": {
+    "message": "Picks “$1” in $2 if you don’t answer"
+  },
+  "actionChoiceOther": {
+    "message": "Other"
+  },
+  "actionChoiceOtherPlaceholder": {
+    "message": "Type your own answer"
+  },
+  "actionDenyWithReply": {
+    "message": "No, and say what to do instead"
+  },
+  "actionDenyWithReplyPlaceholder": {
+    "message": "What should happen instead?"
+  },
   "actionFailed": {
     "message": "Action failed"
   },

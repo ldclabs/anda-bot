@@ -3,8 +3,8 @@ import {
   actionApproveLabel,
   actionChoiceId,
   actionChoiceInputKey,
-  actionChoiceSelected,
   actionChoiceText,
+  actionDefaultChoiceId,
   actionDenyLabel,
   actionDetailIsBlock,
   actionDetailLabel,
@@ -12,12 +12,13 @@ import {
   actionKindLabel,
   actionMessage,
   actionPending,
-  actionResponseLabel,
+  actionSelectedChoice,
   actionStatusLabel,
   actionTitle,
   actionToolLabel,
   choiceInputPlaceholder,
   choiceInputRequired,
+  countdownLabel,
   isApprovalAction,
   isPaymentApproval,
   isShellApproval
@@ -119,6 +120,12 @@ describe('action labels', () => {
     expect(actionStatusLabel(action({ status: 'denied' }))).toBe('actionStatusDenied')
     expect(actionStatusLabel(action({ status: 'selected' }))).toBe('actionStatusSelected')
     expect(actionStatusLabel(action({ status: 'expired' }))).toBe('actionStatusExpired')
+    expect(
+      actionStatusLabel(action({ status: 'selected', response: { auto_selected: true } }))
+    ).toBe('actionStatusAutoSelected')
+    expect(
+      actionStatusLabel(action({ status: 'expired', response: { answered_in_chat: true } }))
+    ).toBe('actionStatusAnsweredInChat')
     expect(actionStatusLabel(action({ status: 'queued' }))).toBe('queued')
     expect(actionStatusLabel(action({ status: '' }))).toBe('actionStatusUnknown')
   })
@@ -146,21 +153,24 @@ describe('action choices', () => {
     expect(actionChoiceId(action())).toBe('')
   })
 
-  it('marks a choice selected only once the action is answered', () => {
-    const answered = action({ status: 'selected', response: { choice_id: 'c1' } })
-    expect(actionChoiceSelected(answered, 'c1')).toBe(true)
-    expect(actionChoiceSelected(answered, 'c2')).toBe(false)
-    expect(actionChoiceSelected(action({ response: { choice_id: 'c1' } }), 'c1')).toBe(false)
+  it('finds the selected choice only once the action is answered', () => {
+    expect(
+      actionSelectedChoice(action({ status: 'selected', response: { choice_id: 'c1' }, choices }))
+    ).toBe(choices[0])
+    expect(
+      actionSelectedChoice(action({ status: 'selected', response: { choice_id: 'gone' }, choices }))
+    ).toBeUndefined()
+    expect(actionSelectedChoice(action({ response: { choice_id: 'c1' }, choices }))).toBeUndefined()
   })
 
-  it('resolves the answered label, falling back to the id', () => {
-    expect(
-      actionResponseLabel(action({ status: 'selected', response: { choice_id: 'c1' }, choices }))
-    ).toBe('Main')
-    expect(
-      actionResponseLabel(action({ status: 'selected', response: { choice_id: 'gone' }, choices }))
-    ).toBe('gone')
-    expect(actionResponseLabel(action({ response: { choice_id: 'c1' }, choices }))).toBe('')
+  it('reads the default choice only when it names one of the choices', () => {
+    expect(actionDefaultChoiceId(action({ choices, payload: { default_choice_id: 'c1' } }))).toBe(
+      'c1'
+    )
+    expect(actionDefaultChoiceId(action({ choices, payload: { default_choice_id: 'gone' } }))).toBe(
+      ''
+    )
+    expect(actionDefaultChoiceId(action({ choices }))).toBe('')
   })
 
   it('returns typed-in text but not the choice echoed back', () => {
@@ -185,6 +195,20 @@ describe('action choices', () => {
     expect(choiceInputRequired(choices[0])).toBe(false)
     expect(choiceInputPlaceholder(choices[1])).toBe('Branch')
     expect(choiceInputPlaceholder(choices[0])).toBe('actionChoiceInputPlaceholder')
+  })
+})
+
+describe('countdownLabel', () => {
+  it('formats the time left as m:ss, rounding up', () => {
+    expect(countdownLabel(200_000, 20_000)).toBe('3:00')
+    expect(countdownLabel(65_500, 0)).toBe('1:06')
+    expect(countdownLabel(9_000, 0)).toBe('0:09')
+  })
+
+  it('is empty without a deadline or once it has passed', () => {
+    expect(countdownLabel(undefined, 0)).toBe('')
+    expect(countdownLabel(1_000, 1_000)).toBe('')
+    expect(countdownLabel(1_000, 5_000)).toBe('')
   })
 })
 

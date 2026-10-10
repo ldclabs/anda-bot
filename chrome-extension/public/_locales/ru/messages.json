@@ -350,6 +350,45 @@
   "actionChoiceSubmit": {
     "message": "Отправить"
   },
+  "actionWaiting": {
+    "message": "Ждёт вашего ответа"
+  },
+  "actionStatusAutoSelected": {
+    "message": "Выбрано по умолчанию"
+  },
+  "actionStatusAnsweredInChat": {
+    "message": "Ответ дан в чате"
+  },
+  "actionDockMore": {
+    "message": "ещё $1"
+  },
+  "actionDockCollapse": {
+    "message": "Свернуть"
+  },
+  "actionDockExpand": {
+    "message": "Развернуть"
+  },
+  "actionDockShortcuts": {
+    "message": "$1 — одобрить · $2 — отклонить"
+  },
+  "actionChoiceRecommended": {
+    "message": "Рекомендуется"
+  },
+  "actionChoiceAutoSelect": {
+    "message": "Через $2 будет выбрано «$1»"
+  },
+  "actionChoiceOther": {
+    "message": "Другое"
+  },
+  "actionChoiceOtherPlaceholder": {
+    "message": "Введите свой ответ"
+  },
+  "actionDenyWithReply": {
+    "message": "Нет, и сказать, что сделать вместо этого"
+  },
+  "actionDenyWithReplyPlaceholder": {
+    "message": "Что сделать вместо этого?"
+  },
   "actionFailed": {
     "message": "Действие не выполнено"
   },

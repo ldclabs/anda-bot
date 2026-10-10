@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- **Approvals and choices dock above the composer**: in the Chrome extension a pending approval or choice was answered only on its card in the transcript, which scrolled away as the chat went on, and Anda Desktop's dock above the composer answered approvals but sent a choice back to that card. Both apps now attach the open question to the composer, after Claude Code's question card. Its details scroll inside the card, and every answer is a numbered row that a click, its number key or Enter answers at once. A choice marks its recommended option and counts down to the automatic pick; a last free-text row replies in chat, which is the "Other" answer to a choice and, for an approval, denies it and then says what to do instead. Presses in the first moments after the next question appears are ignored, so a double-click cannot answer it too. The card collapses to its title, a new choice takes keyboard focus when nothing else holds it, and ⌘⇧↩ / ⌘⇧⌫ (Ctrl+Shift on Windows) still approve and deny in Anda Desktop. The transcript card is now the record: the question while it waits, then the status and the chosen answer, reading "Answered in chat" or "Selected by default" when that is what happened.
+
 ## [0.13.6] — 2026-10-10
 
 ### Changed
