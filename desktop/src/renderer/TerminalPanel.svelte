@@ -16,12 +16,16 @@
     $props()
   const t = (key: Label) => label(language, key)
   // The terminal follows the app theme; ANSI colours stay legible on both.
+  // The overview ruler that sets the scrollbar's width draws its edge in
+  // this colour, white by default: a line down the terminal's right side.
+  const rulerBorder = '#00000000'
   const themes = {
     light: {
       background: '#fcfcfb',
       foreground: '#292926',
       cursor: '#292926',
       selectionBackground: '#d9d9d3',
+      overviewRulerBorder: rulerBorder,
       black: '#292926',
       red: '#b3412f',
       green: '#3f7a3a',
@@ -43,7 +47,8 @@
       background: '#1b1b1a',
       foreground: '#e8e8e2',
       cursor: '#e8e7df',
-      selectionBackground: '#3a3a37'
+      selectionBackground: '#3a3a37',
+      overviewRulerBorder: rulerBorder
     }
   }
   let host: HTMLDivElement

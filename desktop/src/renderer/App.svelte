@@ -601,12 +601,14 @@
   $effect(() => {
     if (client.panelWindows.length) syncPanelContext()
   })
-  /** ⌘F: the panel holding focus, else an open terminal or browser. */
+  /** ⌘F: the panel holding focus, else a terminal or browser on screen. */
   function findInPanel() {
     const focused = document.activeElement?.closest<HTMLElement>('[data-pane]')?.dataset.pane
+    // Not the panels hidden behind a filled one or the narrow window's drawer.
+    const visible = shownPanels.filter((shown) => geometry.panes.has(shown) || shown === drawerTab)
     const tab =
-      shownPanels.find((shown) => shown === focused) ??
-      shownPanels.find((shown) => shown === 'terminal' || shown === 'browser')
+      visible.find((shown) => shown === focused) ??
+      visible.find((shown) => shown === 'terminal' || shown === 'browser')
     if (tab) panelViews[tab]?.find()
   }
   function menuCommand(action: string) {
@@ -627,7 +629,9 @@
       client.view === 'chat' &&
       event.value === client.activeSource
     ) {
-      if (!panelOpen('browser')) showPanel('browser', false)
+      // On the canvas it comes to the front, out from behind a filled panel or
+      // the drawer; a window of its own that is already open is left alone.
+      if (!detached.includes('browser') || !panelOpen('browser')) showPanel('browser', false)
     }
     // A panel's own window asked to go back into the canvas.
     else if (event.type === 'panel-window') {

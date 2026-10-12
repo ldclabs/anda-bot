@@ -942,8 +942,7 @@ async function setup(): Promise<void> {
       if (at !== undefined && !(Number.isFinite(at?.x) && Number.isFinite(at?.y)))
         throw new Error('Invalid panel window position')
       panels!.open(request.tab, request.focus === true, at)
-    } else if (action === 'close') panels!.close(request.tab)
-    else if (action === 'dock') {
+    } else if (action === 'dock') {
       if (
         sender.panel !== request.tab ||
         (request.edge !== undefined && !isPanelEdge(request.edge))

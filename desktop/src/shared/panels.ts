@@ -238,7 +238,6 @@ export interface PanelContext<Attachment = unknown> {
 export type PanelRequest =
   /** Main window: open the panel's window, or bring it forward; `at` is a screen point to open at. */
   | { action: 'open'; tab: PanelTab; focus: boolean; at?: { x: number; y: number } }
-  | { action: 'close'; tab: PanelTab }
   /** A panel window: close and go back into the canvas, along `edge` if given. */
   | { action: 'dock'; tab: PanelTab; edge?: PanelEdge }
   /** Main window: the chat the panel windows follow. */

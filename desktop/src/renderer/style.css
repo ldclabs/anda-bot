@@ -2195,9 +2195,10 @@ button.primary {
 .terminal-surface .xterm {
   height: 100%;
 }
-/* xterm paints its viewport black; a pane's fractional height can leave a
-   pixel of it below the last row. */
-.terminal-surface .xterm-viewport {
+/* xterm paints its viewport black, and the rows rarely fill a pane's height
+   exactly, so some of it shows below the last row. xterm.css loads after
+   this file, so the rule needs more weight than its `.xterm .xterm-viewport`. */
+.terminal-surface .xterm .xterm-viewport {
   background-color: transparent;
 }
 .terminal-empty {

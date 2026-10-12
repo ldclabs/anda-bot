@@ -52,13 +52,11 @@ export class PanelWindows {
     })
     this.changed({ tab, open: true })
   }
-  close(tab: PanelTab): void {
-    this.windows.get(tab)?.close()
-  }
   dock(tab: PanelTab, dock: PanelEdge | 'canvas'): void {
-    if (!this.windows.has(tab)) return
+    const window = this.windows.get(tab)
+    if (!window) return
     this.docking.set(tab, dock)
-    this.close(tab)
+    window.close()
   }
   setContext(context: PanelContext): void {
     this.context = context

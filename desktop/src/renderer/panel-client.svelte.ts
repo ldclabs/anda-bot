@@ -30,12 +30,10 @@ export class PanelClient implements PanelHost, DaemonApi {
   readonly authorized = true
   private readonly resources = new ResourceCache(this)
   private unsubscribe?: () => void
-  get activeSource(): string {
-    return this.context.source
-  }
-  get workspace(): string | undefined {
-    return this.context.workspace
-  }
+  // Derived, so each context Main sends does not count as a chat switch: the
+  // panel clears its preview only when the chat or folder really changes.
+  activeSource = $derived(this.context.source)
+  workspace = $derived(this.context.workspace)
   get language(): string {
     return normalizeUiLanguage(this.preferences.language || navigator.language) || 'en'
   }
