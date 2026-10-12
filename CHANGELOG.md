@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-10-12
+
+### Added
+
+- **Workbench panels share a canvas in Anda Desktop**: Resources, Changes, Terminal and Browser opened one at a time in the right-hand panel, each replacing the last. They now stay open together on a canvas with the chat. The first opens beside the chat, and the next stack in its column. Drag a panel by the grab bar along its top, or by its title, onto another panel or the chat. Near an edge, it splits that pane on that side; in the middle, the two swap places; outside the window, it opens there in a window of its own. Drag the space between two panes to resize them (a double-click shares it evenly). The layout button in a panel's header moves it along an edge of the canvas, fills the canvas with it, or opens it in its own window. A panel's own window follows the chat open in the main window, and its layout menu puts it back on the canvas. Panels float as cards, and the arrangement is kept across restarts, as is which panels open in their own windows. At 900px wide and below, panels open one at a time as a drawer over the chat.
+
+### Changed
+
+- **Windows desktop updates in the app without a signature**: Windows release packages had no in-app update feed unless they were signed, and Anda has no publicly trusted Windows certificate for now. They now always publish one, and each download is checked against the sha512 in the release's `latest.yml`, the same check as `anda update` and `install.ps1`. Windows may show a SmartScreen warning when an unsigned installer is first opened from a browser download. A configured certificate restores signing and signature checks, and macOS still needs a signed package for its feed. Windows installs of 0.14.0 or earlier need one manual install to pick up the feed.
+- **Slimmer scrollbars in Anda Desktop**: scrollbars were Chromium's 15px bars. They are now a 6px thumb on a 10px gutter, the terminal's included. The chat list's scrollbar runs along the sidebar's border, and less space is left under the message box.
+- **Version 0.14.1**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.1.
+
 ## [0.14.0] — 2026-10-11
 
 ### Added
