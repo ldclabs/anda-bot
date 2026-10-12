@@ -137,6 +137,8 @@
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       cursorBlink: true,
       scrollback: 5000,
+      // The scrollbar's width: half of xterm's 14px, like the app's other scrollbars.
+      overviewRuler: { width: 7 },
       theme: dark ? themes.dark : themes.light
     })
     fit = new FitAddon()

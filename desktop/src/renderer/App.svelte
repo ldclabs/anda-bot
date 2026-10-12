@@ -1,6 +1,7 @@
 <script lang="ts">
   import { focusDialog } from './dialog'
   import { onDestroy, tick, untrack } from 'svelte'
+  import { MediaQuery } from 'svelte/reactivity'
   import { provideAndaClient } from '$lib/anda/client/context'
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import AndaMark from '$lib/anda/AndaMark.svelte'
@@ -44,6 +45,26 @@
   import type { DesktopClient } from './client.svelte'
   import { defaultPreferences, type ChatEntry, type UpdateOperation } from '../shared/contract'
   import type { GitBranchInfo } from '../shared/workbench'
+  import {
+    PANEL_TABS,
+    addPane,
+    edgePane,
+    hasPane,
+    isPanelTab,
+    panes,
+    removePane,
+    resizeSplit,
+    splitAt,
+    splitPane,
+    swapPanes,
+    type FileRequest,
+    type LayoutNode,
+    type PaneId,
+    type PanelContext,
+    type PanelEdge,
+    type PanelTab,
+    type PanelWindowEvent
+  } from '../shared/panels'
   import { shortcutLabel, type MenuAction } from '../shared/shortcuts'
   import type { ChatAttachment, ChatMessage, Conversation, RpcOutput } from '$lib/anda/client/types'
   import { label, type Label } from './labels'
@@ -67,7 +88,18 @@
   import { tip } from './tooltip'
   import Automations from './Automations.svelte'
   import Sidebar, { type RuntimeActions } from './Sidebar.svelte'
-  import WorkbenchPanel, { type FileRequest, type PanelTab } from './WorkbenchPanel.svelte'
+  import WorkbenchPanel from './WorkbenchPanel.svelte'
+  import {
+    cornerPanes,
+    dropZone,
+    edgeOf,
+    fitWorkbench,
+    gridOf,
+    measure,
+    minExtent,
+    zoneBox,
+    type Divider
+  } from './panel-layout'
   import SettingsPage, { type SettingsCategory } from './SettingsPage.svelte'
   import EditedFiles from './EditedFiles.svelte'
   import TurnIndex from './TurnIndex.svelte'
@@ -116,9 +148,10 @@
   }
   let pageVisible = $state(!document.hidden)
   let collapsed = $state(false)
-  let rightOpen = $state(false)
-  let rightTab = $state<PanelTab>('resources')
-  let panelMaximized = $state(false)
+  // Panels tile the canvas with the chat (the saved `workbench` tree), and one
+  // can fill it. A narrow window shows one at a time, over the chat.
+  let filledTab = $state<PanelTab | null>(null)
+  let frontTab = $state<PanelTab | null>(null)
   let searchOpen = $state(false)
   let query = $state('')
   let searchBusy = $state(false)
@@ -132,7 +165,7 @@
   let reloadingModels = $state(false)
   let confirmStopOpen = $state(false)
   let dark = $state(document.documentElement.classList.contains('dark'))
-  let panel = $state<WorkbenchPanel | null>(null)
+  let panelViews = $state<Partial<Record<PanelTab, WorkbenchPanel>>>({})
   let dock = $state<ActionDock | null>(null)
   let fileRequest = $state<FileRequest | null>(null)
   let changeFocus = $state<{ id: number; path: string } | null>(null)
@@ -142,14 +175,46 @@
   // someone resizes it the narrow-window defaults in style.css apply.
   const SIDEBAR_MIN = 200
   const SIDEBAR_MAX = 400
-  const PANEL_MIN = 300
-  const MAIN_MIN = 340
   let sidebar = $state<HTMLElement | null>(null)
-  let panelElement = $state<HTMLElement | null>(null)
+  let shell = $state<HTMLElement | null>(null)
   let draggedWidth = $state<number | null>(null)
-  let draggedPanelWidth = $state<number | null>(null)
   const sidebarWidth = $derived(draggedWidth ?? client.preferences.sidebarWidth)
-  const panelWidth = $derived(draggedPanelWidth ?? client.preferences.panelWidth)
+  // The page turns right to left only once the client has loaded the language.
+  const rtl = $derived(client.preferences.language === 'ar')
+  // A dragged divider reshapes a copy of the canvas until it is let go.
+  let resizedWorkbench = $state<LayoutNode | null>(null)
+  let resizingAxis = $state<'row' | 'column' | null>(null)
+  // The canvas's size on screen, so panes are shown no smaller than their minimum.
+  let canvas = $state({ width: 0, height: 0 })
+  const fitted = (tree: LayoutNode) => fitWorkbench(tree, canvas.width, canvas.height)
+  const workbench = $derived(resizedWorkbench ?? fitted(client.preferences.workbench))
+  const detached = $derived(client.preferences.detachedPanels)
+  // Below this width panels open one at a time, as a drawer over the chat.
+  const narrow = new MediaQuery('max-width: 900px')
+  // Stable order: moving a panel on the canvas must not move its element.
+  const shownPanels = $derived(
+    client.view === 'chat' ? PANEL_TABS.filter((tab) => hasPane(workbench, tab)) : []
+  )
+  const filled = $derived(filledTab && shownPanels.includes(filledTab) ? filledTab : null)
+  const drawerTab = $derived.by(() => {
+    if (!narrow.current || filled || !shownPanels.length) return null
+    if (frontTab && shownPanels.includes(frontTab)) return frontTab
+    return panes(workbench).filter(isPanelTab).at(-1)!
+  })
+  const geometry = $derived(
+    measure(
+      filled
+        ? { pane: filled }
+        : narrow.current || !shownPanels.length
+          ? { pane: 'chat' }
+          : workbench
+    )
+  )
+  const grid = $derived(gridOf(geometry))
+  const corners = $derived(
+    cornerPanes(geometry.panes, collapsed ? null : rtl ? 'right' : 'left', rtl)
+  )
+  const CHAT_AREA = '1 / 2 / 2 / 3'
   let scrollArea = $state<HTMLElement | null>(null)
   let following = $state(true)
   let scrollPositions = new Map<string, number>()
@@ -442,13 +507,107 @@
       ]
     if (next) void client.switchChannel(next.source)
   }
+  function panelOpen(tab: PanelTab): boolean {
+    return detached.includes(tab)
+      ? client.panelWindows.includes(tab)
+      : hasPane(client.preferences.workbench, tab)
+  }
+  function saveWorkbench(next: LayoutNode) {
+    void preference({ workbench: next })
+  }
+  /** Shows a panel where it lives: on the canvas, or in its own window (brought forward when `focus`). */
+  function showPanel(tab: PanelTab, focus = true) {
+    if (detached.includes(tab)) return openPanelWindow(tab, focus)
+    frontTab = tab
+    if (filledTab !== tab) filledTab = null
+    if (!hasPane(client.preferences.workbench, tab))
+      saveWorkbench(addPane(client.preferences.workbench, tab))
+  }
+  function openPanelWindow(tab: PanelTab, focus: boolean, at?: { x: number; y: number }) {
+    syncPanelContext()
+    void window.anda
+      .panel({ action: 'open', tab, focus, ...(at ? { at } : {}) })
+      .catch((error) => client.fail(error))
+  }
+  function closePanel(tab: PanelTab) {
+    saveWorkbench(removePane(client.preferences.workbench, tab))
+    if (filledTab === tab) filledTab = null
+  }
+  /**
+   * The chat header's toggles. A panel in its own window comes forward, and
+   * one hidden behind the filled panel or the narrow window's drawer comes to
+   * the front before a second press closes it.
+   */
   function togglePanel(tab: PanelTab) {
-    if (client.view !== 'chat') {
-      client.view = 'chat'
-      rightOpen = true
-    } else rightOpen = !(rightOpen && rightTab === tab)
-    rightTab = tab
-    if (!rightOpen) panelMaximized = false
+    const front = filled ?? drawerTab ?? tab
+    if (client.view !== 'chat') client.view = 'chat'
+    else if (!detached.includes(tab) && panelOpen(tab) && front === tab) return closePanel(tab)
+    showPanel(tab)
+  }
+  function movePanel(tab: PanelTab, edge: PanelEdge) {
+    saveWorkbench(edgePane(client.preferences.workbench, tab, edge))
+    filledTab = null
+    frontTab = tab
+  }
+  /** Lands a dragged panel beside `target`, or in its place. */
+  function placePanel(tab: PanelTab, target: PaneId, zone: PanelEdge | 'center') {
+    const base = client.preferences.workbench
+    saveWorkbench(
+      zone === 'center' ? swapPanes(base, tab, target) : splitPane(base, target, tab, zone)
+    )
+  }
+  function detachPanel(tab: PanelTab, at?: { x: number; y: number }) {
+    void preference({
+      workbench: removePane(client.preferences.workbench, tab),
+      detachedPanels: [...new Set([...detached, tab])]
+    })
+    if (filledTab === tab) filledTab = null
+    openPanelWindow(tab, true, at)
+  }
+  /** A panel's own window came back: into the canvas along `edge`, or where panels open. */
+  function attachPanel(tab: PanelTab, edge: PanelEdge | 'canvas') {
+    const base = client.preferences.workbench
+    void preference({
+      workbench: edge === 'canvas' ? addPane(base, tab) : edgePane(base, tab, edge),
+      detachedPanels: detached.filter((shown) => shown !== tab)
+    })
+    filledTab = null
+    frontTab = tab
+  }
+  // Panels in their own windows follow the chat open here.
+  let sentContext = ''
+  function syncPanelContext() {
+    const context: PanelContext<ChatAttachment> = {
+      source: client.activeSource,
+      workspace: client.workspace,
+      branch: branchInfo.branch,
+      // A saved resource loads by id; its inline bytes stay here.
+      resources: resources.map((attachment) =>
+        attachment.resource._id && attachment.resource.blob
+          ? { ...attachment, resource: { ...attachment.resource, blob: undefined } }
+          : attachment
+      ),
+      sessionFiles,
+      fileRequest,
+      changeFocus
+    }
+    const json = JSON.stringify(context)
+    if (json === sentContext) return
+    sentContext = json
+    void window.anda.panel({ action: 'context', context: JSON.parse(json) }).catch(() => {
+      sentContext = ''
+    })
+  }
+  $effect(() => {
+    if (client.panelWindows.length) syncPanelContext()
+  })
+  /** ⌘F: the panel holding focus, else an open terminal or browser. */
+  function findInPanel() {
+    const focused = document.activeElement?.closest<HTMLElement>('[data-pane]')?.dataset.pane
+    const tab =
+      shownPanels.find((shown) => shown === focused) ??
+      shownPanels.find((shown) => shown === 'terminal' || shown === 'browser')
+    if (tab) panelViews[tab]?.find()
   }
   function menuCommand(action: string) {
     if (action === 'search') openSearch(sidebarFilter)
@@ -457,7 +616,7 @@
     else if (action === 'forward') travel(1)
     else if (action === 'previous-chat') stepChat(-1)
     else if (action === 'next-chat') stepChat(1)
-    else if (action === 'find') panel?.find()
+    else if (action === 'find') findInPanel()
     else if (action.startsWith('panel:')) togglePanel(action.slice(6) as PanelTab)
   }
   const stopMenu = window.anda.onEvent((event) => {
@@ -468,8 +627,15 @@
       client.view === 'chat' &&
       event.value === client.activeSource
     ) {
-      rightOpen = true
-      rightTab = 'browser'
+      if (!panelOpen('browser')) showPanel('browser', false)
+    }
+    // A panel's own window asked to go back into the canvas.
+    else if (event.type === 'panel-window') {
+      const { tab, dock } = event.value as PanelWindowEvent
+      if (dock) {
+        client.view = 'chat'
+        attachPanel(tab, dock)
+      }
     }
   })
   onDestroy(() => {
@@ -703,15 +869,13 @@
     })
   }
   function openFile(target: FileTarget) {
-    rightOpen = true
-    rightTab = 'resources'
     fileRequest = { id: ++requestId, ...target }
+    showPanel('resources')
   }
   function openEditedFile(path: string) {
     if (!branchInfo.repository) return openFile({ path })
-    rightOpen = true
-    rightTab = 'changes'
     changeFocus = { id: ++requestId, path }
+    showPanel('changes')
   }
   /** Workspace paths in answers open a preview; web links keep their default. */
   function transcriptClick(event: MouseEvent) {
@@ -749,14 +913,8 @@
   function clampSidebar(width: number) {
     return Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width)))
   }
-  function clampPanel(width: number) {
-    const sidebarSpace = collapsed ? 0 : (sidebar?.getBoundingClientRect().width ?? 0)
-    const max = Math.max(PANEL_MIN, window.innerWidth - sidebarSpace - MAIN_MIN)
-    return Math.round(Math.min(max, Math.max(PANEL_MIN, width)))
-  }
   /** Pixels an edge's element grows by when the pointer moves `dx` to the right. */
   function growth(dx: number, trailing: boolean) {
-    const rtl = document.documentElement.dir === 'rtl'
     return trailing !== rtl ? dx : -dx
   }
   function dragEdge(
@@ -798,15 +956,143 @@
       (width) => void preference({ sidebarWidth: width })
     )
   }
-  function startPanelResize(event: PointerEvent) {
-    dragEdge(
-      event,
-      panelElement,
-      false,
-      clampPanel,
-      (width) => (draggedPanelWidth = width),
-      (width) => void preference({ panelWidth: width })
+  /** The canvas on screen: the shell without the sidebar. */
+  function canvasSize() {
+    return {
+      width: (shell?.clientWidth ?? 0) - (collapsed ? 0 : (sidebar?.offsetWidth ?? 0)),
+      height: shell?.clientHeight ?? 0
+    }
+  }
+  $effect(() => {
+    if (!shell || !sidebar) return
+    const observer = new ResizeObserver(() => (canvas = canvasSize()))
+    observer.observe(shell)
+    observer.observe(sidebar)
+    return () => observer.disconnect()
+  })
+  /**
+   * The canvas with `divider` moved `delta` pixels along its split, in reading
+   * order, short of squeezing a pane on either side below its minimum. A pane
+   * already under it (a fresh split halves a pane) can still grow.
+   */
+  function movedDivider(base: LayoutNode, divider: Divider, delta: number): LayoutNode {
+    const split = splitAt(base, divider.path)
+    const size = canvasSize()
+    const { rect, index: i, axis } = divider
+    const length =
+      axis === 'row' ? (rect.x1 - rect.x0) * size.width : (rect.y1 - rect.y0) * size.height
+    if (!split || !length) return base
+    const pair = split.sizes[i]! + split.sizes[i + 1]!
+    const current = split.sizes[i]!
+    const low = Math.min(current, minExtent(split.children[i]!, axis) / length)
+    const high = Math.max(current, pair - minExtent(split.children[i + 1]!, axis) / length)
+    const first = Math.min(high, Math.max(low, current + delta / length))
+    const sizes = [...split.sizes]
+    sizes[i] = first
+    sizes[i + 1] = pair - first
+    return resizeSplit(base, divider.path, sizes)
+  }
+  function startDividerDrag(event: PointerEvent, divider: Divider) {
+    if (event.button !== 0) return
+    const handle = event.currentTarget as HTMLElement
+    const base = fitted(client.preferences.workbench)
+    const row = divider.axis === 'row'
+    const position = (e: PointerEvent) => (row ? e.clientX : e.clientY)
+    const start = position(event)
+    handle.setPointerCapture(event.pointerId)
+    resizingAxis = divider.axis
+    const move = (e: PointerEvent) => {
+      const delta = position(e) - start
+      resizedWorkbench = movedDivider(base, divider, row && rtl ? -delta : delta)
+    }
+    const end = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', end)
+      handle.removeEventListener('pointercancel', end)
+      if (resizedWorkbench) saveWorkbench(resizedWorkbench)
+      resizedWorkbench = null
+      resizingAxis = null
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', end)
+    handle.addEventListener('pointercancel', end)
+  }
+  /** Arrow keys on a focused divider: left and right between columns, up and down between rows. */
+  function dividerKey(event: KeyboardEvent, divider: Divider) {
+    const row = divider.axis === 'row'
+    const [back, forward] = row ? ['ArrowLeft', 'ArrowRight'] : ['ArrowUp', 'ArrowDown']
+    const step = event.key === forward ? 16 : event.key === back ? -16 : 0
+    if (!step) return
+    event.preventDefault()
+    saveWorkbench(
+      movedDivider(fitted(client.preferences.workbench), divider, row && rtl ? -step : step)
     )
+  }
+  /** Double-click: the panes on both sides of a divider share its room evenly. */
+  function evenDivider(divider: Divider) {
+    const base = fitted(client.preferences.workbench)
+    const split = splitAt(base, divider.path)
+    if (!split) return
+    const sizes = [...split.sizes]
+    const half = (sizes[divider.index]! + sizes[divider.index + 1]!) / 2
+    sizes[divider.index] = sizes[divider.index + 1] = half
+    saveWorkbench(resizeSplit(base, divider.path, sizes))
+  }
+  // A panel dragged by its title: the pane under the pointer and where on it
+  // the panel would land, or outside the window, where it gets its own.
+  let panelDrag = $state<{
+    tab: PanelTab
+    target?: PaneId
+    zone?: PanelEdge | 'center'
+    box?: { left: number; top: number; width: number; height: number }
+    outside?: boolean
+  } | null>(null)
+  function dragTarget(tab: PanelTab, x: number, y: number): NonNullable<typeof panelDrag> {
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight)
+      return { tab, outside: true }
+    for (const element of shell?.querySelectorAll<HTMLElement>('[data-pane]') ?? []) {
+      const pane = element.dataset.pane as PaneId
+      if (pane === tab || !geometry.panes.has(pane)) continue
+      const box = element.getBoundingClientRect()
+      if (x < box.left || x > box.right || y < box.top || y > box.bottom) continue
+      const zone = dropZone((x - box.left) / box.width, (y - box.top) / box.height, rtl)
+      return { tab, target: pane, zone, box: zoneBox(box, zone, rtl) }
+    }
+    return { tab }
+  }
+  function startPanelDrag(event: PointerEvent, tab: PanelTab) {
+    if (event.button !== 0) return
+    const handle = event.currentTarget as HTMLElement
+    const startX = event.clientX
+    const startY = event.clientY
+    handle.setPointerCapture(event.pointerId)
+    const move = (e: PointerEvent) => {
+      if (panelDrag || Math.hypot(e.clientX - startX, e.clientY - startY) > 5)
+        panelDrag = dragTarget(tab, e.clientX, e.clientY)
+    }
+    const stop = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', end)
+      handle.removeEventListener('pointercancel', stop)
+      window.removeEventListener('keydown', escape, true)
+      panelDrag = null
+    }
+    const end = (e: PointerEvent) => {
+      const drop = panelDrag
+      stop()
+      if (drop?.outside) detachPanel(tab, { x: e.screenX, y: e.screenY })
+      else if (drop?.target && drop.zone) placePanel(tab, drop.target, drop.zone)
+    }
+    const escape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      stop()
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', end)
+    handle.addEventListener('pointercancel', stop)
+    window.addEventListener('keydown', escape, true)
   }
   function resizeByKey(
     event: KeyboardEvent,
@@ -831,18 +1117,20 @@
 
 <svelte:window onkeydown={keydown} />
 <svelte:document onvisibilitychange={() => (pageVisible = !document.hidden)} />
+<!-- The sidebar, then the canvas: the chat and the open panels, laid out
+     from the workbench tree as one grid. -->
 <div
   class:sidebar-collapsed={collapsed}
-  class:sidebar-resizing={draggedWidth !== null || draggedPanelWidth !== null}
-  class:with-panel={rightOpen && client.view === 'chat'}
-  class:workbench-open={rightOpen && rightTab !== 'resources' && client.view === 'chat'}
-  class:panel-sized={panelWidth > 0}
-  class:panel-maximized={panelMaximized && rightOpen && client.view === 'chat'}
+  class:sidebar-resizing={draggedWidth !== null || resizingAxis === 'row'}
+  class:row-resizing={resizingAxis === 'column'}
+  class:panel-dragging={panelDrag !== null}
   class="desktop-shell"
+  bind:this={shell}
   style:--sidebar-width={sidebarWidth === defaultPreferences.sidebarWidth
     ? undefined
     : `${sidebarWidth}px`}
-  style:--panel-width={panelWidth > 0 ? `${panelWidth}px` : undefined}
+  style:grid-template-columns="var(--sidebar-column) {grid.columns}"
+  style:grid-template-rows={grid.rows}
 >
   <aside class="sidebar" bind:this={sidebar}>
     <Sidebar
@@ -891,6 +1179,12 @@
     class="main-column"
     class:empty-chat={client.view === 'chat' && isEmpty}
     class:with-index={prompts.length >= 3}
+    class:pane-hidden={!geometry.panes.has('chat')}
+    class:at-top={geometry.panes.get('chat')?.y0 === 0}
+    class:controls-left={corners.left === 'chat'}
+    class:controls-right={corners.right === 'chat'}
+    data-pane="chat"
+    style:grid-area={grid.pane('chat') ?? CHAT_AREA}
   >
     <header class="workspace-header">
       <div class="header-left">
@@ -959,10 +1253,10 @@
       </div>
       {#if client.view === 'chat'}<div class="header-actions no-drag">
           {#each panelTabs as item (item.id)}<button
-              class:pressed={rightOpen && rightTab === item.id}
+              class:pressed={panelOpen(item.id)}
               class="icon-button"
               aria-label={t(item.label)}
-              aria-pressed={rightOpen && rightTab === item.id}
+              aria-pressed={panelOpen(item.id)}
               use:tip={{ text: t(item.label), shortcut: keys(item.action) }}
               onclick={() => togglePanel(item.id)}><item.icon size={17} /></button
             >{/each}
@@ -1239,43 +1533,72 @@
         {runtime}
       />{/if}
   </section>
-  {#if rightOpen && client.view === 'chat'}<aside class="resource-panel" bind:this={panelElement}>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div
-        class="panel-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={t('resizePanel')}
-        aria-valuemin={PANEL_MIN}
-        aria-valuenow={panelElement?.getBoundingClientRect().width}
-        tabindex="0"
-        use:tip={t('resizePanel')}
-        onpointerdown={startPanelResize}
-        onkeydown={(event) =>
-          resizeByKey(event, panelElement, false, clampPanel, (width) =>
-            preference({ panelWidth: width })
-          )}
-        ondblclick={() => void preference({ panelWidth: 0 })}
-      ></div>
+  {#each shownPanels as tab (tab)}
+    {@const rect = geometry.panes.get(tab)}
+    <aside
+      class="resource-panel"
+      class:pane-hidden={!rect && drawerTab !== tab}
+      class:drawer={drawerTab === tab}
+      class:at-top={rect?.y0 === 0}
+      class:controls-left={corners.left === tab}
+      class:controls-right={corners.right === tab}
+      data-pane={tab}
+      style:grid-area={grid.pane(tab) ?? CHAT_AREA}
+      style:--drawer-width={tab === 'resources' ? '340px' : '560px'}
+    >
       <WorkbenchPanel
-        bind:this={panel}
+        bind:this={panelViews[tab]}
         {client}
         {t}
-        tab={rightTab}
+        {tab}
         {dark}
         branch={branchInfo.branch}
         {resources}
         {sessionFiles}
         {fileRequest}
         {changeFocus}
-        bind:maximized={panelMaximized}
-        onClose={() => {
-          rightOpen = false
-          panelMaximized = false
-        }}
+        edge={edgeOf(rect)}
+        filled={filled === tab}
+        onMove={(edge) => movePanel(tab, edge)}
+        onFill={(fill) => (filledTab = fill ? tab : null)}
+        onDetach={() => detachPanel(tab)}
+        onDragStart={rect && !filled ? (event) => startPanelDrag(event, tab) : undefined}
+        onClose={() => closePanel(tab)}
       />
-    </aside>{/if}
+    </aside>
+  {/each}
+  {#each geometry.dividers as divider (divider.key)}
+    {@const [from, to] =
+      divider.axis === 'row'
+        ? [divider.rect.x0, divider.rect.x1]
+        : [divider.rect.y0, divider.rect.y1]}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="pane-divider {divider.axis}"
+      role="separator"
+      aria-orientation={divider.axis === 'row' ? 'vertical' : 'horizontal'}
+      aria-label={t('resizePanel')}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(((divider.at - from) / (to - from)) * 100)}
+      tabindex="0"
+      use:tip={t('resizePanel')}
+      style:grid-area={grid.divider(divider)}
+      onpointerdown={(event) => startDividerDrag(event, divider)}
+      onkeydown={(event) => dividerKey(event, divider)}
+      ondblclick={() => evenDivider(divider)}
+    ></div>
+  {/each}
 </div>
+{#if panelDrag}<div class="panel-drag-layer" aria-hidden="true">
+    {#if panelDrag.box}<div
+        class="panel-drop"
+        style:left="{panelDrag.box.left}px"
+        style:top="{panelDrag.box.top}px"
+        style:width="{panelDrag.box.width}px"
+        style:height="{panelDrag.box.height}px"
+      ></div>{/if}
+  </div>{/if}
 {#if searchOpen}<div
     class="modal-backdrop"
     role="presentation"

@@ -53,6 +53,8 @@ export class BrowserService {
   private jobs = new Map<number, Promise<unknown>>()
   private downloadId = 0
   private attached = new Set<WebContentsView>()
+  /** The window showing the browser panel; tabs live in the main window otherwise. */
+  private host: BrowserWindow | null = null
   private browsing = session.fromPartition('persist:anda-browser')
   private grants = new Set<string>()
   /** Real paths of the local files the agent opened. */
@@ -210,8 +212,33 @@ export class BrowserService {
   private changed(context: Context): void {
     this.emit(this.state(context))
   }
+  private hostWindow(): BrowserWindow | null {
+    return this.host && !this.host.isDestroyed() ? this.host : this.window()
+  }
+  /** Moves every tab's native view into `target`, the window now showing the panel. */
+  private moveTo(target: BrowserWindow | null): void {
+    const current = this.hostWindow()
+    if (target === current) return
+    for (const view of this.attached)
+      if (current && !current.isDestroyed()) current.contentView.removeChildView(view)
+    this.attached.clear()
+    this.host = target
+    if (target && !target.isDestroyed())
+      for (const context of this.contexts.values())
+        for (const tab of context.tabs.values()) {
+          target.contentView.addChildView(tab.view)
+          this.attached.add(tab.view)
+        }
+  }
+  /** A panel window is closing: its tabs go back to the main window, hidden. */
+  release(window: BrowserWindow): void {
+    if (this.hostWindow() !== window) return
+    for (const context of this.contexts.values()) context.visible = false
+    this.moveTo(this.window())
+    this.layout()
+  }
   private layout(): void {
-    const window = this.window()
+    const window = this.hostWindow()
     if (!window || window.isDestroyed()) return
     for (const context of this.contexts.values())
       for (const [id, tab] of context.tabs) {
@@ -242,13 +269,15 @@ export class BrowserService {
       }
     })
     const tab: Tab = { view }
+    // Matches the browser panel's rounded page area.
+    view.setBorderRadius(8)
     const wc = view.webContents
     const id = wc.id
     // Agent-owned tabs must have a real viewport even before the user opens
     // the browser panel. Keep the native view attached but hidden.
     view.setBounds(context.bounds || { x: 0, y: 0, width: 1280, height: 800 })
     view.setVisible(false)
-    const parent = this.window()
+    const parent = this.hostWindow()
     if (parent && !parent.isDestroyed()) {
       parent.contentView.addChildView(view)
       this.attached.add(view)
@@ -292,7 +321,7 @@ export class BrowserService {
     wc.on('destroyed', () => {
       this.worlds.delete(id)
       context.tabs.delete(id)
-      const parent = this.window()
+      const parent = this.hostWindow()
       if (this.attached.has(view) && parent && !parent.isDestroyed())
         parent.contentView.removeChildView(view)
       this.attached.delete(view)
@@ -315,7 +344,8 @@ export class BrowserService {
     if (!tab) throw new Error('No browser tab selected. Open a tab first.')
     return tab
   }
-  async request(request: BrowserRequest): Promise<BrowserState> {
+  /** `sender` is the window that asked: a `bounds` request places the panel there. */
+  async request(request: BrowserRequest, sender?: BrowserWindow): Promise<BrowserState> {
     const context = this.context(request.source)
     switch (request.action) {
       case 'state':
@@ -324,13 +354,18 @@ export class BrowserService {
         this.newTab(context)
         break
       case 'bounds': {
-        const window = this.window()
+        const window = sender ?? this.hostWindow()
         const bounds = window?.getContentBounds()
         if (
           !bounds ||
           ![request.x, request.y, request.width, request.height].every(Number.isFinite)
         )
           throw new Error('Invalid browser bounds')
+        // A panel that left this window may report late; the window it moved to owns the view.
+        if (window !== this.hostWindow()) {
+          if (!request.visible) return this.state(context)
+          this.moveTo(window)
+        }
         const zoom = window!.webContents.getZoomFactor()
         const x = Math.max(0, Math.round(request.x * zoom)),
           y = Math.max(0, Math.round(request.y * zoom))
@@ -554,7 +589,7 @@ export class BrowserService {
     }
   }
   private summary(wc: WebContents) {
-    return { id: wc.id, url: wc.getURL(), title: wc.getTitle(), window_id: this.window()?.id }
+    return { id: wc.id, url: wc.getURL(), title: wc.getTitle(), window_id: this.hostWindow()?.id }
   }
   private async pageAction(
     context: Context,

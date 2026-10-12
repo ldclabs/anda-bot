@@ -893,13 +893,28 @@ try {
     async () => (await window.anda.bootstrap()).preferences.sidebarWidth === 242
   )
   const header = page.locator('.workspace-header')
+  const pane = (name) => page.locator(`[data-pane="${name}"]`)
+  const preferences = () => page.evaluate(async () => (await window.anda.bootstrap()).preferences)
   await header.getByRole('button', { name: 'Resources', exact: true }).click()
   await page.locator('.resource-panel .panel-title').getByText('Resources').waitFor()
   await header.getByRole('button', { name: 'Changes', exact: true }).click()
   await page.getByText('smoke.txt', { exact: true }).waitFor()
+  // Panels open together on the canvas, stacked beside the chat.
+  assert.equal(await pane('resources').isVisible(), true)
+  assert.deepEqual((await preferences()).workbench, {
+    axis: 'row',
+    children: [
+      { pane: 'chat' },
+      { axis: 'column', children: [{ pane: 'resources' }, { pane: 'changes' }], sizes: [0.5, 0.5] }
+    ],
+    sizes: [0.58, 0.42]
+  })
   await page.getByText('smoke.txt', { exact: true }).click()
   await page.locator('.git-diff').getByText('A local Git fixture', { exact: false }).waitFor()
   await page.screenshot({ path: join(screenshotDir, '08-git.png') })
+  // A second press closes one.
+  await header.getByRole('button', { name: 'Resources', exact: true }).click()
+  await pane('resources').waitFor({ state: 'detached' })
   await header.getByRole('button', { name: 'Terminal', exact: true }).click()
   await page.getByRole('button', { name: 'New terminal', exact: true }).click()
   await page
@@ -983,7 +998,7 @@ try {
     ),
     []
   )
-  await header.getByRole('button', { name: 'Changes', exact: true }).click()
+  // Changes is still open, and follows the chat.
   await page.getByText('terminal.txt', { exact: true }).waitFor()
   await assert.rejects(
     page.evaluate((workspace) => window.anda.terminal({ action: 'list', workspace }), directory),
@@ -1070,10 +1085,11 @@ try {
     nativeViews - 1
   )
   // The panel closes from its own header too.
-  await page
-    .locator('.resource-panel > header')
+  await pane('browser')
+    .locator('.panel-header')
     .getByRole('button', { name: 'Close', exact: true })
     .click()
+  await pane('browser').waitFor({ state: 'detached' })
   // A page the agent opens brings up the chat's browser. A local page loads
   // the assets beside it and nothing else from disk.
   const localSite = join(directory, 'local-site')
@@ -1104,22 +1120,119 @@ try {
     /not folders/
   )
   await browserAction(browserSession, { action: 'close_tab', tab_id: localTab.tab.id })
-  await page
-    .locator('.resource-panel > header')
-    .getByRole('button', { name: 'Close', exact: true })
-    .click()
+  // Panels tile the canvas with the chat: dropped on a pane they split it,
+  // dividers resize them, and they fill the canvas or open in windows of
+  // their own that come back.
+  const layoutMenu = (where) =>
+    where.getByRole('button', { name: 'Panel layout', exact: true }).click()
+  for (const name of ['chat', 'changes', 'terminal', 'browser'])
+    assert.equal(await pane(name).isVisible(), true, `${name} is on the canvas`)
+  await page.screenshot({ path: join(screenshotDir, '15-canvas.png') })
+  const chatBox = await pane('chat').boundingBox()
+  const browserTitle = await pane('browser').locator('.panel-title').boundingBox()
+  await page.mouse.move(browserTitle.x + 20, browserTitle.y + browserTitle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(chatBox.x + 30, chatBox.y + chatBox.height / 2, { steps: 8 })
+  await page.locator('.panel-drop').waitFor()
+  await page.mouse.up()
+  await waitForPage(page, async () => {
+    const tree = (await window.anda.bootstrap()).preferences.workbench
+    return tree.axis === 'row' && tree.children[0].pane === 'browser'
+  })
+  assert.ok((await pane('browser').boundingBox()).x < (await pane('chat').boundingBox()).x)
+  // The chat keeps its minimum width beside the panel dropped next to it.
+  assert.ok((await pane('chat').boundingBox()).width >= 339)
+  // The divider between the stacked panels moves the room between them.
+  const changesHeight = (await pane('changes').boundingBox()).height
+  const divider = await page.locator('.pane-divider.column').first().boundingBox()
+  await page.mouse.move(divider.x + 80, divider.y + divider.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(divider.x + 80, divider.y + divider.height / 2 + 60, { steps: 4 })
+  await page.mouse.up()
+  await waitForPage(
+    page,
+    (height) =>
+      document.querySelector('[data-pane="changes"]').getBoundingClientRect().height > height + 40,
+    changesHeight
+  )
+  await layoutMenu(pane('terminal'))
+  await page.getByRole('menuitemradio', { name: 'Bottom', exact: true }).click()
+  await waitForPage(page, async () => {
+    const tree = (await window.anda.bootstrap()).preferences.workbench
+    return tree.axis === 'column' && tree.children.at(-1).pane === 'terminal'
+  })
+  await page.screenshot({ path: join(screenshotDir, '16-canvas-moved.png') })
+  await layoutMenu(pane('terminal'))
+  await page.getByRole('menuitemradio', { name: 'Fill', exact: true }).click()
+  await page.locator('.main-column.pane-hidden').waitFor({ state: 'attached' })
+  assert.equal(await pane('terminal').isVisible(), true)
+  assert.equal(await pane('browser').isVisible(), false)
+  await layoutMenu(pane('terminal'))
+  await page.getByRole('menuitemradio', { name: 'Tile', exact: true }).click()
+  await pane('chat').waitFor()
+  // The browser's own window takes the native page view with it.
+  const panelWindow = app.waitForEvent('window')
+  await layoutMenu(pane('browser'))
+  await page.getByRole('menuitem', { name: 'Open in new window', exact: true }).click()
+  const browserWindow = await panelWindow
+  await browserWindow.locator('.panel-window .panel-title').getByText('Browser').waitFor()
+  await browserWindow.getByRole('button', { name: 'Browser fixture', exact: true }).waitFor()
+  await pane('browser').waitFor({ state: 'detached' })
+  assert.equal(
+    await header.getByRole('button', { name: 'Browser', exact: true }).getAttribute('aria-pressed'),
+    'true'
+  )
+  assert.deepEqual((await preferences()).detachedPanels, ['browser'])
+  await waitForPage(browserWindow, () => document.title === 'Browser · Anda')
+  const nativeView = () =>
+    app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((target) => ({
+        panel: target.webContents.getURL().includes('panel=browser'),
+        views: target.contentView.children.filter((view) => view.getVisible?.() !== false).length
+      }))
+    )
+  for (const deadline = Date.now() + 10_000; ;) {
+    const windows = await nativeView()
+    if (windows.some((target) => target.panel && target.views > 0)) break
+    if (Date.now() > deadline)
+      throw new Error(`Browser view stayed behind: ${JSON.stringify(windows)}`)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  // The window follows the chat open in the main window.
+  assert.ok(
+    JSON.stringify(await browserAction(browserSession, { action: 'extract_text' })).includes(
+      'Anda browser input'
+    )
+  )
+  await browserWindow.screenshot({ path: join(screenshotDir, '17-panel-window.png') })
+  await layoutMenu(browserWindow.locator('.panel-window'))
+  await browserWindow.getByRole('menuitem', { name: 'Return to main window', exact: true }).click()
+  await pane('browser').locator('.panel-title').getByText('Browser').waitFor()
+  if (!browserWindow.isClosed()) await browserWindow.waitForEvent('close')
+  assert.deepEqual((await preferences()).detachedPanels, [])
+  for (const name of ['browser', 'terminal', 'changes'])
+    await pane(name)
+      .locator('.panel-header')
+      .getByRole('button', { name: 'Close', exact: true })
+      .click()
+  await page.locator('.resource-panel').waitFor({ state: 'detached' })
+  assert.deepEqual((await preferences()).workbench, { pane: 'chat' })
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setBounds({ width: 900, height: 700 })
   )
-  await page.waitForFunction(() => window.innerWidth < 1150)
-  // Below 1150px the panel is a drawer. It opens below the header, whose
-  // buttons still switch between panels and close the open one.
+  await page.waitForFunction(() => window.innerWidth <= 900)
+  // At 900px and below panels open one at a time, as a drawer below the chat
+  // header, whose buttons bring an open panel forward and close the one in front.
   await header.getByRole('button', { name: 'Resources', exact: true }).click()
   await page.locator('.resource-panel .panel-title').getByText('Resources').waitFor()
   await header.getByRole('button', { name: 'Changes', exact: true }).click()
-  await page.locator('.resource-panel .panel-title').getByText('Changes').waitFor()
+  await page.locator('.resource-panel.drawer .panel-title').getByText('Changes').waitFor()
+  assert.equal(await pane('resources').isVisible(), false)
   await page.screenshot({ path: join(screenshotDir, '05-narrow.png') })
-  await header.getByRole('button', { name: 'Changes', exact: true }).click()
+  await header.getByRole('button', { name: 'Resources', exact: true }).click()
+  await page.locator('.resource-panel.drawer .panel-title').getByText('Resources').waitFor()
+  for (const name of ['Resources', 'Changes'])
+    await header.getByRole('button', { name, exact: true }).click()
   await page.locator('.resource-panel').waitFor({ state: 'detached' })
   await page
     .locator('.sidebar-bottom')
@@ -1213,7 +1326,7 @@ try {
   }
   assert.deepEqual(errors, [])
   console.log(
-    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, docked approvals and choices, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
+    'PASS: hidden login and first menu action, tray/settings update dialog with progress and results, window close/reopen (including macOS fullscreen), Electron IPC/WS, receipt-backed chat including renderer reload, message and browser clipboard copy, model settings navigation and draft preservation, ChatGPT placement and narrow form sizing, full automation editing, docked approvals and choices, chat menu and sidebar resizing, drafts, Git diff, PTY output, workbench folders of terminal-started chats, browser tools and isolation, the panel canvas (drag, dividers, fill) and panel windows that come back, synthetic audio recording/transcription/TTS, narrow layout, theme and locale. Screenshots: desktop/test-results'
   )
 } catch (error) {
   failed = true

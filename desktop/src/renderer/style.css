@@ -53,9 +53,30 @@ body,
   overflow: hidden;
   margin: 0;
 }
-html {
-  /* Scrollbars sit on the surface they scroll, with no track of their own. */
-  scrollbar-color: color-mix(in srgb, var(--desk-muted) 45%, transparent) transparent;
+/* Scrollbars are slim: a 6px thumb on the surface they scroll, with no
+   track of its own. The standard scrollbar-color would turn these rules off
+   and draw Chromium's full-width bars, so the shared slim class drops it. */
+.scrollbar-slim {
+  scrollbar-color: auto;
+  scrollbar-width: auto;
+}
+::-webkit-scrollbar,
+.scrollbar-slim::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  background: transparent;
+}
+::-webkit-scrollbar-thumb,
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--desk-muted) 45%, transparent) padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--desk-muted) 75%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 body {
   background: var(--desk-bg);
@@ -86,45 +107,39 @@ kbd {
   font-family: inherit;
 }
 
-/* The shell: sidebar, main column and the optional workbench panel. */
+/* The shell: the sidebar, then the canvas, where the chat and the open
+   workbench panels tile. The App sets the canvas tracks and each pane's
+   grid area from the workbench tree. */
 .desktop-shell {
   /* A dragged --sidebar-width replaces the per-window-size default; the column
      still gives way before a wide sidebar would push the grid past the window. */
   --sidebar-column: minmax(180px, var(--sidebar-width, 242px));
-  --panel-column: 340px;
+  position: relative;
   display: grid;
   grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
   height: 100dvh;
-}
-.desktop-shell.workbench-open {
-  --panel-column: minmax(440px, 42%);
-}
-.desktop-shell.panel-sized {
-  --panel-column: var(--panel-width);
-}
-.desktop-shell.with-panel {
-  grid-template-columns: var(--sidebar-column) minmax(340px, 1fr) var(--panel-column);
+  background: var(--desk-side);
 }
 .desktop-shell.sidebar-collapsed {
-  grid-template-columns: minmax(0, 1fr);
+  --sidebar-column: 0px;
 }
-.desktop-shell.sidebar-collapsed.with-panel {
-  grid-template-columns: minmax(340px, 1fr) var(--panel-column);
+.desktop-shell > .sidebar {
+  grid-row: 1 / -1;
+  grid-column: 1;
 }
-.desktop-shell.with-panel.panel-maximized {
-  grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
-}
-.desktop-shell.sidebar-collapsed.with-panel.panel-maximized {
-  grid-template-columns: minmax(0, 1fr);
-}
-.panel-maximized .main-column {
-  display: none;
+.pane-hidden {
+  display: none !important;
 }
 .desktop-shell.sidebar-resizing {
   cursor: col-resize;
   user-select: none;
 }
-.desktop-shell.sidebar-resizing iframe {
+.desktop-shell.row-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+.desktop-shell.sidebar-resizing iframe,
+.desktop-shell.row-resizing iframe {
   pointer-events: none;
 }
 .sidebar-collapsed .sidebar {
@@ -243,7 +258,11 @@ kbd {
   overflow-y: auto;
   overflow-x: visible;
   flex: 1;
+  /* Out to the sidebar's edge, so the scrollbar runs along its border; the
+     gutter stays reserved so rows keep their width whether it shows or not. */
+  margin-inline-end: -10px;
   padding: 8px 0 12px;
+  scrollbar-gutter: stable;
 }
 .section-label {
   height: 30px;
@@ -426,8 +445,7 @@ kbd {
 .connection-dot.online {
   background: var(--desk-success);
 }
-.sidebar-resizer,
-.panel-resizer {
+.sidebar-resizer {
   position: absolute;
   inset-block: 0;
   z-index: 5;
@@ -437,30 +455,66 @@ kbd {
   -webkit-app-region: no-drag;
 }
 .sidebar-resizer {
-  inset-inline-end: -4px;
+  /* Mostly past the border, clear of the chat list's scrollbar thumb. */
+  inset-inline-end: -6px;
 }
-.panel-resizer {
-  inset-inline-start: -4px;
-}
-.sidebar-resizer::after,
-.panel-resizer::after {
+.sidebar-resizer::after {
   content: '';
   position: absolute;
   inset-block: 0;
-  inset-inline-start: 3px;
+  /* Over the sidebar's border. */
+  inset-inline-start: 2px;
   width: 2px;
   transition: background 120ms ease-out;
 }
 .sidebar-resizer:focus-visible,
-.panel-resizer:focus-visible {
+.pane-divider:focus-visible {
   outline: none;
 }
 .sidebar-resizer:hover::after,
 .sidebar-resizer:focus-visible::after,
-.panel-resizer:hover::after,
-.panel-resizer:focus-visible::after,
-.sidebar-resizing .sidebar-resizer:active::after,
-.sidebar-resizing .panel-resizer:active::after {
+.sidebar-resizing .sidebar-resizer:active::after {
+  background: var(--desk-muted);
+}
+/* The edge between two panes of the canvas: a hairline, with room to grab. */
+.pane-divider {
+  position: relative;
+  z-index: 5;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+.pane-divider.row {
+  justify-self: start;
+  width: 8px;
+  margin-inline-start: -4px;
+  cursor: col-resize;
+}
+.pane-divider.column {
+  align-self: start;
+  height: 8px;
+  margin-top: -4px;
+  cursor: row-resize;
+}
+.pane-divider::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  transition: background 120ms ease-out;
+}
+.pane-divider.row::after {
+  inset-block: 12px;
+  inset-inline-start: 3px;
+  width: 2px;
+}
+.pane-divider.column::after {
+  inset-inline: 12px;
+  top: 3px;
+  height: 2px;
+}
+.pane-divider:hover::after,
+.pane-divider:focus-visible::after,
+.sidebar-resizing .pane-divider:active::after,
+.row-resizing .pane-divider:active::after {
   background: var(--desk-muted);
 }
 
@@ -471,6 +525,7 @@ kbd {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  background: var(--desk-bg);
 }
 .workspace-header {
   height: 52px;
@@ -551,20 +606,23 @@ kbd {
 .no-drag {
   -webkit-app-region: no-drag;
 }
-/* With the sidebar collapsed the header starts under macOS's window buttons. */
-:root[data-platform='darwin']:not([data-fullscreen]) .sidebar-collapsed .workspace-header {
+/* The header in the window's top-left corner starts after macOS's window
+   buttons; they stay there when the app reads right to left. */
+:root[data-platform='darwin']:not([data-fullscreen]) .controls-left > header {
   padding-left: 78px;
 }
-/* macOS keeps its window buttons at the top-left when the app reads right to
-   left, where the main column or an open side panel now begins. */
-:root[data-platform='darwin'][dir='rtl']:not([data-fullscreen]) .workspace-header,
-:root[data-platform='darwin'][dir='rtl']:not([data-fullscreen]) .resource-panel > header {
+:root[data-platform='darwin'][dir='rtl']:not([data-fullscreen]) .controls-left > header {
   padding-left: 92px;
 }
 /* Windows draws its caption buttons over the top-right corner. */
-[data-platform='win32'] .header-actions,
-[data-platform='win32'] .panel-actions {
+[data-platform='win32'] .controls-right > header .header-actions,
+[data-platform='win32'] .controls-right > header .panel-actions {
   margin-right: 120px;
+}
+/* Only headers along the window's top edge move the window. */
+.desktop-shell > :not(.at-top) > .workspace-header,
+.desktop-shell > :not(.at-top) > .panel-header {
+  -webkit-app-region: no-drag;
 }
 .conversation-scroll {
   flex: 1;
@@ -897,7 +955,7 @@ kbd {
   background: var(--desk-text);
 }
 .composer-footer {
-  padding: 12px 30px 20px;
+  padding: 12px 30px 10px;
   flex-shrink: 0;
   /* The composer card's palette, in desktop colours. */
   --message-bg: var(--desk-input);
@@ -1744,15 +1802,150 @@ button.primary {
   gap: 15px;
 }
 
-/* Workbench panel */
+/* Workbench panels: tiled on the canvas, or in a window of their own. A pane
+   keeps its content inside, where the browser's native page is placed. */
 .resource-panel {
   position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  border-inline-start: 1px solid var(--desk-border);
+  overflow: hidden;
   background: var(--desk-bg);
+}
+/* On the canvas a panel floats as a card, with the canvas showing around
+   it; the chat stays flat beneath. Card headers center on the window
+   buttons' line. */
+.desktop-shell > .resource-panel {
+  margin: 6px;
+  border: 1px solid var(--desk-border);
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px #0000000a,
+    0 8px 24px #00000012;
+}
+:root.dark .desktop-shell > .resource-panel {
+  box-shadow:
+    0 1px 2px #0000004d,
+    0 10px 28px #00000059;
+}
+.desktop-shell > .resource-panel > .panel-header {
+  height: 40px;
+}
+/* The card's grab bar, as in Claude Code: shown on hover, dragged to move it. */
+.panel-grip {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 50%;
+  width: 56px;
+  height: 10px;
+  transform: translateX(-50%);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+  -webkit-app-region: no-drag;
+}
+.panel-grip::after {
+  content: '';
+  position: absolute;
+  inset: 3px 12px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--desk-muted) 55%, transparent);
+}
+.resource-panel:hover > .panel-header > .panel-grip,
+.panel-grip:focus-visible,
+.panel-dragging .panel-grip {
+  opacity: 1;
+}
+/* A narrow window shows one panel at a time, as a card over the chat below
+   its header, whose buttons switch between panels. */
+.desktop-shell > .resource-panel.drawer {
+  z-index: 30;
+  justify-self: end;
+  width: min(var(--drawer-width), calc(80% - 16px));
+  margin: 58px 8px 8px;
+  box-shadow:
+    0 2px 6px #0000001a,
+    0 18px 48px #00000033;
+}
+.panel-title.draggable {
+  cursor: grab;
+  -webkit-app-region: no-drag;
+}
+.desktop-shell.panel-dragging,
+.desktop-shell.panel-dragging .panel-title.draggable {
+  cursor: grabbing;
+  user-select: none;
+}
+/* Where a dragged panel lands, over everything including the browser's page. */
+.panel-drag-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  pointer-events: none;
+}
+.panel-drop {
+  position: fixed;
+  border: 2px solid color-mix(in srgb, var(--desk-accent) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--desk-accent) 14%, transparent);
+  transition:
+    left 90ms ease-out,
+    top 90ms ease-out,
+    width 90ms ease-out,
+    height 90ms ease-out;
+}
+.panel-window {
+  height: 100dvh;
+}
+.panel-layout-menu {
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px #0000002e;
+  -webkit-app-region: no-drag;
+}
+.panel-layout-heading {
+  padding: 4px 6px 6px;
+  color: var(--desk-muted);
+  font-size: 12px;
+}
+.panel-layout-choices {
+  display: flex;
+  gap: 6px;
+  padding: 0 6px 6px;
+}
+.panel-layout-choices [role='menuitemradio'] {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 30px;
+  border: 1px solid var(--desk-border);
+  border-radius: 7px;
+  color: var(--desk-icon);
+  outline: none;
+}
+.panel-layout-choices [role='menuitemradio'][aria-checked='true'] {
+  border-color: color-mix(in srgb, var(--desk-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--desk-accent) 16%, transparent);
+  color: var(--desk-accent);
+}
+.panel-layout-menu [role='separator'] {
+  height: 1px;
+  margin: 4px 0;
+}
+.panel-layout-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  outline: none;
+}
+.panel-layout-command svg {
+  color: var(--desk-icon);
 }
 .panel-header {
   height: 52px;
@@ -1985,12 +2178,12 @@ button.primary {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 250px;
+  min-height: 0;
   overflow: hidden;
 }
 .terminal-surface {
   flex: 1;
-  min-height: 180px;
+  min-height: 0;
   padding: 8px 4px 4px 10px;
   background: var(--desk-bg);
   overflow: hidden;
@@ -2001,6 +2194,11 @@ button.primary {
 }
 .terminal-surface .xterm {
   height: 100%;
+}
+/* xterm paints its viewport black; a pane's fractional height can leave a
+   pixel of it below the last row. */
+.terminal-surface .xterm-viewport {
+  background-color: transparent;
 }
 .terminal-empty {
   position: absolute;
@@ -2157,7 +2355,7 @@ button.primary {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 300px;
+  min-height: 0;
 }
 .browser-tabs {
   flex-wrap: nowrap;
@@ -2193,7 +2391,10 @@ button.primary {
 }
 .browser-surface {
   flex: 1;
-  min-height: 200px;
+  min-height: 0;
+  /* The page sits inset with rounded corners; Main rounds its native view to match. */
+  margin: 0 6px 6px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
 }
@@ -2238,41 +2439,7 @@ button.primary {
   margin-bottom: 22px;
 }
 
-/* Below 1150px the panel is a drawer over the main column. */
 @media (max-width: 1150px) {
-  .desktop-shell.with-panel {
-    grid-template-columns: var(--sidebar-column) minmax(0, 1fr);
-  }
-  .desktop-shell.sidebar-collapsed.with-panel {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .panel-maximized .main-column {
-    display: flex;
-  }
-  /* The drawer opens below the header, whose buttons switch between panels. */
-  .desktop-shell.with-panel .resource-panel {
-    position: fixed;
-    z-index: 30;
-    right: 0;
-    top: 52px;
-    bottom: 0;
-    width: min(var(--panel-width, 560px), 80vw);
-    border-top: 1px solid var(--desk-border);
-    box-shadow: -12px 0 30px #0002;
-  }
-  .desktop-shell:not(.workbench-open).with-panel:not(.panel-sized) .resource-panel {
-    width: 340px;
-  }
-  .desktop-shell.with-panel.panel-maximized .resource-panel {
-    width: auto;
-    left: 0;
-    top: 0;
-    border-top: 0;
-  }
-  /* Only a maximized drawer reaches up to the caption buttons. */
-  [data-platform='win32'] .with-panel:not(.panel-maximized) .panel-actions {
-    margin-right: 0;
-  }
   .desktop-shell {
     --sidebar-column: minmax(180px, var(--sidebar-width, 210px));
   }
@@ -2285,7 +2452,7 @@ button.primary {
     font-size: 24px;
   }
   .composer-footer {
-    padding: 10px 16px 16px;
+    padding: 10px 16px 10px;
   }
   .transcript,
   .with-index .transcript {
@@ -2312,11 +2479,5 @@ button.primary {
   *::after {
     animation: none !important;
     scroll-behavior: auto !important;
-  }
-}
-/* Beside an open panel the header no longer reaches the caption buttons. */
-@media (min-width: 1151px) {
-  [data-platform='win32'] .with-panel:not(.panel-maximized) .header-actions {
-    margin-right: 0;
   }
 }

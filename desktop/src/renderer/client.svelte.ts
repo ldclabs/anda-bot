@@ -42,6 +42,7 @@ import es from '../../../chrome-extension/public/_locales/es/messages.json'
 import ru from '../../../chrome-extension/public/_locales/ru/messages.json'
 import ar from '../../../chrome-extension/public/_locales/ar/messages.json'
 import { needsModelSetup } from '../shared/model-setup'
+import type { PanelTab, PanelWindowEvent } from '../shared/panels'
 
 const translations = { en, zh_CN: zh, fr, es, ru, ar }
 
@@ -68,6 +69,8 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   activeChannel = $state<Channel | null>(null)
   modelState = $state<ModelState>({ activeModel: null, modelNames: [] })
   view = $state('chat')
+  /** Workbench panels open in windows of their own. */
+  panelWindows = $state<PanelTab[]>([])
   /** A server an `anda://mcp/install` link offered, waiting for the MCP page to show it. */
   mcpInstall = $state<{ name: string; config: string } | null>(null)
   jumpMessage = $state('')
@@ -198,6 +201,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.updateStatus = bootstrap.update
     this.updateOffer = bootstrap.updateOffer
     this.updateDialogOpen = bootstrap.updateRequested || bootstrap.update?.phase === 'running'
+    this.panelWindows = bootstrap.panelWindows
     const language = normalizeUiLanguage(this.preferences.language || navigator.language) || 'en'
     this.preferences.language = language
     setNativeMessages(language, translations[language])
@@ -235,7 +239,13 @@ export class DesktopClient extends EventTarget implements DaemonApi {
       } else if (event.type === 'update-offer') {
         this.updateOffer = event.value as UpdateOffer | null
       } else if (event.type === 'preferences') {
-        this.preferences = event.value as Preferences
+        // Another window changed these; this one keeps its own in-flight changes.
+        this.preferences = { ...this.preferences, ...(event.value as Partial<Preferences>) }
+      } else if (event.type === 'panel-window') {
+        const { tab, open } = event.value as PanelWindowEvent
+        this.panelWindows = open
+          ? [...new Set([...this.panelWindows, tab])]
+          : this.panelWindows.filter((shown) => shown !== tab)
       } else if (event.type === 'fullscreen') {
         document.documentElement.toggleAttribute('data-fullscreen', event.value === true)
       } else if (event.type === 'state') {

@@ -30,7 +30,17 @@ import { TerminalService } from './terminal'
 import { BrowserService } from './browser'
 import { DesktopUpdater } from './updater'
 import type { Bootstrap, DaemonView, NativeEvent, Preferences } from '../shared/contract'
-import { DesktopStore } from './store'
+import {
+  isPanelEdge,
+  isPanelTab,
+  validDetached,
+  validWorkbench,
+  type PanelRequest,
+  type PanelTab,
+  type PanelWindowState
+} from '../shared/panels'
+import { DesktopStore, type Bounds } from './store'
+import { PanelWindows } from './panel-windows'
 import { DaemonClient, type InstallReport } from './daemon-client'
 import { isOlderRelease } from './update-machine'
 import {
@@ -88,13 +98,13 @@ let hideAfterFullScreen = false
 let tray: Tray | null = null
 let quitting = false
 let stateLoaded = false
-let boundsTimer: NodeJS.Timeout | undefined
 let store: DesktopStore
 let daemon: DaemonClient
 let git: GitService
 let terminals: TerminalService
 let browser: BrowserService
 let updater: DesktopUpdater
+let panels: PanelWindows | undefined
 let quitPrompt = false
 let upgradeNoticeShown = false
 let pendingNavigation: string | null = null
@@ -110,6 +120,12 @@ const rendererUrl = process.env.ELECTRON_RENDERER_URL
 
 function emit(event: NativeEvent): void {
   window?.webContents.send('anda:event', event)
+}
+/** Every app window: the main one and the panels in their own windows. */
+function broadcast(event: NativeEvent, except?: BrowserWindow): void {
+  if (window !== except) emit(event)
+  for (const panel of panels?.all ?? [])
+    if (panel !== except) panel.webContents.send('anda:event', event)
 }
 function t(key: Label): string {
   return label(store.state.preferences.language, key)
@@ -128,7 +144,7 @@ async function setLaunchAtLogin(enabled: boolean): Promise<void> {
   store.state.preferences.launchAtLogin = enabled
   if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: enabled, args: ['--hidden'] })
   await store.save()
-  emit({ type: 'preferences', value: store.state.preferences })
+  broadcast({ type: 'preferences', value: store.state.preferences })
 }
 /**
  * Mirrors the UI language to `launcher/ui.json` in the Anda home: the daemon
@@ -241,7 +257,13 @@ function runUpdate(action: () => Promise<string>): Promise<string> {
   // The updater publishes progress and retains the result for a loading renderer.
   return action().catch((error) => (error instanceof Error ? error.message : String(error)))
 }
-function menuAction(value: MenuAction): void {
+function menuAction(value: MenuAction, focused?: Electron.BaseWindow): void {
+  // A panel in its own window finds in itself; everything else is the main window's.
+  const panel = value === 'find' ? panels?.all.find((target) => target === focused) : undefined
+  if (panel) {
+    panel.webContents.send('anda:event', { type: 'menu', value })
+    return
+  }
   show()
   if (rendererReady) emit({ type: 'menu', value })
   else pendingMenuAction = value
@@ -319,7 +341,6 @@ app.on('before-quit', (event) => {
   updater?.stop()
   browser?.destroy()
   clearTimeout(reconnectTimer)
-  clearTimeout(boundsTimer)
   daemon?.disconnect()
   if (stateLoaded) {
     event.preventDefault()
@@ -340,31 +361,36 @@ autoUpdater.on('before-quit-for-update', () => {
   updater?.stop()
 })
 
-function createWindow(): void {
-  rendererReady = false
-  const saved = store?.state.windowBounds
-  const valid =
-    saved &&
-    Object.values(saved).every(Number.isFinite) &&
-    saved.width >= 760 &&
-    saved.height >= 560
-  const visible =
-    valid &&
-    screen
-      .getAllDisplays()
-      .some(
-        ({ workArea: area }) =>
-          saved.x < area.x + area.width - 80 &&
-          saved.x + saved.width > area.x + 80 &&
-          saved.y < area.y + area.height - 80 &&
-          saved.y + saved.height > area.y + 80
-      )
-  window = new BrowserWindow({
-    width: valid ? saved.width : 1280,
-    height: valid ? saved.height : 860,
-    ...(visible ? { x: saved.x, y: saved.y } : {}),
-    minWidth: 760,
-    minHeight: 560,
+/**
+ * A window's saved size, and its place when that is still on a screen; none
+ * when the saved one is unreadable or below the window's minimum.
+ */
+function restoredBounds(
+  saved: Bounds | undefined,
+  minWidth: number,
+  minHeight: number
+): Partial<Bounds> | undefined {
+  if (
+    !saved ||
+    !Object.values(saved).every(Number.isFinite) ||
+    saved.width < minWidth ||
+    saved.height < minHeight
+  )
+    return undefined
+  const visible = screen
+    .getAllDisplays()
+    .some(
+      ({ workArea: area }) =>
+        saved.x < area.x + area.width - 80 &&
+        saved.x + saved.width > area.x + 80 &&
+        saved.y < area.y + area.height - 80 &&
+        saved.y + saved.height > area.y + 80
+    )
+  return visible ? saved : { width: saved.width, height: saved.height }
+}
+/** The frame every app window shares: its own title bar, and the sandboxed renderer. */
+function appWindowOptions(): Electron.BrowserWindowConstructorOptions {
+  return {
     show: false,
     title: 'Anda',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#191919' : '#fcfcfb',
@@ -379,19 +405,25 @@ function createWindow(): void {
       nodeIntegration: false,
       webSecurity: true
     }
-  })
-  const rememberBounds = () => {
-    clearTimeout(boundsTimer)
-    boundsTimer = setTimeout(() => {
-      if (window && !window.isDestroyed()) {
-        store.state.windowBounds = window.getNormalBounds()
-        void store.save().catch(() => {})
-      }
+  }
+}
+/** Saves a window's bounds a moment after it stops moving. */
+function trackBounds(target: BrowserWindow, save: (bounds: Bounds) => void): void {
+  let timer: NodeJS.Timeout | undefined
+  const remember = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (target.isDestroyed()) return
+      save(target.getNormalBounds())
+      void store.save().catch(() => {})
     }, 400)
   }
-  window.on('resize', rememberBounds)
-  window.on('move', rememberBounds)
-  const contents = window.webContents
+  target.on('resize', remember)
+  target.on('move', remember)
+  target.on('closed', () => clearTimeout(timer))
+}
+/** Links open in the system browser; the app's own page never navigates away. */
+function guardContents(contents: Electron.WebContents): void {
   contents.setWindowOpenHandler(({ url }) => {
     openExternal(url)
     return { action: 'deny' }
@@ -402,6 +434,57 @@ function createWindow(): void {
     event.preventDefault()
     openExternal(url)
   })
+}
+function rendererPage(panel?: PanelTab): string {
+  const base = rendererUrl && !app.isPackaged ? rendererUrl : applicationUrl
+  return panel ? `${base}?panel=${panel}` : base
+}
+/**
+ * A panel's own window, at the place it had last time; one torn off the main
+ * window opens where it was dropped, with its title bar under the pointer.
+ */
+function createPanelWindow(tab: PanelTab, at?: { x: number; y: number }): BrowserWindow {
+  const saved = restoredBounds(store.state.panelBounds?.[tab], 360, 300)
+  const width = saved?.width ?? 760
+  const place = at
+    ? { x: Math.round(at.x - Math.min(160, width / 2)), y: Math.round(at.y - 26) }
+    : saved?.x !== undefined
+      ? { x: saved.x, y: saved.y! }
+      : {}
+  const panelWindow = new BrowserWindow({
+    width,
+    height: saved?.height ?? 640,
+    ...place,
+    minWidth: 360,
+    minHeight: 300,
+    ...appWindowOptions()
+  })
+  trackBounds(panelWindow, (bounds) => {
+    store.state.panelBounds = { ...store.state.panelBounds, [tab]: bounds }
+  })
+  const contents = panelWindow.webContents
+  guardContents(contents)
+  const fullScreen = (value: boolean) => () =>
+    contents.send('anda:event', { type: 'fullscreen', value })
+  panelWindow.on('enter-full-screen', fullScreen(true))
+  panelWindow.on('leave-full-screen', fullScreen(false))
+  void panelWindow.loadURL(rendererPage(tab))
+  return panelWindow
+}
+function createWindow(): void {
+  rendererReady = false
+  const saved = restoredBounds(store?.state.windowBounds, 760, 560)
+  window = new BrowserWindow({
+    width: saved?.width ?? 1280,
+    height: saved?.height ?? 860,
+    ...(saved?.x !== undefined ? { x: saved.x, y: saved.y } : {}),
+    minWidth: 760,
+    minHeight: 560,
+    ...appWindowOptions()
+  })
+  trackBounds(window, (bounds) => (store.state.windowBounds = bounds))
+  const contents = window.webContents
+  guardContents(contents)
   contents.session.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (!appPermissionAllowed(contents.id, webContents.id, permission, details))
       return callback(false)
@@ -474,19 +557,25 @@ function createWindow(): void {
         if (response === 0) contents.reload()
       })
   })
-  if (rendererUrl && !app.isPackaged) void window.loadURL(rendererUrl)
-  else void window.loadURL(applicationUrl)
+  void window.loadURL(rendererPage())
 }
 
-function checkSender(event: Electron.IpcMainInvokeEvent): void {
+/** The app window an IPC call came from: the main window, or a panel's own window. */
+interface Sender {
+  window: BrowserWindow
+  panel?: PanelTab
+}
+function checkSender(event: Electron.IpcMainInvokeEvent): Sender {
+  const panel = panels?.tabOf(event.sender)
+  const owner = panel ? BrowserWindow.fromWebContents(event.sender) : window
   if (
-    !window ||
-    event.sender.id !== window.webContents.id ||
+    !owner ||
+    (!panel && event.sender.id !== owner.webContents.id) ||
     event.senderFrame !== event.sender.mainFrame
   )
     throw new Error('Untrusted IPC sender')
   const current = new URL(event.senderFrame.url)
-  const expected = new URL(rendererUrl && !app.isPackaged ? rendererUrl : applicationUrl)
+  const expected = new URL(rendererPage())
   if (
     current.protocol !== expected.protocol ||
     (current.protocol === 'file:'
@@ -494,11 +583,31 @@ function checkSender(event: Electron.IpcMainInvokeEvent): void {
       : current.origin !== expected.origin)
   )
     throw new Error('Untrusted application origin')
+  return { window: owner, panel }
 }
+/**
+ * What a panel's own window may call: its panel's workbench (terminal, Git,
+ * browser, files), the daemon calls the panels make, preferences, and its
+ * place among the panel windows.
+ */
+const panelChannels = new Set([
+  'anda:terminal',
+  'anda:git',
+  'anda:browser',
+  'anda:workspace-file',
+  'anda:rpc',
+  'anda:preferences',
+  'anda:panel'
+])
 function handle(channel: string, fn: (...args: any[]) => unknown): void {
+  handleFrom(channel, (_sender, ...args) => fn(...args))
+}
+/** Like `handle`, for handlers that answer the asking window itself. */
+function handleFrom(channel: string, fn: (sender: Sender, ...args: any[]) => unknown): void {
   ipcMain.handle(channel, (event, ...args) => {
-    checkSender(event)
-    return fn(...args)
+    const sender = checkSender(event)
+    if (sender.panel && !panelChannels.has(channel)) throw new Error('Untrusted IPC sender')
+    return fn(sender, ...args)
   })
 }
 function validatePreferences(patch: Partial<Preferences>): void {
@@ -517,7 +626,8 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'notifications',
     'launchAtLogin',
     'sidebarWidth',
-    'panelWidth',
+    'workbench',
+    'detachedPanels',
     'sidebarGroup',
     'chats',
     'projects',
@@ -525,6 +635,10 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'drafts'
   ])
   if (Object.keys(patch).some((key) => !allowed.has(key))) throw new Error('Unknown preference')
+  if (patch.workbench !== undefined && !validWorkbench(patch.workbench))
+    throw new Error('Invalid workbench layout')
+  if (patch.detachedPanels !== undefined && !validDetached(patch.detachedPanels))
+    throw new Error('Invalid detached panels')
   if (patch.theme && !['system', 'light', 'dark'].includes(patch.theme))
     throw new Error('Invalid theme')
   if (
@@ -538,12 +652,6 @@ function validatePreferences(patch: Partial<Preferences>): void {
       !(patch.sidebarWidth >= 120 && patch.sidebarWidth <= 800))
   )
     throw new Error('Invalid sidebar width')
-  if (
-    patch.panelWidth !== undefined &&
-    (typeof patch.panelWidth !== 'number' ||
-      !(patch.panelWidth === 0 || (patch.panelWidth >= 200 && patch.panelWidth <= 4000)))
-  )
-    throw new Error('Invalid panel width')
   if (patch.sidebarGroup && !['none', 'date', 'project'].includes(patch.sidebarGroup))
     throw new Error('Invalid sidebar grouping')
   if (
@@ -581,7 +689,8 @@ async function bootstrap(): Promise<Bootstrap> {
     update: updater.status,
     updateOffer: updater.offer,
     updateRequested,
-    fullScreen: window?.isFullScreen() ?? false
+    fullScreen: window?.isFullScreen() ?? false,
+    panelWindows: panels?.tabs ?? []
   }
 }
 
@@ -641,12 +750,12 @@ async function setup(): Promise<void> {
   git = new GitService(join(app.getPath('userData'), 'workbench'), workbenchWorkspace)
   terminals = new TerminalService(
     workbenchWorkspace,
-    (value) => emit({ type: 'terminal', value }),
+    (value) => broadcast({ type: 'terminal', value }),
     () => !updater?.installing
   )
   browser = new BrowserService(
     () => window,
-    (value) => emit({ type: 'browser', value }),
+    (value) => broadcast({ type: 'browser', value }),
     (source) => emit({ type: 'browser-reveal', value: source }),
     (name) => daemon.registerBrowserSession(name),
     home
@@ -661,7 +770,12 @@ async function setup(): Promise<void> {
   )
   void updater.recover().catch((error) => emit({ type: 'update', value: String(error) }))
   if (!testMode) updater.startAutomaticChecks()
-  handle('anda:browser', (request) => browser.request(request))
+  panels = new PanelWindows(
+    createPanelWindow,
+    (value) => emit({ type: 'panel-window', value }),
+    (closing) => browser.release(closing)
+  )
+  handleFrom('anda:browser', (sender, request) => browser.request(request, sender.window))
   daemon.on('browser-action', async (message) => {
     const command = message.params
     const result = await browser.execute(command).then(
@@ -715,7 +829,7 @@ async function setup(): Promise<void> {
             )
         }
       }
-      const result = await dialog.showMessageBox(window!, {
+      const result = await dialog.showMessageBox(BrowserWindow.getFocusedWindow() ?? window!, {
         type: 'warning',
         message: 'Archive this worktree?',
         detail: `${request.path}\nAnda will save a Git snapshot before removing the checkout. Stop any agents or other applications using this folder first.`,
@@ -757,7 +871,9 @@ async function setup(): Promise<void> {
     if (!['stop', 'restart'].includes(action)) throw new Error('Invalid daemon action')
     return controlDaemon(action)
   })
-  handle('anda:rpc', async (method, params, submissionId) => {
+  handleFrom('anda:rpc', async (sender, method, params, submissionId) => {
+    // A panel reads resources and registers worktrees; chats are sent from the main window.
+    if (sender.panel && method === 'agent_run') throw new Error('Untrusted IPC sender')
     try {
       if (
         method === 'agent_run' &&
@@ -782,10 +898,12 @@ async function setup(): Promise<void> {
       throw new Error('Invalid revision')
     return daemon.config(method, content, revision)
   })
-  handle('anda:preferences', async (patch: Partial<Preferences>) => {
+  handleFrom('anda:preferences', async (sender, patch: Partial<Preferences>) => {
     validatePreferences(patch)
     store.state.preferences = { ...store.state.preferences, ...patch }
     await store.save()
+    // The other windows merge the change into the preferences they show.
+    broadcast({ type: 'preferences', value: patch }, sender.window)
     if (patch.theme) nativeTheme.themeSource = patch.theme
     if (typeof patch.launchAtLogin === 'boolean' && app.isPackaged)
       app.setLoginItemSettings({
@@ -796,6 +914,44 @@ async function setup(): Promise<void> {
       await persistUiLanguage(patch.language).catch(() => {})
       refreshTray()
     }
+  })
+  handleFrom('anda:panel', (sender, request: PanelRequest) => {
+    if (!request || typeof request !== 'object') throw new Error('Invalid panel request')
+    const { action } = request
+    if (action === 'state') {
+      if (!sender.panel) throw new Error('Only a panel window has panel state')
+      return {
+        tab: sender.panel,
+        context: panels!.context,
+        preferences: store.state.preferences,
+        platform: process.platform,
+        fullScreen: sender.window.isFullScreen()
+      } satisfies PanelWindowState
+    }
+    if (action === 'context') {
+      if (sender.panel) throw new Error('Only the main window sets the panel context')
+      if (Buffer.byteLength(JSON.stringify(request.context ?? null)) > 4 * 1024 * 1024)
+        throw new Error('Panel context is too large')
+      panels!.setContext(request.context)
+      return
+    }
+    if (!isPanelTab(request.tab)) throw new Error('Invalid panel')
+    if (action === 'open') {
+      if (sender.panel) throw new Error('Only the main window opens panel windows')
+      const at = request.at
+      if (at !== undefined && !(Number.isFinite(at?.x) && Number.isFinite(at?.y)))
+        throw new Error('Invalid panel window position')
+      panels!.open(request.tab, request.focus === true, at)
+    } else if (action === 'close') panels!.close(request.tab)
+    else if (action === 'dock') {
+      if (
+        sender.panel !== request.tab ||
+        (request.edge !== undefined && !isPanelEdge(request.edge))
+      )
+        throw new Error('Invalid panel dock')
+      panels!.dock(request.tab, request.edge ?? 'canvas')
+      show()
+    } else throw new Error('Unsupported panel request')
   })
   handle('anda:storage:get', (keys: string[]) => {
     if (
@@ -916,7 +1072,7 @@ async function setup(): Promise<void> {
   ): Electron.MenuItemConstructorOptions => ({
     label,
     accelerator: accelerator(action, process.platform),
-    click: () => menuAction(action),
+    click: (_item, focused) => menuAction(action, focused),
     ...options
   })
   const menu: Electron.MenuItemConstructorOptions[] = [
@@ -997,7 +1153,10 @@ async function setup(): Promise<void> {
   // The tray owns the service at login, before any window asks for it.
   if (!daemon.manuallyStopped) void connectNow()
   if (process.platform !== 'darwin')
-    nativeTheme.on('updated', () => window?.setTitleBarOverlay(titleBarOverlay()))
+    nativeTheme.on('updated', () => {
+      for (const target of [window, ...(panels?.all ?? [])])
+        if (target && !target.isDestroyed()) target.setTitleBarOverlay(titleBarOverlay())
+    })
 }
 
 if (hasLock)

@@ -7,6 +7,7 @@ const api: DesktopBridge = {
   git: (request) => ipcRenderer.invoke('anda:git', request),
   workspaceFile: (request) => ipcRenderer.invoke('anda:workspace-file', request),
   terminal: (request) => ipcRenderer.invoke('anda:terminal', request),
+  panel: (request) => ipcRenderer.invoke('anda:panel', request),
   bootstrap: () => ipcRenderer.invoke('anda:bootstrap'),
   ready: () => ipcRenderer.invoke('anda:ready'),
   connect: () => ipcRenderer.invoke('anda:connect'),

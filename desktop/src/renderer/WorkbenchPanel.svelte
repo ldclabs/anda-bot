@@ -1,25 +1,16 @@
-<script lang="ts" module>
-  export type PanelTab = 'resources' | 'changes' | 'terminal' | 'browser'
-  export interface FileRequest {
-    id: number
-    path: string
-    line?: number
-  }
-</script>
-
 <script lang="ts">
   /**
-   * The right-hand workbench. The chat header's toggles choose the panel;
-   * this header names it and carries the panel's own commands, maximize and
-   * close. Resources also previews workspace files the transcript links to.
+   * A workbench panel, tiled with the chat on the canvas or in a window of its
+   * own. The chat header's toggles open the panels; this header names one,
+   * drags it to another place on the canvas by its title, and carries its own
+   * commands, where it sits, and close. Resources also previews workspace
+   * files the transcript links to.
    */
   import { tick, untrack } from 'svelte'
   import {
     FolderOpen,
     Globe,
     GitCompare,
-    Maximize2,
-    Minimize2,
     Paperclip,
     Plus,
     RefreshCw,
@@ -28,10 +19,12 @@
     X
   } from '@lucide/svelte'
   import { base64ToBytes } from '$lib/utils/base64'
+  import { normalizeUiLanguage } from '$lib/i18n'
   import { formatFileSize } from '$lib/utils/format'
   import type { ChatAttachment, Resource } from '$lib/anda/client/types'
-  import type { DesktopClient } from './client.svelte'
+  import type { PanelHost } from './panel-host'
   import type { WorkspaceFilePreview } from '../shared/workbench'
+  import type { FileRequest, PanelEdge, PanelTab } from '../shared/panels'
   import { shortcutLabel } from '../shared/shortcuts'
   import { folderName } from './chat-list'
   import type { Label } from './labels'
@@ -39,6 +32,7 @@
   import TerminalPanel from './TerminalPanel.svelte'
   import GitPanel from './GitPanel.svelte'
   import BrowserPanel from './BrowserPanel.svelte'
+  import PanelLayoutMenu from './PanelLayoutMenu.svelte'
 
   let {
     client,
@@ -50,10 +44,17 @@
     sessionFiles,
     fileRequest,
     changeFocus,
-    maximized = $bindable(false),
+    edge,
+    detached = false,
+    filled = false,
+    onMove,
+    onReturn,
+    onFill,
+    onDetach,
+    onDragStart,
     onClose
   }: {
-    client: DesktopClient
+    client: PanelHost
     t: (key: Label) => string
     tab: PanelTab
     dark: boolean
@@ -62,8 +63,18 @@
     sessionFiles: string[]
     fileRequest: FileRequest | null
     changeFocus: { id: number; path: string } | null
-    maximized?: boolean
-    onClose: () => void
+    /** The canvas edge the panel runs along, if any. */
+    edge: PanelEdge | null
+    /** In a window of its own, which closes it. */
+    detached?: boolean
+    filled?: boolean
+    onMove: (edge: PanelEdge) => void
+    onReturn?: () => void
+    onFill?: (filled: boolean) => void
+    onDetach?: () => void
+    /** The title starts dragging the panel to another place on the canvas. */
+    onDragStart?: (event: PointerEvent) => void
+    onClose?: () => void
   } = $props()
 
   const titles: Record<PanelTab, Label> = {
@@ -79,6 +90,7 @@
     browser: Globe
   }
   const Icon = $derived(icons[tab])
+  const rtl = $derived(normalizeUiLanguage(client.preferences.language) === 'ar')
   const context = $derived(
     tab === 'changes'
       ? branch
@@ -201,7 +213,12 @@
 </script>
 
 <header class="panel-header">
-  <span class="panel-title"
+  <!-- The grab bar and the title move the panel; the layout menu does it from the keyboard. -->
+  {#if onDragStart}<!-- svelte-ignore a11y_no_static_element_interactions -->
+    <span class="panel-grip" aria-hidden="true" onpointerdown={onDragStart} use:tip={t('dragPanel')}
+    ></span>{/if}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <span class="panel-title" class:draggable={Boolean(onDragStart)} onpointerdown={onDragStart}
     ><Icon size={15} /><span>{t(titles[tab])}</span>{#if context}<small>{context}</small>{/if}</span
   >
   <div class="panel-actions">
@@ -237,16 +254,13 @@
         onclick={() => git?.refresh()}><RefreshCw size={14} /></button
       >
     {/if}
-    <button
-      class="icon-button"
-      aria-label={maximized ? t('restorePanel') : t('maximizePanel')}
-      aria-pressed={maximized}
-      use:tip={maximized ? t('restorePanel') : t('maximizePanel')}
-      onclick={() => (maximized = !maximized)}
-      >{#if maximized}<Minimize2 size={15} />{:else}<Maximize2 size={15} />{/if}</button
-    ><button class="icon-button" aria-label={t('close')} use:tip={t('close')} onclick={onClose}
-      ><X size={16} /></button
-    >
+    <PanelLayoutMenu {t} {edge} {rtl} {detached} {filled} {onMove} {onReturn} {onFill} {onDetach} />
+    {#if onClose}<button
+        class="icon-button"
+        aria-label={t('close')}
+        use:tip={t('close')}
+        onclick={onClose}><X size={16} /></button
+      >{/if}
   </div>
 </header>
 {#if tab === 'browser'}

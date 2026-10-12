@@ -1,6 +1,7 @@
 import type { GitRequest, TerminalRequest, WorkspaceFileRequest } from './workbench'
 import type { BrowserRequest, BrowserState } from './browser'
 import type { SubmissionReceipt } from './app-protocol'
+import { defaultWorkbench, type LayoutNode, type PanelRequest, type PanelTab } from './panels'
 export type Theme = 'system' | 'light' | 'dark'
 export type ApprovalMode = 'request_approval' | 'on_risk' | 'full_access' | 'custom'
 export type SidebarGroup = 'none' | 'date' | 'project'
@@ -29,8 +30,10 @@ export interface Preferences {
   launchAtLogin: boolean
   /** Sidebar width in CSS pixels, set by dragging its edge. */
   sidebarWidth: number
-  /** Workbench panel width in CSS pixels; 0 keeps each panel's default. */
-  panelWidth: number
+  /** How the chat and the open workbench panels tile the main window. */
+  workbench: LayoutNode
+  /** Panels that open in windows of their own. */
+  detachedPanels: PanelTab[]
   sidebarGroup: SidebarGroup
   chats: ChatEntry[]
   projects: ProjectEntry[]
@@ -46,7 +49,8 @@ export const defaultPreferences: Preferences = {
   notifications: true,
   launchAtLogin: false,
   sidebarWidth: 242,
-  panelWidth: 0,
+  workbench: defaultWorkbench,
+  detachedPanels: [],
   sidebarGroup: 'none',
   chats: [],
   projects: [],
@@ -75,6 +79,8 @@ export interface Bootstrap {
   updateOffer: UpdateOffer | null
   updateRequested: boolean
   fullScreen: boolean
+  /** Panels open in their own windows, which outlive a reload of this one. */
+  panelWindows: PanelTab[]
 }
 /** What the user asked for: checking both channels, or the status bar's download or restart step. */
 export type UpdateOperation = 'check' | 'download' | 'install'
@@ -112,6 +118,8 @@ export interface NativeEvent {
     | 'browser-reveal'
     | 'preferences'
     | 'fullscreen'
+    | 'panel-window'
+    | 'panel-context'
   value?: unknown
 }
 export interface DesktopBridge {
@@ -122,6 +130,7 @@ export interface DesktopBridge {
   git<Result>(request: GitRequest): Promise<Result>
   workspaceFile<Result>(request: WorkspaceFileRequest): Promise<Result>
   terminal<Result>(request: TerminalRequest): Promise<Result>
+  panel<Result>(request: PanelRequest): Promise<Result>
   bootstrap(): Promise<Bootstrap>
   ready(): Promise<void>
   connect(): Promise<DaemonView>

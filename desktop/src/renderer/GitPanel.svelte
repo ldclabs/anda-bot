@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import { Minus, Plus } from '@lucide/svelte'
-  import type { DesktopClient } from './client.svelte'
+  import type { PanelHost } from './panel-host'
   import type { GitFile, GitSnapshot, GitRequest } from '../shared/workbench'
   import { label, type Label } from './labels'
   import { diffLineKind } from './presentation'
@@ -13,7 +13,7 @@
     sessionFiles = [],
     focus = null
   }: {
-    client: DesktopClient
+    client: PanelHost
     workspace: string
     /** Workspace-relative paths this chat's agent edited. */
     sessionFiles?: string[]

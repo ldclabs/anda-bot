@@ -52,7 +52,7 @@
       if (disposed || !host) return
       const rect = host.getBoundingClientRect()
       const obscured = Boolean(
-        document.querySelector('.modal-backdrop, [role="dialog"], [role="menu"]')
+        document.querySelector('.modal-backdrop, [role="dialog"], [role="menu"], .panel-drag-layer')
       )
       const bounds = {
         action: 'bounds' as const,
