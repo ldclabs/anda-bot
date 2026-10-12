@@ -64,7 +64,7 @@ const en = {
   desktopUpToDate: 'Anda Desktop is up to date.',
   desktopUpdatesReleaseOnly: 'Desktop updates are available only in release builds.',
   desktopUpdatesManual:
-    'This desktop build has no signed update channel; install the next package manually.',
+    'This desktop build has no update channel; install the next package manually.',
   checkingUpdates: 'Checking for updates…',
   checkingRuntime: 'Checking Anda runtime updates and downloading any new release…',
   checkingDesktop: 'Checking Anda Desktop updates…',
@@ -283,7 +283,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateError: 'Anda 桌面客户端：{error}',
     desktopUpToDate: 'Anda 桌面客户端已是最新版本。',
     desktopUpdatesReleaseOnly: '当前为开发版本，桌面客户端自动更新仅适用于正式发布版本。',
-    desktopUpdatesManual: '当前桌面客户端未配置签名更新通道，请手动安装新版本安装包。',
+    desktopUpdatesManual: '当前桌面客户端未配置更新通道，请手动安装新版本安装包。',
     checkingUpdates: '正在检查更新…',
     checkingRuntime: '正在检查 Anda 服务更新，如有新版本会下载到本地…',
     checkingDesktop: '正在检查 Anda 桌面客户端更新…',
@@ -493,7 +493,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdatesReleaseOnly:
       'Les mises à jour du bureau sont disponibles uniquement dans les versions publiées.',
     desktopUpdatesManual:
-      'Cette version ne dispose pas de canal de mise à jour signé ; installez manuellement le prochain paquet.',
+      'Cette version ne dispose pas de canal de mise à jour ; installez manuellement le prochain paquet.',
     checkingUpdates: 'Recherche de mises à jour…',
     checkingRuntime: 'Recherche et téléchargement des mises à jour du service Anda…',
     checkingDesktop: 'Recherche de mises à jour d’Anda Desktop…',
@@ -709,7 +709,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdatesReleaseOnly:
       'Las actualizaciones de escritorio solo están disponibles en versiones publicadas.',
     desktopUpdatesManual:
-      'Esta versión no tiene un canal de actualización firmado; instala el próximo paquete manualmente.',
+      'Esta versión no tiene un canal de actualización; instala el próximo paquete manualmente.',
     checkingUpdates: 'Buscando actualizaciones…',
     checkingRuntime: 'Buscando y descargando actualizaciones del servicio Anda…',
     checkingDesktop: 'Buscando actualizaciones de Anda Desktop…',
@@ -922,7 +922,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpToDate: 'Anda Desktop обновлён до последней версии.',
     desktopUpdatesReleaseOnly: 'Обновления приложения доступны только в релизных сборках.',
     desktopUpdatesManual:
-      'В этой сборке нет подписанного канала обновлений; установите следующий пакет вручную.',
+      'В этой сборке нет канала обновлений; установите следующий пакет вручную.',
     checkingUpdates: 'Проверка обновлений…',
     checkingRuntime: 'Проверка и загрузка обновлений службы Anda…',
     checkingDesktop: 'Проверка обновлений Anda Desktop…',
@@ -1134,7 +1134,7 @@ export const desktopMessages: Record<string, Record<Label, string>> = {
     desktopUpdateError: 'Anda Desktop: {error}',
     desktopUpToDate: 'Anda Desktop محدّث.',
     desktopUpdatesReleaseOnly: 'تحديثات تطبيق سطح المكتب متاحة فقط في الإصدارات المنشورة.',
-    desktopUpdatesManual: 'لا تتضمن هذه النسخة قناة تحديث موقّعة؛ ثبّت الحزمة التالية يدويًا.',
+    desktopUpdatesManual: 'لا تتضمن هذه النسخة قناة تحديث؛ ثبّت الحزمة التالية يدويًا.',
     checkingUpdates: 'جارٍ البحث عن تحديثات…',
     checkingRuntime: 'جارٍ البحث عن تحديثات خدمة Anda وتنزيلها…',
     checkingDesktop: 'جارٍ البحث عن تحديثات Anda Desktop…',

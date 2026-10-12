@@ -311,7 +311,7 @@ export class DesktopUpdater {
     try {
       configured =
         JSON.parse(await readFile(join(process.resourcesPath, 'release-channel.json'), 'utf8'))
-          .signed === true
+          .provider === 'github'
     } catch {}
     return configured ? null : this.t('desktopUpdatesManual')
   }

@@ -338,17 +338,22 @@ jobs:
           pnpm --dir desktop build
           node desktop/scripts/prepare-runtime.mjs
 
-      - name: Check desktop signing configuration
-        id: signing
+      # A macOS update feed needs the Developer ID signature; Windows packages
+      # publish one with or without a certificate.
+      - name: Choose desktop package configuration
+        id: channel
         shell: bash
         env:
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
         run: |
           if [ -n "$CSC_LINK" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif [ "$RUNNER_OS" = Windows ]; then
+            echo "Windows signing is not configured; building an unsigned package with an update feed."
+            echo "release=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Desktop signing is not configured; building unsigned packages without an update feed."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "macOS signing is not configured; building an unsigned package without an update feed."
+            echo "release=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Package desktop
@@ -363,7 +368,7 @@ jobs:
           ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
         run: |
           config=electron-builder.yml
-          if [ "${{ steps.signing.outputs.configured }}" = "true" ]; then
+          if [ "${{ steps.channel.outputs.release }}" = "true" ]; then
             config=electron-builder.release.cjs
           fi
           args=(--config "$config" --publish never)

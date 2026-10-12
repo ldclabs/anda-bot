@@ -105,7 +105,7 @@ function fixture(running = true) {
 function packagedFixture(running = true) {
   build.packaged = true
   vi.stubGlobal('process', { ...process, resourcesPath: '/test/resources' })
-  vi.mocked(readFile).mockResolvedValue(JSON.stringify({ signed: true }))
+  vi.mocked(readFile).mockResolvedValue(JSON.stringify({ provider: 'github' }))
   return fixture(running)
 }
 
@@ -349,14 +349,14 @@ it('looks up the desktop feed before the runtime check downloads a release', asy
   expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1)
 })
 
-it('explains manual desktop updates after installing the runtime in an unsigned build', async () => {
+it('explains manual desktop updates after installing the runtime in a build without a release channel', async () => {
   const f = packagedFixture(false)
-  vi.mocked(readFile).mockResolvedValue(JSON.stringify({ signed: false }))
+  vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
   f.daemon.runtimeUpdateState.mockResolvedValueOnce(f.updater.runtime!)
   const message = await f.updater.check()
 
   expect(message).toContain('Anda v0.14.0 is installed.')
-  expect(message).toContain('no signed update channel')
+  expect(message).toContain('no update channel')
   expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled()
   expect(f.updater.status).toEqual({ phase: 'complete', operation: 'check', message })
 })
@@ -462,11 +462,11 @@ it('keeps automatic check errors quiet and retries at the next interval', async 
 })
 
 it.each([false, true])(
-  'skips desktop checks without a signed release channel (packaged: %s)',
+  'skips desktop checks without a release channel (packaged: %s)',
   async (packaged) => {
     const f = packagedFixture()
     build.packaged = packaged
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify({ signed: false }))
+    vi.mocked(readFile).mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
     f.updater.startAutomaticChecks()
     await vi.advanceTimersByTimeAsync(60_000)
     expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled()
