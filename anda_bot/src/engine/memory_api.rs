@@ -248,7 +248,10 @@ impl MemoryApiState {
                     .map(|()| json!({"schema_version":1,"discarded":true})),
             ),
             MemoryRequest::Agents => match service.agents() {
-                Ok(agents) => ok(json!(agents.grants.list().await), None),
+                Ok(agents) => ok(
+                    json!(agents.grants.list(anda_engine::unix_ms()).await),
+                    None,
+                ),
                 Err(error) => service_error(error),
             },
             MemoryRequest::AgentCreate(request) => {

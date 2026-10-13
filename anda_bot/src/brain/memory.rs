@@ -59,7 +59,8 @@ pub struct Barrier {
 
 impl Barrier {
     /// A note for the model, or `None` when every receipt is in memory.
-    pub fn note(&self) -> Option<String> {
+    /// `from` names where the updates came from, such as "this conversation".
+    pub fn note(&self, from: &str) -> Option<String> {
         let failed = self
             .settled
             .iter()
@@ -68,15 +69,14 @@ impl Barrier {
         let mut notes = Vec::new();
         if !self.pending.is_empty() {
             notes.push(format!(
-                "{} memory update(s) from this conversation are still being processed; this \
-                 recall may not reflect them.",
+                "{} memory update(s) from {from} are still being processed; this recall may not \
+                 reflect them.",
                 self.pending.len()
             ));
         }
         if failed > 0 {
             notes.push(format!(
-                "{failed} memory update(s) from this conversation failed processing and are not \
-                 in memory."
+                "{failed} memory update(s) from {from} failed processing and are not in memory."
             ));
         }
         (!notes.is_empty()).then(|| notes.join(" "))

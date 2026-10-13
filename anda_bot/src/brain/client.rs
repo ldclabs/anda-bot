@@ -585,7 +585,7 @@ impl Tool<BaseCtx> for Client {
         }
         let note = barrier
             .as_ref()
-            .and_then(super::memory::Barrier::note)
+            .and_then(|barrier| barrier.note("this conversation"))
             .filter(|_| request.budget.is_none());
         let with_note = |mut output: ToolOutput<String>| {
             if let Some(note) = &note {

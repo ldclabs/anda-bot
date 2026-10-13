@@ -41,7 +41,7 @@ pub const MAX_GRANT_DAYS: u64 = 3650;
 const MAX_TOPIC_CHARS: usize = 200;
 const MAX_NAME_CHARS: usize = 64;
 const MAX_CLIENT_CHARS: usize = 40;
-const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
+const MAX_IDEMPOTENCY_KEY_CHARS: usize = 128;
 const MAX_ACTIVE_GRANTS: usize = 32;
 const DAY_MS: u64 = 24 * 3600 * 1000;
 /// How long a revoked or expired grant stays listed.
@@ -100,8 +100,14 @@ impl AgentGrant {
         format!("agent:{}", self.client)
     }
 
-    fn retired_at(&self) -> u64 {
-        self.revoked_at.unwrap_or(self.expires_at)
+    /// Active, or retired less than [`RETIRED_RETENTION_MS`] ago.
+    fn is_listed(&self, now_ms: u64) -> bool {
+        self.is_active(now_ms)
+            || self
+                .revoked_at
+                .unwrap_or(self.expires_at)
+                .saturating_add(RETIRED_RETENTION_MS)
+                > now_ms
     }
 }
 
@@ -192,11 +198,12 @@ impl AgentGrants {
     }
 
     /// Every grant still listed, newest first.
-    pub async fn list(&self) -> GrantList {
+    pub async fn list(&self, now_ms: u64) -> GrantList {
         let registry = self.registry.lock().await;
         let mut items: Vec<AgentGrant> = registry
             .grants
             .iter()
+            .filter(|stored| stored.grant.is_listed(now_ms))
             .map(|stored| stored.grant.clone())
             .collect();
         items.sort_by_key(|grant| std::cmp::Reverse(grant.created_at));
@@ -242,14 +249,9 @@ impl AgentGrants {
             token_digest: token_digest(&token),
         };
         self.update(|registry| {
-            registry.grants.retain(|stored| {
-                stored.grant.is_active(now_ms)
-                    || stored
-                        .grant
-                        .retired_at()
-                        .saturating_add(RETIRED_RETENTION_MS)
-                        > now_ms
-            });
+            registry
+                .grants
+                .retain(|stored| stored.grant.is_listed(now_ms));
             let active = registry
                 .grants
                 .iter()
@@ -268,7 +270,10 @@ impl AgentGrants {
     /// Revokes the grant with id `target`, or every grant of the client
     /// `target`. Its tokens stop working at once.
     pub async fn revoke(&self, target: &str, now_ms: u64) -> Result<RevokedGrants, BoxError> {
-        let target = target.trim();
+        // Clients are stored as `create` normalizes them; grant ids are
+        // lowercase already.
+        let target = target.trim().to_ascii_lowercase();
+        let target = target.as_str();
         let revoked = self
             .update(|registry| {
                 let mut revoked = Vec::new();
@@ -512,7 +517,7 @@ impl AgentAccess {
                     }
                 });
             }
-            barrier.note()
+            barrier.note("your notes")
         });
         Ok(AgentRecall {
             answer: output.content,
@@ -538,7 +543,7 @@ impl AgentAccess {
         }
         let topic = valid_topic(input.topic.as_deref())?;
         let key = match input.idempotency_key.as_deref() {
-            Some(key) if key.is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES => {
+            Some(key) if key.is_empty() || key.chars().count() > MAX_IDEMPOTENCY_KEY_CHARS => {
                 return Err("invalid_request".into());
             }
             Some(key) => Some(format!(
@@ -856,7 +861,8 @@ mod tests {
             .create(request("codex", AgentScope::Read), now)
             .await
             .unwrap();
-        let revoked = reloaded.revoke("claude-code", now + 3).await.unwrap();
+        // A client is revoked by the spelling it was added with.
+        let revoked = reloaded.revoke(" Claude-Code ", now + 3).await.unwrap();
         assert_eq!(revoked.revoked.len(), 1);
         assert!(reloaded.verify(&issued.token, now + 4).await.is_none());
         assert!(reloaded.verify(&read.token, now + 4).await.is_some());
@@ -870,17 +876,21 @@ mod tests {
         );
         let revoked = reloaded.revoke(&read.grant.id, now + 5).await.unwrap();
         assert_eq!(revoked.revoked[0].client, "codex");
-        assert_eq!(reloaded.list().await.items.len(), 2);
+        assert_eq!(reloaded.list(now + 5).await.items.len(), 2);
 
-        // Retired grants are pruned a month after they stop working.
+        // Retired grants leave the list a month after they stop working, and
+        // the next grant prunes them.
         let later = now + 5 + RETIRED_RETENTION_MS + 1;
+        assert!(reloaded.list(later).await.items.is_empty());
         reloaded
             .create(request("cursor", AgentScope::Read), later)
             .await
             .unwrap();
-        let listed = reloaded.list().await.items;
+        let listed = reloaded.list(later).await.items;
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].name, "Cursor");
+        let stored: Registry = journal.read(REGISTRY_KEY).await.unwrap().unwrap();
+        assert_eq!(stored.grants.len(), 1);
     }
 
     #[tokio::test]
@@ -947,6 +957,44 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "agent_capacity"
+        );
+    }
+
+    #[tokio::test]
+    async fn idempotency_keys_are_limited_in_characters() {
+        let db = crate::test_support::memory_db("agent_note_keys").await;
+        let conversations = Arc::new(
+            ConversationsTool::connect(db, "bot".into(), "/tmp".into())
+                .await
+                .unwrap(),
+        );
+        let grants = AgentGrants::load(journal()).await.unwrap();
+        let grant = grants
+            .create(request("codex", AgentScope::Write), 1)
+            .await
+            .unwrap()
+            .grant;
+        // Without the embedded Brain, a note that passes validation stops at
+        // the journal.
+        let agents = AgentAccess::new(
+            grants,
+            Client::new("http://127.0.0.1:0".into(), None),
+            conversations,
+            crate::identity::Ed25519Key::new([7; 32]).id(),
+        );
+        let note = |key: String| NoteInput {
+            content: "x".into(),
+            topic: None,
+            idempotency_key: Some(key),
+        };
+        let error = |result: Result<NoteReceipt, BoxError>| result.unwrap_err().to_string();
+        assert_eq!(
+            error(agents.remember(&grant, note("记".repeat(128))).await),
+            "unsupported_capability"
+        );
+        assert_eq!(
+            error(agents.remember(&grant, note("k".repeat(129))).await),
+            "invalid_request"
         );
     }
 }

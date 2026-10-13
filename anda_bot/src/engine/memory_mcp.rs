@@ -302,7 +302,9 @@ fn entity_page(page: EntityPage, next_cursor: Option<String>) -> Value {
             "about_owner": page.entity.about_owner,
         },
         "claims": claims,
-        "complete": page.complete,
+        // Why some claims could not be shown on this page; null when none
+        // were left out. Whether more pages follow is `next_cursor` alone.
+        "partial_reason": page.partial_reason,
         "next_cursor": next_cursor,
     })
 }
@@ -416,7 +418,8 @@ fn tools(grant: &AgentGrant) -> Vec<Tool> {
             "read_memory_entity",
             "Read what Anda's memory holds about an entity",
             "List what Anda's memory holds about one entity, newest first: each claim with Anda's \
-             current belief and the quotes it came from. No model runs.",
+             current belief and the quotes it came from. No model runs. More claims remain while \
+             next_cursor is not null; partial_reason says why some claims could not be shown.",
             json!({
                 "type": "object",
                 "properties": {

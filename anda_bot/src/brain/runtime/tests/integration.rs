@@ -1659,7 +1659,12 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
         .await
         .unwrap();
     assert_eq!(barrier.pending.len(), 2);
-    assert!(barrier.note().unwrap().contains("still being processed"));
+    assert!(
+        barrier
+            .note("this conversation")
+            .unwrap()
+            .contains("2 memory update(s) from this conversation are still being processed")
+    );
     assert!(
         host.memory_barrier(&journal, &keys[1].id().to_string(), 42, Default::default())
             .await
