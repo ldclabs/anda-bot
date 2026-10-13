@@ -4,6 +4,8 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.2] — 2026-10-13
+
 ### Added
 
 - **Other agents share Anda's memory over MCP**: Claude Code, Codex and other MCP clients on the same machine could not reach Anda's memory, except by reading the owner's full-access browser token or calling the CLI. `anda memory agents add <client> [--write] [--days N]` now gives each agent a token of its own and prints how to connect Claude Code (`claude mcp add --transport http …`) and Codex (`bearer_token_env_var`). The daemon serves a Streamable HTTP MCP endpoint at `/mcp/memory`: stateless, loopback host names only, no browser origins, a token on every request, and paused like the other memory routes while an update is prepared. Every token can use `recall_memory` (a question answered with Anda's memory model, after a short wait for the agent's own pending notes), `search_memory` and `read_memory_entity` (entities and their sourced claims, a page at a time while `next_cursor` is set, without a model); a `--write` token can also use `remember` and `memory_note_status`. A note is the agent's own statement: it is kept in an owner-owned conversation with the source `agent:<client>`, attributed to the agent as a named participant (a `$external_user:"agent/<client>"` Person named, for example, "Claude Code") and observed through the same journal as Anda's own windows, so it is never taken for the owner's words or `$self`'s, and the Memory workspace verifies, corrects and deletes what is formed from it like any other record. An `idempotency_key` makes a retry replay the first note. Tokens are shown once and kept only as digests; `anda memory agents` lists the grants with their last use (revoked or expired ones for 30 days), and `anda memory agents revoke <id|client>` stops them at once, whichever case the client is typed in. Tokens last 90 days by default (up to 3650), and at most 32 may be active. The owner API gained `GET`/`POST /daemon/memory/v1/agents` and `POST /daemon/memory/v1/agents/{id|client}/revoke`, with WebSocket `memory_agents`, `memory_agent_create` and `memory_agent_revoke`.
@@ -11,6 +13,10 @@ All notable changes to Anda Bot.
 ### Fixed
 
 - **`read_file` and `search_file` reach the chat's project directory**: in a chat opened on a project with `anda` or Anda Desktop, the shell ran in the project, but `read_file` and `search_file` reached only Anda's own directories under `~/.anda`. Reading a project file failed with "Path is not accessible from any configured workspace", and the agent fell back to the shell (conversation #953, reading the repository's `CHANGELOG.md`). They now reach the directory the chat registered, ahead of the others, under the same grant the shell uses: only for the owner, never for an external IM user, and a scheduled run uses the directory saved with its job. They read it no more freely than the shell would without asking: under "Request approval" they leave the project to the shell, and under "Approve for me" `read_file` refuses files that look like secrets (`.env`, keys, tokens), which the shell asks about first. `edit_file`, `write_file` and `apply_patch` still reach only `~/.anda`.
+
+### Changed
+
+- **Version 0.14.2**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.2.
 
 ## [0.14.1] — 2026-10-12
 
