@@ -75,6 +75,41 @@ model:
       labels: ["pro", "brain"]
 ```
 
+## 与其他智能体共享记忆
+
+同一台机器上的 Claude Code、Codex 和其他 MCP 客户端可以通过 MCP 使用 Anda 的记忆。为每个智能体单独创建令牌；加上 `--write` 后，它还能告诉记忆要记住什么：
+
+```bash
+anda memory agents add claude-code --write
+```
+
+命令只显示一次令牌，并给出 Claude Code 和 Codex 的接入方式：
+
+```bash
+claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer <token>"
+```
+
+```toml
+# ~/.codex/config.toml；启动 Codex 前先 export ANDA_MEMORY_TOKEN=<token>
+[mcp_servers.anda-memory]
+url = "http://127.0.0.1:8042/mcp/memory"
+bearer_token_env_var = "ANDA_MEMORY_TOKEN"
+```
+
+其他客户端用 `Authorization: Bearer <token>` 请求头连接同一个 Streamable HTTP 端点。端点位于 daemon 地址的 `/mcp/memory`，只接受回环主机名（`localhost`、`127.0.0.1` 或 `::1`）并拒绝网页发起的请求；每个请求仍须携带令牌，其他机器上的客户端需通过隧道接入。
+
+| 工具 | 权限 | 作用 |
+| --- | --- | --- |
+| `recall_memory` | 所有令牌 | 用 Anda 的记忆模型回答一个问题；会先短暂等待该智能体尚在整理的笔记 |
+| `search_memory` | 所有令牌 | 按名称查找实体，不调用模型 |
+| `read_memory_entity` | 所有令牌 | 列出某个实体的记录（新的在前），附带 Anda 当前的判断和来源引文，不调用模型 |
+| `remember` | `--write` | 以智能体自己的名义记录一条笔记并提交给 Formation；传入 `idempotency_key` 可安全重试 |
+| `memory_note_status` | `--write` | 查询笔记是否已整理完 |
+
+笔记是智能体自己的陈述，归属于具名参与者（例如“Claude Code”），既不会算作你的话，也不会算作 Anda 自己的话。它保存在一个来源为 `agent:claude-code` 的独立会话中；“记忆”工作区会带着这个来源显示 Formation 由它形成的记录，可以像其他记录一样更正、停用或删除。
+
+令牌能读到 Anda 能读到的内容，所以只交给你信任的智能体，并注意它读到的内容会发给它的模型服务商。Recall 和 Formation 使用 Anda 的记忆模型，费用也计在那里。`anda memory agents` 列出所有授权及其最近使用时间，`anda memory agents revoke <id|client>` 立即让令牌失效。令牌默认 90 天有效，可用 `--days` 设为其他期限（最长 3650 天）。Anda 只保存令牌的摘要，丢失的令牌无法再次显示：撤销后重新创建即可。Anda 准备更新期间，端点会返回 503，直到更新完成。
+
 ## 可选原生运行时
 
 通过 `brain.runtime_config` 指定可信 JSON/YAML，路径相对配置目录解析；`BRAIN_RUNTIME_CONFIG` 优先。重启后在首次加载 Space 前安装绑定。浏览器记忆待办及 TUI `/brain inbox`、`/brain status`、`/brain formation <id>` 保留真实调用者身份。读取不授予执行权限，回答重试须保留相同事件键和正文。Recall 收据只证明交付，Formation 接受不等于完成。`learning` 与 `mib` 独立；语义求值、utility、trust、自动学习均需显式原生配置与权限。现有 IM 发送接口不是自动动作适配器；MIB persistent 不宣称 normal/ungated 学习或完整计量。每个 Formation 窗口都是带持久回执的 observe 意图，中断的提交会重放同一回执，不会把窗口整理两次。`recall_memory` 会先短暂等待本对话尚未处理完的窗口，并说明哪些仍在处理。`brain_attention` 还会返回你上次查看以来到期的承诺和已触发的 Watch；`brain_feedback` 把助手的自述记录为带归属的证据，而不是评分。

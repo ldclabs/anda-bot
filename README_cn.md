@@ -523,6 +523,20 @@ channels:
 
 MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
 
+### 与其他智能体共享记忆
+
+同一台机器上的 Claude Code、Codex 和其他 MCP 客户端可以使用 Anda 的记忆。为每个智能体单独创建令牌：
+
+```bash
+anda memory agents add claude-code --write
+```
+
+命令只显示一次令牌，并给出接入 Claude Code 的命令（`claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer …"`），以及 Codex 的 `[mcp_servers.anda-memory]` 配置（从 `ANDA_MEMORY_TOKEN` 读取令牌）。端点是 daemon 地址上 `/mcp/memory` 的 Streamable HTTP 服务，只接受回环主机名（`localhost`、`127.0.0.1` 或 `::1`）并拒绝网页发起的请求；每个请求仍须携带令牌，其他机器上的客户端需通过隧道接入。
+
+所有令牌都能使用 `recall_memory`（用 Anda 的记忆模型回答一个问题），以及 `search_memory` 和 `read_memory_entity`（查找实体及其带来源的记录，不调用模型）。用 `--write` 创建的令牌还能使用 `remember`，以智能体自己的名义告诉 Anda 一件事；`memory_note_status` 说明这条笔记是否已整理完。笔记是智能体自己的陈述，归属于具名参与者（例如“Claude Code”），绝不会算作你的话。它保存在一个来源为 `agent:claude-code` 的独立会话中；由它形成的记忆在“记忆”工作区中带着这个来源显示，可以更正、停用或删除。
+
+令牌能读到 Anda 能读到的内容，所以只交给你信任的智能体，并注意它读到的内容会发给它的模型服务商。`anda memory agents` 列出所有授权，`anda memory agents revoke <id|client>` 立即让令牌失效。令牌默认 90 天有效，可用 `--days` 设为其他期限（最长 3650 天）。Anda 只保存令牌的摘要，丢失的令牌无法再次显示：撤销后重新创建即可。
+
 ## 文件、技能与自动化
 
 Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。Shell 命令在短暂的前台等待（默认 10 秒，最多 30 秒）后仍未结束时，会转入后台继续运行，最长 24 小时：输出会回报到对话中，agent 可以用 `shell_session` 查询或停止它，`/stop` 会取消它。交互式 CLI 连接时，会使用本机 owner 身份向 daemon 注册启动目录；该 CLI 会话的原生 Shell 命令从已注册的目录运行。进入 Chrome 扩展或 Anda 桌面端中的文件目录会话时，客户端也会注册该目录，此会话的 Shell 命令从该目录启动。daemon 只在内存中保留这些注册，最长 24 小时，重启后即失效，因此各客户端每次发送消息时都会重新注册该目录。其他来源不能只靠请求元数据指定任意 Shell 目录。文件工具仍只能访问已配置的工作区。附件理解也可读取 owner 已注册且授权尚未过期的目录；请求元数据本身不能授权新目录。

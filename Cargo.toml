@@ -75,10 +75,15 @@ reqwest = { version = "0.13", features = [
   "query",
   "multipart",
 ] }
-# Only names `CredentialRefreshGuard` for the MCP credential store; it must
-# resolve to the rmcp anda_engine uses (one type identity), so keep the same
-# version line and add no features of its own.
-rmcp = { version = "3.5", default-features = false, features = ["auth"] }
+# Names `CredentialRefreshGuard` for the MCP credential store, so it must
+# resolve to the rmcp anda_engine uses (one type identity): keep the same
+# version line. The server features serve the memory MCP endpoint other
+# agents connect to (`engine::memory_mcp`).
+rmcp = { version = "3.5", default-features = false, features = [
+  "auth",
+  "server",
+  "transport-streamable-http-server",
+] }
 rust-i18n = "4"
 # Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs`
 # is the sole crypto backend in the tree (reqwest's rustls and cose2's

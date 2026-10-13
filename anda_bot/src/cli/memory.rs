@@ -1,4 +1,10 @@
-use crate::{brain::product::MEMORY_GUIDE, gateway};
+use crate::{
+    brain::{
+        agents::{AgentGrant, AgentScope, DEFAULT_GRANT_DAYS, GrantRequest, IssuedGrant},
+        product::MEMORY_GUIDE,
+    },
+    gateway,
+};
 use anda_core::BoxError;
 use clap::{Args, Subcommand};
 
@@ -35,6 +41,34 @@ enum MemorySubcommand {
         #[arg(long)]
         cursor: Option<String>,
     },
+    /// Share memory with other local agents (Claude Code, Codex, …) over MCP.
+    Agents {
+        #[command(subcommand)]
+        command: Option<AgentsCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsCommand {
+    /// List the agents' grants.
+    List,
+    /// Create a token for an agent and print how to connect it.
+    Add {
+        /// The agent's handle, such as claude-code or codex. Its notes are
+        /// attributed to it across tokens.
+        client: String,
+        /// Display name; defaults to a known client's, such as "Claude Code".
+        #[arg(long)]
+        name: Option<String>,
+        /// Also let the agent tell memory what to remember.
+        #[arg(long)]
+        write: bool,
+        /// Days until the token expires (1-3650).
+        #[arg(long, default_value_t = DEFAULT_GRANT_DAYS)]
+        days: u64,
+    },
+    /// Revoke a grant by id, or every grant of a client.
+    Revoke { target: String },
 }
 
 #[derive(Subcommand)]
@@ -155,6 +189,9 @@ pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), Bo
                 println!("{}", page.render());
             }
         }
+        Some(MemorySubcommand::Agents { command }) => {
+            run_agents(client, command.as_ref(), cmd.json).await?
+        }
         None | Some(MemorySubcommand::Status) => {
             let overview = client.memory_overview().await?;
             if cmd.json {
@@ -171,6 +208,134 @@ pub async fn run(client: &gateway::Client, cmd: &MemoryCommand) -> Result<(), Bo
         }
     }
     Ok(())
+}
+
+async fn run_agents(
+    client: &gateway::Client,
+    command: Option<&AgentsCommand>,
+    json: bool,
+) -> Result<(), BoxError> {
+    match command {
+        None | Some(AgentsCommand::List) => {
+            let list = client.memory_agents().await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({"result":list}))?
+                );
+            } else {
+                println!("{}", render_grants(&list.items, anda_engine::unix_ms()));
+            }
+        }
+        Some(AgentsCommand::Add {
+            client: agent,
+            name,
+            write,
+            days,
+        }) => {
+            let issued = client
+                .memory_agent_create(&GrantRequest {
+                    client: agent.clone(),
+                    name: name.clone(),
+                    scope: if *write {
+                        AgentScope::Write
+                    } else {
+                        AgentScope::Read
+                    },
+                    days: Some(*days),
+                })
+                .await?;
+            let url = format!("{}{}", client.base_url(), crate::engine::MEMORY_MCP_PATH);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({"result":{"grant":issued.grant,"token":issued.token,"url":url}})
+                    )?
+                );
+            } else {
+                println!("{}", render_issued(&issued, &url));
+            }
+        }
+        Some(AgentsCommand::Revoke { target }) => {
+            let revoked = client.memory_agent_revoke(target).await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({"result":revoked}))?
+                );
+            } else {
+                for grant in &revoked.revoked {
+                    println!(
+                        "Revoked / 已撤销: {} ({}) {}",
+                        grant.name, grant.client, grant.id
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn date(ms: u64) -> String {
+    anda_engine::rfc3339_datetime(ms)
+        .map(|time| time.chars().take(10).collect())
+        .unwrap_or_default()
+}
+
+fn scope_label(scope: AgentScope) -> &'static str {
+    match scope {
+        AgentScope::Read => "read / 只读",
+        AgentScope::Write => "read + write / 读写",
+    }
+}
+
+fn render_grants(grants: &[AgentGrant], now_ms: u64) -> String {
+    let mut text = "Memory agents / 记忆访问授权\n".to_string();
+    for grant in grants {
+        let state = match grant.revoked_at {
+            Some(at) => format!("revoked / 已撤销 {}", date(at)),
+            None if grant.is_active(now_ms) => format!("expires / 到期 {}", date(grant.expires_at)),
+            None => format!("expired / 已过期 {}", date(grant.expires_at)),
+        };
+        let used = grant
+            .last_used_at
+            .map(|at| format!(" · last used / 最近使用 {}", date(at)))
+            .unwrap_or_default();
+        text.push_str(&format!(
+            "\n{} · {} ({}) · {} · {state}{used}",
+            grant.id,
+            grant.name,
+            grant.client,
+            scope_label(grant.scope)
+        ));
+    }
+    if grants.is_empty() {
+        text.push_str("\nNo agents yet / 暂无授权\nanda memory agents add claude-code --write");
+    }
+    text
+}
+
+fn render_issued(issued: &IssuedGrant, url: &str) -> String {
+    let grant = &issued.grant;
+    let token = &issued.token;
+    format!(
+        "Memory access for {name} ({client}): {scope}, expires {expires}.\n\
+         已授权 {name} 访问记忆：{scope}，{expires} 到期。\n\n\
+         Token, shown once / 令牌仅显示一次:\n{token}\n\n\
+         Claude Code:\n  \
+         claude mcp add --transport http --scope user anda-memory {url} --header \"Authorization: Bearer {token}\"\n\n\
+         Codex (~/.codex/config.toml, with ANDA_MEMORY_TOKEN set to the token / 并把令牌设为 ANDA_MEMORY_TOKEN):\n  \
+         [mcp_servers.anda-memory]\n  \
+         url = \"{url}\"\n  \
+         bearer_token_env_var = \"ANDA_MEMORY_TOKEN\"\n\n\
+         Other clients / 其他客户端: Streamable HTTP {url}, header Authorization: Bearer <token>\n\
+         Revoke / 撤销: anda memory agents revoke {client}",
+        name = grant.name,
+        client = grant.client,
+        scope = scope_label(grant.scope),
+        expires = date(grant.expires_at),
+    )
 }
 
 fn render_inbox_page(page: &crate::brain::AttentionPage) -> String {
@@ -191,6 +356,49 @@ mod tests {
     use axum::{Json, Router, extract::Query, routing::get};
     use serde_json::json;
     use std::{collections::HashMap, sync::Arc};
+
+    #[test]
+    fn agent_grants_render_their_state_and_how_to_connect() {
+        let grant = AgentGrant {
+            id: "d3grant".into(),
+            client: "claude-code".into(),
+            name: "Claude Code".into(),
+            scope: AgentScope::Write,
+            created_at: 0,
+            expires_at: 1_790_000_000_000,
+            revoked_at: None,
+            last_used_at: Some(1_780_000_000_000),
+        };
+        let text = render_issued(
+            &IssuedGrant {
+                grant: grant.clone(),
+                token: "anda_mem_secret".into(),
+            },
+            "http://127.0.0.1:8042/mcp/memory",
+        );
+        assert!(text.contains(
+            "claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header \"Authorization: Bearer anda_mem_secret\""
+        ));
+        assert!(text.contains("bearer_token_env_var = \"ANDA_MEMORY_TOKEN\""));
+        assert!(text.contains("anda memory agents revoke claude-code"));
+
+        let listed = render_grants(
+            &[
+                grant.clone(),
+                AgentGrant {
+                    revoked_at: Some(1_785_000_000_000),
+                    ..grant.clone()
+                },
+            ],
+            1_785_000_000_000,
+        );
+        assert!(listed.contains("d3grant · Claude Code (claude-code) · read + write"));
+        assert!(listed.contains("expires / 到期 2026-09-21"));
+        assert!(listed.contains("last used / 最近使用 2026-05-28"));
+        assert!(listed.contains("revoked / 已撤销"));
+        assert!(!listed.contains("anda_mem_"));
+        assert!(render_grants(&[], 0).contains("anda memory agents add"));
+    }
 
     #[tokio::test]
     async fn inbox_reads_next_page_and_shows_continuation() {

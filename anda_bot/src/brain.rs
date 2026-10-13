@@ -1,5 +1,6 @@
 mod access;
 pub mod activity;
+pub mod agents;
 mod attention;
 pub mod catalog;
 mod client;

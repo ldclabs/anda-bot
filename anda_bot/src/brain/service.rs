@@ -14,6 +14,7 @@ pub struct MemoryService {
     activity: Option<std::sync::Arc<super::activity::ActivityStore>>,
     mutations: Option<std::sync::Arc<super::mutation::MutationService>>,
     setup: Option<super::setup::InboxSetup>,
+    agents: Option<std::sync::Arc<super::agents::AgentAccess>>,
     searches: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
@@ -24,8 +25,21 @@ impl MemoryService {
             activity: None,
             mutations: None,
             setup: None,
+            agents: None,
             searches: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
         }
+    }
+
+    pub fn with_agents(mut self, agents: super::agents::AgentAccess) -> Self {
+        self.agents = Some(std::sync::Arc::new(agents));
+        self
+    }
+
+    /// Other agents' grants, notes and questions (`engine::memory_mcp`).
+    pub fn agents(&self) -> Result<&std::sync::Arc<super::agents::AgentAccess>, BoxError> {
+        self.agents
+            .as_ref()
+            .ok_or_else(|| "unsupported_capability".into())
     }
 
     pub fn with_activity(mut self, activity: super::activity::ActivityStore) -> Self {

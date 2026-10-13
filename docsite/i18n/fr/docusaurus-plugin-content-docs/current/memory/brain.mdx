@@ -75,6 +75,41 @@ model:
       labels: ["primary", "brain"]
 ```
 
+## Partager la mémoire avec d'autres agents
+
+Claude Code, Codex et d'autres clients MCP de la même machine peuvent utiliser la mémoire d'Anda via MCP. Donnez à chaque agent son propre jeton ; ajoutez `--write` pour qu'il puisse aussi dire à la mémoire quoi retenir :
+
+```bash
+anda memory agents add claude-code --write
+```
+
+La commande affiche le jeton une seule fois, avec la configuration pour Claude Code et Codex :
+
+```bash
+claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer <token>"
+```
+
+```toml
+# ~/.codex/config.toml ; lancez export ANDA_MEMORY_TOKEN=<token> avant de démarrer Codex
+[mcp_servers.anda-memory]
+url = "http://127.0.0.1:8042/mcp/memory"
+bearer_token_env_var = "ANDA_MEMORY_TOKEN"
+```
+
+Les autres clients se connectent au même point de terminaison Streamable HTTP avec l'en-tête `Authorization: Bearer <token>`. Il est servi sur `/mcp/memory` à l'adresse du daemon, n'accepte qu'un nom d'hôte de bouclage (`localhost`, `127.0.0.1` ou `::1`) et refuse les requêtes provenant de pages web ; chaque requête exige malgré tout un jeton, et un client sur une autre machine se connecte via un tunnel.
+
+| Outil | Accès | Rôle |
+| --- | --- | --- |
+| `recall_memory` | tous les jetons | Répond à une question à partir de la mémoire avec le modèle de mémoire d'Anda ; attend brièvement les notes de l'agent encore en cours de traitement |
+| `search_memory` | tous les jetons | Trouve des entités par leur nom, sans modèle |
+| `read_memory_entity` | tous les jetons | Liste les affirmations d'une entité, des plus récentes aux plus anciennes, avec la croyance actuelle d'Anda et des citations de leurs sources, sans modèle |
+| `remember` | `--write` | Enregistre une note dans les propres mots de l'agent et la soumet à Formation ; une `idempotency_key` rend une nouvelle tentative sûre |
+| `memory_note_status` | `--write` | Indique si une note a été traitée |
+
+Une note est une déclaration de l'agent, attribuée à celui-ci en tant que participant nommé (par exemple « Claude Code »), jamais à vous ni à Anda elle-même. Elle est conservée dans une conversation qui lui est propre, avec la source `agent:claude-code`, et l'espace **Mémoire** affiche ce que Formation en a tiré avec cette source, prêt à être corrigé, mis hors d'usage ou supprimé comme tout autre enregistrement.
+
+Un jeton lit ce qu'Anda lit : ne le confiez qu'à un agent à qui vous confiez votre mémoire, et rappelez-vous que ce qu'il lit parvient à son fournisseur de modèles. Recall et Formation utilisent les modèles de mémoire d'Anda et y sont facturés. `anda memory agents` liste les autorisations et leur dernière utilisation, et `anda memory agents revoke <id|client>` révoque un jeton immédiatement. Les jetons durent 90 jours, sauf si `--days` fixe une autre durée (jusqu'à 3650). Anda ne conserve qu'une empreinte de chaque jeton : un jeton perdu ne peut pas être réaffiché, révoquez-le et créez-en un nouveau. Pendant qu'Anda prépare une mise à jour, le point de terminaison répond 503 jusqu'à la fin de celle-ci.
+
 ## Environnement natif facultatif
 
 Définissez `brain.runtime_config` vers un fichier JSON/YAML de confiance, relatif au dossier de configuration ; `BRAIN_RUNTIME_CONFIG` est prioritaire. Redémarrez pour installer les liaisons avant le chargement du Space. La boîte Brain du navigateur et `/brain inbox`, `/brain status`, `/brain formation <id>` dans le terminal conservent l’identité authentifiée. La lecture n’autorise aucune exécution ; réessayez une réponse avec le même événement et texte. Un reçu Recall prouve seulement la livraison ; accepter Formation ne signifie pas le terminer. La fonctionnalité `learning` est indépendante de `mib` ; sémantique, utility, trust et apprentissage automatique exigent une configuration native explicite. Les transports IM actuels ne sont pas des adaptateurs d’action automatique. Le mode MIB persistent ne garantit ni apprentissage normal/ungated ni coûts complets. Chaque fenêtre Formation est une intention observée avec un reçu durable : un envoi interrompu rejoue le même reçu au lieu de traiter la fenêtre deux fois. `recall_memory` attend d’abord brièvement les fenêtres en attente de la conversation et indique celles encore en cours. `brain_attention` renvoie aussi les engagements échus et les watches déclenchés depuis la dernière consultation, et `brain_feedback` enregistre le compte rendu de l’assistant comme preuve attribuée, jamais comme une note.

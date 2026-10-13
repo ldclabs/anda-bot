@@ -2151,3 +2151,180 @@ async fn memory_views_show_the_brains_own_unsourced_claims_read_only() {
     assert_eq!(error.to_string(), "unsupported_scope");
     fixture.space.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn agent_notes_are_the_agents_statements_and_stay_verifiable_by_the_owner() {
+    use crate::brain::{
+        FormationState, FormationSubmission, Journal, MemoryService,
+        activity::ActivityStore,
+        agents::{AgentAccess, AgentGrants, AgentScope, GrantRequest, NoteInput},
+        catalog::RecordQuery,
+    };
+    let keys = [
+        Ed25519Key::new([94; 32]),
+        Ed25519Key::new([95; 32]),
+        Ed25519Key::new([96; 32]),
+    ];
+    let config = runtime_config(&keys, None);
+    let brain = create(Arc::new(InMemory::new()), &keys, Some(config.clone())).await;
+    let space = brain.state.load_space("anda_bot", true).await.unwrap();
+    let brain_url = crate::test_support::spawn_http_mock(
+        Brain {
+            state: brain.state.clone(),
+        }
+        .into_router(),
+    )
+    .await;
+    let host = Host::new(brain.state.clone(), Some(&config)).unwrap();
+    let db = crate::test_support::memory_db("agent_notes").await;
+    let conversations = Arc::new(
+        crate::engine::ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+            .await
+            .unwrap(),
+    );
+    let journal = Journal::new(db.object_store());
+    let client = Client::new(format!("{brain_url}/v1/anda_bot"), Some(token(&keys[0])))
+        .with_host(host, journal.clone());
+    let owner = keys[0].id();
+    let grants = AgentGrants::load(journal.clone()).await.unwrap();
+    let now = anda_engine::unix_ms();
+    let grant = |client: &str, scope| GrantRequest {
+        client: client.into(),
+        name: None,
+        scope,
+        days: None,
+    };
+    let writer = grants
+        .create(grant("claude-code", AgentScope::Write), now)
+        .await
+        .unwrap()
+        .grant;
+    let reader = grants
+        .create(grant("codex", AgentScope::Read), now)
+        .await
+        .unwrap()
+        .grant;
+    let agents = AgentAccess::new(grants, client.clone(), conversations.clone(), owner);
+
+    let note = NoteInput {
+        content: "The owner wants short release notes with a risk section.".into(),
+        topic: Some("anda-bot releases".into()),
+        idempotency_key: Some("release-notes".into()),
+    };
+    let receipt = agents.remember(&writer, note.clone()).await.unwrap();
+    assert_eq!(receipt.state, FormationState::Accepted, "{receipt:?}");
+    assert!(!receipt.replayed);
+    // The same key replays the note instead of adding another.
+    let replay = agents.remember(&writer, note.clone()).await.unwrap();
+    assert!(replay.replayed);
+    assert_eq!(replay.note_id, receipt.note_id);
+    assert_eq!(
+        agents
+            .remember(&reader, note.clone())
+            .await
+            .unwrap_err()
+            .to_string(),
+        "forbidden"
+    );
+
+    // The note is the agent's message in a conversation the owner owns.
+    let (conversation, index) = receipt.note_id.split_once('/').unwrap();
+    assert_eq!(index, "0");
+    let notebook = conversations
+        .conversations
+        .get_conversation(conversation.parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(notebook.user, owner);
+    assert_eq!(notebook.messages.len(), 1);
+    let message: anda_core::Message = serde_json::from_value(notebook.messages[0].clone()).unwrap();
+    assert_eq!(message.role, "user");
+    assert_eq!(
+        message.name.as_deref(),
+        Some("$external_user:\"agent/claude-code\"")
+    );
+    assert_eq!(
+        notebook.extra.as_ref().unwrap()["source"],
+        "agent:claude-code"
+    );
+
+    // Formation is told who said it: the agent's Person, not the owner.
+    let row: FormationSubmission = journal
+        .read(&format!("formation/{}", receipt.note_id))
+        .await
+        .unwrap()
+        .unwrap();
+    let provenance = row.provenance.clone().unwrap();
+    assert_eq!(provenance.caller, owner.to_string());
+    assert_eq!(provenance.source, "agent:claude-code");
+    assert_eq!(
+        provenance.counterparty.as_deref(),
+        Some(writer.participant().as_str())
+    );
+    let person = command(
+        &space,
+        r#"FIND(?p.id, ?p.name) WHERE { ?p {type: "Person", key: :key} } LIMIT 1"#,
+        json!({"key": writer.participant()}),
+    )
+    .await;
+    assert_eq!(person[0][1], "Claude Code", "{person}");
+    let agent_id = person[0][0].as_str().unwrap().to_string();
+
+    // What Formation forms from the note cites it, and the owner's views
+    // verify that source like one of their own conversations.
+    let native = row.brain_conversation.unwrap();
+    let created = command(
+        &space,
+        r#"MUTATE {
+        CREATE CONCEPT ?owner {TYPE "Person" NAME "Owner" SET FIELDS {key: :owner}}
+        CREATE CONCEPT ?style {TYPE "ReleaseNoteStyle" NAME "Short release notes with risks"}
+        CREATE EVIDENCE ?input {CLIENT KEY :key SET FIELDS {evidence_class:"user_statement",payload: :payload,observed_at: :at}}
+        ASSERT ?claim (?owner,"prefers",?style) {by:{id: :agent},mode:"stated",evidence:?input}
+    }"#,
+        json!({
+            "owner": owner.to_string(),
+            "agent": agent_id,
+            "at": anda_engine::rfc3339_datetime(message.timestamp.unwrap()),
+            "key": format!("formation:conversation:{native}:1"),
+            "payload": message,
+        }),
+    )
+    .await;
+    let claim = created["handles"]["claim"].as_str().unwrap();
+    let activity = ActivityStore::connect(db, conversations, journal, client.clone())
+        .await
+        .unwrap();
+    activity.reconcile().await.unwrap();
+    let service = MemoryService::new(client).with_activity(activity);
+    let (page, _) = service
+        .records(
+            owner,
+            RecordQuery {
+                cursor: None,
+                limit: Some(50),
+            },
+        )
+        .await
+        .unwrap();
+    let record = page.items.iter().find(|item| item.id == claim).unwrap();
+    assert!(record.sources_complete, "{record:?}");
+    assert_eq!(record.sources[0].source, "agent:claude-code");
+    assert_eq!(
+        record.sources[0].text.as_deref(),
+        Some("The owner wants short release notes with a risk section.")
+    );
+    assert!(record.allowed_actions.contains(&"delete".to_string()));
+
+    // Each agent sees only its own notes.
+    let status = agents.note_status(&writer, &receipt.note_id).await.unwrap();
+    assert_eq!(status.note_id, receipt.note_id);
+    assert_eq!(
+        agents
+            .note_status(&reader, &receipt.note_id)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "note_not_found"
+    );
+    space.close().await.unwrap();
+}

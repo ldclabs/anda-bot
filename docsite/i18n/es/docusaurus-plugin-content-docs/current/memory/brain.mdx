@@ -75,6 +75,41 @@ model:
       labels: ["primary", "brain"]
 ```
 
+## Compartir la memoria con otros agentes
+
+Claude Code, Codex y otros clientes MCP del mismo equipo pueden usar la memoria de Anda a través de MCP. Dé a cada agente su propio token; añada `--write` para que también pueda indicarle a la memoria qué recordar:
+
+```bash
+anda memory agents add claude-code --write
+```
+
+El comando muestra el token una sola vez, junto con la configuración para Claude Code y Codex:
+
+```bash
+claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer <token>"
+```
+
+```toml
+# ~/.codex/config.toml; ejecute export ANDA_MEMORY_TOKEN=<token> antes de iniciar Codex
+[mcp_servers.anda-memory]
+url = "http://127.0.0.1:8042/mcp/memory"
+bearer_token_env_var = "ANDA_MEMORY_TOKEN"
+```
+
+Otros clientes se conectan al mismo endpoint Streamable HTTP con la cabecera `Authorization: Bearer <token>`. Se sirve en `/mcp/memory` en la dirección del daemon, solo acepta un nombre de host de loopback (`localhost`, `127.0.0.1` o `::1`) y rechaza las solicitudes de páginas web; cada solicitud necesita igualmente un token, y un cliente en otra máquina se conecta a través de un túnel.
+
+| Herramienta | Acceso | Qué hace |
+| --- | --- | --- |
+| `recall_memory` | todos los tokens | Responde una pregunta a partir de la memoria con el modelo de memoria de Anda; espera brevemente las notas del propio agente que aún se están procesando |
+| `search_memory` | todos los tokens | Busca entidades por nombre sin usar un modelo |
+| `read_memory_entity` | todos los tokens | Enumera las afirmaciones de una entidad, de la más reciente a la más antigua, con la creencia actual de Anda y citas de sus fuentes, sin usar un modelo |
+| `remember` | `--write` | Registra una nota con las propias palabras del agente y la envía a Formation; un `idempotency_key` hace que un reintento sea seguro |
+| `memory_note_status` | `--write` | Indica si una nota ya se ha procesado |
+
+Una nota es una afirmación del agente, atribuida a él como participante con nombre (por ejemplo, "Claude Code"), nunca a usted ni a la propia Anda. Se guarda en una conversación propia con la fuente `agent:claude-code`, y el espacio de trabajo **Memoria** muestra lo que Formation creó a partir de ella con esa fuente, listo para corregirlo, dejar de usarlo o eliminarlo como cualquier otro registro.
+
+Un token lee lo mismo que lee Anda, así que entréguelo solo a un agente al que confíe su memoria, y recuerde que lo que lea llega a su proveedor de modelos. Recall y Formation usan los modelos de memoria de Anda y se facturan allí. `anda memory agents` enumera las autorizaciones y su último uso, y `anda memory agents revoke <id|client>` invalida un token de inmediato. Los tokens duran 90 días salvo que `--days` indique otra duración (hasta 3650). Anda solo guarda un resumen (digest) de cada token, por lo que un token perdido no puede volver a mostrarse: revóquelo y cree uno nuevo. Mientras Anda prepara una actualización, el endpoint responde 503 hasta que termine.
+
 ## Entorno nativo opcional
 
 Configura `brain.runtime_config` con un archivo JSON/YAML de confianza relativo al directorio de configuración; `BRAIN_RUNTIME_CONFIG` tiene prioridad. Reinicia para instalar los enlaces antes de cargar el Space. La bandeja Brain del navegador y `/brain inbox`, `/brain status`, `/brain formation <id>` en la terminal conservan la identidad autenticada. Leer no autoriza la ejecución; reintenta respuestas con el mismo evento y texto. Un recibo Recall solo prueba la entrega; aceptar Formation no significa completarlo. La función `learning` es independiente de `mib`; semántica, utility, trust y aprendizaje automático requieren configuración nativa explícita. Los transportes IM actuales no son adaptadores de acción automática. MIB persistent no declara aprendizaje normal/ungated ni costes completos. Cada ventana de Formation es una intención observada con un recibo duradero, así que un envío interrumpido reproduce el mismo recibo en lugar de procesar la ventana dos veces. `recall_memory` espera primero brevemente las ventanas pendientes de la propia conversación e indica cuáles siguen en proceso. `brain_attention` también devuelve compromisos vencidos y watches disparados desde la última consulta, y `brain_feedback` registra el informe propio del asistente como evidencia atribuida, nunca como una calificación.

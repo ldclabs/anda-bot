@@ -27,6 +27,8 @@ anda agent run --memory-mode off --prompt '只使用这个新对话的信息帮�
 
 `/daemon/memory/v1` 是使用 Bot `ToolResponse` 的所有者管理入口，与原生 KIP、模型工具分开。HTTP 和 WebSocket 每次请求都重新验证原凭证。概览、记录、搜索、变更预览/提交/查询/丢弃、待办设置与记录订阅复用同一服务。活动查询还支持已认证调用者自己拥有的指定会话，不暴露其他记录或计数。产品响应的标识统一为字符串。
 
+`/daemon/memory/v1/agents`（WebSocket `memory_agents`、`memory_agent_create`、`memory_agent_revoke`）管理其他本地智能体访问 `/mcp/memory` 的授权。该端点是所有者管理入口之外的无状态 Streamable HTTP MCP 服务，只接受回环主机名。授权令牌只显示一次，以 SHA-256 摘要保存，且只能用于该端点。智能体的笔记是所有者会话中的一条消息，其单条消息窗口与 Bot 自己的窗口经同一 journal 观察，counterparty 为该智能体的 `$external_user:"agent/<client>"` Person，来源为 `agent:<client>`。因此活动记录、来源校验、更正和删除都与其他窗口一致。
+
 活动分页按提交时间和稳定的 journal 键排序，旧索引重建后也保持该顺序。升级后若已保存的游标被拒绝，请从首页刷新。启动与低频对账负责修复索引，日常轮询只读取变化和未完成记录。来源校验缓存仅在同一调用者的单次请求内复用。
 
 记录分页在达到响应大小预算前停止，返回指向首条尚未返回记录的游标。`response_size_limit` 表示还有后续记录，不代表来源缺失。较长引用会标记 `text_truncated`，记录身份和原始声明标签保持不变。订阅列表接受可选的 `cursor` 和 `limit`（1–50），以绑定调用者的游标返回生效订阅，已取消历史不占配额。浏览器读完所有页面后才启用新建订阅。

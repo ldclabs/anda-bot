@@ -44,6 +44,8 @@ mod goal;
 mod idle;
 pub(crate) mod mcp;
 mod memory_api;
+mod memory_mcp;
+pub(crate) use memory_mcp::MEMORY_MCP_PATH;
 mod multimodal;
 mod project_fs;
 mod prompt;
@@ -93,7 +95,8 @@ pub(crate) use prompt::PromptCommand;
 pub use resources::ResourceStore;
 pub use skill_library::SkillLibrary;
 pub(crate) use system::{
-    external_user_prompt_with_space, system_runtime_prompt, system_runtime_prompt_from,
+    external_user_prompt_with_space, scoped_external_user_name, system_runtime_prompt,
+    system_runtime_prompt_from,
 };
 
 // Empty model labels resolve through Models::get_model(), which tracks the active model.
@@ -601,6 +604,7 @@ impl Engines {
             brain_client.clone(),
         )
         .await?;
+        let agent_grants = brain::agents::AgentGrants::load(brain_journal.clone()).await?;
         let memory = brain::MemoryService::new(brain_client.clone())
             .with_activity(memory_activity.clone())
             .with_mutations(brain::mutation::MutationService::new(
@@ -612,6 +616,12 @@ impl Engines {
                 cfg.home_dir.clone(),
                 brain_journal.clone(),
                 config_write_lock.clone(),
+            ))
+            .with_agents(brain::agents::AgentAccess::new(
+                agent_grants,
+                brain_client.clone(),
+                conversations_tool.clone(),
+                cfg.owner,
             ));
         let browser_bridge = Arc::new(BrowserBridge::new());
         let [
@@ -934,6 +944,11 @@ impl Engines {
 
     pub fn into_router(self, cancel_token: CancellationToken) -> Router<()> {
         let plan_access_state = self.plan_access_state();
+        let memory_mcp_router = memory_mcp::router(
+            self.memory.clone(),
+            self.bot.admission(),
+            cancel_token.clone(),
+        );
         let memory_state = memory_api::MemoryApiState {
             app: self.state.clone(),
             owner: self.cli_workspaces.owner(),
@@ -1055,6 +1070,7 @@ impl Engines {
             .merge(daemon_control_router)
             .merge(mcp_oauth_router)
             .merge(mcp_api_router)
+            .merge(memory_mcp_router)
             .merge(chatgpt_router);
         app
     }

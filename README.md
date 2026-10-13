@@ -554,6 +554,20 @@ Set `allow_external_users: true` to accept non-allowlisted IM senders as `$exter
 
 See the `mcp.json` example above for MCP servers, and [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml) for channel, transcription, and TTS examples.
 
+### Share Memory With Other Agents
+
+Claude Code, Codex and other MCP clients on the same machine can use Anda's memory. Give each agent a token of its own:
+
+```bash
+anda memory agents add claude-code --write
+```
+
+The command prints the token once, together with the command that connects Claude Code (`claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer …"`) and the `[mcp_servers.anda-memory]` entry for Codex, which reads the token from `ANDA_MEMORY_TOKEN`. The endpoint is Streamable HTTP at `/mcp/memory` on the daemon's address. It accepts only a loopback host name (`localhost`, `127.0.0.1` or `::1`) and refuses requests from web pages; every request still needs a token, and a client on another machine connects through a tunnel.
+
+Every token can use `recall_memory`, which answers a question from memory with Anda's memory model, and `search_memory` and `read_memory_entity`, which look up entities and their claims with sources and call no model. A token created with `--write` can also use `remember`, which tells Anda something in the agent's own words, and `memory_note_status`, which says when a note has been processed. A note is the agent's statement, attributed to it as a named participant (for example "Claude Code"), never to you. It is kept in a conversation of its own with the source `agent:claude-code`, and the Memory workspace shows what was formed from it with that source, ready to correct, stop using or delete.
+
+A token reads what Anda reads, so only give one to an agent you trust with your memory, and remember that what it reads reaches its model provider. `anda memory agents` lists the grants, and `anda memory agents revoke <id|client>` stops a token at once. Tokens last 90 days unless `--days` sets another lifetime (up to 3650). Anda keeps only a digest of each token, so a lost token cannot be shown again: revoke it and add a new one.
+
 ## Files, Skills, And Automations
 
 The local runtime creates a workspace directory at `~/.anda/workspace`. File and shell tools operate in this folder by default. A shell command still running after a short foreground wait (10 seconds by default, up to 30) keeps running in the background for up to 24 hours: its output is reported to the conversation, the agent can poll or stop it with `shell_session`, and `/stop` cancels it. When the interactive CLI connects, it registers its launch directory with the daemon using the local owner's credentials; native shell commands for that CLI session run from the registered directory. The Chrome extension and Anda Desktop likewise register a directory-backed chat when you enter it, so its shell commands start in that directory. The daemon keeps these registrations in memory for up to 24 hours and forgets them when it restarts, so each client registers the directory again with every message it sends. Other sources cannot select an arbitrary shell directory through request metadata alone. Filesystem tools remain limited to configured workspaces. Attachment understanding can also read the owner's registered directories while their grants remain valid; request metadata alone cannot authorize a new directory.

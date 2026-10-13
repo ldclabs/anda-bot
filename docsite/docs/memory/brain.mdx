@@ -75,6 +75,41 @@ model:
       labels: ["primary", "brain"]
 ```
 
+## Share memory with other agents
+
+Claude Code, Codex and other MCP clients on the same machine can use Anda's memory over MCP. Give each agent a token of its own; add `--write` to let it tell memory what to remember:
+
+```bash
+anda memory agents add claude-code --write
+```
+
+The command prints the token once, with the setup for Claude Code and Codex:
+
+```bash
+claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer <token>"
+```
+
+```toml
+# ~/.codex/config.toml; export ANDA_MEMORY_TOKEN=<token> before starting Codex
+[mcp_servers.anda-memory]
+url = "http://127.0.0.1:8042/mcp/memory"
+bearer_token_env_var = "ANDA_MEMORY_TOKEN"
+```
+
+Other clients connect to the same Streamable HTTP endpoint with an `Authorization: Bearer <token>` header. It is served at `/mcp/memory` on the daemon's address, accepts only a loopback host name (`localhost`, `127.0.0.1` or `::1`) and refuses requests from web pages; every request still needs a token, and a client on another machine connects through a tunnel.
+
+| Tool | Access | What it does |
+| --- | --- | --- |
+| `recall_memory` | every token | Answers one question from memory with Anda's memory model; waits briefly for the agent's own notes still being processed |
+| `search_memory` | every token | Finds entities by name without a model |
+| `read_memory_entity` | every token | Lists an entity's claims, newest first, with Anda's current belief and source quotes, without a model |
+| `remember` | `--write` | Records a note in the agent's own words and submits it to Formation; an `idempotency_key` makes a retry safe |
+| `memory_note_status` | `--write` | Reports whether a note has been processed |
+
+A note is the agent's statement, attributed to it as a named participant (for example "Claude Code"), never to you and never to Anda itself. It is kept in a conversation of its own with the source `agent:claude-code`, and the Memory workspace shows what Formation made of it with that source, ready to correct, stop using or delete like any other record.
+
+A token reads what Anda reads, so only give one to an agent you trust with your memory, and remember that what it reads reaches its model provider. Recall and Formation run on Anda's memory models and are billed there. `anda memory agents` lists the grants and when each was last used, and `anda memory agents revoke <id|client>` stops a token at once. Tokens last 90 days unless `--days` sets another lifetime (up to 3650). Anda keeps only a digest of each token, so a lost token cannot be shown again: revoke it and add a new one. While Anda prepares an update, the endpoint answers 503 until it finishes.
+
 ## Optional native runtime
 
 Set `brain.runtime_config` to a trusted JSON/YAML file relative to the configuration directory; `BRAIN_RUNTIME_CONFIG` overrides it. Restart to install bindings before Space loading. The browser Brain inbox and TUI `/brain inbox`, `/brain status`, `/brain formation <id>` use the authenticated caller. Reading is not execution permission; retry an answer with the same event key and text. Recall receipts prove delivery only, and Formation acceptance is not completion. The `learning` feature is independent of `mib`; semantic, utility, trust and automatic learning require explicit native configuration and authority. Current IM transports are not automatic action adapters. MIB persistent memory does not claim normal/ungated learning or complete costs. Each Formation window is an observed intent with a durable receipt, so an interrupted submission replays the same receipt instead of forming the window twice. `recall_memory` first waits briefly for the conversation's own pending windows and says which are still being processed. `brain_attention` also returns due commitments and fired watches since you last looked, and `brain_feedback` records the assistant's own report as attributed evidence, never a grade.

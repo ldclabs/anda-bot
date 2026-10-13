@@ -143,6 +143,54 @@ impl Client {
         }
     }
 
+    pub async fn memory_agents(&self) -> Result<crate::brain::agents::GrantList, BoxError> {
+        self.memory_envelope(self.request(reqwest::Method::GET, "/daemon/memory/v1/agents"))
+            .await
+    }
+
+    pub async fn memory_agent_create(
+        &self,
+        request: &crate::brain::agents::GrantRequest,
+    ) -> Result<crate::brain::agents::IssuedGrant, BoxError> {
+        self.memory_envelope(
+            self.request(reqwest::Method::POST, "/daemon/memory/v1/agents")
+                .json(request),
+        )
+        .await
+    }
+
+    pub async fn memory_agent_revoke(
+        &self,
+        target: &str,
+    ) -> Result<crate::brain::agents::RevokedGrants, BoxError> {
+        let mut url = reqwest::Url::parse(&self.base_url)?;
+        url.path_segments_mut()
+            .map_err(|_| "invalid gateway URL")?
+            .extend(["daemon", "memory", "v1", "agents", target, "revoke"]);
+        self.memory_envelope(self.http.post(url).bearer_auth(&self.auth_token))
+            .await
+    }
+
+    /// Sends one owner memory request and reads its envelope, refusals
+    /// included, whatever the status code.
+    async fn memory_envelope<T>(&self, request: reqwest::RequestBuilder) -> Result<T, BoxError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let response = request.timeout(MEMORY_TIMEOUT).send().await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        match serde_json::from_slice::<ToolResponse>(&body) {
+            Ok(ToolResponse::Ok { result, .. }) => Ok(serde_json::from_value(result)?),
+            Ok(ToolResponse::Err { error, .. }) => Err(error.message.into()),
+            Err(_) => Err(format!(
+                "[GatewayClient] request failed, status: {status}, body: {}",
+                body_excerpt(&body)
+            )
+            .into()),
+        }
+    }
+
     /// Calls one method of the owner's MCP API (`anda mcp`).
     pub async fn mcp<T>(&self, method: &str, params: serde_json::Value) -> Result<T, BoxError>
     where

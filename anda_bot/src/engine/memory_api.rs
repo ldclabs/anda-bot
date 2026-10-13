@@ -25,6 +25,7 @@ use crate::{
     brain::{
         MemoryService,
         activity::ActivityQuery,
+        agents::GrantRequest,
         catalog::RecordQuery,
         entity::{EntityQuery, EntitySearchQuery},
         mutation::{ChangeRequest, CommitRequest},
@@ -76,6 +77,9 @@ enum MemoryRequest {
     ChangeCommit(String, CommitRequest),
     ChangeStatus(String),
     ChangeDiscard(String),
+    Agents,
+    AgentCreate(GrantRequest),
+    AgentRevoke(String),
 }
 
 impl MemoryRequest {
@@ -145,6 +149,16 @@ impl MemoryRequest {
             }
             "memory_change_discard" => {
                 Self::ChangeDiscard(one(params, "Expected one operation id.")?)
+            }
+            "memory_agents" => {
+                none(&params, "memory_agents requires an empty parameter array.")?;
+                Self::Agents
+            }
+            "memory_agent_create" => {
+                Self::AgentCreate(one(params, "Expected one agent grant request.")?)
+            }
+            "memory_agent_revoke" => {
+                Self::AgentRevoke(one(params, "Expected one grant id or client.")?)
             }
             _ => {
                 return Err(error(
@@ -233,6 +247,43 @@ impl MemoryApiState {
                     .await
                     .map(|()| json!({"schema_version":1,"discarded":true})),
             ),
+            MemoryRequest::Agents => match service.agents() {
+                Ok(agents) => ok(json!(agents.grants.list().await), None),
+                Err(error) => service_error(error),
+            },
+            MemoryRequest::AgentCreate(request) => {
+                let issued = match service.agents() {
+                    Ok(agents) => agents.grants.create(request, anda_engine::unix_ms()).await,
+                    Err(error) => Err(error),
+                };
+                if let Ok(issued) = &issued {
+                    log::warn!(
+                        name = "memory";
+                        "memory agent grant {} created for {} ({:?})",
+                        issued.grant.id,
+                        issued.grant.client,
+                        issued.grant.scope
+                    );
+                }
+                respond(issued)
+            }
+            MemoryRequest::AgentRevoke(target) => {
+                let revoked = match service.agents() {
+                    Ok(agents) => agents.grants.revoke(&target, anda_engine::unix_ms()).await,
+                    Err(error) => Err(error),
+                };
+                if let Ok(revoked) = &revoked {
+                    for grant in &revoked.revoked {
+                        log::warn!(
+                            name = "memory";
+                            "memory agent grant {} revoked for {}",
+                            grant.id,
+                            grant.client
+                        );
+                    }
+                }
+                respond(revoked)
+            }
         }
     }
 
@@ -357,6 +408,14 @@ impl MemoryApiState {
                 "/daemon/memory/v1/changes/{id}/discard",
                 routing::post(discard_change),
             )
+            .route(
+                "/daemon/memory/v1/agents",
+                routing::get(list_agents).post(create_agent),
+            )
+            .route(
+                "/daemon/memory/v1/agents/{target}/revoke",
+                routing::post(revoke_agent),
+            )
             .layer(DefaultBodyLimit::max(64 * 1024))
             .with_state(self)
     }
@@ -433,6 +492,27 @@ fn service_error(err: BoxError) -> Reply {
             error(
                 "unsupported_scope",
                 "The complete source or change scope could not be verified.",
+            ),
+        ),
+        "invalid_agent" => (
+            StatusCode::BAD_REQUEST,
+            error(
+                "invalid_agent",
+                "An agent client is 1-40 lowercase letters, digits, '.', '_' or '-', its name at most 64 characters, and a grant lasts 1-3650 days.",
+            ),
+        ),
+        "agent_not_found" => (
+            StatusCode::NOT_FOUND,
+            error(
+                "agent_not_found",
+                "No active agent grant has this id or client.",
+            ),
+        ),
+        "agent_capacity" => (
+            StatusCode::CONFLICT,
+            error(
+                "agent_capacity",
+                "At most 32 agent grants may be active; revoke one first.",
             ),
         ),
         "memory_change_pending" => (
@@ -694,6 +774,27 @@ async fn discard_change(
     owner_route(&state, &headers, Ok(MemoryRequest::ChangeDiscard(id))).await
 }
 
+async fn list_agents(State(state): State<MemoryApiState>, headers: HeaderMap) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::Agents)).await
+}
+
+async fn create_agent(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    body: Result<Json<GrantRequest>, JsonRejection>,
+) -> Response {
+    let request = from_json(body, MemoryRequest::AgentCreate);
+    owner_route(&state, &headers, request).await
+}
+
+async fn revoke_agent(
+    State(state): State<MemoryApiState>,
+    headers: HeaderMap,
+    Path(target): Path<String>,
+) -> Response {
+    owner_route(&state, &headers, Ok(MemoryRequest::AgentRevoke(target))).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,6 +985,95 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status().as_u16(), status, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn memory_agent_grants_are_owner_only_and_round_trip() {
+        use crate::brain::{
+            Journal,
+            agents::{AgentAccess, AgentGrants, AgentScope, GrantRequest},
+        };
+        let (mut state, owner, other) = fixture();
+        let db = crate::test_support::memory_db("memory_api_agents").await;
+        let conversations = Arc::new(
+            crate::engine::ConversationsTool::connect(db.clone(), "bot".into(), "/tmp".into())
+                .await
+                .unwrap(),
+        );
+        let client = Client::new("http://127.0.0.1:0".into(), None);
+        state.service = MemoryService::new(client.clone()).with_agents(AgentAccess::new(
+            AgentGrants::load(Journal::new(db.object_store()))
+                .await
+                .unwrap(),
+            client,
+            conversations,
+            owner.id(),
+        ));
+        let auth = headers(&owner, false);
+        assert_eq!(
+            state
+                .websocket_dispatch(&headers(&other, false), "memory_agents", json!([]))
+                .await["error"]["code"],
+            "forbidden"
+        );
+        assert_eq!(
+            state
+                .websocket_dispatch(
+                    &auth,
+                    "memory_agent_create",
+                    json!([{"client":"Claude Code","scope":"read"}])
+                )
+                .await["error"]["code"],
+            "invalid_agent"
+        );
+        let created = state
+            .websocket_dispatch(
+                &auth,
+                "memory_agent_create",
+                json!([{"client":"cursor","scope":"read"}]),
+            )
+            .await;
+        assert_eq!(created["result"]["grant"]["name"], "Cursor", "{created}");
+
+        // The CLI's client reads the same routes, refusals included.
+        let url = crate::test_support::spawn_http_mock(state.into_router()).await;
+        let mut claims = crate::identity::expiring_claims(Duration::from_secs(60)).unwrap();
+        claims.audience = Some("*".into());
+        let cli = crate::gateway::Client::new(url.clone(), owner.sign_cwt(claims).unwrap());
+        let issued = cli
+            .memory_agent_create(&GrantRequest {
+                client: "codex".into(),
+                name: None,
+                scope: AgentScope::Write,
+                days: Some(7),
+            })
+            .await
+            .unwrap();
+        assert!(issued.token.starts_with("anda_mem_"));
+        assert_eq!(issued.grant.name, "Codex");
+        let listed = cli.memory_agents().await.unwrap();
+        assert_eq!(listed.items.len(), 2);
+        assert!(
+            !serde_json::to_string(&listed)
+                .unwrap()
+                .contains(&issued.token)
+        );
+        let revoked = cli.memory_agent_revoke("codex").await.unwrap();
+        assert_eq!(revoked.revoked[0].id, issued.grant.id);
+        assert_eq!(
+            cli.memory_agent_revoke("codex")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "No active agent grant has this id or client."
+        );
+        let response = crate::util::http_client::new_reqwest_client()
+            .get(format!("{url}/daemon/memory/v1/agents"))
+            .headers(headers(&other, false))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
