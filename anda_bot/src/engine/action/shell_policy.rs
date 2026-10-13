@@ -490,7 +490,9 @@ fn has_risky_shell_syntax(command: &str) -> bool {
     .any(|token| command.contains(token))
 }
 
-fn references_sensitive_path(command: &str) -> bool {
+/// Whether a command or path names something secret-like: on_risk always
+/// asks before touching one.
+pub(crate) fn references_sensitive_path(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     let normalized = normalize_path_separators(&lower);
     if normalized.contains("appdata") && !normalized.contains("/appdata/local/temp") {

@@ -45,6 +45,7 @@ mod idle;
 pub(crate) mod mcp;
 mod memory_api;
 mod multimodal;
+mod project_fs;
 mod prompt;
 mod resources;
 mod shell_runtime;
@@ -725,6 +726,11 @@ impl Engines {
         let connect_mcp_server_tool = Arc::new(McpConnectTool::new(mcp_manager.clone()));
         let manage_mcp_server_tool = Arc::new(ManageMcpServerTool::new(mcp_manager.clone()));
         let mcp_resources_tool = Arc::new(McpResourcesTool::new(mcp_manager.clone()));
+        // Unlike the edit and write tools, these also reach the chat's project.
+        let read_file_tool: project_fs::ProjectFsTool<fs::ReadFileTool> =
+            project_fs::ProjectFsTool::new(cfg.workspaces.clone(), cli_workspaces.clone());
+        let search_file_tool: project_fs::ProjectFsTool<fs::SearchFileTool> =
+            project_fs::ProjectFsTool::new(cfg.workspaces.clone(), cli_workspaces.clone());
         use agent::memory_policy::{MemoryPolicyAgent, MemoryPolicyTool};
         let mut hooks = anda_engine::hook::Hooks::new();
         hooks.add(Box::new(agent::memory_policy::MemoryPolicyHook));
@@ -743,12 +749,8 @@ impl Engines {
             ))))?
             .register_tool(record_artifacts(Arc::new(AskUserChoiceTool)))?
             .register_tool(record_artifacts(Arc::new(GoalTool::new())))?
-            .register_tool(record_artifacts(Arc::new(
-                fs::ReadFileTool::with_workspaces(cfg.workspaces.clone()),
-            )))?
-            .register_tool(record_artifacts(Arc::new(
-                fs::SearchFileTool::with_workspaces(cfg.workspaces.clone()),
-            )))?
+            .register_tool(record_artifacts(Arc::new(read_file_tool)))?
+            .register_tool(record_artifacts(Arc::new(search_file_tool)))?
             .register_tool(record_artifacts(Arc::new(
                 fs::EditFileTool::with_workspaces(cfg.workspaces.clone()),
             )))?

@@ -28,10 +28,10 @@ use crate::util::request_meta::keys;
 
 mod shell_policy;
 
-pub(crate) use shell_policy::ApprovalMode;
 use shell_policy::{
     ApprovalDecision, ShellRiskCache, shell_approval_decision_with_model, shell_risk_language_hint,
 };
+pub(crate) use shell_policy::{ApprovalMode, references_sensitive_path};
 
 mod protocol;
 
@@ -81,7 +81,7 @@ impl ApprovalMode {
 /// [`SessionRequestMeta`]. Approval decisions must follow the live request (a
 /// cron job firing into an existing chat session, a CLI launched with
 /// `--full-access`), so prefer it and fall back to the context metadata.
-fn live_request_meta(ctx: &BaseCtx) -> RequestMeta {
+pub(crate) fn live_request_meta(ctx: &BaseCtx) -> RequestMeta {
     ctx.get_state::<SessionRequestMeta>()
         .map(|meta| meta.get())
         .unwrap_or_else(|| ctx.meta().clone())

@@ -208,52 +208,61 @@ impl NativeShellRuntime {
     }
 
     async fn cli_workspace(&self, ctx: &BaseCtx) -> Result<Option<PathBuf>, BoxError> {
-        let session = ctx.get_state::<SessionRequestMeta>();
-        let meta = session
-            .as_ref()
-            .map_or_else(|| ctx.meta().clone(), SessionRequestMeta::get);
-        let Some((source, workspace)) = cli_workspace_request(&meta)? else {
-            return Ok(None);
-        };
-        let saved_grant = match &session {
-            Some(session) => session.cron_workspace(),
-            None => ctx.get_state::<CronWorkspaceGrant>(),
-        };
-        let resolved = if let Some(grant) = saved_grant {
-            let resolved = canonical_directory(&workspace).await?;
-            if grant.caller != *ctx.caller()
-                || grant.path != resolved
-                || (source != workspace && canonical_directory(&source).await? != resolved)
-            {
-                return Err("Scheduled workspace does not match its saved authorization".into());
-            }
-            resolved
-        } else {
-            let grants = self
-                .cli_workspaces
-                .as_ref()
-                .ok_or("CLI workspace registration is unavailable")?;
-            grants
-                .authorize_workspace(ctx.caller(), &meta)
-                .await?
-                .ok_or("CLI request is missing its workspace")?
-        };
-
-        // NativeRuntime also reads the context's original metadata. A resumed
-        // session may have been created in a nested directory, which would
-        // otherwise override this newer, registered parent directory.
-        if let Some(frozen) = ctx.meta().get_extra_as::<PathBuf>(keys::WORKSPACE)
-            && frozen != workspace
-            && let Ok(frozen) = tokio::fs::canonicalize(frozen).await
-            && frozen != resolved
-            && frozen.starts_with(&resolved)
-        {
-            return Err(
-                "CLI workspace changed inside an active session; start a new conversation".into(),
-            );
-        }
-        Ok(Some(resolved))
+        call_workspace(self.cli_workspaces.as_ref(), ctx).await
     }
+}
+
+/// The registered CLI or desktop directory a tool call runs in, or `None`
+/// when the request names none. A scheduled run uses the grant saved with its
+/// cron job; any other call needs a live registration. The shell runs there,
+/// and the workspace file tools read there.
+pub(crate) async fn call_workspace(
+    grants: Option<&CliWorkspaceGrants>,
+    ctx: &BaseCtx,
+) -> Result<Option<PathBuf>, BoxError> {
+    let session = ctx.get_state::<SessionRequestMeta>();
+    let meta = session
+        .as_ref()
+        .map_or_else(|| ctx.meta().clone(), SessionRequestMeta::get);
+    let Some((source, workspace)) = cli_workspace_request(&meta)? else {
+        return Ok(None);
+    };
+    let saved_grant = match &session {
+        Some(session) => session.cron_workspace(),
+        None => ctx.get_state::<CronWorkspaceGrant>(),
+    };
+    let resolved = if let Some(grant) = saved_grant {
+        let resolved = canonical_directory(&workspace).await?;
+        if grant.caller != *ctx.caller()
+            || grant.path != resolved
+            || (source != workspace && canonical_directory(&source).await? != resolved)
+        {
+            return Err("Scheduled workspace does not match its saved authorization".into());
+        }
+        resolved
+    } else {
+        grants
+            .ok_or("CLI workspace registration is unavailable")?
+            .authorize_workspace(ctx.caller(), &meta)
+            .await?
+            .ok_or("CLI request is missing its workspace")?
+    };
+
+    // NativeRuntime and the file tools also read the context's original
+    // metadata. A resumed session may have been created in a nested
+    // directory, which would otherwise override this newer, registered parent
+    // directory.
+    if let Some(frozen) = ctx.meta().get_extra_as::<PathBuf>(keys::WORKSPACE)
+        && frozen != workspace
+        && let Ok(frozen) = tokio::fs::canonicalize(frozen).await
+        && frozen != resolved
+        && frozen.starts_with(&resolved)
+    {
+        return Err(
+            "CLI workspace changed inside an active session; start a new conversation".into(),
+        );
+    }
+    Ok(Some(resolved))
 }
 
 #[async_trait]

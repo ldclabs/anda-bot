@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`read_file` and `search_file` reach the chat's project directory**: in a chat opened on a project with `anda` or Anda Desktop, the shell ran in the project, but `read_file` and `search_file` reached only Anda's own directories under `~/.anda`. Reading a project file failed with "Path is not accessible from any configured workspace", and the agent fell back to the shell (conversation #953, reading the repository's `CHANGELOG.md`). They now reach the directory the chat registered, ahead of the others, under the same grant the shell uses: only for the owner, never for an external IM user, and a scheduled run uses the directory saved with its job. They read it no more freely than the shell would without asking: under "Request approval" they leave the project to the shell, and under "Approve for me" `read_file` refuses files that look like secrets (`.env`, keys, tokens), which the shell asks about first. `edit_file`, `write_file` and `apply_patch` still reach only `~/.anda`.
+
 ## [0.14.1] — 2026-10-12
 
 ### Added
