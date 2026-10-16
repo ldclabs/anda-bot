@@ -28,7 +28,7 @@ use crate::engine::{
     apply_action_resolution_to_chat_message, apply_action_resolution_to_message,
     conversation::{ContextUsage, SourceState},
     goal::{self},
-    is_action_message_value, multimodal,
+    is_action_message_value, multimodal, plan,
     prompt::{PromptCommand, skill_command_directive},
     system::{
         mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
@@ -501,6 +501,8 @@ impl SessionRunner {
             }),
             ..Default::default()
         };
+        // The work goes on in the child, and so does its plan.
+        plan::record(&self.ctx.base, &mut child_conversation);
 
         // DB errors here must not propagate to the outer runner loop: that
         // would drop the session while the conversation stays `Working` in
@@ -827,6 +829,22 @@ impl SessionRunner {
             return Ok(!cancelled);
         }
 
+        // A request from the caller to an idle runner starts a new turn, so the
+        // previous request's plan goes. Background results keep it: a step may
+        // be waiting for them. Mid-task input leaves it to the model, which
+        // sends a new plan when the request changes.
+        if self.runner.is_idle()
+            && inputs.iter().any(|input| {
+                input.new_request
+                    && !matches!(
+                        input.command,
+                        PromptCommand::Ping | PromptCommand::Invalid { .. }
+                    )
+            })
+        {
+            plan::clear(&self.ctx.base, &mut self.conversation);
+        }
+
         // Accumulate all follow-up content for this batch instead of queueing
         // it input-by-input. Background subagent/shell results arrive as
         // separate inputs and are drained into a single run() call (the channel
@@ -850,6 +868,7 @@ impl SessionRunner {
                 resources,
                 mut extra,
                 usage,
+                ..
             } = input;
             self.cron_receipts.push(cron_receipt);
             // Session lifecycle control is not user context for the model.
@@ -1253,6 +1272,12 @@ impl SessionRunner {
                         .await;
                 }
                 self.replace_conversation_messages_from_chat_history(res.chat_history);
+                if res.failed_reason.is_none()
+                    && self.runner.is_idle()
+                    && !self.session.has_running_background_tasks()
+                {
+                    plan::finish_turn(&self.ctx.base, &mut self.conversation);
+                }
 
                 self.conversation.status = if res.failed_reason.is_some() {
                     ConversationStatus::Failed
@@ -1404,6 +1429,7 @@ fn apply_action_event_to_history(runner: &mut CompletionRunner, event: ActionEve
                 responded_at,
             )
         }),
+        ActionEvent::Plan(_) => false,
     }
 }
 
@@ -1433,6 +1459,7 @@ fn apply_action_event_to_messages(messages: &mut Vec<Message>, event: ActionEven
                 }
             }
         }
+        ActionEvent::Plan(_) => {}
     }
 }
 
@@ -1521,6 +1548,7 @@ fn apply_action_event_to_conversation(conversation: &mut Conversation, event: Ac
         } => conversation.messages.iter_mut().any(|message| {
             apply_action_resolution_to_message(message, &action_id, status, &response, responded_at)
         }),
+        ActionEvent::Plan(steps) => plan::save(conversation, &steps),
     };
 
     if updated {
@@ -1949,6 +1977,7 @@ mod tests {
             resources: vec![],
             extra: serde_json::Map::new(),
             usage: Usage::default(),
+            new_request: true,
         }
     }
 
@@ -3850,5 +3879,120 @@ mod tests {
         assert!(session.control.is_pending());
         drop(receipt);
         assert!(completion.await.unwrap().error.is_some());
+    }
+
+    fn plan_steps(statuses: &[&str]) -> Vec<anda_engine::extension::todo::TodoItemInput> {
+        statuses
+            .iter()
+            .enumerate()
+            .map(|(i, status)| anda_engine::extension::todo::TodoItemInput {
+                id: (i + 1).to_string(),
+                content: Some(format!("Step {}", i + 1)),
+                status: Some(status.to_string()),
+            })
+            .collect()
+    }
+
+    fn recorded_plan_statuses(conversation: &Conversation) -> Option<Vec<String>> {
+        let plan = conversation.extra.as_ref()?.get(plan::PLAN_KEY)?;
+        Some(
+            plan.as_array()
+                .unwrap()
+                .iter()
+                .map(|step| step["status"].as_str().unwrap().to_string())
+                .collect(),
+        )
+    }
+
+    fn background(command: PromptCommand) -> ConversationInput {
+        ConversationInput {
+            new_request: false,
+            ..input(command)
+        }
+    }
+
+    #[test]
+    fn plan_event_is_recorded_in_the_conversation() {
+        let mut conversation = Conversation::default();
+        let steps = vec![plan::PlanStep {
+            content: "Run tests".to_string(),
+            status: plan::PlanStatus::InProgress,
+        }];
+        assert!(apply_action_event_to_conversation(
+            &mut conversation,
+            ActionEvent::Plan(steps.clone())
+        ));
+        assert_eq!(
+            recorded_plan_statuses(&conversation),
+            Some(vec!["in_progress".to_string()])
+        );
+        assert!(!apply_action_event_to_conversation(
+            &mut conversation,
+            ActionEvent::Plan(steps)
+        ));
+    }
+
+    #[tokio::test]
+    async fn new_request_clears_the_plan_and_background_input_keeps_it() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let mut snapshot = HashMap::new();
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["in_progress", "pending"]))
+            .unwrap();
+        plan::record(&sess_runner.ctx.base, &mut sess_runner.conversation);
+
+        // A step may be waiting for a background result, and pending steps
+        // keep the final reply from completing the one in progress.
+        sess_runner
+            .run(
+                vec![background(PromptCommand::Plain {
+                    prompt: "subagent finished".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            recorded_plan_statuses(&sess_runner.conversation),
+            Some(vec!["in_progress".to_string(), "pending".to_string()])
+        );
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "something else".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        assert_eq!(recorded_plan_statuses(&sess_runner.conversation), None);
+        assert!(!session.has_items());
+    }
+
+    #[tokio::test]
+    async fn final_reply_completes_the_last_step() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["completed", "in_progress"]))
+            .unwrap();
+
+        sess_runner
+            .run(
+                vec![background(PromptCommand::Plain {
+                    prompt: "tests passed".to_string(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            recorded_plan_statuses(&sess_runner.conversation),
+            Some(vec!["completed".to_string(), "completed".to_string()])
+        );
     }
 }

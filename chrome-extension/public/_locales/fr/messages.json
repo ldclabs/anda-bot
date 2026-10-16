@@ -371,6 +371,21 @@
   "actionDockShortcuts": {
     "message": "$1 approuver · $2 refuser"
   },
+  "planDockLabel": {
+    "message": "Plan"
+  },
+  "planDockProgress": {
+    "message": "$1 étape(s) sur $2 terminée(s)"
+  },
+  "planStepCompleted": {
+    "message": "Terminée"
+  },
+  "planStepInProgress": {
+    "message": "En cours"
+  },
+  "planStepPending": {
+    "message": "À faire"
+  },
   "actionChoiceRecommended": {
     "message": "Recommandé"
   },

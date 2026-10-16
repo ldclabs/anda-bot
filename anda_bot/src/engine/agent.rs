@@ -65,6 +65,7 @@ use super::{
     goal::{self, GoalTool, GoalToolState},
     idle::{IDLE_CHECK_INTERVAL, IDLE_HOOK_THRESHOLD_MS, IdleHook, IdleTracker},
     multimodal,
+    plan::{self, UpdatePlanTool},
     prompt::{PromptCommand, skill_command_directive},
     resources::ResourceStore,
     side,
@@ -159,6 +160,7 @@ fn base_tool_dependencies() -> Vec<String> {
         ShellTool::NAME.to_string(),
         SHELL_SESSION_NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
+        UpdatePlanTool::NAME.to_string(),
         ReadFileTool::NAME.to_string(),
         SearchFileTool::NAME.to_string(),
         EditFileTool::NAME.to_string(),
@@ -833,9 +835,10 @@ impl AndaBot {
         }))
     }
 
-    /// The tools a session's first request loads: the base set, `extra`, the
-    /// browser tools while the caller has a browser this request may drive,
-    /// and the caller's three most used other tools.
+    /// The tools a session's first request loads: the base set, `extra`,
+    /// `update_plan` where a client shows the plan, the browser tools while
+    /// the caller has a browser this request may drive, and the caller's three
+    /// most used other tools.
     fn initial_tools(
         &self,
         caller: Principal,
@@ -845,6 +848,9 @@ impl AndaBot {
     ) -> UniqueVec<String> {
         let mut tools = UniqueVec::from(base_tools());
         tools.extend(extra);
+        if plan::shown_for(meta) {
+            tools.push(UpdatePlanTool::NAME.to_string());
+        }
         if self.inner.browser_manager.is_available(caller, meta) {
             tools.extend(ChromeBrowserTool::NAMES.map(String::from));
         }
@@ -1055,6 +1061,7 @@ impl Agent<AgentCtx> for AndaBot {
             resources,
             extra: ctx.meta().extra.clone(),
             usage: Usage::default(),
+            new_request: true,
         };
         let current_conversation_id = current_conversation.as_ref().map(|conv| conv._id);
         if let Some(id) = current_conversation_id {
@@ -1907,6 +1914,8 @@ mod tests {
             .register_tool(Arc::new(AskUserChoiceTool))
             .unwrap()
             .register_tool(Arc::new(GoalTool::new()))
+            .unwrap()
+            .register_tool(Arc::new(UpdatePlanTool))
             .unwrap()
             .register_tool(Arc::new(ReadFileTool::with_workspaces(vec![])))
             .unwrap()

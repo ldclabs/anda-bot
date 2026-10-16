@@ -13,6 +13,7 @@ import type {
   Conversation,
   ConversationDelta,
   MessageGroup,
+  PlanStep,
   SourceState
 } from './types'
 import { SubmitMessageConversationId } from './types'
@@ -143,6 +144,7 @@ function createBackend(options: {
                 cached_tokens: 0,
                 requests: 1
               },
+              plan: conv?.plan,
               updated_at: conv?.updated_at || 0
             }
             return { output: { result: delta }, usage: {} } as Result
@@ -421,6 +423,45 @@ describe('Channel source jumps', () => {
       expect(channel.messageGroups[1]?.current).toBe(true)
       expect(channel.conversationId).toBe(5)
     } finally {
+      channel.destroy()
+    }
+  })
+})
+
+describe('Channel.plan', () => {
+  it('follows the plan of the running request through polled deltas', async () => {
+    const now = Date.now()
+    const started: PlanStep[] = [
+      { content: 'Read the config', status: 'in_progress' },
+      { content: 'Fix the bug', status: 'pending' }
+    ]
+    const advanced: PlanStep[] = [
+      { content: 'Read the config', status: 'completed' },
+      { content: 'Fix the bug', status: 'in_progress' }
+    ]
+    const running = conversation({
+      status: 'working',
+      plan: started,
+      updated_at: now,
+      created_at: now - 1000
+    })
+    const backend = createBackend({
+      conversations: [running],
+      sourceState: { conv_id: 5, status: 'working', timestamp: now }
+    })
+    const channel = new Channel('browser:test', backend.api)
+    await channel.init()
+    const wakeTimer = setInterval(() => channel.wakePolling(), 5)
+
+    try {
+      expect(channel.plan).toEqual(started)
+      running.plan = advanced
+      await vi.waitFor(() => expect(channel.plan).toEqual(advanced))
+      // The next request cleared the plan.
+      running.plan = undefined
+      await vi.waitFor(() => expect(channel.plan).toBeUndefined())
+    } finally {
+      clearInterval(wakeTimer)
       channel.destroy()
     }
   })

@@ -499,6 +499,14 @@ export interface ContextUsage {
   window: number
 }
 
+export type PlanStatus = 'pending' | 'in_progress' | 'completed'
+
+/** One step of the plan the agent keeps for the request it works on. */
+export interface PlanStep {
+  content: string
+  status: PlanStatus
+}
+
 export interface Conversation {
   _id: number
   user: Principal
@@ -509,6 +517,8 @@ export interface Conversation {
   status: ConversationStatus
   usage: Usage
   context_usage?: ContextUsage
+  /** The plan of the request in progress, lifted from `extra.plan`. */
+  plan?: PlanStep[]
   failed_reason?: string
   steering_messages?: string[]
   follow_up_messages?: string[]
@@ -527,6 +537,7 @@ export interface ConversationDelta {
   status: ConversationStatus
   usage: Usage
   context_usage?: ContextUsage
+  plan?: PlanStep[]
   failed_reason?: string
   updated_at: number
   child?: number

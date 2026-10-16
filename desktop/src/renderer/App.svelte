@@ -9,6 +9,7 @@
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
+  import PlanDock from '$lib/anda/PlanDock.svelte'
   import { displayMessages } from '$lib/anda/chat/message-display'
   import { actionPending } from '$lib/anda/chat/action-view'
   import { firstLine, runningToolLabel } from '$lib/anda/chat/tool-view'
@@ -1370,6 +1371,7 @@
         >{/if}
       <footer class="composer-footer">
         <div class="composer-container">
+          <PlanDock steps={channel?.plan || []} {working} />
           <ActionDock
             bind:this={dock}
             pending={pendingActions}

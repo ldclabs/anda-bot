@@ -482,6 +482,7 @@ impl AgentHook for Session {
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
                 usage,
+                new_request: false,
             })
             .await
             .ok();
@@ -521,6 +522,7 @@ impl AgentHook for Session {
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
                 usage,
+                new_request: false,
             })
             .await
             .ok();
@@ -566,6 +568,7 @@ impl AgentHook for Session {
                 resources: output.artifacts,
                 extra: ctx.meta().extra.clone(),
                 usage,
+                new_request: false,
             })
             .await
             .ok();
@@ -636,6 +639,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 usage: output.usage,
                 extra: ctx.meta().extra.clone(),
                 resources: output.artifacts,
+                new_request: false,
             })
             .await
             .ok();
@@ -672,6 +676,7 @@ impl ToolHook<ExecArgs, ExecOutput> for Session {
                 usage: output.usage,
                 extra: ctx.meta().extra.clone(),
                 resources: output.artifacts,
+                new_request: false,
             })
             .await
             .ok();
@@ -704,6 +709,8 @@ pub(super) struct ConversationInput {
     pub(super) resources: Vec<Resource>,
     pub(super) extra: Map<String, Value>,
     pub(super) usage: Usage,
+    /// A request from the caller, as opposed to a background result.
+    pub(super) new_request: bool,
 }
 
 #[cfg(test)]

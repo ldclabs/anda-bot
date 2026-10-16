@@ -371,6 +371,21 @@
   "actionDockShortcuts": {
     "message": "$1 批准 · $2 拒绝"
   },
+  "planDockLabel": {
+    "message": "计划"
+  },
+  "planDockProgress": {
+    "message": "已完成 $1/$2 步"
+  },
+  "planStepCompleted": {
+    "message": "已完成"
+  },
+  "planStepInProgress": {
+    "message": "进行中"
+  },
+  "planStepPending": {
+    "message": "未开始"
+  },
   "actionChoiceRecommended": {
     "message": "推荐"
   },

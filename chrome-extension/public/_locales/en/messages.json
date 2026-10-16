@@ -371,6 +371,21 @@
   "actionDockShortcuts": {
     "message": "$1 approve · $2 deny"
   },
+  "planDockLabel": {
+    "message": "Plan"
+  },
+  "planDockProgress": {
+    "message": "$1 of $2 steps done"
+  },
+  "planStepCompleted": {
+    "message": "Done"
+  },
+  "planStepInProgress": {
+    "message": "In progress"
+  },
+  "planStepPending": {
+    "message": "Not started"
+  },
   "actionChoiceRecommended": {
     "message": "Recommended"
   },

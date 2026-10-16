@@ -47,6 +47,7 @@ mod memory_api;
 mod memory_mcp;
 pub(crate) use memory_mcp::MEMORY_MCP_PATH;
 mod multimodal;
+mod plan;
 mod project_fs;
 mod prompt;
 mod resources;
@@ -759,6 +760,7 @@ impl Engines {
             ))))?
             .register_tool(record_artifacts(Arc::new(AskUserChoiceTool)))?
             .register_tool(record_artifacts(Arc::new(GoalTool::new())))?
+            .register_tool(record_artifacts(Arc::new(plan::UpdatePlanTool)))?
             .register_tool(record_artifacts(Arc::new(read_file_tool)))?
             .register_tool(record_artifacts(Arc::new(search_file_tool)))?
             .register_tool(record_artifacts(Arc::new(

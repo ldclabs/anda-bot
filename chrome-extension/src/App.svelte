@@ -11,6 +11,7 @@
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import AndaMark from '$lib/anda/AndaMark.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
+  import PlanDock from '$lib/anda/PlanDock.svelte'
   import { actionPending } from '$lib/anda/chat/action-view'
   import { displayMessages } from '$lib/anda/chat/message-display'
   import { runningToolLabel } from '$lib/anda/chat/tool-view'
@@ -697,6 +698,7 @@
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatGptUsage model={andaClient.modelState.activeModel} />
+      <PlanDock steps={andaClient.activeChannel?.plan || []} working={stoppable} />
       <ActionDock
         pending={pendingActions}
         onReply={(text) => sendPrompt({ text, attachments: [] })}

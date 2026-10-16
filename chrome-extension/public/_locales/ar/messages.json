@@ -371,6 +371,21 @@
   "actionDockShortcuts": {
     "message": "$1 للموافقة · $2 للرفض"
   },
+  "planDockLabel": {
+    "message": "الخطة"
+  },
+  "planDockProgress": {
+    "message": "اكتملت $1 من $2 خطوات"
+  },
+  "planStepCompleted": {
+    "message": "مكتملة"
+  },
+  "planStepInProgress": {
+    "message": "قيد التنفيذ"
+  },
+  "planStepPending": {
+    "message": "لم تبدأ"
+  },
   "actionChoiceRecommended": {
     "message": "موصى به"
   },

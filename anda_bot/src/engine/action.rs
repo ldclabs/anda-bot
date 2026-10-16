@@ -23,7 +23,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-use super::{agent::SessionRequestMeta, goal::GoalToolState};
+use super::{agent::SessionRequestMeta, goal::GoalToolState, plan::PlanStep};
 use crate::util::request_meta::keys;
 
 mod shell_policy;
@@ -134,6 +134,10 @@ pub(crate) enum ActionEvent {
         response: Value,
         responded_at: u64,
     },
+    /// The turn plan changed. Not an action, but it rides this channel so the
+    /// conversation records it while the step that changed it is still
+    /// running, the way a pending approval shows up.
+    Plan(Vec<PlanStep>),
 }
 
 #[derive(Clone)]
@@ -258,6 +262,12 @@ impl ActionSession {
 
     pub(crate) fn cancel_pending(&self) -> Vec<ActionEvent> {
         self.runtime.cancel_session(&self.session_id)
+    }
+
+    /// Hands the session runner a changed plan. A closed session has nobody
+    /// to show it to.
+    pub(crate) async fn publish_plan(&self, steps: Vec<PlanStep>) {
+        let _ = self.event_sender.send(ActionEvent::Plan(steps)).await;
     }
 
     /// The user wrote in chat while a choice card was waiting. Release the

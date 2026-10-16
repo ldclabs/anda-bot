@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
 };
 
+use super::plan::PLAN_KEY;
 use crate::util::request_meta::{keys, request_meta_extra_as};
 
 /// Key of [`ContextUsage`] in a conversation's `extra` and in the
@@ -562,13 +563,38 @@ fn memory_reusable(
     Ok(space.product_source_allowed(&source))
 }
 
-/// Lifts [`ContextUsage`] to the top level, beside `usage`, where a client
-/// polling deltas finds it.
-fn with_context_usage(mut result: Value, context: Option<ContextUsage>) -> Value {
-    if let (Some(context), Some(result)) = (context, result.as_object_mut()) {
-        result.insert(CONTEXT_USAGE_KEY.to_string(), json!(context));
+/// What the session runner records in a conversation's `extra` about the
+/// work in progress: the context in use and the turn plan.
+struct LiveState {
+    context: Option<ContextUsage>,
+    plan: Option<Value>,
+}
+
+impl LiveState {
+    fn of(conversation: &Conversation) -> Self {
+        Self {
+            context: ContextUsage::of(conversation),
+            plan: conversation
+                .extra
+                .as_ref()
+                .and_then(|extra| extra.get(PLAN_KEY))
+                .cloned(),
+        }
     }
-    result
+
+    /// Lifts the state to the top level, beside `usage`, where a client
+    /// polling deltas finds it.
+    fn lift(self, mut result: Value) -> Value {
+        if let Some(result) = result.as_object_mut() {
+            if let Some(context) = self.context {
+                result.insert(CONTEXT_USAGE_KEY.to_string(), json!(context));
+            }
+            if let Some(plan) = self.plan {
+                result.insert(PLAN_KEY.to_string(), plan);
+            }
+        }
+        result
+    }
 }
 
 fn ok(result: Value) -> ToolOutput<Response> {
@@ -750,7 +776,7 @@ impl Tool<BaseCtx> for ConversationsTool {
                 Ok(ok(if is_agent {
                     json!(Document::from(conversation))
                 } else {
-                    with_context_usage(json!(conversation), ContextUsage::of(&conversation))
+                    LiveState::of(&conversation).lift(json!(conversation))
                 }))
             }
             ConversationsToolArgs::GetConversationDelta {
@@ -761,11 +787,10 @@ impl Tool<BaseCtx> for ConversationsTool {
                 let conversation = self.conversations.get_conversation(_id).await?;
                 self.check_readable(&conversation, caller, is_agent).await?;
 
-                let context = ContextUsage::of(&conversation);
-                Ok(ok(with_context_usage(
-                    json!(conversation.into_delta(messages_offset, artifacts_offset)),
-                    context,
-                )))
+                let live = LiveState::of(&conversation);
+                Ok(ok(live.lift(json!(
+                    conversation.into_delta(messages_offset, artifacts_offset)
+                ))))
             }
             ConversationsToolArgs::BatchGetConversations { ids } => {
                 let conversations = self
@@ -1336,6 +1361,12 @@ mod tests {
         context.save(&mut mine);
         assert_eq!(ContextUsage::of(&mine), Some(context));
         assert_eq!(mine.extra.as_ref().unwrap()["workspace"], "/work");
+        let plan = json!([{"content": "Run tests", "status": "in_progress"}]);
+        mine.extra
+            .as_mut()
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .insert(PLAN_KEY.to_string(), plan.clone());
         let my_id = tool
             .conversations
             .add_conversation(ConversationRef::from(&mine))
@@ -1363,6 +1394,7 @@ mod tests {
         );
         assert_eq!(result["_id"], my_id);
         assert_eq!(result[CONTEXT_USAGE_KEY], json!(context));
+        assert_eq!(result[PLAN_KEY], plan);
 
         let err = tool
             .call(
@@ -1390,6 +1422,7 @@ mod tests {
         );
         assert_eq!(result["messages"].as_array().map(Vec::len), Some(1));
         assert_eq!(result[CONTEXT_USAGE_KEY], json!(context));
+        assert_eq!(result[PLAN_KEY], plan);
 
         let err = tool
             .call(

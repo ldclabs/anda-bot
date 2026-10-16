@@ -371,6 +371,21 @@
   "actionDockShortcuts": {
     "message": "$1 — одобрить · $2 — отклонить"
   },
+  "planDockLabel": {
+    "message": "План"
+  },
+  "planDockProgress": {
+    "message": "Выполнено шагов: $1 из $2"
+  },
+  "planStepCompleted": {
+    "message": "Готово"
+  },
+  "planStepInProgress": {
+    "message": "Выполняется"
+  },
+  "planStepPending": {
+    "message": "Не начато"
+  },
   "actionChoiceRecommended": {
     "message": "Рекомендуется"
   },

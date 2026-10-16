@@ -24,6 +24,7 @@ import type {
   ConversationDelta,
   ConversationStatus,
   MessageGroup,
+  PlanStep,
   RequestMeta,
   RpcOutput,
   SourceState,
@@ -158,6 +159,11 @@ export class Channel extends EventTarget {
   /** The context the latest conversation's most recent model request filled. */
   get contextUsage(): ContextUsage | undefined {
     return this.#conversation?.context_usage
+  }
+
+  /** The steps of the request the agent is working on, if it keeps a plan. */
+  get plan(): PlanStep[] | undefined {
+    return this.#conversation?.plan
   }
 
   get conversationId(): number {
@@ -697,7 +703,8 @@ export class Channel extends EventTarget {
         conversation.failed_reason !== result.failed_reason ||
         conversation.child !== result.child ||
         JSON.stringify(conversation.usage) !== JSON.stringify(result.usage) ||
-        JSON.stringify(conversation.context_usage) !== JSON.stringify(result.context_usage)
+        JSON.stringify(conversation.context_usage) !== JSON.stringify(result.context_usage) ||
+        JSON.stringify(conversation.plan) !== JSON.stringify(result.plan)
       if (result.messages.length)
         conversation.messages = [...(conversation.messages || []), ...result.messages]
       if (result.artifacts.length)
@@ -705,6 +712,7 @@ export class Channel extends EventTarget {
       conversation.status = result.status
       conversation.usage = result.usage
       conversation.context_usage = result.context_usage
+      conversation.plan = result.plan
       conversation.failed_reason = result.failed_reason
       conversation.updated_at = result.updated_at
       conversation.child = result.child
@@ -723,6 +731,7 @@ export class Channel extends EventTarget {
         conversation.status = refreshed.status
         conversation.usage = refreshed.usage
         conversation.context_usage = refreshed.context_usage
+        conversation.plan = refreshed.plan
         conversation.failed_reason = refreshed.failed_reason
         conversation.updated_at = refreshed.updated_at
         conversation.child = refreshed.child

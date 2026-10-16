@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 use crate::engine::{
     conversation::CONTEXT_USAGE_KEY,
     is_action_message_value,
+    plan::PLAN_KEY,
     system::{mark_special_user_messages, scoped_external_user_name},
 };
 use crate::util::request_meta::{keys, request_meta_extra_as};
@@ -76,10 +77,11 @@ pub(super) fn request_meta_from_conversation(
     for key in TRANSIENT_REQUEST_EXTRA_KEYS {
         extra.remove(key);
     }
-    // The runner records the context in use beside the request metadata. It
-    // describes this conversation, and a compaction child built from the
-    // recovered metadata would show it as its own.
+    // The runner records the context in use and the turn plan beside the
+    // request metadata. They describe this conversation, and a compaction
+    // child built from the recovered metadata would show them as its own.
     extra.remove(CONTEXT_USAGE_KEY);
+    extra.remove(PLAN_KEY);
     apply_source_key_to_meta_extra(&mut extra, source_key);
     extra.insert(keys::CONVERSATION.to_string(), conversation._id.into());
 
@@ -374,6 +376,7 @@ mod tests {
                 "approval_mode": "full_access",
                 "finish_when_idle": true,
                 CONTEXT_USAGE_KEY: {"tokens": 320_000, "window": 400_000},
+                PLAN_KEY: [{"content": "Run tests", "status": "in_progress"}],
             })),
             ..Default::default()
         };
@@ -387,6 +390,7 @@ mod tests {
         assert_eq!(meta.get_extra_as::<bool>("finish_when_idle"), None);
         // The recorded context is the conversation's, not request metadata.
         assert!(!meta.extra.contains_key(CONTEXT_USAGE_KEY));
+        assert!(!meta.extra.contains_key(PLAN_KEY));
         // Routing keys still have to survive so replies return to the source.
         assert_eq!(
             meta.get_extra_as::<String>("source"),

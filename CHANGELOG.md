@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- **Multi-step work shows its plan above the message box**: since the session todo list was dropped in 0.13, nothing showed how far a long request had got, so the user had to read every message and tool row. A new `update_plan` tool lets the agent keep a short list of steps for the request it is working on (at most 12, each a short phrase, one in progress). Anda Desktop and the Chrome extension pin the list above the message box, and it can be collapsed to the step in progress. The agent sends the plan with its first tool call and moves to the next step with `advance` alongside the call that starts it, never in a round trip of its own; `done` and `start` reorder it, and a new list replaces it. The final reply checks off the last step when no step is left pending. The plan updates while a long command is still running: it travels the channel approvals use, so the conversation records it at once. It is kept in the session's task list, so a compaction hands the unfinished steps to the continuation and the child conversation shows the same plan. A new request to an idle session starts without a plan, and background results leave the current one alone. `GetConversation` and `GetConversationDelta` return it as `plan` beside `context_usage`. The tool is loaded only where a client shows the plan: not in IM channels, cron jobs or MCP event automations, and never for subagents.
+
 ## [0.14.2] — 2026-10-13
 
 ### Added

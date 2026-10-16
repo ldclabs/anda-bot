@@ -721,6 +721,7 @@ mod tests {
                     } => shown
                         .lock()
                         .push(json!({"resolved": action_id, "status": status})),
+                    ActionEvent::Plan(_) => {}
                 }
             }
         });
