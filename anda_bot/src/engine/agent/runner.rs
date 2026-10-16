@@ -72,6 +72,10 @@ impl AndaBot {
         {
             req.model = Some(model.model_name());
         }
+        // The turn plan lives in the session, and a new session starts without
+        // one. A conversation it continues, as after a daemon restart, must not
+        // keep showing the previous session's plan.
+        plan::record(&ctx.base, &mut conversation);
         let assistant = self.clone();
         tokio::spawn(async move {
             let mut cron_receipts = crate::cron::AgentReceipts::default();
@@ -829,11 +833,13 @@ impl SessionRunner {
             return Ok(!cancelled);
         }
 
-        // A request from the caller to an idle runner starts a new turn, so the
-        // previous request's plan goes. Background results keep it: a step may
-        // be waiting for them. Mid-task input leaves it to the model, which
-        // sends a new plan when the request changes.
+        // A request from the caller to an idle session starts a new turn, so
+        // the previous request's plan goes. Background results keep it: a step
+        // may be waiting for them. Mid-task input, including a message while
+        // background work still runs, leaves it to the model, which sends a new
+        // plan when the request changes.
         if self.runner.is_idle()
+            && !self.session.has_running_background_tasks()
             && inputs.iter().any(|input| {
                 input.new_request
                     && !matches!(
@@ -3994,5 +4000,123 @@ mod tests {
             recorded_plan_statuses(&sess_runner.conversation),
             Some(vec!["completed".to_string(), "completed".to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn new_request_keeps_the_plan_while_background_work_runs() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["in_progress", "pending"]))
+            .unwrap();
+        plan::record(&sess_runner.ctx.base, &mut sess_runner.conversation);
+        sess_runner
+            .session
+            .background_tasks
+            .write()
+            .insert("build".to_string(), BackgroundTaskInfo::default());
+
+        // The step in progress still waits for the build: a question about it
+        // is mid-task input, not a new request.
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "how is it going?".to_string(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            recorded_plan_statuses(&sess_runner.conversation),
+            Some(vec!["in_progress".to_string(), "pending".to_string()])
+        );
+        assert!(session.has_items());
+    }
+
+    #[tokio::test]
+    async fn nested_agents_keep_their_own_task_list() {
+        use anda_engine::{extension::todo::todo_session, hook::AgentHook};
+
+        let (session, _rx, _action_rx) = build_session();
+        // A nested agent's context starts as a copy of the session's state,
+        // which shares the plan's task list.
+        let ctx = mock_runner_ctx();
+        let shared = todo_session(&ctx.base);
+        shared.set(plan_steps(&["in_progress", "pending"])).unwrap();
+
+        session
+            .before_agent_run(&ctx, "research".to_string(), Vec::new())
+            .await
+            .unwrap();
+        assert!(!todo_session(&ctx.base).has_items());
+        assert!(shared.has_items());
+    }
+
+    #[tokio::test]
+    async fn new_session_drops_the_plan_of_the_session_before() {
+        let bot = build_runner_bot().await;
+        let (session, rx, action_rx) = build_session();
+        let stop_sender = session.sender.clone();
+        // The daemon restarted after the last turn: the conversation still
+        // records its plan, while the session that kept it is gone.
+        let conversation = Conversation {
+            status: ConversationStatus::Idle,
+            extra: Some(json!({
+                plan::PLAN_KEY: [{"content": "Old step", "status": "in_progress"}]
+            })),
+            ..Default::default()
+        };
+        let id = bot
+            .inner
+            .conversations
+            .conversations
+            .add_conversation(ConversationRef::from(&conversation))
+            .await
+            .unwrap();
+
+        bot.spawn_session_runner(
+            mock_runner_ctx(),
+            CompletionRequest {
+                prompt: "next request".to_string(),
+                ..Default::default()
+            },
+            vec![],
+            vec![],
+            session,
+            Conversation {
+                _id: id,
+                ..conversation
+            },
+            rx,
+            action_rx,
+            None,
+            None,
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let saved = bot
+                    .inner
+                    .conversations
+                    .conversations
+                    .get_conversation(id)
+                    .await
+                    .unwrap();
+                if recorded_plan_statuses(&saved).is_none() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the conversation kept the plan of the session before");
+
+        let _ = stop_sender
+            .send(input(PromptCommand::Stop {
+                reason: String::new(),
+            }))
+            .await;
     }
 }

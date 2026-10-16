@@ -854,10 +854,15 @@ impl AndaBot {
         if self.inner.browser_manager.is_available(caller, meta) {
             tools.extend(ChromeBrowserTool::NAMES.map(String::from));
         }
+        // Every multi-step request calls `update_plan` several times, so it
+        // ranks among the most used tools; where no client shows the plan it
+        // must not come back that way.
+        let mut loaded = tools.to_vec();
+        loaded.push(UpdatePlanTool::NAME.to_string());
         let most_used = self
             .inner
             .conversations
-            .tool_usage_with(|usage| select_most_used_tools(available_tools, &tools, usage, 3));
+            .tool_usage_with(|usage| select_most_used_tools(available_tools, &loaded, usage, 3));
         tools.extend(most_used);
         tools
     }
@@ -1725,6 +1730,38 @@ mod tests {
             selected,
             vec!["read_file".to_string(), "write_file".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn update_plan_is_not_a_most_used_tool_where_no_client_shows_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let bot = build_test_bot_with_channels(dir.path().to_path_buf(), Vec::new()).await;
+        // Multi-step work makes update_plan the most used tool.
+        bot.inner
+            .conversations
+            .accumulate_tool_usage(HashMap::from([(
+                UpdatePlanTool::NAME.to_string(),
+                Usage {
+                    requests: 99,
+                    ..Default::default()
+                },
+            )]))
+            .await
+            .unwrap();
+        let available = vec![UpdatePlanTool::NAME.to_string()];
+        let mut im = RequestMeta::default();
+        im.extra
+            .insert(keys::REPLY_TARGET.to_string(), json!("chat-1"));
+
+        let tools = bot.initial_tools(test_caller(), &im, &available, Vec::new());
+        assert!(!tools.contains(UpdatePlanTool::NAME));
+        let tools = bot.initial_tools(
+            test_caller(),
+            &RequestMeta::default(),
+            &available,
+            Vec::new(),
+        );
+        assert!(tools.contains(UpdatePlanTool::NAME));
     }
 
     use crate::engine::ACTIVE_MODEL_LABEL;

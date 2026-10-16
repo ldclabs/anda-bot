@@ -76,8 +76,9 @@ pub struct UpdatePlanArgs {
 }
 
 /// Shows the user the steps of the request in progress. Only the main AndaBot
-/// session writes the plan: subagents share its context state and would
-/// overwrite it.
+/// session writes the plan: a subagent keeps its own task list but shares the
+/// session's action channel, so its plan would replace the one the user
+/// follows.
 #[derive(Debug, Clone, Default)]
 pub struct UpdatePlanTool;
 
@@ -358,8 +359,8 @@ pub(crate) fn save(conversation: &mut Conversation, steps: &[PlanStep]) -> bool 
     true
 }
 
-/// Mirrors the session's plan into the conversation, as after a compaction
-/// moved the work to a child conversation.
+/// Mirrors the session's plan into the conversation: the child a compaction
+/// moved the work to, or one a new session continues.
 pub(crate) fn record(base: &BaseCtx, conversation: &mut Conversation) -> bool {
     let steps = base
         .get_state::<TodoSession>()

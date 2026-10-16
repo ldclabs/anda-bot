@@ -8,7 +8,10 @@ use anda_core::{
 };
 use anda_engine::{
     context::{AgentCtx, BaseCtx},
-    extension::shell::{CommandArgs, CommandOutput, ExecArgs, ExecOutput, ShellTool},
+    extension::{
+        shell::{CommandArgs, CommandOutput, ExecArgs, ExecOutput, ShellTool},
+        todo::TodoSession,
+    },
     hook::{AgentHook, BackgroundHandle, BackgroundTaskControls, ToolHook},
 };
 use async_trait::async_trait;
@@ -402,13 +405,17 @@ impl AgentHook for Session {
     }
     async fn before_agent_run(
         &self,
-        _ctx: &AgentCtx,
+        ctx: &AgentCtx,
         prompt: String,
         resources: Vec<Resource>,
     ) -> Result<(String, Vec<Resource>), BoxError> {
         if !self.memory_policy.may_write() {
             return Err("Nested agents are unavailable in restricted memory mode.".into());
         }
+        // A nested agent keeps its own task list. The session's holds the plan
+        // the user follows, which the agent's compaction would otherwise hand
+        // back to it as its own tasks.
+        ctx.base.set_state(TodoSession::new());
         Ok((prompt, resources))
     }
     async fn on_background_start(
