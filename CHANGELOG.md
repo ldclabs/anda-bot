@@ -4,9 +4,17 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.3] — 2026-10-17
+
 ### Added
 
 - **Multi-step work shows its plan above the message box**: since the session todo list was dropped in 0.13, nothing showed how far a long request had got, so the user had to read every message and tool row. A new `update_plan` tool lets the agent keep a short list of steps for the request it is working on (at most 12, each a short phrase, one in progress). Anda Desktop and the Chrome extension pin the list above the message box, and it can be collapsed to the step in progress. The agent sends the plan with its first tool call and moves to the next step with `advance` alongside the call that starts it, never in a round trip of its own; `done` and `start` reorder it, and a new list replaces it. The final reply checks off the last step when no step is left pending. The plan updates while a long command is still running: it travels the channel approvals use, so the conversation records it at once. It is kept in the session's task list, so a compaction hands the unfinished steps to the continuation and the child conversation shows the same plan. A new request to an idle session starts without a plan, and background results leave the current one alone. `GetConversation` and `GetConversationDelta` return it as `plan` beside `context_usage`. The tool is loaded only where a client shows the plan: not in IM channels, cron jobs or MCP event automations, and never for subagents.
+- **The agent compacts its own context at a task boundary**: a session compacted only when its context reached 80% of the model's window or after 81 turns, often in the middle of a task, and the summary turn replayed the whole conversation without the prompt cache. Sessions now offer the agent `compact_context` (Anda Engine 0.17). Once the context is at least 30% full, the agent can compact at the end of a task or phase with a handoff it writes itself, and no summary turn is sent. From 50%, a short runtime note tells it how full the context is; the note is never saved. The handoff guidance keeps what Anda's compaction summary asks for: absolute paths, where each piece of state lives, open background work, and, under `/goal`, each requirement with its evidence. As with any compaction, the session continues in a linked conversation. If the agent compacts before answering a message, that message moves to the continuation, so it is shown and remembered once. Compaction at 80% stays as the backstop, and subagent sessions can compact themselves the same way.
+
+### Changed
+
+- **Anda Engine 0.17**: Anda Core, Engine, Engine Server and Web3 Client move to 0.17, with Anda Brain 0.13.5 and serde-saphyr 2. Engine 0.17 removes remote engines, agents and tools, which Anda Bot never used.
+- **Version 0.14.3**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.3.
 
 ## [0.14.2] — 2026-10-13
 
