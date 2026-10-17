@@ -6,7 +6,7 @@ use anda_core::{
     AgentContext, BoxError, CompletionRequest, ContentPart, Message, Resource, StateFeatures, Usage,
 };
 use anda_engine::{
-    context::{AgentCtx, CompletionRunner},
+    context::{AgentCtx, CompletionRunner, SelfCompaction},
     memory::{Conversation, ConversationRef, ConversationStatus},
     rfc3339_datetime, unix_ms,
 };
@@ -31,8 +31,8 @@ use crate::engine::{
     is_action_message_value, multimodal, plan,
     prompt::{PromptCommand, skill_command_directive},
     system::{
-        mark_special_user_messages, system_extra_user_context, system_runtime_prompt,
-        system_user_message,
+        compaction_continue_prompt, mark_special_user_messages, system_extra_user_context,
+        system_runtime_prompt, system_user_message,
     },
 };
 
@@ -47,7 +47,9 @@ const FORMATION_RETRY_BACKOFF_MS: u64 = 60 * 1000;
 // backoff a failing supervisor model would be hammered continuously.
 const GOAL_CHECK_RETRY_BACKOFF_MS: u64 = 60 * 1000;
 const COMPACTION_PROMPT: &str = include_str!("../../../assets/CompactionPrompt.md");
-const COMPACTION_CONTINUE_PROMPT: &str = "Continue the active work from the compaction handoff. The handoff includes the conversation state and any pending user or tool messages captured immediately before compaction.";
+// What CompactionPrompt.md asks of a summary beyond the engine's own
+// `compact_context` checklist, for handoffs the model writes itself.
+const SELF_COMPACTION_GUIDANCE: &str = "In Anda, use absolute paths for artifacts later turns must reopen, and name where critical state lives (this handoff, `recall_memory`, shell output, or a file), since they do not share data. Keep open background tasks, pending tool results, blockers and verification gaps. Under `/goal` or another long-running objective, map each explicit requirement to its evidence, marked done, unverified, blocked or remaining; say whether the goal is complete, and if it is not, give the next concrete action first.";
 
 impl AndaBot {
     #[allow(clippy::too_many_arguments)]
@@ -122,6 +124,7 @@ impl AndaBot {
                 .extend(multimodal::attachment_content(resources, inline));
             let mut runner = ctx.clone().completion_iter(req, vec![]).unbound();
             runner.set_transient_inline_data(true);
+            enable_self_compaction(&mut runner);
             assistant.inner.apply_merge_discovered_tools(&mut runner);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
@@ -617,7 +620,12 @@ impl SessionRunner {
             .inner
             .apply_merge_discovered_tools(&mut runner);
         self.runner = runner;
-        if let Some(prompt) = continuation_prompt {
+        // The engine resumes work the compaction interrupted, and delivers again
+        // input the model compacted before acting on. Queued input moves the
+        // task on too, so only a runner left with nothing to do needs this.
+        if let Some(prompt) = continuation_prompt
+            && self.runner.is_idle()
+        {
             self.runner.follow_up(prompt);
         }
 
@@ -1476,11 +1484,17 @@ fn prepend_prompt_content(content: &mut Vec<ContentPart>, prompt: String) {
     content.insert(0, prompt.into());
 }
 
-fn compaction_continue_prompt() -> String {
-    system_runtime_prompt(
-        "context compaction continuation",
-        COMPACTION_CONTINUE_PROMPT,
-    )
+/// Lets the model compact its own context with `compact_context` at a task
+/// or phase boundary. The session loop checks `needs_compaction_with` before
+/// every step, which the engine requires of a runner that offers it.
+fn enable_self_compaction(runner: &mut CompletionRunner) {
+    let compaction = SelfCompaction {
+        guidance: Some(SELF_COMPACTION_GUIDANCE.to_string()),
+        ..Default::default()
+    };
+    if let Err(err) = runner.set_self_compaction(Some(compaction)) {
+        log::warn!("Session runs without self-compaction: {err}");
+    }
 }
 
 fn is_context_length_error(err: &BoxError) -> bool {
@@ -1636,6 +1650,7 @@ mod tests {
     use crate::engine::conversation::ConversationsTool;
     use crate::engine::prompt::PromptCommand;
     use crate::engine::resources::ResourceStore;
+    use crate::engine::system::SYSTEM_PERSON_NAME;
     use crate::engine::{ActionEvent, ActionRuntime, action::ActionStatus};
     use anda_brain::types::InputContext;
     use anda_core::{AgentOutput, BoxPinFut, RequestMeta};
@@ -2529,10 +2544,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(continuation_history.contains("compacted handoff"));
-        assert!(
-            request_text(&recorded[2])
-                .contains("Continue the active work from the compaction handoff")
-        );
+        assert_eq!(request_text(&recorded[2]), compaction_continue_prompt());
     }
 
     #[tokio::test]
@@ -2684,6 +2696,211 @@ mod tests {
         assert_eq!(persisted_usage.output_tokens, tool_usage.output_tokens);
         assert_eq!(persisted_usage.cached_tokens, tool_usage.cached_tokens);
         assert_eq!(persisted_usage.requests, tool_usage.requests);
+    }
+
+    /// Answers its first request with one tool call and every later one with
+    /// text, reporting `input_tokens` of a 1,000-token window throughout.
+    #[derive(Clone, Debug)]
+    struct ToolCallThenTextCompleter {
+        requests: Arc<Mutex<Vec<CompletionRequest>>>,
+        tool_call: anda_core::ToolCall,
+        input_tokens: u64,
+    }
+
+    impl CompletionFeaturesDyn for ToolCallThenTextCompleter {
+        fn model_name(&self) -> String {
+            "tool-call-then-text".to_string()
+        }
+
+        fn completion(&self, req: CompletionRequest) -> BoxPinFut<Result<AgentOutput, BoxError>> {
+            let first = {
+                let mut requests = self.requests.lock();
+                requests.push(req.clone());
+                requests.len() == 1
+            };
+            let content = if request_text(&req).trim() == COMPACTION_PROMPT.trim() {
+                "compacted handoff"
+            } else {
+                "done"
+            };
+            // Providers return the turn's additions, not the request history.
+            let mut chat_history =
+                pending_request_messages(&req, 42).split_off(req.chat_history.len());
+            let tool_calls = if first {
+                chat_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: vec![ContentPart::ToolCall {
+                        name: self.tool_call.name.clone(),
+                        args: self.tool_call.args.clone(),
+                        call_id: self.tool_call.call_id.clone(),
+                    }],
+                    ..Default::default()
+                });
+                vec![self.tool_call.clone()]
+            } else {
+                chat_history.push(Message {
+                    role: "assistant".to_string(),
+                    content: vec![content.to_string().into()],
+                    ..Default::default()
+                });
+                vec![]
+            };
+
+            Box::pin(futures::future::ready(Ok(AgentOutput {
+                content: if first { String::new() } else { content.into() },
+                tool_calls,
+                chat_history,
+                usage: Usage {
+                    input_tokens: self.input_tokens,
+                    output_tokens: 10,
+                    cached_tokens: 0,
+                    requests: 1,
+                },
+                ..Default::default()
+            })))
+        }
+    }
+
+    fn tool_call_then_text_ctx(
+        requests: Arc<Mutex<Vec<CompletionRequest>>>,
+        tool_call: anda_core::ToolCall,
+        input_tokens: u64,
+    ) -> AgentCtx {
+        let mut model = Model::new(Arc::new(ToolCallThenTextCompleter {
+            requests,
+            tool_call,
+            input_tokens,
+        }));
+        model.context_window = 1_000;
+        EngineBuilder::new()
+            .with_model(model)
+            .register_tool(Arc::new(ArtifactToolFixture))
+            .unwrap()
+            .mock_ctx()
+    }
+
+    fn stored_messages(conversation: &Conversation) -> Vec<Message> {
+        conversation
+            .messages
+            .iter()
+            .filter_map(|message| serde_json::from_value(message.clone()).ok())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn session_runner_runs_the_compaction_the_model_requested() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let handoff = "Objective: answer the pending question about the parser. ".repeat(6);
+        let ctx = tool_call_then_text_ctx(
+            requests.clone(),
+            anda_core::ToolCall {
+                name: anda_engine::context::COMPACT_CONTEXT_TOOL.to_string(),
+                args: json!({"reason": "earlier exploration is done", "handoff": handoff}),
+                call_id: Some("compact-call".to_string()),
+                result: None,
+                remote_id: None,
+            },
+            // 61% of the window: enough to admit the request, below forced compaction.
+            600,
+        );
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        enable_self_compaction(&mut sess_runner.runner);
+        let parent_id = sess_runner.conversation._id;
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "what does the parser return?".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        sess_runner.run(vec![], &mut snapshot).await.unwrap();
+
+        let recorded = requests.lock();
+        // The model's handoff replaces the summary turn.
+        assert_eq!(recorded.len(), 2);
+        let definition = recorded[0]
+            .tools
+            .iter()
+            .find(|tool| tool.name == anda_engine::context::COMPACT_CONTEXT_TOOL)
+            .expect("the session offers compact_context");
+        assert!(definition.description.ends_with(SELF_COMPACTION_GUIDANCE));
+        // The question it compacted before answering comes again, with no
+        // continuation prompt of its own.
+        let resumed = request_text(&recorded[1]);
+        assert!(
+            resumed.contains("what does the parser return?"),
+            "{resumed}"
+        );
+        assert!(!resumed.contains("context compaction continuation"));
+        assert!(
+            recorded[1]
+                .chat_history
+                .iter()
+                .filter_map(Message::text)
+                .any(|text| text == handoff.trim())
+        );
+
+        assert_eq!(sess_runner.conversation.ancestors, Some(vec![parent_id]));
+        let child = stored_messages(&sess_runner.conversation);
+        assert_eq!(child[0].role, "assistant");
+        assert_eq!(child[0].text().as_deref(), Some(handoff.trim()));
+    }
+
+    #[tokio::test]
+    async fn session_runner_resumes_an_interrupted_tool_round_once_after_compaction() {
+        let bot = build_runner_bot().await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = tool_call_then_text_ctx(
+            requests.clone(),
+            anda_core::ToolCall {
+                name: "review_artifact".to_string(),
+                args: json!({}),
+                call_id: Some("review-call".to_string()),
+                result: None,
+                remote_id: None,
+            },
+            // Past the 80% forced-compaction threshold.
+            900,
+        );
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
+        let mut snapshot = HashMap::new();
+
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "review the artifact".to_string(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        sess_runner.run(vec![], &mut snapshot).await.unwrap();
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 3);
+        assert_eq!(request_text(&recorded[1]).trim(), COMPACTION_PROMPT.trim());
+        // Only the engine's resume prompt: the session adds none to a runner
+        // that already has work queued.
+        assert_eq!(
+            request_text(&recorded[2]),
+            anda_engine::context::COMPACTION_CONTINUE_PROMPT
+        );
+
+        // Saved as a runtime notice, never as a message from the user.
+        let resume = stored_messages(&sess_runner.conversation)
+            .into_iter()
+            .find(|message| message.role == "user")
+            .expect("the child conversation records the resume prompt");
+        assert_eq!(
+            resume.text().as_deref(),
+            Some(compaction_continue_prompt().as_str())
+        );
+        assert_eq!(resume.name.as_deref(), Some(SYSTEM_PERSON_NAME));
     }
 
     #[tokio::test]

@@ -68,7 +68,7 @@ The repository also contains:
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
 - Source builds track the KIP 2.0 stack (Brain 0.13 with its Memory Interface,
-  Nexus/DB/KIP 0.14, Core/Engine 0.16). The whole shared stack resolves from
+  Nexus/DB/KIP 0.14, Core/Engine 0.17). The whole shared stack resolves from
   crates.io (exact versions live in `Cargo.lock`); the commented `[patch.crates-io]`
   entries support sibling-checkout development. Keep a single DB/core type
   identity and verify Cargo metadata before changing patches.

@@ -2889,7 +2889,7 @@ mod tests {
                 .unwrap();
             let (submission, receiver) = crate::cron::AgentSubmission::new();
             ctx.base.set_state(submission.clone());
-            let (ack, _) = ctx
+            let ack = ctx
                 .agent_run(AgentInput::new(AndaBot::NAME.into(), prompt.into()))
                 .await
                 .unwrap();

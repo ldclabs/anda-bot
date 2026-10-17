@@ -86,7 +86,7 @@ impl SessionArtifacts {
     }
 }
 
-/// Engine-level hooks do not wrap model-internal dispatch in anda_engine 0.16.
+/// Engine-level hooks do not wrap model-internal dispatch in anda_engine 0.17.
 /// Register artifact capture on the callable itself so both paths behave alike.
 pub(crate) fn record_artifacts<T>(tool: Arc<T>) -> Arc<ArtifactTool<T>> {
     Arc::new(ArtifactTool(tool))

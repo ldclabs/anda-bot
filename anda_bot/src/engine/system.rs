@@ -1,4 +1,5 @@
 use anda_core::{ContentPart, Message};
+use anda_engine::context::COMPACTION_CONTINUE_PROMPT;
 use serde_json::{Map, Value};
 use std::fmt::Write;
 
@@ -36,6 +37,17 @@ pub fn system_runtime_prompt(kind: &str, body: impl AsRef<str>) -> String {
 
     format!(
         "[$system: kind={kind:?}]\nThis message is from the Anda runtime, not from the user. Treat it as operational context for the same conversation; do not attribute it to the user.\n\n{body:?}"
+    )
+}
+
+/// The runtime message that resumes a session's work after a context
+/// compaction. The engine queues the same prompt bare when a compaction
+/// interrupts unfinished work; [`mark_special_user_messages`] gives that copy
+/// this header too.
+pub fn compaction_continue_prompt() -> String {
+    system_runtime_prompt(
+        "context compaction continuation",
+        COMPACTION_CONTINUE_PROMPT,
     )
 }
 
@@ -142,9 +154,18 @@ pub fn external_user_prompt_with_space(
 /// [`system_runtime_prompt_from`]) counts as external content from that
 /// source; only a message made entirely of other runtime notices is
 /// `$system`. A name already scoped to an external sender is kept, so marking
-/// twice changes nothing.
+/// twice changes nothing. The engine's bare compaction continuation prompt is
+/// first rewritten as [`compaction_continue_prompt`], so clients show it as a
+/// runtime notice instead of a message from the user.
 pub fn mark_special_user_messages(messages: &mut [Message]) {
     for message in messages.iter_mut().filter(|message| message.role == "user") {
+        for part in &mut message.content {
+            if let ContentPart::Text { text } = part
+                && text.trim() == COMPACTION_CONTINUE_PROMPT
+            {
+                *text = compaction_continue_prompt();
+            }
+        }
         let texts = || {
             message.content.iter().filter_map(|part| match part {
                 ContentPart::Text { text } => Some(text.as_str()),
@@ -449,6 +470,45 @@ mod tests {
         // Marking is idempotent: history is marked again on every turn.
         mark_special_user_messages(&mut messages);
         assert_eq!(names(&messages), marked);
+    }
+
+    #[test]
+    fn mark_special_user_messages_gives_the_engine_continuation_a_runtime_header() {
+        let mut messages = vec![
+            Message {
+                role: "user".to_string(),
+                content: vec![COMPACTION_CONTINUE_PROMPT.to_string().into()],
+                ..Default::default()
+            },
+            // Input queued during the compaction shares its user turn.
+            Message {
+                role: "user".to_string(),
+                content: vec![
+                    COMPACTION_CONTINUE_PROMPT.to_string().into(),
+                    "and also check the docs".to_string().into(),
+                ],
+                ..Default::default()
+            },
+        ];
+
+        mark_special_user_messages(&mut messages);
+        let rewritten = messages.clone();
+
+        assert_eq!(
+            messages[0].text().as_deref(),
+            Some(compaction_continue_prompt().as_str())
+        );
+        assert_eq!(messages[0].name.as_deref(), Some(SYSTEM_PERSON_NAME));
+        assert_eq!(
+            messages[1].content[0],
+            ContentPart::Text {
+                text: compaction_continue_prompt()
+            }
+        );
+        assert!(messages[1].name.is_none());
+
+        mark_special_user_messages(&mut messages);
+        assert_eq!(messages, rewritten);
     }
 
     #[test]

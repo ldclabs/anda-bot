@@ -257,7 +257,7 @@ pub(crate) async fn run_unattended_agent(
     let (submission, receiver) = AgentSubmission::new();
     let stop_on_drop = submission.cancellation_token().drop_guard();
     ctx.base.set_state(submission.clone());
-    let (output, _) = tokio::select! {
+    let output = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Err("Cron scheduler stopped".into()),
         output = ctx.agent_run(AgentInput::new(name, prompt)) => output?,
@@ -327,7 +327,7 @@ async fn run_shell(
         sender: Mutex::new(Some(sender)),
     });
     ctx.base.set_state(DynToolJsonHook::new(hook.clone()));
-    let (output, _) = ctx
+    let output = ctx
         .tool_call(ToolInput {
             name: ShellTool::NAME.into(),
             args: json!(CommandArgs {
