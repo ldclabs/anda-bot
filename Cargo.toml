@@ -24,7 +24,7 @@ async-trait = "0.1"
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.17" }
-anda_engine = { version = "0.17.1" }
+anda_engine = { version = "0.17" }
 anda_engine_server = { version = "0.17" }
 anda_web3_client = { version = "0.17", features = ["client"] }
 anda_object_store = "0.14"

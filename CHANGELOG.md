@@ -4,6 +4,15 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.5] — 2026-10-17
+
+### Changed
+
+- **A tool that joins a DeepSeek conversation keeps the prompt cache**: on `deepseek-flash`, an attachment sent into a running conversation (which loads the tools that read it) or a `/skill` used mid-conversation added a tool, and because tools come first in the prompt DeepSeek caches, the next request re-read the whole conversation at the uncached price. DeepSeek can now activate the tool where it joins (Anda Engine's mid-conversation tool additions, the extension DeepSeek Harness uses), so everything before it stays cached. The capability belongs to `deepseek-flash` only; other models, `deepseek-v4-pro` included, add tools as before.
+- **Shell risk checks and bookmark previews no longer think on DeepSeek**: both ask the model for the least reasoning it takes. DeepSeek thinks unless told not to, so these short checks spent time and tokens on reasoning they did not need; they now turn thinking off. On DeepSeek, `effort: minimal` turns thinking off; the other efforts are sent as before. Claude and GPT treat `minimal` as `low`, as before.
+- **Anda Engine 0.17.2**: Anda Bot now requires Anda Engine 0.17.2 (with Anda Core 0.17.1), which carries the two changes above.
+- **Version 0.14.5**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.5.
+
 ### Fixed
 
 - **Desktop opens files from chats without a project**: a chat with no folder chosen runs in Anda's default workspace (`~/.anda/workspace`), but clicking a file it edited, or one its answer named, showed "Select a project folder to open its workbench." Resources now previews and reveals those files from the default workspace. Terminal and Changes still need a project.

@@ -198,7 +198,8 @@ async fn model_shell_approval_decision(
                 text: request.to_string(),
             }],
             output_schema: Some(shell_risk_output_schema()),
-            effort: Some(ModelEffort::Low),
+            // The least reasoning the model takes; DeepSeek, which thinks by default, stops.
+            effort: Some(ModelEffort::Minimal),
             ..Default::default()
         })
         .await?;
@@ -1082,7 +1083,7 @@ mod tests {
         let lite_requests = lite_requests.lock().unwrap();
         assert_eq!(lite_requests.len(), 1);
         assert_eq!(flash_requests.lock().unwrap().len(), 0);
-        assert_eq!(lite_requests[0].effort, Some(ModelEffort::Low));
+        assert_eq!(lite_requests[0].effort, Some(ModelEffort::Minimal));
         assert!(
             lite_requests[0]
                 .instructions

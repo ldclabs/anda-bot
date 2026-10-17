@@ -1012,7 +1012,8 @@ impl BookmarksTool {
             )
             .to_string(),
             content: vec![ContentPart::Text { text }],
-            effort: Some(ModelEffort::Low),
+            // The least reasoning the model takes; DeepSeek, which thinks by default, stops.
+            effort: Some(ModelEffort::Minimal),
             ..Default::default()
         });
 
