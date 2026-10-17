@@ -45,6 +45,7 @@ import { DaemonClient, type InstallReport } from './daemon-client'
 import { isOlderRelease } from './update-machine'
 import {
   appPermissionAllowed,
+  authorizeFileRoot,
   authorizeWorkspace,
   externalUrl,
   mcpInstallLink,
@@ -843,7 +844,7 @@ async function setup(): Promise<void> {
   })
   handle('anda:workspace-file', async (request: WorkspaceFileRequest) => {
     if (!request || typeof request !== 'object') throw new Error('Invalid file request')
-    const root = await authorizeWorkspace(request.workspace, store.state.preferences)
+    const root = await authorizeFileRoot(request.workspace, store.state.preferences, home)
     if (request.action === 'read') return readWorkspaceFile(root, request.path)
     if (request.action === 'reveal') {
       shell.showItemInFolder(request.path ? await resolveWorkspacePath(root, request.path) : root)

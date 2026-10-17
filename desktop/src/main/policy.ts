@@ -1,5 +1,5 @@
 import { realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { workspaceFromCliSource } from '../../../chrome-extension/src/lib/anda/client/workspace'
 import type { Preferences } from '../shared/contract'
 
@@ -32,6 +32,24 @@ export async function authorizeWorkspace(
   if (!listed || !(await stat(resolved)).isDirectory())
     throw new Error('Select this folder as a project before using the workbench.')
   return resolved
+}
+
+/**
+ * The folder a file preview resolves its path against: the chat's workspace,
+ * or, for a chat without a project, Anda's default workspace
+ * (`<ANDA_HOME>/workspace`), where the daemon runs it.
+ */
+export async function authorizeFileRoot(
+  workspace: string | undefined,
+  preferences: Pick<Preferences, 'projects' | 'chats'>,
+  home: string
+): Promise<string> {
+  if (workspace) return authorizeWorkspace(workspace, preferences)
+  try {
+    return await realpath(join(home, 'workspace'))
+  } catch {
+    throw new Error('Anda’s default workspace was not found.')
+  }
 }
 
 export function rendererAssetPath(root: string, raw: string): string {

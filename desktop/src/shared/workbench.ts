@@ -40,11 +40,12 @@ export type GitRequest =
 /**
  * A file inside a chat's workspace, named by a path in the transcript. Only
  * reading a bounded text preview and revealing it in the file manager are
- * offered: opening it would launch scripts and application bundles.
+ * offered: opening it would launch scripts and application bundles. A chat
+ * without a project names no workspace and runs in Anda's default one.
  */
 export type WorkspaceFileRequest =
-  | { action: 'read'; workspace: string; path: string }
-  | { action: 'reveal'; workspace: string; path?: string }
+  | { action: 'read'; workspace?: string; path: string }
+  | { action: 'reveal'; workspace?: string; path?: string }
 export interface WorkspaceFilePreview {
   /** Path relative to the workspace, with `/` separators. */
   path: string

@@ -4,6 +4,10 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Desktop opens files from chats without a project**: a chat with no folder chosen runs in Anda's default workspace (`~/.anda/workspace`), but clicking a file it edited, or one its answer named, showed "Select a project folder to open its workbench." Resources now previews and reveals those files from the default workspace. Terminal and Changes still need a project.
+
 ## [0.14.4] — 2026-10-17
 
 ### Fixed

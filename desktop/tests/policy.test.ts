@@ -4,6 +4,7 @@ import { resolve, join, sep } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   appPermissionAllowed,
+  authorizeFileRoot,
   authorizeWorkspace,
   externalUrl,
   loopbackBaseUrl,
@@ -198,5 +199,22 @@ describe('workbench workspaces', () => {
     )
     await expect(authorizeWorkspace(join(listed, 'missing'), preferences)).rejects.toThrow()
     await expect(authorizeWorkspace('', preferences)).rejects.toThrow('Choose a workspace first')
+  })
+
+  it('previews files of a chat without a project from Anda’s default workspace', async () => {
+    const [home, project, other] = await folders('home', 'project', 'other')
+    const preferences = { projects: [{ id: 'p', path: project, name: 'project' }], chats: [] }
+
+    await expect(authorizeFileRoot(undefined, preferences, home)).rejects.toThrow(
+      'default workspace was not found'
+    )
+    await mkdir(join(home, 'workspace'))
+    expect(await authorizeFileRoot(undefined, preferences, home)).toBe(join(home, 'workspace'))
+    expect(await authorizeFileRoot('', preferences, home)).toBe(join(home, 'workspace'))
+    // A named workspace is still checked; it never falls back.
+    expect(await authorizeFileRoot(project, preferences, home)).toBe(project)
+    await expect(authorizeFileRoot(other, preferences, home)).rejects.toThrow(
+      'Select this folder as a project'
+    )
   })
 })

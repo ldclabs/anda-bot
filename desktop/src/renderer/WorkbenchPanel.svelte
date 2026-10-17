@@ -178,19 +178,16 @@
     lastFileRequest = request.id
     untrack(() => void openFile(request))
   })
+  // A chat without a project names no workspace: Main reads its files from
+  // Anda's default workspace, where the daemon ran it.
   async function openFile(request: FileRequest) {
     clearPreview()
     const current = generation
-    const workspace = client.workspace
     file = { path: request.path, line: request.line }
-    if (!workspace) {
-      file = { ...file, error: t('chooseProject') }
-      return
-    }
     try {
       const preview = await window.anda.workspaceFile<WorkspaceFilePreview>({
         action: 'read',
-        workspace,
+        workspace: client.workspace,
         path: request.path
       })
       if (current !== generation) return
@@ -203,7 +200,6 @@
     }
   }
   async function reveal(path?: string) {
-    if (!client.workspace) return
     try {
       await window.anda.workspaceFile({ action: 'reveal', workspace: client.workspace, path })
     } catch (error) {

@@ -904,7 +904,7 @@
       return
     }
     const code = target.closest('code')
-    if (code && !code.closest('pre') && client.workspace) {
+    if (code && !code.closest('pre')) {
       const file = fileTarget(code.textContent || '')
       if (file) openFile(file)
     }
@@ -914,7 +914,7 @@
     const code = (event.target as HTMLElement).closest('code')
     if (!code || code.dataset.fileChecked || code.closest('pre')) return
     code.dataset.fileChecked = '1'
-    if (client.workspace && code.closest('.md-content') && fileTarget(code.textContent || ''))
+    if (code.closest('.md-content') && fileTarget(code.textContent || ''))
       code.classList.add('file-link')
   }
   function clampSidebar(width: number) {
