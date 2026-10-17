@@ -643,7 +643,10 @@ kbd {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 50px 25px 26px;
+  /* Centred in the space above the composer; auto margins keep a short
+     window scrollable instead of clipping the top. */
+  margin-block: auto;
+  padding: 24px 25px 40px;
 }
 .welcome h1 {
   font-size: 28px;
@@ -708,22 +711,31 @@ kbd {
     --anda-comet-angle: 360deg;
   }
 }
-/* A new chat centres its composer; the welcome sits above it, suggestions below. */
+/* A new chat keeps its composer at the bottom, where the chat will continue;
+   Anda, the suggestions and recent projects sit together in the middle, over
+   the dot field. */
+.empty-chat {
+  isolation: isolate;
+}
 .empty-chat .conversation-scroll {
-  flex: 1 1 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
 }
-.empty-chat .composer-footer {
-  flex: 1 1 0;
+.welcome-field {
+  position: absolute;
+  top: 52px;
+  left: 0;
+  z-index: -1;
+  width: 100%;
+  height: calc(100% - 52px);
+  pointer-events: none;
 }
 .suggestions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  margin-top: 18px;
+  margin-top: 30px;
 }
 .suggestions button,
 .recent-projects button {

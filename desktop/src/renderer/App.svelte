@@ -104,6 +104,7 @@
   import SettingsPage, { type SettingsCategory } from './SettingsPage.svelte'
   import EditedFiles from './EditedFiles.svelte'
   import TurnIndex from './TurnIndex.svelte'
+  import WelcomeField from './WelcomeField.svelte'
   import UpdateDialog from './UpdateDialog.svelte'
   import ModelSetup from './ModelSetup.svelte'
   let { client }: { client: DesktopClient } = $props()
@@ -166,6 +167,7 @@
   let reloadingModels = $state(false)
   let confirmStopOpen = $state(false)
   let dark = $state(document.documentElement.classList.contains('dark'))
+  let welcomeMark = $state<HTMLElement | null>(null)
   let panelViews = $state<Partial<Record<PanelTab, WorkbenchPanel>>>({})
   let dock = $state<ActionDock | null>(null)
   let fileRequest = $state<FileRequest | null>(null)
@@ -1272,6 +1274,7 @@
         <p>{t('loading')}</p>
       </div>
     {:else if client.view === 'chat'}
+      {#if isEmpty}<WelcomeField {dark} origin={welcomeMark} />{/if}
       {#if client.readOnly}<div class="status-banner">
           <span>{t('readOnly')}</span><button onclick={() => client.newChat()}
             >{t('newChat')}</button
@@ -1321,12 +1324,33 @@
         }}
       >
         {#if isEmpty}<div class="welcome">
-            <div class="welcome-mark">
+            <div class="welcome-mark" bind:this={welcomeMark}>
               <span class="welcome-aura" aria-hidden="true"></span>
               <AndaMark track class="welcome-panda" />
             </div>
             <h1>{t('welcome')}</h1>
             <p>{t('intro')}</p>
+            <div class="suggestions">
+              <button onclick={addProject}><Folder size={16} />{t('suggestion1')}</button><button
+                onclick={() =>
+                  (client.incomingDraft = {
+                    id: crypto.randomUUID(),
+                    text: t('organizePrompt'),
+                    createdAt: Date.now()
+                  })}><Sparkles size={16} />{t('suggestion2')}</button
+              ><button onclick={() => (client.view = 'memory')}
+                ><BrainCircuit size={16} />{t('suggestion3')}</button
+              >
+            </div>
+            {#if recentFolders.length}<div class="recent-projects">
+                <span>{t('recentProjects')}</span>
+                {#each recentFolders.slice(0, 4) as path (path)}<button
+                    class:active={client.workspace === path}
+                    title={path}
+                    onclick={() => client.setNewChatWorkspace(path)}
+                    ><Folder size={13} />{folderName(path)}</button
+                  >{/each}
+              </div>{/if}
           </div>
         {:else}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div class="transcript" onclick={transcriptClick} onpointerover={transcriptPointer}>
@@ -1496,29 +1520,6 @@
             </DropdownMenu>
           </div>
         </div>
-        {#if isEmpty}
-          <div class="suggestions">
-            <button onclick={addProject}><Folder size={16} />{t('suggestion1')}</button><button
-              onclick={() =>
-                (client.incomingDraft = {
-                  id: crypto.randomUUID(),
-                  text: t('organizePrompt'),
-                  createdAt: Date.now()
-                })}><Sparkles size={16} />{t('suggestion2')}</button
-            ><button onclick={() => (client.view = 'memory')}
-              ><BrainCircuit size={16} />{t('suggestion3')}</button
-            >
-          </div>
-          {#if recentFolders.length}<div class="recent-projects">
-              <span>{t('recentProjects')}</span>
-              {#each recentFolders.slice(0, 4) as path (path)}<button
-                  class:active={client.workspace === path}
-                  title={path}
-                  onclick={() => client.setNewChatWorkspace(path)}
-                  ><Folder size={13} />{folderName(path)}</button
-                >{/each}
-            </div>{/if}
-        {/if}
       </footer>
     {:else if client.view === 'memory'}<div class="management-page"><MemoryWorkspace /></div>
     {:else if client.view === 'skills'}<div class="management-page"><SkillsWorkspace /></div>

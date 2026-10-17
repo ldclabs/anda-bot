@@ -13,6 +13,7 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- **Anda Desktop's New chat page keeps the message box at the bottom**: a new chat centred its message box, with the suggestions and recent projects under it, so the box jumped to the bottom once the first message was sent. It now sits at the bottom from the start, where the conversation continues, and Anda, the suggestions and the recent projects share the middle of the page. Behind them, a faint dot grid unfolds from Anda. Dots brighten under the pointer and leave a slow trail, and a click on the background draws a heart, a paw print, a panda, bamboo leaves or a sparkle in dots, which breathes once and then drifts out into a ring as it fades; a tap on Anda always sends a heart. The grid is drawn only while something moves, and it stays still when the system asks for reduced motion.
 - **Anda Engine 0.17**: Anda Core, Engine, Engine Server and Web3 Client move to 0.17, with Anda Brain 0.13.5 and serde-saphyr 2. Engine 0.17 removes remote engines, agents and tools, which Anda Bot never used.
 - **Version 0.14.3**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.3.
 
