@@ -4,6 +4,17 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.4] — 2026-10-17
+
+### Fixed
+
+- **Claude conversations continue after a reply that used tools**: on Claude Opus 5.5, which thinks by default, the next message after a tool-using reply failed with "Completion failed … `thinking` or `redacted_thinking` blocks in the latest assistant message cannot be modified" (conversation #958). When a reply finishes, the session drops its finished tool calls and results from the history it replays to the model, to save context. It kept the thinking that came with each tool call, and Anthropic merged those thinking-only leftovers into the reply and rejected the request. Anda Engine 0.17.1 drops a tool call's thinking along with the call. The reply keeps its own thinking. The message that hit the error was not saved, so send it again.
+
+### Changed
+
+- **Anda Engine 0.17.1**: Anda Bot now requires Anda Engine 0.17.1, which carries the fix above.
+- **Version 0.14.4**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.4.
+
 ## [0.14.3] — 2026-10-17
 
 ### Added
