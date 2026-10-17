@@ -6,7 +6,7 @@ use anda_core::{
     AgentContext, BoxError, CompletionRequest, ContentPart, Message, Resource, StateFeatures, Usage,
 };
 use anda_engine::{
-    context::{AgentCtx, CompletionRunner, SelfCompaction},
+    context::{AgentCtx, COMPACT_CONTEXT_TOOL, CompletionRunner, SelfCompaction},
     memory::{Conversation, ConversationRef, ConversationStatus},
     rfc3339_datetime, unix_ms,
 };
@@ -476,6 +476,14 @@ impl SessionRunner {
         for event in events {
             apply_action_event_to_messages(&mut output.chat_history, event);
         }
+        // A model that compacts before answering gets its latest input again in
+        // the child. Leave that turn to the child, as input pending at any other
+        // compaction is, so it is shown and formed once.
+        drop_redelivered_turn(
+            &mut output.chat_history,
+            runner.follow_up_message_iter(),
+            self.session.submit_formation_at.load(Ordering::SeqCst) as usize,
+        );
 
         // 如果目标还没有完成，也需要关闭本轮 conversation （conversation 数据大小有限，不应该超过 10MB），为 session 创建新的 conversation 和 runner 继续后续的交互
         // 同一个 session 可以逐步产生不限数量的 conversation 对话，可支持超长程推理。
@@ -1475,6 +1483,72 @@ fn apply_action_event_to_messages(messages: &mut Vec<Message>, event: ActionEven
         }
         ActionEvent::Plan(_) => {}
     }
+}
+
+/// Removes the turn the model compacted before answering from the parent
+/// history: its user input, the `compact_context` call and the call's output.
+/// It does so only when `queued`, the replacement runner's next input, starts
+/// with exactly that user input, and none of the turn is in a submitted
+/// Formation window (`formed` messages are). Returns whether it removed it.
+fn drop_redelivered_turn<'a>(
+    history: &mut Vec<Message>,
+    queued: impl Iterator<Item = &'a ContentPart>,
+    formed: usize,
+) -> bool {
+    let Some(call) = history.iter().rposition(|message| {
+        message.role == "assistant" && message.content.iter().any(is_compact_context_call)
+    }) else {
+        return false;
+    };
+    // Only the latest turn; action cards may follow it.
+    if history[call + 1..]
+        .iter()
+        .any(|message| message.role == "assistant" && action_id_from_message(message).is_none())
+    {
+        return false;
+    }
+    let input = history[..call]
+        .iter()
+        .rposition(|message| message.role != "user")
+        .map_or(0, |index| index + 1);
+    if input == call || input < formed {
+        return false;
+    }
+
+    // The stored copy lost its inline media bytes; the queued one keeps them.
+    let stored = |part: &&ContentPart| match part {
+        ContentPart::InlineData { .. } => false,
+        ContentPart::FileData { file_uri, .. } => !file_uri.starts_with("data:"),
+        _ => true,
+    };
+    let turn_input: Vec<&ContentPart> = history[input..call]
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter(stored)
+        .collect();
+    let redelivered: Vec<&ContentPart> = queued.filter(stored).take(turn_input.len()).collect();
+    if turn_input.is_empty() || redelivered != turn_input {
+        return false;
+    }
+
+    let output = history[call + 1..].iter().position(|message| {
+        message.role == "tool"
+            && !message.content.is_empty()
+            && message.content.iter().all(is_compact_context_output)
+    });
+    if let Some(offset) = output {
+        history.remove(call + 1 + offset);
+    }
+    history.drain(input..=call);
+    true
+}
+
+fn is_compact_context_call(part: &ContentPart) -> bool {
+    matches!(part, ContentPart::ToolCall { name, .. } if name == COMPACT_CONTEXT_TOOL)
+}
+
+fn is_compact_context_output(part: &ContentPart) -> bool {
+    matches!(part, ContentPart::ToolOutput { name, .. } if name == COMPACT_CONTEXT_TOOL)
 }
 
 fn prepend_prompt_content(content: &mut Vec<ContentPart>, prompt: String) {
@@ -2820,7 +2894,7 @@ mod tests {
             .unwrap();
         sess_runner.run(vec![], &mut snapshot).await.unwrap();
 
-        let recorded = requests.lock();
+        let recorded = requests.lock().clone();
         // The model's handoff replaces the summary turn.
         assert_eq!(recorded.len(), 2);
         let definition = recorded[0]
@@ -2849,6 +2923,135 @@ mod tests {
         let child = stored_messages(&sess_runner.conversation);
         assert_eq!(child[0].role, "assistant");
         assert_eq!(child[0].text().as_deref(), Some(handoff.trim()));
+
+        // The question is shown and formed once: the child answers it, so the
+        // parent keeps neither it nor the compaction request.
+        let parent = bot
+            .inner
+            .conversations
+            .conversations
+            .get_conversation(parent_id)
+            .await
+            .unwrap();
+        let mut chain = stored_messages(&parent);
+        assert!(
+            !chain
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(is_compact_context_call)
+        );
+        chain.extend(child);
+        let asked = chain
+            .iter()
+            .filter(|message| {
+                message.role == "user"
+                    && message
+                        .text()
+                        .is_some_and(|text| text.contains("what does the parser return?"))
+            })
+            .count();
+        assert_eq!(asked, 1);
+    }
+
+    fn text_message(role: &str, text: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: vec![text.to_string().into()],
+            ..Default::default()
+        }
+    }
+
+    fn compact_call_turn() -> Vec<Message> {
+        vec![
+            text_message("user", "earlier question"),
+            text_message("assistant", "earlier answer"),
+            Message {
+                role: "user".to_string(),
+                content: vec![
+                    "look at this".to_string().into(),
+                    ContentPart::Text {
+                        text: system_runtime_prompt("notice", "queued with it"),
+                    },
+                ],
+                ..Default::default()
+            },
+            Message {
+                role: "assistant".to_string(),
+                content: vec![ContentPart::ToolCall {
+                    name: COMPACT_CONTEXT_TOOL.to_string(),
+                    args: json!({}),
+                    call_id: Some("compact-call".to_string()),
+                }],
+                ..Default::default()
+            },
+            Message {
+                role: "tool".to_string(),
+                content: vec![ContentPart::ToolOutput {
+                    name: COMPACT_CONTEXT_TOOL.to_string(),
+                    output: json!({"status": "accepted"}),
+                    is_error: None,
+                    call_id: Some("compact-call".to_string()),
+                    remote_id: None,
+                }],
+                ..Default::default()
+            },
+        ]
+    }
+
+    #[test]
+    fn drop_redelivered_turn_leaves_the_turn_to_the_child() {
+        let image = ContentPart::InlineData {
+            mime_type: "image/png".to_string(),
+            data: ByteBufB64(vec![1, 2, 3]),
+        };
+        let mut history = compact_call_turn();
+        let card = crate::engine::action::action_message(
+            crate::engine::action::USER_CHOICE_ACTION,
+            json!({"id": "act_1", "status": "pending"}),
+        );
+        history.push(card.clone());
+        // Inline bytes stay in the queued copy only; later input follows it.
+        let mut queued = history[2].content.clone();
+        queued.insert(1, image);
+        queued.push("a follow-up".to_string().into());
+
+        assert!(drop_redelivered_turn(&mut history, queued.iter(), 2));
+        assert_eq!(
+            history,
+            vec![
+                text_message("user", "earlier question"),
+                text_message("assistant", "earlier answer"),
+                card,
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_redelivered_turn_keeps_turns_the_child_does_not_repeat() {
+        let turn = compact_call_turn();
+        let input = turn[2].content.clone();
+
+        // The engine resumes instead of redelivering.
+        let mut history = turn.clone();
+        let resume = [ContentPart::Text {
+            text: anda_engine::context::COMPACTION_CONTINUE_PROMPT.to_string(),
+        }];
+        assert!(!drop_redelivered_turn(&mut history, resume.iter(), 0));
+        assert_eq!(history, turn);
+
+        // Formation already read part of the turn.
+        assert!(!drop_redelivered_turn(&mut history, input.iter(), 3));
+        assert_eq!(history, turn);
+
+        // The call came from a tool round, not from user input.
+        let mut tool_round = turn.clone();
+        tool_round[2].role = "tool".to_string();
+        assert!(!drop_redelivered_turn(&mut tool_round, input.iter(), 0));
+
+        // A later answer means the call is not the latest turn.
+        let mut answered = turn.clone();
+        answered.push(text_message("assistant", "answered after all"));
+        assert!(!drop_redelivered_turn(&mut answered, input.iter(), 0));
     }
 
     #[tokio::test]
