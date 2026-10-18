@@ -282,6 +282,11 @@ function show(): void {
   hideAfterFullScreen = false
   if (!window) createWindow()
   if (window?.isMinimized()) window.restore()
+  // A hidden window loses its page as first responder, and macOS hands it back
+  // on show as if Tab were pressed: the page's first control (the sidebar
+  // toggle) took keyboard focus, ring and tooltip. Focusing the page first
+  // keeps whatever it had focused.
+  window?.webContents.focus()
   window?.show()
   window?.focus()
 }
