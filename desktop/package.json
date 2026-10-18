@@ -45,6 +45,7 @@
     "electron-vite": "5.0.0",
     "katex": "^0.17.0",
     "markdown-it": "^14.3.2",
+    "pele": "^1.6.0",
     "playwright": "1.60.0",
     "postcss": "^8.5.28",
     "prettier": "^3.9.9",

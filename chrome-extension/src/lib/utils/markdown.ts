@@ -1,5 +1,6 @@
 import katex from 'katex'
 import MarkdownIt from 'markdown-it'
+import { PeleError, render as renderDiagram } from 'pele'
 // Languages load with the renderer: a message rendered before a lazy chunk
 // arrived would keep its unhighlighted code until its text changed.
 import Prism from './prismjs'
@@ -411,10 +412,70 @@ function prismPlugin(md: MarkdownIt) {
   }
 }
 
+// Mermaid 图表插件 - pele 把 ```mermaid 代码块同步渲染为 SVG
+function mermaidPlugin(md: MarkdownIt) {
+  const closingFence = /^[\s>]*(`{3,}|~{3,})\s*$/
+
+  // 流式输出时最后一个代码块还没闭合，半截图表会在代码与 SVG 之间来回闪烁，
+  // 所以只渲染已闭合的代码块（markdown-it 把未闭合的代码块延伸到文末，不做标记）
+  md.core.ruler.after('block', 'mermaid_fence', function (state) {
+    let lines: string[] | undefined
+    for (const token of state.tokens) {
+      if (token.type !== 'fence' || !token.map) continue
+      if (token.info.trim().split(/\s+/g)[0] !== 'mermaid') continue
+      const [start, end] = token.map
+      if (end - 1 <= start) continue
+      lines ??= state.src.split('\n')
+      const marker = closingFence.exec(lines[end - 1] || '')?.[1]
+      if (marker && marker[0] === token.markup[0] && marker.length >= token.markup.length) {
+        token.meta = { ...token.meta, mermaid: true }
+      }
+    }
+  })
+
+  // 图中链接与正文链接一致：绝对地址在新标签页打开，其余不可点击（否则侧边栏自身会被导航走）
+  const diagramLinks = (svg: string): string =>
+    svg.replace(/<a ([^>]*)>/g, (_tag, attrs: string) => {
+      const href = /\bhref="([^"]*)"/.exec(attrs)?.[1] || ''
+      if (!isAbsoluteUrl(href)) return '<a>'
+      return `<a ${attrs.replace(/\s*\btarget="[^"]*"/g, '')} target="_blank">`
+    })
+
+  // pele 按字体测量标签宽度，需与页面实际字体一致，否则文字会溢出节点
+  let fontFamily: string | undefined
+  const diagramFont = (): string | undefined => {
+    if (fontFamily === undefined && typeof document !== 'undefined' && document.body) {
+      fontFamily = getComputedStyle(document.body).fontFamily
+    }
+    return fontFamily || undefined
+  }
+
+  const fence = md.renderer.rules.fence!
+  md.renderer.rules.fence = function (tokens, idx, options, env, renderer) {
+    const token = tokens[idx]!
+    if (token.meta?.mermaid) {
+      try {
+        const { svg } = renderDiagram(token.content, {
+          fontFamily: diagramFont(),
+          // 渲染时拿不到容器宽度，以视口宽度近似：窄侧边栏里横向图改为纵向布局，而不是缩成小字
+          maxWidth: (typeof window !== 'undefined' && window.innerWidth) || undefined,
+          linkRel: 'noopener noreferrer'
+        })
+        return `<div class="md-diagram">${diagramLinks(svg)}</div>`
+      } catch (error) {
+        // 语法错误等回退为普通代码块；错误信息含图表源码，不插入 HTML
+        if (!(error instanceof PeleError)) console.warn('Mermaid rendering failed:', error)
+      }
+    }
+    return fence(tokens, idx, options, env, renderer)
+  }
+}
+
 // 应用插件
 md.use(strongCjkQuotePlugin)
 md.use(katexPlugin)
 md.use(prismPlugin)
+md.use(mermaidPlugin)
 
 /**
  * 渲染 Markdown 文本为 HTML

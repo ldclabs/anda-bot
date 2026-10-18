@@ -43,6 +43,7 @@
   "dependencies": {
     "katex": "^0.17.0",
     "markdown-it": "^14.3.2",
+    "pele": "^1.6.0",
     "prismjs": "^1.30.0",
     "yaml": "^2.9.1"
   }

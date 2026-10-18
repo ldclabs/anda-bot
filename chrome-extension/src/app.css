@@ -560,6 +560,24 @@
     padding: 0.5em 0;
   }
 
+  /* Mermaid 图表（markdown.ts 用 pele 渲染）：SVG 只读 --pele-* 变量，
+     由消息配色混合得出，切换明暗主题无需重绘 */
+  .md-content .md-diagram {
+    --pele-bg: var(--message-bg, var(--background));
+    --pele-fg: var(--message-text, var(--foreground));
+    --pele-muted: var(--message-muted, var(--muted-foreground));
+    --pele-line: color-mix(in srgb, var(--pele-fg) 70%, var(--pele-bg));
+    --pele-surface: color-mix(in srgb, var(--pele-fg) 5%, var(--pele-bg));
+    --pele-surface-alt: color-mix(in srgb, var(--pele-fg) 10%, var(--pele-bg));
+    --pele-border: color-mix(in srgb, var(--pele-fg) 30%, var(--pele-bg));
+    margin: 1em 0;
+  }
+
+  .md-content .md-diagram > svg {
+    display: block;
+    margin-inline: auto;
+  }
+
   /* 任务列表 */
   .md-content input[type='checkbox'] {
     margin-right: 0.5em;

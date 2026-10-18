@@ -16,4 +16,53 @@ describe('renderMarkdown', () => {
       '<a href="https://example.com" target="_blank" rel="noopener noreferrer">site</a>'
     )
   })
+
+  it('renders closed mermaid fences as diagrams', () => {
+    const html = renderMarkdown('Flow:\n\n```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n')
+    expect(html).toContain('<div class="md-diagram"><svg')
+    expect(html).toContain('class="pele pele-flowchart"')
+    expect(html).not.toContain('<pre>')
+
+    const quoted = renderMarkdown('> ```mermaid\n> sequenceDiagram\n>   A->>B: Hi\n> ```')
+    expect(quoted).toContain('<blockquote>\n<div class="md-diagram"><svg')
+  })
+
+  it('keeps a streaming mermaid fence as code until it closes', () => {
+    for (const partial of [
+      '```mermaid\nflowchart LR\n  A --> B',
+      '```mermaid\nflowchart LR\n  A --> B\n',
+      '````mermaid\nflowchart LR\n  A --> B\n```'
+    ]) {
+      const html = renderMarkdown(partial)
+      expect(html).not.toContain('<svg')
+      expect(html).toContain('A --&gt; B')
+    }
+  })
+
+  it('falls back to escaped code for invalid diagrams', () => {
+    const html = renderMarkdown('```mermaid\nflowchart LR\n  A["<img src=x>"] -->\n```')
+    expect(html).toBe(
+      '<pre><code>flowchart LR\n  A[&quot;&lt;img src=x&gt;&quot;] --&gt;\n</code></pre>'
+    )
+  })
+
+  it('applies the markdown link policy inside diagrams', () => {
+    const html = renderMarkdown(
+      [
+        '```mermaid',
+        'flowchart LR',
+        '  A --> B --> C',
+        '  click A href "https://example.com" _self',
+        '  click B "./notes.md"',
+        '  click C "javascript:alert(1)"',
+        '```'
+      ].join('\n')
+    )
+    expect(html).toContain(
+      '<a href="https://example.com/" rel="noopener noreferrer" target="_blank">'
+    )
+    expect(html).not.toContain('_self')
+    expect(html).not.toContain('notes.md')
+    expect(html).not.toContain('javascript:')
+  })
 })

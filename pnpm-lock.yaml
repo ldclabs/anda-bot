@@ -14,6 +14,9 @@ importers:
       markdown-it:
         specifier: ^14.3.2
         version: 14.3.2
+      pele:
+        specifier: ^1.6.0
+        version: 1.6.0
       prismjs:
         specifier: ^1.30.0
         version: 1.30.0
@@ -178,6 +181,9 @@ importers:
       markdown-it:
         specifier: ^14.3.2
         version: 14.3.2
+      pele:
+        specifier: ^1.6.0
+        version: 1.6.0
       playwright:
         specifier: 1.60.0
         version: 1.60.0
@@ -6380,6 +6386,10 @@ packages:
   pe-library@0.4.1:
     resolution: {integrity: sha512-eRWB5LBz7PpDu4PUlwT0PhnQfTQJlDDdPa35urV4Osrm0t0AqQFGn+UIkU3klZvwJ8KPO3VbBFsXquA6p6kqZw==}
     engines: {node: '>=12', npm: '>=6'}
+
+  pele@1.6.0:
+    resolution: {integrity: sha512-VfAiVItsOGlGhvnBfphdT28VCG7mXMZxQNOwAGsCtxI2ztbUsT39MraEOYjsapLxVETkdUZscm0DdotYDQMLdw==}
+    engines: {node: '>=20'}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -15741,6 +15751,8 @@ snapshots:
   pathe@2.0.3: {}
 
   pe-library@0.4.1: {}
+
+  pele@1.6.0: {}
 
   picocolors@1.1.1: {}
 
