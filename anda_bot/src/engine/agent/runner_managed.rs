@@ -24,6 +24,7 @@ impl AndaBot {
             available_tools: &names,
             home_dir: "unavailable",
             workspace: "runner-managed task environment",
+            project_instructions: None,
             user_profile: "",
             local_date: now,
         });

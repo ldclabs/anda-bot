@@ -574,6 +574,8 @@ The local runtime creates a workspace directory at `~/.anda/workspace`. File and
 
 For a one-shot request, `anda agent run --workspace . --prompt "Summarize this project"` registers the directory before submitting the prompt and uses its `cli:<path>` source by default. Relative `--workspace` paths resolve from the CLI's current directory. Explicit `source` and `workspace` values in `--meta` still take precedence; filesystem tools remain limited to configured workspaces.
 
+If the directory a session starts in has an `AGENTS.md` at its root, its text joins the session's system instructions, so a repository can state its conventions for an agent once instead of the user repeating them in every prompt. The file is read when the session is created, up to 64 KiB: an edit reaches the next session, and the agent can read the file again with `read_file`. A link, a non-text file, or anything that resolves outside the workspace is ignored.
+
 Custom runtime skills can be added under `~/.anda/skills`. Release-managed skills are installed in `~/.anda/bundled-skills`, and shared cross-agent skills from `~/.agents/skills` can be imported into the personal library via the Dashboard. Integrated cron capabilities enable scheduling shell commands or automated agent prompts, with execution histories stored locally. Cron runs remain active until the agent or shell command finishes, and schedule edits preserve paused state. Cron tools are available only to trusted users. CLI-created jobs retain the working-directory authorization validated at creation, including across daemon restarts.
 
 ## Local Data And Privacy

@@ -8,7 +8,7 @@ use chrono::{DateTime, Local, Utc};
 
 use crate::engine::ActionsTool;
 
-use super::AndaBot;
+use super::{AndaBot, project_instructions::ProjectInstructions};
 
 static SELF_INSTRUCTIONS: &str = include_str!("../../../assets/SelfInstructions.md");
 
@@ -17,18 +17,24 @@ pub(super) struct SystemInstructionSections<'a> {
     pub(super) available_tools: &'a [String],
     pub(super) home_dir: &'a str,
     pub(super) workspace: &'a str,
+    /// `AGENTS.md` from the workspace root, read when the session starts.
+    pub(super) project_instructions: Option<&'a ProjectInstructions>,
     pub(super) user_profile: &'a str,
     pub(super) local_date: &'a str,
 }
 
 pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
-        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
+        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n{project}\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
         ins = SELF_INSTRUCTIONS.trim(),
         knowledge = sections.self_knowledge,
         tools = format_available_tools(sections.available_tools),
         home = sections.home_dir,
         workspace = sections.workspace,
+        project = sections
+            .project_instructions
+            .map(ProjectInstructions::render)
+            .unwrap_or_default(),
         user_profile = sections.user_profile,
         local_date = sections.local_date,
     )
@@ -150,11 +156,16 @@ impl AndaBot {
             }
         }
 
+        // The workspace may state its own conventions in `AGENTS.md`. It is
+        // read once, here: the instructions are built when the session is
+        // created and reused for every request in it.
+        let project_instructions = ProjectInstructions::load(workspace).await;
         let mut instructions = render_system_instructions(SystemInstructionSections {
             self_knowledge: &self_knowledge,
             available_tools,
             home_dir,
             workspace,
+            project_instructions: project_instructions.as_ref(),
             user_profile: &user_profile,
             local_date: &local_date,
         });
@@ -227,6 +238,7 @@ mod tests {
             available_tools: &tools,
             home_dir: "/home/anda",
             workspace: "/workspace/current",
+            project_instructions: None,
             user_profile: "{}",
             local_date: "2026-05-09",
         });
@@ -236,6 +248,35 @@ mod tests {
         assert!(prompt.contains("shell, tools_groups, tools_select"));
         assert!(prompt.contains("schemas are intentionally omitted"));
         assert!(prompt.contains("current workspace (authoritative): /workspace/current"));
+        assert!(!prompt.contains("## Project Instructions"));
+        assert!(!prompt.contains("\n\n\n"));
+    }
+
+    #[test]
+    fn render_system_instructions_places_project_instructions_after_the_environment() {
+        let tools = vec!["shell".to_string()];
+        let project = ProjectInstructions {
+            path: "/workspace/current/AGENTS.md".to_string(),
+            content: "# House rules\nUse pnpm.".to_string(),
+            truncated: false,
+        };
+        let prompt = render_system_instructions(SystemInstructionSections {
+            self_knowledge: "{}",
+            available_tools: &tools,
+            home_dir: "/home/anda",
+            workspace: "/workspace/current",
+            project_instructions: Some(&project),
+            user_profile: "{}",
+            local_date: "2026-05-09",
+        });
+
+        let environment = prompt.find("- current workspace").unwrap();
+        let project_section = prompt.find("## Project Instructions").unwrap();
+        let user_profile = prompt.find("## User Profile").unwrap();
+        assert!(environment < project_section && project_section < user_profile);
+        assert!(prompt.contains("/workspace/current/AGENTS.md"));
+        assert!(prompt.contains("# House rules\nUse pnpm."));
+        assert!(!prompt.contains("\n\n\n"));
     }
 
     #[test]

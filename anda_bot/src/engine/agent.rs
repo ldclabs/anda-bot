@@ -40,6 +40,7 @@ use std::{
 mod instructions;
 pub(crate) mod memory_policy;
 mod meta;
+mod project_instructions;
 mod runner;
 #[cfg(feature = "mib")]
 mod runner_managed;

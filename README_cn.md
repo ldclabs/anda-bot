@@ -543,6 +543,8 @@ Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell �
 
 单次请求可使用 `anda agent run --workspace . --prompt "总结这个项目"`，CLI 会在提交提示词前注册目录，并默认使用对应的 `cli:<path>` source。`--workspace` 的相对路径基于 CLI 当前目录解析。`--meta` 中显式指定的 `source`、`workspace` 仍然优先；文件工具仍受已配置工作区限制。
 
+会话启动的目录根部若有 `AGENTS.md`，其内容会加入该会话的系统提示词，仓库因此可以一次性写明给 agent 的约定，而不必由用户在每次提示词里重复。文件在会话创建时读取，最多 64 KiB：之后的修改从下一个会话开始生效，agent 也可以在会话中用 `read_file` 重新读取。指向工作区之外的链接、非文本文件会被忽略。
+
 用户可将自定义运行时技能放入 `~/.anda/skills`。发布版内置技能会安装到 `~/.anda/bundled-skills`，而在 `~/.agents/skills` 下的跨 Agent 技能可在 Dashboard 中导入到个人库。内置的 Cron 任务调度器支持安排未来的 Shell 任务或 Agent 提示词，并保留运行历史。
 
 ## 本地数据与隐私
