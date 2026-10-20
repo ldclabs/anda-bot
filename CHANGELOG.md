@@ -23,6 +23,7 @@ All notable changes to Anda Bot.
 ### Fixed
 
 - **Reopening Anda Desktop from the tray keeps focus where it was**: on macOS, showing a hidden window handed focus back through key-view selection, which Chromium treats as a Tab press, so the sidebar toggle took keyboard focus and showed its focus ring and tooltip. The page is now focused directly before the window is shown, so it keeps whatever it had focused.
+- **Mermaid diagrams ignore the fence tag's case, and a streaming reply stops relaying them out**: a fence written `Mermaid` renders like `mermaid`, and a diagram that has already rendered keeps its layout while the rest of the reply streams in, instead of being laid out again on every token (a 120-node flowchart took about 4 ms each time). A changed diagram, or another window width, still renders again.
 
 ## [0.14.5] — 2026-10-17
 

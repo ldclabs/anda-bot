@@ -422,7 +422,8 @@ function mermaidPlugin(md: MarkdownIt) {
     let lines: string[] | undefined
     for (const token of state.tokens) {
       if (token.type !== 'fence' || !token.map) continue
-      if (token.info.trim().split(/\s+/g)[0] !== 'mermaid') continue
+      // 语言标记不区分大小写：模型有时写成 ```Mermaid
+      if (token.info.trim().split(/\s+/g)[0]?.toLowerCase() !== 'mermaid') continue
       const [start, end] = token.map
       if (end - 1 <= start) continue
       lines ??= state.src.split('\n')
@@ -450,18 +451,41 @@ function mermaidPlugin(md: MarkdownIt) {
     return fontFamily || undefined
   }
 
+  // 流式输出时每条增量都重新渲染整段 markdown，同一个已闭合的图表会被反复布局
+  // （120 个节点的流程图每次约 3.8ms）。按源码、宽度和字体缓存布局结果；颜色来自
+  // --pele-* 变量，不进入缓存键，明暗主题切换无需重绘。
+  const DIAGRAM_CACHE_SIZE = 8
+  const diagramCache = new Map<string, string>()
+
+  const rememberDiagram = (key: string, svg: string): string => {
+    // 页面字体还在加载时测出的宽度会变，这种布局不能留下。
+    if (typeof document !== 'undefined' && document.fonts?.status === 'loading') return svg
+    if (diagramCache.size >= DIAGRAM_CACHE_SIZE) diagramCache.clear()
+    diagramCache.set(key, svg)
+    return svg
+  }
+
+  const diagram = (source: string): string => {
+    const font = diagramFont()
+    // 渲染时拿不到容器宽度，以视口宽度近似：窄侧边栏里横向图改为纵向布局，而不是缩成小字
+    const width = (typeof window !== 'undefined' && window.innerWidth) || undefined
+    const key = `${width ?? ''}\u0000${font ?? ''}\u0000${source}`
+    const cached = diagramCache.get(key)
+    if (cached !== undefined) return cached
+    const { svg } = renderDiagram(source, {
+      fontFamily: font,
+      maxWidth: width,
+      linkRel: 'noopener noreferrer'
+    })
+    return rememberDiagram(key, svg)
+  }
+
   const fence = md.renderer.rules.fence!
   md.renderer.rules.fence = function (tokens, idx, options, env, renderer) {
     const token = tokens[idx]!
     if (token.meta?.mermaid) {
       try {
-        const { svg } = renderDiagram(token.content, {
-          fontFamily: diagramFont(),
-          // 渲染时拿不到容器宽度，以视口宽度近似：窄侧边栏里横向图改为纵向布局，而不是缩成小字
-          maxWidth: (typeof window !== 'undefined' && window.innerWidth) || undefined,
-          linkRel: 'noopener noreferrer'
-        })
-        return `<div class="md-diagram">${diagramLinks(svg)}</div>`
+        return `<div class="md-diagram">${diagramLinks(diagram(token.content))}</div>`
       } catch (error) {
         // 语法错误等回退为普通代码块；错误信息含图表源码，不插入 HTML
         if (!(error instanceof PeleError)) console.warn('Mermaid rendering failed:', error)

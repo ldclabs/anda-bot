@@ -27,6 +27,35 @@ describe('renderMarkdown', () => {
     expect(quoted).toContain('<blockquote>\n<div class="md-diagram"><svg')
   })
 
+  it('accepts a capitalized mermaid tag', () => {
+    const html = renderMarkdown('```Mermaid\nflowchart LR\n  A --> B\n```\n')
+    expect(html).toContain('<div class="md-diagram"><svg')
+    expect(html).not.toContain('<pre>')
+  })
+
+  it('renders every diagram in a message, not just the first', () => {
+    const html = renderMarkdown(
+      [
+        'One:',
+        '',
+        '```mermaid',
+        'flowchart LR',
+        '  A --> B',
+        '```',
+        '',
+        'Two:',
+        '',
+        '```mermaid',
+        'sequenceDiagram',
+        '  A->>B: Hi',
+        '```'
+      ].join('\n')
+    )
+    expect(html.match(/<svg/g)).toHaveLength(2)
+    expect(html).toContain('pele-flowchart')
+    expect(html).toContain('pele-sequence')
+  })
+
   it('keeps a streaming mermaid fence as code until it closes', () => {
     for (const partial of [
       '```mermaid\nflowchart LR\n  A --> B',
