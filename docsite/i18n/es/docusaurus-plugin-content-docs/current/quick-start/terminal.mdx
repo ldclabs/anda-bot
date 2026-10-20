@@ -61,8 +61,11 @@ Los comandos de shell riesgosos y las conexiones a servidores MCP muestran una t
 | --- | --- |
 | Cuadro de entrada vacío | Pulse `y` para aprobar, `n` para denegar. |
 | El cuadro de entrada tiene texto | Escriba `y`/`yes` o `n`/`no` y pulse Enter, o pulse Ctrl+U para limpiar la entrada y volver a usar los atajos de una sola tecla. |
+| Tarjeta de comando de shell | Pulse `a` para aprobar y no volver a preguntar por ese mismo comando durante el resto de la sesión. |
 
 El pie de página siempre indica cuál de las dos opciones está activa. Una tarjeta sin respuesta caduca a los 10 minutos y la llamada a la herramienta falla.
+
+La comprobación de riesgos también recuerda cómo respondió a las tarjetas anteriores de la sesión: una operación que aprobó, o una más acotada, se ejecuta sin volver a preguntar, mientras que los push, publicaciones, versiones, despliegues y subidas piden aprobación cada vez. Los comandos pueden leer fuera del espacio de trabajo activo, pero escribir, mover o eliminar algo allí requiere aprobación.
 
 Las tareas cron y el modo de objetivo autónomo (`/goal ...`) siempre se ejecutan con acceso completo, porque no hay nadie presente para responder una tarjeta y, de lo contrario, la tarea se quedaría bloqueada hasta que la tarjeta caduque.
 

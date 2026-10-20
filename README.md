@@ -194,11 +194,11 @@ Input preserves spaces in text and code. Cursor movement and deletion treat comb
 
 Risky shell commands, MCP server connections and MCP tool calls that need your consent raise an approval card before they run:
 
-- With an empty input box, press `y` to approve or `n` to deny. An MCP tool card also offers `a`, Always allow, which approves and stops asking for that tool.
+- With an empty input box, press `y` to approve or `n` to deny. A shell command card also offers `a`, which approves and stops asking for that exact command for the rest of the session; an MCP tool card offers `a`, Always allow, which approves and stops asking for that tool.
 - If the input box already has text, those keys go to the input instead. Type `y`/`yes` or `n`/`no` and press Enter to answer, or press Ctrl+U to clear the input and use the single-key shortcuts again. The footer always shows which of the two is currently active.
 - Approval cards expire after 10 minutes, and the tool call then fails.
 
-Approval cards show the full command, details and choices, wrapping to the terminal width. A command that asks for its own working directory shows it on the card, and one outside the active workspace always needs approval. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
+Approval cards show the full command, details and choices, wrapping to the terminal width. A command that asks for its own working directory shows it on the card. Commands may read outside the active workspace, but writing, moving or deleting anything there needs approval. The risk check also remembers how you answered earlier cards in the session: an operation you approved, or a narrower one, runs without asking again, while pushes, publishes, releases, deploys and uploads ask every time. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
 
 Start the terminal UI with `anda --full-access` to skip the cards for that session; the status line shows `full-access` while it is on.
 

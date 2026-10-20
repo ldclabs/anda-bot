@@ -4,6 +4,26 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.6] — 2026-10-20
+
+### Added
+
+- **Shell risk checks learn from the session**: the model that decides whether a shell command needs your approval judged every command on its own, so it asked again about the kind of operation you had just approved, and nothing it decided carried over. It now reads the session's earlier checks and how you answered their cards, and follows them: an operation you approved, or a narrower one, runs without asking again, while one you denied keeps asking, rewritten forms included. Pushes, publishes, releases, deploys and uploads ask every time, whatever you approved before. A card that expired or a task you stopped counts as no answer, not as a denial. The history only grows, one line per message after instructions that never change, so each check reuses the previous one's prompt cache; a new workspace or language adds a line rather than starting over, since one session often spans several. Past 48 commands or 24,000 characters it is compacted once, keeping the latest commands you answered and the latest others. Commands the fixed rules settle (read-only commands, an empty command, a secret-like path) never reach the model, as before.
+- **A shell approval card can stop asking about that exact command**: besides Approve and Deny, the card offers "Allow this command for this session" (`a` in the terminal UI; localized like the approval reason). It approves, and the same command, with the same working directory, background flag and environment keys in the same workspace, then runs without a card until the session ends, in every approval mode, since you chose it yourself. Anything else still asks.
+- **Mermaid diagrams in chat**: a closed ` ```mermaid ` fence in a chat message, thinking text or bookmark renders as a diagram in Anda Desktop and the Chrome extension (rendered with pele), instead of showing its source. A fence renders only once its closing marker arrives, so a streaming reply does not flip between code and diagram, and an invalid diagram falls back to the code block. Links in a diagram follow the markdown link policy: absolute URLs open in a new tab, relative ones do nothing. Labels are measured with the page font and laid out to the panel's width, so a wide flowchart turns vertical in the side panel instead of shrinking to unreadable text, and its colors follow the light or dark theme without rendering again.
+
+### Changed
+
+- **Clearer rules for the shell risk check**: reading outside the active workspace (dependency and toolchain sources such as `~/.cargo/registry`, documentation, other projects) no longer needs approval; writing, moving or deleting anything outside the workspace and the temporary directories still does. A background command (a dev server, a watcher, a long build or test run) is no longer risky by itself; one that sets up something meant to outlive the session, such as a launch agent, system service, scheduled job or login item, is. The instructions now live in `anda_bot/assets/ShellRiskInstructions.md`.
+- **Shell risk checks think a little again**: 0.14.5 had them ask for the least reasoning (`effort: minimal`), which turns DeepSeek's thinking off. Weighing a command against the session's history needs some, so they now ask for `effort: low`, and DeepSeek thinks briefly. Bookmark previews keep `minimal`.
+- **Sessions compact only when the context fills up**: a session also compacted after 81 turns, even with most of its context left, often in the middle of a task and without the prompt cache. That backstop is gone: a session now compacts when its context reaches 80% of the model's window, or when the agent calls `compact_context` at a task boundary.
+- **Anda Engine 0.17.4**: Anda Bot now requires Anda Engine 0.17.4, which drops the 81-turn backstop above.
+- **Version 0.14.6**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.6.
+
+### Fixed
+
+- **Reopening Anda Desktop from the tray keeps focus where it was**: on macOS, showing a hidden window handed focus back through key-view selection, which Chromium treats as a Tab press, so the sidebar toggle took keyboard focus and showed its focus ring and tooltip. The page is now focused directly before the window is shown, so it keeps whatever it had focused.
+
 ## [0.14.5] — 2026-10-17
 
 ### Changed

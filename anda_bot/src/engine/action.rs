@@ -29,7 +29,8 @@ use crate::util::request_meta::keys;
 mod shell_policy;
 
 use shell_policy::{
-    ApprovalDecision, ShellRiskCache, shell_approval_decision_with_model, shell_risk_language_hint,
+    ApprovalDecision, ShellApproval, ShellApprovalLedger, UserAnswer,
+    shell_approval_decision_with_model, shell_risk_language_hint,
 };
 pub(crate) use shell_policy::{ApprovalMode, references_sensitive_path};
 
@@ -235,7 +236,8 @@ pub(crate) struct ActionSession {
     conversation_id: Arc<AtomicU64>,
     models: Arc<Models>,
     home_dir: PathBuf,
-    risk_cache: Arc<ShellRiskCache>,
+    /// The session's shell approvals, which the risk classifier learns from.
+    shell_ledger: Arc<ShellApprovalLedger>,
 }
 
 impl ActionSession {
@@ -256,7 +258,7 @@ impl ActionSession {
             conversation_id,
             models,
             home_dir,
-            risk_cache: Arc::default(),
+            shell_ledger: Arc::default(),
         }
     }
 
@@ -327,20 +329,30 @@ impl ActionSession {
             .unwrap_or_default();
         let language_hint = shell_risk_language_hint(&meta)
             .or_else(|| crate::util::locale::persisted_ui_language(&self.home_dir));
-        let approval_reason = match shell_approval_decision_with_model(
+        let ShellApproval {
+            decision,
+            ledger_seq,
+        } = shell_approval_decision_with_model(
             &args,
             approval_mode,
             &workspace,
             self.models.as_ref(),
             language_hint.as_deref(),
-            &self.risk_cache,
+            &self.shell_ledger,
         )
-        .await
-        {
+        .await;
+        let approval_reason = match decision {
             ApprovalDecision::Allow => return Ok(args),
             ApprovalDecision::Ask(reason) => reason,
         };
+        // When the classifier asked, it reads the user's answer next time.
+        let record_answer = |answer| {
+            if let Some(seq) = ledger_seq {
+                self.shell_ledger.record_answer(seq, answer);
+            }
+        };
         if let Some(reason) = unattended_run_reason(ctx, &meta) {
+            record_answer(UserAnswer::NoResponse);
             return Err(format!(
                 "this shell command needs the user's approval ({approval_reason}), which nobody \
                  can give in this {reason}, so it was NOT run"
@@ -350,7 +362,7 @@ impl ActionSession {
         let approval_locale = language_hint.as_deref().unwrap_or("en");
         let mut details = Vec::new();
         if !workspace.is_empty() {
-            details.push(approval_detail("Workspace", workspace, "text"));
+            details.push(approval_detail("Workspace", &workspace, "text"));
         }
         if let Some(cwd) = &args.cwd {
             details.push(approval_detail("Working directory", cwd, "text"));
@@ -378,20 +390,23 @@ impl ActionSession {
             details.push(approval_detail("Environment keys", &args.env_keys, "list"));
         }
 
+        // The third answer approves and stops asking about this exact command
+        // for the rest of the session.
         let kind = PendingActionKind::Approval {
             approved_payload: json!({
                 "tool": ShellTool::NAME,
                 "command": &args.command,
             }),
-            rememberable: false,
+            rememberable: true,
         };
+        let remember_label = t!("shell_approval.remember", locale = approval_locale);
         let payload = ActionPayload {
             tool: Some(ActionToolRef::labeled(ShellTool::NAME, "Shell command")),
             message: Some("The agent wants to run a local shell command.".to_string()),
             summary: Some(args.command.clone()),
             command: Some(args.command.clone()),
             details: Some(details),
-            approval: Some(ApprovalLabels::approve_deny()),
+            approval: Some(ApprovalLabels::approve_deny_remember(&remember_label)),
             metadata: Some(json!({
                 "command": &args.command,
                 "cwd": &args.cwd,
@@ -402,9 +417,22 @@ impl ActionSession {
             })),
             ..self.new_payload(ctx, &kind, "Approve shell command".to_string())
         };
-        self.request_approval(payload, kind, "shell command")
-            .await
-            .map(|_| args)
+        let response = self.publish_and_wait(payload, kind, "shell command").await;
+        record_answer(match &response {
+            Ok(response) if response.status == ActionStatus::Approved => UserAnswer::Approved,
+            // A stopped task resolves as denied too, but without the user.
+            Ok(response)
+                if response.status == ActionStatus::Denied
+                    && response.payload["approve"] == false =>
+            {
+                UserAnswer::Denied
+            }
+            _ => UserAnswer::NoResponse,
+        });
+        if approval_outcome(response?, "shell command")? {
+            self.shell_ledger.allow_for_session(&args, &workspace);
+        }
+        Ok(args)
     }
 
     /// Shows an MCP approval card and waits for the answer: one for adding,
@@ -459,21 +487,7 @@ impl ActionSession {
         kind: PendingActionKind,
         what: &str,
     ) -> Result<bool, BoxError> {
-        let response = self.publish_and_wait(payload, kind, what).await?;
-        match response.status {
-            ActionStatus::Approved => Ok(response.payload["remember"] == true),
-            // Approvals never pass by default: an unanswered one is refused,
-            // and the error says so plainly so the model neither mistakes it
-            // for a failed run nor queues the same card again.
-            ActionStatus::Expired => Err(format!(
-                "approval for the {what} expired: the user did not respond within {} minutes, \
-                 so it was NOT carried out. Do not retry the same request now; continue another \
-                 way, or tell the user what needs approval.",
-                ACTION_RESPONSE_TIMEOUT.as_secs() / 60
-            )
-            .into()),
-            _ => Err(action_denied_error(&response.payload)),
-        }
+        approval_outcome(self.publish_and_wait(payload, kind, what).await?, what)
     }
 
     /// Publishes an action card and waits for it to resolve. A card nobody
@@ -1297,6 +1311,25 @@ fn normalize_choice_args(args: &mut UserChoiceArgs) -> Result<(), BoxError> {
     Ok(())
 }
 
+/// Maps an approval's resolution to the go-ahead; `Ok(true)` when the user
+/// also asked not to be asked again.
+fn approval_outcome(response: ActionResponse, what: &str) -> Result<bool, BoxError> {
+    match response.status {
+        ActionStatus::Approved => Ok(response.payload["remember"] == true),
+        // Approvals never pass by default: an unanswered one is refused, and
+        // the error says so plainly so the model neither mistakes it for a
+        // failed run nor queues the same card again.
+        ActionStatus::Expired => Err(format!(
+            "approval for the {what} expired: the user did not respond within {} minutes, \
+             so it was NOT carried out. Do not retry the same request now; continue another \
+             way, or tell the user what needs approval.",
+            ACTION_RESPONSE_TIMEOUT.as_secs() / 60
+        )
+        .into()),
+        _ => Err(action_denied_error(&response.payload)),
+    }
+}
+
 fn action_denied_error(payload: &Value) -> BoxError {
     let reason = payload
         .get("reason")
@@ -1550,6 +1583,11 @@ mod tests {
             reason["value"],
             "该命令可能会访问网络、写入文件或更改系统状态。"
         );
+        assert_eq!(payload["approval"]["approve_label"], "Approve");
+        assert_eq!(
+            payload["approval"]["remember_label"],
+            "本会话内不再询问此命令"
+        );
 
         runtime
             .respond(
@@ -1739,6 +1777,18 @@ mod tests {
         ActionSession,
         mpsc::Receiver<ActionEvent>,
     ) {
+        test_session_with(ctx, Models::default(), std::env::temp_dir())
+    }
+
+    fn test_session_with(
+        ctx: &BaseCtx,
+        models: Models,
+        home_dir: PathBuf,
+    ) -> (
+        Arc<ActionRuntime>,
+        ActionSession,
+        mpsc::Receiver<ActionEvent>,
+    ) {
         let runtime = Arc::new(ActionRuntime::new());
         let (event_sender, event_rx) = mpsc::channel(4);
         let session = ActionSession::new(
@@ -1747,10 +1797,194 @@ mod tests {
             ctx.caller().to_text(),
             "session_1".to_string(),
             Arc::new(AtomicU64::new(9)),
-            Arc::new(Models::default()),
-            std::env::temp_dir(),
+            Arc::new(models),
+            home_dir,
         );
         (runtime, session, event_rx)
+    }
+
+    /// The payload of the next card published, past any resolutions.
+    async fn next_card(event_rx: &mut mpsc::Receiver<ActionEvent>) -> Value {
+        loop {
+            match event_rx.recv().await.expect("event channel open") {
+                ActionEvent::Add(message) => {
+                    let Some(ContentPart::Action { payload, .. }) = message.content.first() else {
+                        panic!("expected action payload");
+                    };
+                    return payload.clone();
+                }
+                _ => continue,
+            }
+        }
+    }
+
+    /// Asks to run `command`, then answers its card (`None`: stops the task).
+    async fn answer_shell_card(
+        (runtime, session, event_rx): &mut (
+            Arc<ActionRuntime>,
+            ActionSession,
+            mpsc::Receiver<ActionEvent>,
+        ),
+        ctx: &BaseCtx,
+        command: &str,
+        approve: Option<bool>,
+        remember: Option<bool>,
+    ) -> (Value, Result<CommandArgs, BoxError>) {
+        let (request_session, request_ctx) = (session.clone(), ctx.clone());
+        let args = CommandArgs {
+            command: command.to_string(),
+            ..Default::default()
+        };
+        let request = tokio::spawn(async move {
+            request_session
+                .request_shell_approval(&request_ctx, args)
+                .await
+        });
+        let card = next_card(event_rx).await;
+        match approve {
+            Some(approve) => {
+                runtime
+                    .respond(
+                        &ctx.caller().to_text(),
+                        9,
+                        ActionResponseArgs {
+                            action_id: card["id"].as_str().unwrap().to_string(),
+                            approve: Some(approve),
+                            choice_id: None,
+                            choice_text: None,
+                            remember,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+            None => {
+                session.cancel_pending();
+            }
+        }
+        (card, request.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn shell_approval_can_stop_asking_about_the_exact_command() {
+        let home = tempfile::tempdir().unwrap();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let mut session = test_session_with(&ctx, Models::default(), home.path().to_path_buf());
+
+        let (card, result) =
+            answer_shell_card(&mut session, &ctx, "rm -rf target", Some(true), Some(true)).await;
+        assert_eq!(
+            card["approval"]["remember_label"],
+            "Allow this command for this session"
+        );
+        assert_eq!(result.unwrap().command, "rm -rf target");
+
+        // The same command now runs without a card...
+        let (_, shell, event_rx) = &mut session;
+        let args = CommandArgs {
+            command: "rm -rf target".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            shell
+                .request_shell_approval(&ctx, args)
+                .await
+                .unwrap()
+                .command,
+            "rm -rf target"
+        );
+        while let Ok(event) = event_rx.try_recv() {
+            assert!(!matches!(event, ActionEvent::Add(_)), "no card expected");
+        }
+
+        // ...while another still asks, and a plain approval is not remembered.
+        let (card, result) =
+            answer_shell_card(&mut session, &ctx, "rm -rf dist", Some(true), None).await;
+        assert_eq!(card["command"], "rm -rf dist");
+        assert!(result.is_ok());
+        let (_, result) =
+            answer_shell_card(&mut session, &ctx, "rm -rf dist", Some(false), None).await;
+        assert!(result.is_err());
+    }
+
+    struct AskingCompleter(Arc<std::sync::Mutex<Vec<anda_core::CompletionRequest>>>);
+
+    impl anda_engine::model::CompletionFeaturesDyn for AskingCompleter {
+        fn completion(
+            &self,
+            req: anda_core::CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<anda_core::AgentOutput, BoxError>> {
+            self.0.lock().unwrap().push(req);
+            Box::pin(async {
+                Ok(anda_core::AgentOutput {
+                    content: r#"{"decision":"ask","reason":"risky"}"#.to_string(),
+                    ..Default::default()
+                })
+            })
+        }
+
+        fn model_name(&self) -> String {
+            "asking".to_string()
+        }
+    }
+
+    #[tokio::test]
+    async fn shell_classifier_reads_how_the_user_answered() {
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let models = Models::default();
+        models.set(
+            "lite".to_string(),
+            anda_engine::model::Model::with_completer(Arc::new(AskingCompleter(requests.clone()))),
+        );
+        let home = tempfile::tempdir().unwrap();
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let mut session = test_session_with(&ctx, models, home.path().to_path_buf());
+
+        let (card, result) =
+            answer_shell_card(&mut session, &ctx, "pnpm add zod", Some(true), None).await;
+        assert!(result.is_ok());
+        let reason = card["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|detail| detail["label"] == "Approval reason")
+            .expect("approval reason detail");
+        assert_eq!(reason["value"], "risky");
+        let (_, result) = answer_shell_card(
+            &mut session,
+            &ctx,
+            "git push origin main",
+            Some(false),
+            None,
+        )
+        .await;
+        assert!(result.is_err());
+        let (_, result) = answer_shell_card(&mut session, &ctx, "pnpm add react", None, None).await;
+        assert!(result.is_err());
+        let (_, result) =
+            answer_shell_card(&mut session, &ctx, "pnpm add vue", Some(false), None).await;
+        assert!(result.is_err());
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        let history: Vec<String> = requests[3]
+            .chat_history
+            .iter()
+            .filter_map(Message::text)
+            .collect();
+        assert_eq!(
+            history,
+            [
+                r#"{"type":"context","workspace":null,"language":"unknown"}"#,
+                r#"{"type":"command","seq":1,"command":"pnpm add zod"}"#,
+                r#"{"type":"verdict","seq":1,"classifier":"ask","user":"approved"}"#,
+                r#"{"type":"command","seq":2,"command":"git push origin main"}"#,
+                r#"{"type":"verdict","seq":2,"classifier":"ask","user":"denied"}"#,
+                r#"{"type":"command","seq":3,"command":"pnpm add react"}"#,
+                // A stopped task is not the user saying no.
+                r#"{"type":"verdict","seq":3,"classifier":"ask","user":"no_response"}"#,
+            ]
+        );
     }
 
     #[tokio::test]

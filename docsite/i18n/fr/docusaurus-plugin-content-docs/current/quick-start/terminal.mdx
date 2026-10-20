@@ -61,8 +61,11 @@ Les commandes shell risquées et les connexions à des serveurs MCP affichent un
 | --- | --- |
 | Zone de saisie vide | Appuyez sur `y` pour approuver, `n` pour refuser. |
 | La zone de saisie contient du texte | Tapez `y`/`yes` ou `n`/`no` puis appuyez sur Entrée, ou appuyez sur Ctrl+U pour vider la saisie et réutiliser les raccourcis à une touche. |
+| Carte de commande shell | Appuyez sur `a` pour approuver et ne plus être sollicité pour cette même commande jusqu'à la fin de la session. |
 
 Le pied de page indique toujours laquelle des deux options est active. Une carte sans réponse expire au bout de 10 minutes, et l'appel de l'outil échoue alors.
+
+La vérification des risques retient aussi vos réponses aux cartes précédentes de la session : une opération que vous avez approuvée, ou une opération plus restreinte, s'exécute sans redemander, tandis que les push, publications, releases, déploiements et téléversements demandent une approbation à chaque fois. Les commandes peuvent lire en dehors de l'espace de travail actif, mais y écrire, déplacer ou supprimer quoi que ce soit nécessite une approbation.
 
 Les tâches cron et le mode objectif autonome (`/goal ...`) s'exécutent toujours avec un accès complet, car personne n'est présent pour répondre à une carte et la tâche resterait sinon bloquée jusqu'à l'expiration de celle-ci.
 

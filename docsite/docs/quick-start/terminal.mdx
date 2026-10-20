@@ -63,8 +63,11 @@ Risky shell commands and MCP server connections raise an approval card before th
 | --- | --- |
 | Input box empty | Press `y` to approve, `n` to deny. |
 | Input box has text | Type `y`/`yes` or `n`/`no` and press Enter, or press Ctrl+U to clear the input and use the single-key shortcuts again. |
+| Shell command card | Press `a` to approve and stop asking for that exact command for the rest of the session. |
 
 The footer always shows which of the two is currently active. An unanswered card expires after 10 minutes, and the tool call then fails.
+
+The risk check also remembers how you answered earlier cards in the session: an operation you approved, or a narrower one, runs without asking again, while pushes, publishes, releases, deploys and uploads ask every time. Commands may read outside the active workspace, but writing, moving or deleting anything there needs approval.
 
 Approval cards show the full command, details and choices, wrapping to the terminal width. Status changes append a result to the transcript. Submission errors take priority over shortcut help; a failed text-choice submission keeps the draft for editing and retrying.
 

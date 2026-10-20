@@ -44,6 +44,13 @@ shell_approval.detail.approval_reason:
   ar: سبب طلب الموافقة
   fr: Motif de l'approbation
   es: Motivo de aprobación
+shell_approval.remember:
+  en: Allow this command for this session
+  zh-Hans: 本会话内不再询问此命令
+  ru: Разрешить эту команду до конца сеанса
+  ar: السماح بهذا الأمر حتى نهاية هذه الجلسة
+  fr: Autoriser cette commande pour cette session
+  es: Permitir este comando durante esta sesión
 shell_approval.reason.approval_required:
   en: Current approval mode requires you to confirm this command.
   zh-Hans: 当前审批模式要求你确认该命令。
