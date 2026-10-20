@@ -4,6 +4,11 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The plan no longer freezes on its last steps**: the tool told the model its final reply would check off the last step, but the runtime completes only the step in progress, and only when no step is left pending. A request that ended with two steps left, such as verifying and then committing, therefore kept showing the first as in progress and the second as pending after both were done, and nothing said so. The tool now states that rule, and a turn that ends with steps the model never marked gets one plan check: the model is asked once, inside the same request, to mark what it finished, or to leave the plan alone when it stopped to wait for the user. A new request clears the check together with the plan.
+- **A plan update can no longer be lost between two calls**: a response that holds two `update_plan` calls runs them concurrently, and each one loaded the list, applied its own change and wrote the whole list back, so the later write silently dropped the earlier update; the publishes could also land in the other order, leaving the client on the older list. The session now holds one write lock, installed on the context the whole turn shares so every call takes that same one, and the turn-end completion takes it as well.
+
 ## [0.14.6] — 2026-10-20
 
 ### Added

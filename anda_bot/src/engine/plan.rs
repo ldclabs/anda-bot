@@ -6,6 +6,10 @@
 //! re-injects the unfinished ones. The session runner mirrors them into the
 //! conversation's `extra` under [`PLAN_KEY`], and `GetConversation` /
 //! `GetConversationDelta` lift that to the top level for polling clients.
+//!
+//! Every write of the plan, from the tool and from the turn end, takes the
+//! session's [`PlanLock`]: a response may hold several `update_plan` calls and
+//! the engine runs them concurrently.
 
 use crate::util::{request_meta::keys, tool_response::ToolResponse as Response};
 use anda_core::{BoxError, FunctionDefinition, RequestMeta, Resource, Tool, ToolOutput};
@@ -16,6 +20,8 @@ use anda_engine::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio::sync::{Mutex, MutexGuard};
 
 use super::{action::ActionSession, agent::AndaBot};
 
@@ -75,6 +81,50 @@ pub struct UpdatePlanArgs {
     pub start: Option<usize>,
 }
 
+/// Serializes the plan's read-modify-write, and the publish that follows it.
+///
+/// The engine runs the tool calls of one response concurrently, and every call
+/// gets a child context that snapshot-copies the parent's state map. A handle
+/// installed on the session's own context therefore reaches all of them, while
+/// a lock a call installed for itself would not reach its siblings. Without it
+/// two calls both load the same list and the later whole-list `set` drops the
+/// earlier update; their publishes could also land in the other order, which
+/// would leave the client showing the older list.
+#[derive(Debug, Clone, Default)]
+struct PlanLock(Arc<Mutex<()>>);
+
+impl PlanLock {
+    /// Returns this context's lock, installing it when it is absent.
+    /// [`init_lock`] installs it on the session's own context before its first
+    /// turn, so the calls of a turn all find that same handle.
+    fn of(base: &BaseCtx) -> Self {
+        if let Some(lock) = base.get_state::<Self>() {
+            return lock;
+        }
+        let lock = Self::default();
+        base.set_state(lock.clone());
+        lock
+    }
+
+    async fn lock(&self) -> MutexGuard<'_, ()> {
+        self.0.lock().await
+    }
+
+    /// The turn-end bookkeeping runs after every call of the turn resolved, so
+    /// it never waits: a lock it cannot take means a call is still writing, and
+    /// the check the turn gets for its unfinished steps covers that plan.
+    fn try_lock(&self) -> Option<MutexGuard<'_, ()>> {
+        self.0.try_lock().ok()
+    }
+}
+
+/// Installs the plan's lock on the session's own context, before its first
+/// turn. Tool calls run in child contexts that snapshot-copy that state map, so
+/// the lock has to be installed here to be the one they all take.
+pub(crate) fn init_lock(base: &BaseCtx) {
+    PlanLock::of(base);
+}
+
 /// Shows the user the steps of the request in progress. Only the main AndaBot
 /// session writes the plan: a subagent keeps its own task list but shares the
 /// session's action channel, so its plan would replace the one the user
@@ -100,7 +150,8 @@ impl Tool<BaseCtx> for UpdatePlanTool {
             "Use it for every request that edits files or needs more than one tool call; skip it for a single call or plain conversation.\n",
             "- Never call it alone: send it in the same response as another tool call, so it costs no extra round trip. The first call goes with the request's first tool call, even one that only reads.\n",
             "- First call: `items` holds the whole plan in order, 1-12 short imperative steps (about 7 words, no numbering), the step you are starting `in_progress`, the rest `pending`.\n",
-            "- Next step: `advance: true` with the call that begins it; it completes the step in progress and starts the next pending one. Your final reply completes the last step, so it needs no call.\n",
+            "- Next step: `advance: true` with the call that begins it; it completes the step in progress and starts the next pending one, so advance into your last step as well.\n",
+            "- Your final reply completes only the step in progress, and only when no step is left pending: a step you never advanced into stays pending, so mark what you finished before you answer.\n",
             "- Out of order: `done` lists 1-based steps to complete, `start` names the 1-based step to begin.\n",
             "- Plan changed, including when the user redirects you mid-task: send `items` again with the whole new list.\n",
             "Keep exactly one step in progress while working, and do not repeat the plan as a list in your reply."
@@ -129,6 +180,10 @@ impl Tool<BaseCtx> for UpdatePlanTool {
 
         let replaced = args.items.is_some();
         let session = todo_session(&ctx);
+        // One update at a time, the publish included: a response may hold
+        // several `update_plan` calls and the engine runs them concurrently.
+        let lock = PlanLock::of(&ctx);
+        let _writing = lock.lock().await;
         let steps = apply(load(&session), args)?;
         store(&session, &steps)?;
         if let Some(actions) = ctx.get_state::<ActionSession>() {
@@ -383,6 +438,10 @@ pub(crate) fn finish_turn(base: &BaseCtx, conversation: &mut Conversation) -> bo
     let Some(session) = base.get_state::<TodoSession>() else {
         return false;
     };
+    let lock = PlanLock::of(base);
+    let Some(_writing) = lock.try_lock() else {
+        return false;
+    };
     let mut steps = load(&session);
     if steps.iter().any(|step| step.status == PlanStatus::Pending) {
         return false;
@@ -398,6 +457,34 @@ pub(crate) fn finish_turn(base: &BaseCtx, conversation: &mut Conversation) -> bo
         return false;
     }
     save(conversation, &steps)
+}
+
+/// The note a turn that ended with an unfinished plan gets. The plan is what
+/// the user follows, so a model that stops while step 5 is in progress and
+/// step 6 is pending leaves the request looking unfinished even when it did
+/// both. Asking once per turn, with the steps it never marked, is what makes
+/// the list true again; `None` when nothing is left to mark.
+pub(crate) fn reconcile_prompt(base: &BaseCtx) -> Option<String> {
+    let steps = base
+        .get_state::<TodoSession>()
+        .map(|session| load(&session))
+        .unwrap_or_default();
+    let unfinished: Vec<String> = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, step)| step.status != PlanStatus::Completed)
+        .map(|(i, step)| format!("{} ({})", i + 1, step.status.as_str().replace('_', " ")))
+        .collect();
+    if unfinished.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Plan check, from the runtime rather than the user: your turn ended while the plan still lists {} unfinished step(s): {}. \
+         If that work is done, call update_plan now (advance or done) and answer with one short line. \
+         If you stopped to wait for the user, leave the plan as it is and answer with one short line.",
+        unfinished.len(),
+        unfinished.join(", ")
+    ))
 }
 
 #[cfg(test)]
@@ -641,6 +728,23 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_prompt_lists_only_the_steps_left_open() {
+        let base = EngineBuilder::new().mock_ctx().base;
+        assert_eq!(reconcile_prompt(&base), None);
+
+        let session = todo_session(&base);
+        store(&session, &plan(&[Completed, Completed])).unwrap();
+        assert_eq!(reconcile_prompt(&base), None);
+
+        store(&session, &plan(&[Completed, InProgress, Pending])).unwrap();
+        let prompt = reconcile_prompt(&base).expect("an unfinished plan needs a check");
+        assert!(prompt.contains("2 unfinished"), "{prompt}");
+        assert!(prompt.contains("2 (in progress)"), "{prompt}");
+        assert!(prompt.contains("3 (pending)"), "{prompt}");
+        assert!(!prompt.contains("Step 1"), "{prompt}");
+    }
+
+    #[test]
     fn clear_and_record_follow_the_session() {
         let base = EngineBuilder::new().mock_ctx().base;
         let session = todo_session(&base);
@@ -696,5 +800,73 @@ mod tests {
             panic!("expected a plan event");
         };
         assert_eq!(steps, plan(&[InProgress, Pending]));
+    }
+
+    #[test]
+    fn a_tool_call_inherits_the_sessions_plan_lock() {
+        let ctx = EngineBuilder::new().mock_ctx();
+        init_lock(&ctx.base);
+        let installed = ctx.base.get_state::<PlanLock>().unwrap();
+
+        // Every tool call runs in a child context that snapshot-copies the
+        // session's state map, so a call has to find the handle installed
+        // there: one it installed for itself would not serialize its
+        // siblings.
+        let call = ctx.child_base(UpdatePlanTool::NAME).unwrap();
+        assert!(Arc::ptr_eq(&installed.0, &PlanLock::of(&call).0));
+    }
+
+    #[tokio::test]
+    async fn the_turn_end_leaves_a_plan_to_the_call_that_is_writing_it() {
+        let base = EngineBuilder::new().mock_ctx().base;
+        let session = todo_session(&base);
+        store(&session, &plan(&[Completed, InProgress])).unwrap();
+        let mut conversation = Conversation::default();
+
+        let lock = PlanLock::of(&base);
+        let writing = lock.lock().await;
+        assert!(!finish_turn(&base, &mut conversation));
+        assert_eq!(statuses(&load(&session)), [Completed, InProgress]);
+
+        // The check a turn gets for its unfinished steps is what covers that
+        // plan, so the step completes again once nothing holds the lock.
+        drop(writing);
+        assert!(finish_turn(&base, &mut conversation));
+        assert_eq!(statuses(&load(&session)), [Completed, Completed]);
+    }
+
+    /// One response may hold several `update_plan` calls and the engine runs
+    /// them concurrently, each loading the list before storing its whole
+    /// update. Unlocked, the later store drops the earlier one, so the plan
+    /// loses steps the model marked done.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_updates_keep_every_step() {
+        let mut ctx = EngineBuilder::new().mock_ctx().base;
+        ctx.agent = AndaBot::NAME.to_string();
+        let session = todo_session(&ctx);
+        store(&session, &plan(&[Pending; MAX_STEPS])).unwrap();
+        init_lock(&ctx);
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(MAX_STEPS));
+        let mut calls = Vec::new();
+        for step in 1..=MAX_STEPS {
+            let ctx = ctx.clone();
+            let barrier = barrier.clone();
+            calls.push(tokio::spawn(async move {
+                let args = UpdatePlanArgs {
+                    done: Some(vec![step]),
+                    ..Default::default()
+                };
+                barrier.wait().await;
+                UpdatePlanTool.call(ctx, args, Vec::new()).await.unwrap();
+            }));
+        }
+        for call in calls {
+            call.await.unwrap();
+        }
+        assert_eq!(
+            statuses(&load(&todo_session(&ctx))),
+            vec![Completed; MAX_STEPS]
+        );
     }
 }

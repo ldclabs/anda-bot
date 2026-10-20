@@ -74,6 +74,10 @@ impl AndaBot {
         {
             req.model = Some(model.model_name());
         }
+        // The turn plan's write lock has to live on this context: tool calls
+        // run in child contexts that snapshot-copy its state map, so a lock a
+        // call installed for itself would not serialize its siblings.
+        plan::init_lock(&ctx.base);
         // The turn plan lives in the session, and a new session starts without
         // one. A conversation it continues, as after a daemon restart, must not
         // keep showing the previous session's plan.
@@ -142,6 +146,7 @@ impl AndaBot {
                 extra_user_context: extra_user_context.clone(),
                 last_extra_user_context: extra_user_context,
                 wait_for_input: false,
+                plan_nudge_sent: false,
             };
             for event in initial_events {
                 sess_runner.apply_action_event_to_runner(event);
@@ -259,6 +264,9 @@ struct SessionRunner {
     // Set by run() on an idle tick: the outer loop should wait for new input
     // (bounded by the 1s idle poll interval) instead of spinning.
     wait_for_input: bool,
+    // One plan check per turn: the model ended its turn with steps it never
+    // marked, so it is asked once to reconcile them.
+    plan_nudge_sent: bool,
 }
 
 impl SessionRunner {
@@ -849,6 +857,12 @@ impl SessionRunner {
             return Ok(!cancelled);
         }
 
+        // A request from the caller starts a new turn, so the previous turn's
+        // one plan check goes with the plan it was about.
+        if inputs.iter().any(|input| input.new_request) {
+            self.plan_nudge_sent = false;
+        }
+
         // A request from the caller to an idle session starts a new turn, so
         // the previous request's plan goes. Background results keep it: a step
         // may be waiting for them. Mid-task input, including a message while
@@ -1299,6 +1313,16 @@ impl SessionRunner {
                     && !self.session.has_running_background_tasks()
                 {
                     plan::finish_turn(&self.ctx.base, &mut self.conversation);
+                    // That completed the step in progress only when no step was
+                    // left pending. A plan the model stopped before would stay
+                    // stale in the client, so ask it once this turn to mark the
+                    // steps it never advanced into.
+                    if !self.plan_nudge_sent
+                        && let Some(prompt) = plan::reconcile_prompt(&self.ctx.base)
+                    {
+                        self.plan_nudge_sent = true;
+                        self.runner.follow_up(prompt);
+                    }
                 }
 
                 self.conversation.status = if res.failed_reason.is_some() {
@@ -2114,6 +2138,7 @@ mod tests {
             extra_user_context: None,
             last_extra_user_context: None,
             wait_for_input: false,
+            plan_nudge_sent: false,
         };
         persist_runner_conversation(&mut sess_runner).await;
         (sess_runner, rx)
@@ -4384,6 +4409,10 @@ mod tests {
             recorded_plan_statuses(&sess_runner.conversation),
             Some(vec!["in_progress".to_string(), "pending".to_string()])
         );
+        // That turn ended with two steps unfinished, so the runner holds the
+        // plan check: the tick the outer loop performs next delivers it, the
+        // way it would before the caller's next message arrives.
+        sess_runner.run(vec![], &mut snapshot).await.unwrap();
 
         sess_runner
             .run(
@@ -4420,6 +4449,81 @@ mod tests {
             recorded_plan_statuses(&sess_runner.conversation),
             Some(vec!["completed".to_string(), "completed".to_string()])
         );
+        // A plan the reply finished needs no check.
+        assert!(!sess_runner.plan_nudge_sent);
+        assert_eq!(sess_runner.runner.turns(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_turn_that_stops_before_two_steps_asks_for_one_plan_check() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["completed", "in_progress", "pending"]))
+            .unwrap();
+        plan::record(&sess_runner.ctx.base, &mut sess_runner.conversation);
+
+        sess_runner
+            .run(
+                vec![background(PromptCommand::Plain {
+                    prompt: "tests passed".to_string(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+
+        // The reply finishes no step while another is still pending, so the
+        // recorded plan stays as the model left it and one check is queued.
+        assert_eq!(
+            recorded_plan_statuses(&sess_runner.conversation),
+            Some(vec![
+                "completed".to_string(),
+                "in_progress".to_string(),
+                "pending".to_string()
+            ])
+        );
+        assert!(sess_runner.plan_nudge_sent);
+        assert!(!sess_runner.runner.is_idle());
+        assert_eq!(sess_runner.runner.turns(), 1);
+
+        // The outer loop's next tick delivers it: one more model turn, and no
+        // second check when the model leaves the plan alone again.
+        sess_runner.run(vec![], &mut HashMap::new()).await.unwrap();
+        assert_eq!(sess_runner.runner.turns(), 2);
+        assert_eq!(
+            recorded_plan_statuses(&sess_runner.conversation),
+            Some(vec![
+                "completed".to_string(),
+                "in_progress".to_string(),
+                "pending".to_string()
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_request_starts_a_fresh_plan_check() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["completed", "in_progress", "pending"]))
+            .unwrap();
+        sess_runner.plan_nudge_sent = true;
+
+        // The caller's next request clears the plan and the check with it.
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Plain {
+                    prompt: "something else".to_string(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+        assert!(!sess_runner.plan_nudge_sent);
+        assert!(!session.has_items());
     }
 
     #[tokio::test]
