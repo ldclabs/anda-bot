@@ -392,6 +392,9 @@ impl SessionRunner {
         now_ms: u64,
         tools_usage_snapshot: &mut HashMap<String, Usage>,
     ) -> Result<(), BoxError> {
+        // A stop leaves the plan for reference, but must not restart the
+        // stopped turn with an idle plan check. New user work resets this.
+        self.plan_nudge_sent = true;
         *self.session.goal.write() = None;
         self.session
             .goal_check_backoff_until
@@ -857,9 +860,16 @@ impl SessionRunner {
             return Ok(!cancelled);
         }
 
-        // A request from the caller starts a new turn, so the previous turn's
-        // one plan check goes with the plan it was about.
-        if inputs.iter().any(|input| input.new_request) {
+        let new_request = inputs.iter().any(|input| {
+            input.new_request
+                && !matches!(
+                    input.command,
+                    PromptCommand::Ping | PromptCommand::Invalid { .. }
+                )
+        });
+        // Only new user work resets the plan check; a keepalive does not
+        // authorize another check of the same unfinished plan.
+        if new_request {
             self.plan_nudge_sent = false;
         }
 
@@ -868,16 +878,7 @@ impl SessionRunner {
         // may be waiting for them. Mid-task input, including a message while
         // background work still runs, leaves it to the model, which sends a new
         // plan when the request changes.
-        if self.runner.is_idle()
-            && !self.session.has_running_background_tasks()
-            && inputs.iter().any(|input| {
-                input.new_request
-                    && !matches!(
-                        input.command,
-                        PromptCommand::Ping | PromptCommand::Invalid { .. }
-                    )
-            })
-        {
+        if new_request && self.runner.is_idle() && !self.session.has_running_background_tasks() {
             plan::clear(&self.ctx.base, &mut self.conversation);
         }
 
@@ -1006,6 +1007,20 @@ impl SessionRunner {
             && let Some(goal) = self.session.goal.write().as_mut()
         {
             goal.waiting_for_user = false;
+        }
+
+        // Check on the next idle tick, after new input had a chance to clear
+        // the old plan. Queueing this at turn end would make the runner busy
+        // and merge the old check into the caller's next request.
+        if follow_up_batch.is_empty()
+            && steer_batch.is_empty()
+            && self.runner.is_idle()
+            && !self.session.has_running_background_tasks()
+            && !self.plan_nudge_sent
+            && let Some(prompt) = plan::reconcile_prompt(&self.ctx.base)
+        {
+            self.plan_nudge_sent = true;
+            follow_up_batch.push(prompt.into());
         }
 
         let now_ms = unix_ms();
@@ -1313,16 +1328,6 @@ impl SessionRunner {
                     && !self.session.has_running_background_tasks()
                 {
                     plan::finish_turn(&self.ctx.base, &mut self.conversation);
-                    // That completed the step in progress only when no step was
-                    // left pending. A plan the model stopped before would stay
-                    // stale in the client, so ask it once this turn to mark the
-                    // steps it never advanced into.
-                    if !self.plan_nudge_sent
-                        && let Some(prompt) = plan::reconcile_prompt(&self.ctx.base)
-                    {
-                        self.plan_nudge_sent = true;
-                        self.runner.follow_up(prompt);
-                    }
                 }
 
                 self.conversation.status = if res.failed_reason.is_some() {
@@ -4386,7 +4391,9 @@ mod tests {
     #[tokio::test]
     async fn new_request_clears_the_plan_and_background_input_keeps_it() {
         let bot = build_runner_bot().await;
-        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
         let mut snapshot = HashMap::new();
         let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
         session
@@ -4409,11 +4416,8 @@ mod tests {
             recorded_plan_statuses(&sess_runner.conversation),
             Some(vec!["in_progress".to_string(), "pending".to_string()])
         );
-        // That turn ended with two steps unfinished, so the runner holds the
-        // plan check: the tick the outer loop performs next delivers it, the
-        // way it would before the caller's next message arrives.
-        sess_runner.run(vec![], &mut snapshot).await.unwrap();
-
+        // Deliver the next request immediately, before an empty tick could
+        // send the previous turn's check. Only the new request should run.
         sess_runner
             .run(
                 vec![input(PromptCommand::Plain {
@@ -4425,6 +4429,10 @@ mod tests {
             .unwrap();
         assert_eq!(recorded_plan_statuses(&sess_runner.conversation), None);
         assert!(!session.has_items());
+        assert!(!sess_runner.plan_nudge_sent);
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(request_text(&recorded[1]), "something else");
     }
 
     #[tokio::test]
@@ -4457,7 +4465,9 @@ mod tests {
     #[tokio::test]
     async fn a_turn_that_stops_before_two_steps_asks_for_one_plan_check() {
         let bot = build_runner_bot().await;
-        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let ctx = recording_usage_ctx_with_input_tokens(requests.clone(), 1);
+        let (mut sess_runner, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
         let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
         session
             .set(plan_steps(&["completed", "in_progress", "pending"]))
@@ -4474,8 +4484,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The reply finishes no step while another is still pending, so the
-        // recorded plan stays as the model left it and one check is queued.
+        // The reply finishes no step while another is still pending. Leave
+        // the runner idle so the next user request can still clear the plan.
         assert_eq!(
             recorded_plan_statuses(&sess_runner.conversation),
             Some(vec![
@@ -4484,13 +4494,15 @@ mod tests {
                 "pending".to_string()
             ])
         );
-        assert!(sess_runner.plan_nudge_sent);
-        assert!(!sess_runner.runner.is_idle());
+        assert!(!sess_runner.plan_nudge_sent);
+        assert!(sess_runner.runner.is_idle());
         assert_eq!(sess_runner.runner.turns(), 1);
 
         // The outer loop's next tick delivers it: one more model turn, and no
         // second check when the model leaves the plan alone again.
         sess_runner.run(vec![], &mut HashMap::new()).await.unwrap();
+        assert!(sess_runner.plan_nudge_sent);
+        assert!(sess_runner.runner.is_idle());
         assert_eq!(sess_runner.runner.turns(), 2);
         assert_eq!(
             recorded_plan_statuses(&sess_runner.conversation),
@@ -4500,6 +4512,95 @@ mod tests {
                 "pending".to_string()
             ])
         );
+
+        let recorded = requests.lock();
+        assert_eq!(recorded.len(), 2);
+        let prompt = request_text(&recorded[1]);
+        assert!(prompt.starts_with("[$system: kind=\"plan check\"]"));
+        let notice = sess_runner
+            .conversation
+            .messages
+            .iter()
+            .find(|message| message["content"][0]["text"].as_str() == Some(prompt.as_str()))
+            .expect("the check is persisted with its runtime attribution");
+        assert_eq!(notice["role"], "user");
+        assert_eq!(notice["name"], SYSTEM_PERSON_NAME);
+    }
+
+    #[tokio::test]
+    async fn keepalive_does_not_repeat_a_plan_check() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["in_progress", "pending"]))
+            .unwrap();
+        plan::record(&sess_runner.ctx.base, &mut sess_runner.conversation);
+        let mut snapshot = HashMap::new();
+        sess_runner
+            .run(
+                vec![background(PromptCommand::Plain {
+                    prompt: "waiting for the user".into(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+
+        // The gateway's keepalive may already be queued at the turn boundary.
+        // It allows the first check, but must never authorize a second one.
+        for command in [
+            PromptCommand::Ping,
+            PromptCommand::Ping,
+            PromptCommand::Invalid {
+                reason: "unknown command".into(),
+            },
+        ] {
+            sess_runner
+                .run(vec![input(command)], &mut snapshot)
+                .await
+                .unwrap();
+            assert!(sess_runner.plan_nudge_sent);
+            assert!(sess_runner.runner.is_idle());
+            assert_eq!(sess_runner.runner.turns(), 2);
+            assert_eq!(
+                recorded_plan_statuses(&sess_runner.conversation),
+                Some(vec!["in_progress".into(), "pending".into()])
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn stopping_a_turn_suppresses_its_plan_check() {
+        let bot = build_runner_bot().await;
+        let (mut sess_runner, _rx) = build_session_runner(&bot).await;
+        let session = anda_engine::extension::todo::todo_session(&sess_runner.ctx.base);
+        session
+            .set(plan_steps(&["in_progress", "pending"]))
+            .unwrap();
+        let mut snapshot = HashMap::new();
+        sess_runner
+            .run(
+                vec![background(PromptCommand::Plain {
+                    prompt: "waiting for the user".into(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        sess_runner
+            .run(
+                vec![input(PromptCommand::Stop {
+                    reason: "stop this task".into(),
+                })],
+                &mut snapshot,
+            )
+            .await
+            .unwrap();
+        sess_runner.run(vec![], &mut snapshot).await.unwrap();
+        assert_eq!(sess_runner.runner.turns(), 1);
+        assert!(sess_runner.runner.is_idle());
+        assert!(session.has_items());
     }
 
     #[tokio::test]

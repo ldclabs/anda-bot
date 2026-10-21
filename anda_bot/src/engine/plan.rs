@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::{Mutex, MutexGuard};
 
-use super::{action::ActionSession, agent::AndaBot};
+use super::{action::ActionSession, agent::AndaBot, system::system_runtime_prompt};
 
 /// Key of the plan in a conversation's `extra` and in the `GetConversation`
 /// and `GetConversationDelta` results.
@@ -478,12 +478,15 @@ pub(crate) fn reconcile_prompt(base: &BaseCtx) -> Option<String> {
     if unfinished.is_empty() {
         return None;
     }
-    Some(format!(
-        "Plan check, from the runtime rather than the user: your turn ended while the plan still lists {} unfinished step(s): {}. \
+    Some(system_runtime_prompt(
+        "plan check",
+        format!(
+            "Your turn ended while the plan still lists {} unfinished step(s): {}. \
          If that work is done, call update_plan now (advance or done) and answer with one short line. \
          If you stopped to wait for the user, leave the plan as it is and answer with one short line.",
-        unfinished.len(),
-        unfinished.join(", ")
+            unfinished.len(),
+            unfinished.join(", ")
+        ),
     ))
 }
 
