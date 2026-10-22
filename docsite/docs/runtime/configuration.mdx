@@ -385,8 +385,10 @@ anda mcp triggers pause 3                      # also: resume, delete
   daemon was stopped are replayed when the server supports it. Recent event ids
   are deduplicated, but execution is at least once: a crash after an external
   action can replay it. Each trigger keeps at most 500 pending events; overflow
-  drops the oldest and records a loss notice, as upstream gaps do. An automation whose server is disabled, removed or failing waits,
-  one whose server needs sign-in says so, and both resume when the server is back.
+  drops the oldest and records a loss notice, as upstream gaps do. When the
+  server reports lost events, the automation shows it. An automation whose
+  server is disabled, removed or failing waits, one whose server needs sign-in
+  says so, and both resume when the server is back.
 - **Webhooks through dMsg.** Some servers deliver events only by webhook, and
   Anda listens on no public port. Mark dMsg's entry with
   `"events": {"webhook_ingress": true}`: for each such automation Anda creates an
@@ -396,9 +398,10 @@ anda mcp triggers pause 3                      # also: resume, delete
   and is retried without creating another endpoint. Anda acknowledges only
   durable deliveries, validates the acknowledgement receipt, and retries failed
   acknowledgements after reconnect or restart. `anda mcp triggers get ID` shows
-  binding status and pending/failed acknowledgements. HTTP upstreams supply their
-  URL for dMsg's signature key discovery; stdio upstreams have no such origin,
-  so they rely on the shared-secret signature (`v1`), not `v1a`.
+  binding status and pending/failed acknowledgements. Anda supplies the URL of
+  an HTTPS upstream for dMsg's signature key discovery; plain-HTTP and stdio
+  upstreams have no origin to send, so they rely on the shared-secret
+  signature (`v1`), not `v1a`.
 
 ```json
 {

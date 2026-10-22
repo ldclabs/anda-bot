@@ -410,7 +410,11 @@ impl McpManager {
     }
 
     /// The configured upstream URL, for dMsg's webhook signature key discovery.
-    /// A stdio server has no public origin; never substitute its local id.
+    /// dMsg accepts an HTTPS origin (loopback HTTP only in its local
+    /// deployment), and refuses the whole bind for anything else, so a
+    /// plain-HTTP server supplies no URL and relies on the shared-secret
+    /// signature (`v1`). A stdio server has no public origin either; never
+    /// substitute its local id.
     pub(crate) fn server_url(&self, id: &str) -> Result<Option<String>, BoxError> {
         let view = self.inner.view.read();
         let registered = view
@@ -418,8 +422,12 @@ impl McpManager {
             .get(id)
             .ok_or_else(|| McpError::not_found(id))?;
         Ok(match &registered.config.transport {
-            McpTransportConfig::StreamableHttp(http) => Some(http.url.clone()),
-            McpTransportConfig::Stdio(_) => None,
+            McpTransportConfig::StreamableHttp(http)
+                if reqwest::Url::parse(&http.url).is_ok_and(|url| url.scheme() == "https") =>
+            {
+                Some(http.url.clone())
+            }
+            _ => None,
         })
     }
 

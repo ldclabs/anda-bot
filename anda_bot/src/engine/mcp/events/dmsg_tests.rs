@@ -96,6 +96,24 @@ fn contract_rejects_the_previous_bind_and_ack_payloads() {
 }
 
 #[tokio::test]
+async fn only_https_upstreams_supply_a_key_discovery_url() {
+    let (runtime, _engine, _prompts, _home) = runtime_with(
+        json!({
+            "secure": {"type": "http", "url": "https://mcp.example.com/mcp"},
+            "plain": {"type": "http", "url": "http://127.0.0.1:9/mcp"},
+        }),
+        false,
+    )
+    .await;
+    assert_eq!(
+        runtime.manager().server_url("secure").unwrap().as_deref(),
+        Some("https://mcp.example.com/mcp")
+    );
+    // dMsg refuses a plain-HTTP origin and with it the whole bind.
+    assert_eq!(runtime.manager().server_url("plain").unwrap(), None);
+}
+
+#[tokio::test]
 async fn binding_failure_retries_the_same_endpoint_and_subscription() {
     let (runtime, _engine, upstream, dmsg, _home) = webhook_runtime(true).await;
     let trigger = runtime
@@ -115,10 +133,9 @@ async fn binding_failure_retries_the_same_endpoint_and_subscription() {
     assert!(!stored.webhook.unwrap().bound);
     assert!(dmsg.calls("events/poll").is_empty());
     let bind = &dmsg.tool_calls("dmsg_events_bind")[0];
-    assert_eq!(
-        bind["server"],
-        runtime.manager().server_url("docs").unwrap().unwrap()
-    );
+    // The mock upstream is plain HTTP: dMsg would refuse that origin for key
+    // discovery, so the bind carries no URL and verifies with `v1` only.
+    assert!(bind.get("server").is_none());
     assert!(bind["refresh_before"].is_u64());
     assert!(bind.get("refreshBefore").is_none());
     dmsg.tools
