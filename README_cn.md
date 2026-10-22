@@ -2,580 +2,344 @@
 
 [English](README.md) | [简体中文](README_cn.md)
 
-> Born of panda. Awakened as Anda.
+> 源自熊猫，觉醒为 Anda。
 
-Anda Bot 是一个基于 Rust 编写、开源、本地运行的 AI 智能体，提供 Chrome 扩展、Electron 桌面客户端和 CLI/TUI 入口。它具备长期记忆、长程推理、本地工具调用、Subagents 协同调度等能力，并能在与用户的协作中持续学习与成长。
+Anda Bot 是一个开源、本地优先的 AI 智能体。它将长期记忆与文件操作、命令执行、浏览器和外部服务连接起来，让你从 Anda 桌面端、Chrome 侧边栏、终端或即时通讯应用中，与同一个智能体协作。
 
-其核心差异在于背后的记忆引擎 [Anda Brain](https://github.com/ldclabs/anda-brain)。Anda Brain 会将对话转化为一个持续生长的认知图谱（Cognitive Nexus），包含用户、项目、偏好、事件、关系、决策以及不断演变的事实。这意味着 Anda Bot 不仅仅是检索历史文本，而是能够自主提炼有价值的知识、构建上下文、建立关联，并将有用的历史背景带入未来的对话中。
+Rust 可执行程序 `anda` 运行本地后台服务，并内嵌 [Anda Brain](https://github.com/ldclabs/anda-brain)。对话、记忆图谱和任务状态保存在本机；模型请求发送给你配置的服务商。
 
-## 核心特性
+[官网](https://anda.bot) · [使用文档](https://docs.anda.bot/zh-Hans/) · [下载](https://github.com/ldclabs/anda-bot/releases/latest)
 
-- **图谱化长期记忆**：基于知识图谱记忆大脑（Anda Brain），而非零散的聊天日志。
-- **自主学习与召回**：能从过去的工作中自动提炼关键信息，并在未来对话中主动召回相关背景。
-- **长程推理任务**：能够执行跨越多轮对话和复杂上下文的长周期推理任务。
-- **丰富的工具生态**：擅长调用外部工具（如 Claude Code、Codex）、本地 Shell、文件系统、自定义技能以及定时任务。
-- **Subagents 协同系统**：支持将复杂任务拆解并分发给多个专门的子智能体（如实现、审查、研究、监督等角色）协同推进。
-- **Rust & 本地优先**：基于 Rust 构建，完全开源，优先运行在用户本地终端。
-- **多渠道接入**：既可作为终端 TUI 运行，也支持接入 Telegram、WeChat、Discord、Lark/飞书。
-- **语音对话支持**：配置好语音转写和合成服务后，即可支持无缝的语音交互。
-- **数据隐私可控**：所有的运行状态和数据默认保存在本地用户目录下。
+## 主要能力
 
-## 长程任务与 Subagents
-
-Anda Bot 专为需要连续性的复杂目标而设计，而非简单的单轮问答。一个任务目标可以保持长期活跃：智能体会自动检查进度、压缩上下文、跨越关联会话、调用工具，并持续推进直至有明确证据表明目标已达成。Subagents 协同机制允许将特定工作（如代码实现、质量审查、资料研究、运行监督）分配给专属子智能体，而主智能体则维护全局计划和记忆线索。
-
-外部编码工具是该执行闭环的重要组成部分。在需要时，Anda Bot 可以协同 Claude Code、Codex等工具，调用本地 Shell 和文件工具，加载运行时技能（Skills），并将关键成果沉淀到 Anda Brain 中以供后续召回。
-
-## 记忆与认知大脑
-
-先运行 `anda memory guide` 阅读离线指南，再在普通聊天中告诉 Anda 一条偏好。等后台整理后，用 `/new` 开新对话询问。`anda memory` 和 TUI `/memory` 无需调用模型即可查看连接与处理状态；浏览器“记忆”工作区提供记录、可核对的来源、更正及移除预览。助手的口头确认不等于事实已保存。
-
-整理记录按提交时间排序；记忆记录和生效中的订阅支持连续分页，已取消的订阅不占用活动列表配额。Recall 请求收到 HTTP 错误后不会自动重发。
-
-使用 `anda agent run --memory-mode no-store --prompt '…'` 或 `--memory-mode off` 新建受 Brain 策略约束的会话；聊天历史、文件和服务商处理仍保留。持久确认问题按需启用：`anda memory inbox setup` 先预览配置，再明确应用并重启。详见[使用步骤与范围](docs/brain-integration_cn.md#先使用日常记忆)。
-
-Anda Brain 的核心设计理念是让记忆有机生长，而非简单地堆积数据。其核心循环包含三个阶段：
-
-- **Formation（生成记忆）**：对话内容被编码为结构化知识，如实体、关系、事件、偏好和行为模式。
-- **Recall（召回记忆）**：支持使用自然语言向记忆图谱提问，并获取包含丰富上下文的关联知识，而非单纯的关键词匹配。
-- **Maintenance（记忆维护）**：在后台合并重复信息、巩固记忆碎片、降低过时事实的置信度，并在事实演变时保留时间线。
-
-这为用户提供了一种自然且具有连续性的互动体验：只需告知智能体需要跨会话保留的偏好、项目背景或决策依据，在事实变化时进行纠正，或在需要时直接询问智能体“你还记得什么”。若用户的工作偏好发生演变，系统会记录并学习这种演进过程，而不是简单地覆盖历史或给出矛盾的回复。
+- **跨对话延续上下文。** Brain 将有用的偏好、人物、项目和决策整理为知识图谱。记忆工作区支持查看来源、更正记录、停止使用，以及预览删除范围。
+- **持续处理复杂任务。** 智能体可以维护计划、分派子任务、压缩上下文，并围绕明确目标继续工作。运行时技能包含与 Claude Code、Codex 等外部工具协作的工作流。
+- **在项目中工作。** Anda 桌面端集成聊天、文件预览、Git 差异与提交、可恢复的工作树、交互终端和内置浏览器。终端客户端可以从当前目录开始工作。
+- **连接工具和服务。** 管理本地与远程 MCP 服务、OAuth 登录、工具权限、资源，以及从其他应用导入的配置。其他智能体也可以通过 Anda 自身的 MCP 接口使用它的记忆。
+- **自动处理周期性工作。** 定时运行智能体提示词或 shell 命令、查看执行历史，也可以响应支持事件订阅的 MCP 服务。
+- **选择合适的交互入口。** 接入 Telegram、微信、Discord、Lark/飞书；通过已配置的模型理解图片、音频和视频附件；单独启用语音转写和语音输出。
 
 ## 快速开始
 
 ### Anda 桌面端
 
-Anda 桌面端是本地 Anda 的聊天窗口、工作台和托盘。请从 [latest release](https://github.com/ldclabs/anda-bot/releases/latest) 下载：
+从 [GitHub Releases](https://github.com/ldclabs/anda-bot/releases/latest) 下载安装包：
 
-- macOS Apple Silicon：`Anda-mac-arm64.dmg`
-- Windows x64：`Anda-win-x64.exe`
-- Homebrew：`brew install --cask ldclabs/tap/anda-desktop`（会同时安装 `anda` formula）
+| 平台 | 安装包 |
+| --- | --- |
+| macOS，Apple Silicon | `Anda-mac-arm64.dmg` |
+| Windows，x64 | `Anda-win-x64.exe` |
 
-新的 macOS 命令行和桌面发布包仅提供 Apple Silicon 版本。Intel Mac 用户可从源码构建。
+macOS 也可以使用 Homebrew：
 
-桌面端、终端和 Chrome 扩展共用同一个 `anda` 和同一个 daemon。桌面端启动时会沿用已有安装（安装脚本、`ANDA_INSTALL_DIR` 或 Homebrew 安装的 anda）；如果没有，就把内置的 `anda` 和精选技能安装到安装脚本使用的位置：macOS 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\AndaBot`。较新的 CLI 不会被降级，Homebrew 安装通过 `brew upgrade` 更新。模型连接引导中可以选择是否登录时启动 Anda；关闭窗口后，托盘会让服务继续运行。
+```bash
+brew install --cask ldclabs/tap/anda-desktop
+```
 
-尚未配置模型时，桌面端会自动打开“连接模型”引导。使用 ChatGPT 登录并确认模型，或从内置 `config.yaml` 的预置模型中选择一项、填写 API Key。Anda 保存并加载默认模型后，即可返回聊天。选择“稍后设置”后，聊天页会保留提示，也可以从**设置 → 通用 → 连接模型**重新打开。已有的模型配置会直接沿用。
+打开应用，按照「连接模型」引导操作：登录 ChatGPT 并选择可用模型，或选择 API 服务商预设并填写密钥。之后可以从「设置 → 通用 → 连接模型」重新打开引导。
 
-桌面端托盘取代了已停用的 Anda Bot 菜单栏启动器。安装 Anda 桌面端、重新运行安装脚本或更新旧启动器时，都会移除启动器的登录项、app 包和快捷方式；如果原来启动器会在登录时启动，daemon 仍会在登录时启动。
+桌面端会使用已有的 `anda` 安装，或安装随应用提供的运行时和技能。使用同一个 Anda 数据目录时，桌面端、CLI 和 Chrome 扩展共享后台服务与数据。托盘提供服务管理、登录启动、日志和更新入口。使用发行版无需安装 Rust、Node.js 或 pnpm。
 
-托盘和设置中的**检查更新**会检查 `anda` 和桌面客户端两个组件。每个版本同时发布两者，桌面安装包内置同一版本的 `anda`：如果共享的 `anda` 由桌面端安装，正式发布版的桌面更新就是完整的更新，只下载一次，确认一次即可安装。服务会暂停新任务、等待活动任务结束后停止；客户端重启后用新的 `anda` 启动服务。使用 Homebrew 或在设置中指定的 `anda` 时，两者分别更新：安装 `anda` 更新会等待活动任务结束，在安装期间停止服务，完成后再启动；随后的桌面更新只重启客户端。检查失败（例如离线）时，已下载的 `anda` 版本仍保留在托盘中。托盘始终保留**检查更新**及安装入口，还可以重启服务、复制 Chrome 扩展令牌和打开日志。
-
-正式发布版桌面客户端（macOS 需已签名）会在启动 1 分钟后自动检查应用更新，之后每次检查完成后间隔 6 小时再检查，即使关闭窗口或停止服务也会继续。发现新版本后，托盘和侧边栏底部会显示**下载更新**；下载完成后，同一位置改为**重启以完成更新**。没有更新或网络检查失败时保持安静。
-
-桌面端与 Chrome 扩展共享聊天、记忆、技能、书签和配置组件。工作台支持服务端推送和持久提交回执、独立内嵌浏览器与 Agent 操作、交互终端、Git 改动/提交及可恢复工作树，并提供音频自检页。Chrome 浏览器自动化仍可使用扩展。配置管理仅限 owner，保存支持修订校验，避免覆盖其他客户端的新配置；`anda validate-config` 从 stdin 验证 YAML，不初始化 home 或 daemon。
-
-发布环境提供签名凭证时，发布包会签名（macOS 还会公证）。未签名的 macOS 包没有应用内更新通道；Windows 包无论是否签名都能在应用内更新，并按该版本的校验和验证。从浏览器下载的未签名 Windows 安装包首次打开时可能出现 SmartScreen 提示。如需构建本机安装包，运行 `pnpm install --filter @anda/desktop...` 和 `pnpm --dir desktop package`；详见[桌面安装、开发和验证说明](desktop/README.md)与[实施与验证记录](docs/desktop-client-implementation.md)。
+工作台操作、打包和更新方式见[桌面端指南](desktop/README.md)。目前桌面发行包面向 macOS Apple Silicon 和 Windows x64；Intel Mac 用户可以从源码构建。
 
 ### 命令行
 
-不安装桌面端，只安装最新的 `anda` 发布版：
-
-通过 Homebrew：
+Homebrew：
 
 ```bash
 brew install ldclabs/tap/anda
 ```
 
-macOS 和 Linux 通过安装脚本：
+macOS 和 Linux：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.sh | sh
 ```
 
-如果机器上也装过 Homebrew 版本，请打开新终端后确认 `command -v anda`
-指向 `~/.local/bin/anda` 或你的 `ANDA_INSTALL_DIR`；否则较旧的 Homebrew
-二进制可能会遮蔽安装脚本安装的新版本。
-
-Windows 通过 PowerShell：
+Windows PowerShell：
 
 ```powershell
 irm https://raw.githubusercontent.com/ldclabs/anda-bot/main/scripts/install.ps1 | iex
 ```
 
-安装脚本会安装 `anda` 和精选技能，将其加入 `PATH`，用 `anda autostart install`
-注册 daemon 登录自启，并重启 daemon。Windows 上的登录项是当前用户的 `Run`
-注册表值，登录时运行 `anda start`（会短暂出现一个控制台窗口）；Anda 桌面端的登录启动
-不会出现窗口。PowerShell 安装器可以用 `-NoAutostart` 或 `-NoStart` 退出默认行为；
-shell 安装器可以设置 `ANDA_NO_AUTOSTART=1` 或 `ANDA_NO_START=1`。
+CLI 发行版支持 macOS arm64、Linux x86_64/arm64 和 Windows x86_64。安装脚本会安装可执行程序与内置技能、更新 `PATH`、注册登录启动并重启后台服务。shell 安装脚本接受 `ANDA_NO_AUTOSTART=1` 和 `ANDA_NO_START=1`；下载到本地的 PowerShell 脚本接受 `-NoAutostart` 和 `-NoStart`。
 
-前置要求：
+安装后打开新终端。如果存在多份安装，在 macOS/Linux 上用 `command -v anda`，或在 PowerShell 中用 `Get-Command anda`，确认实际运行的程序。
 
-- 至少一个可用的模型提供方 API key。可以在桌面端的“连接模型”引导或**设置 → Agent 配置**中填写，
-  也可以写在 `~/.anda/config.yaml`，或通过支持的环境变量提供。
-
-也可以使用 Rust 1.95 或更新版本从源码编译运行 Anda Bot：
-
-源码构建跟随 KIP 2.0 栈：带 Memory Interface 绑定的 Brain 0.13、Nexus/DB/KIP 0.14 及配套的 Core/Engine 0.17，保持单一 DB/core 类型身份。Brain 0.13.5 及共享栈默认从 crates.io 解析；`[patch.crates-io]` 中的注释项供同级检出开发使用。开发构建在 2.1.0 草案下写入的数据库须先迁移到新库，本构建才能打开；旧库保留只读以便回退。Brain HTTP 接受 `command` 或 `operations` 应用参数（不含 `kip` 字段），返回 KIP 2.0 信封；普通 Bot 工具保留原有 `result`/`error` 响应格式。
-
-开发和测试构建对依赖包启用基础优化，将 macOS 展开表控制在链接器的 16 MiB 限制以内。`anda_bot` 自身仍不启用优化，并保留调试信息和 panic 展开。首次编译依赖会稍慢，后续构建会复用这些产物。
-
-运行 `make test` 可执行启用全部 feature 的完整 Rust 测试。它默认设置 `RUST_MIN_STACK=16777216`（每个测试线程 16 MiB），与 CI 保持一致，因为内嵌 Brain 未优化的异步栈帧可能超出默认测试线程栈。显式指定的 `RUST_MIN_STACK` 可覆盖此默认值。直接调用 Cargo 时，请使用 `RUST_MIN_STACK=16777216 cargo test --workspace --all-features`。
-
-首次使用 KIP 1.x 数据库启动时，会先迁移记忆再开放网关，可能需要数分钟。启动新 daemon 时最多等待十分钟；子进程若退出会及时报错。升级前请备份数据库；迁移后旧任务的原始状态和结果仍保存在 `LegacyRecord` 中。
-
-可选 `mib` feature 提供仅监听本机的评测宿主：`anda mib --model-config /absolute/path/model.json --listen 127.0.0.1:8043`。入口在生产 home/daemon 初始化之前分流，使用隔离的 Brain 运行。Agent 协议执行 Bot 的 runner-managed 业务模式和 MIB 管理的任务工具；独立的记忆后端协议供 MIB 自有同模型 Agent 使用。生命周期、记忆开关和仍不完整的成本计量见 [MIB 接入](docs/mib-integration_cn.md)。
-
-可选 MIB 控制增加强制 Recall 预算（`--recall-max-tokens` 与 `--recall-context-tokens` 同时提供）及评测侧专用的 `learning_audit`。MIB normal/ungated 条件仍需完整独立计量，持久记忆不等于已启用学习组。
-
-```bash
-git clone https://github.com/ldclabs/anda-brain.git
-git clone https://github.com/ldclabs/anda-bot.git
-cd anda-bot
-cargo run -p anda_bot --
-```
-
-首次启动时，daemon 会自动创建 `~/.anda/config.yaml`。如果界面提示模型配置缺失，请打开该文件，填写 provider 详情，保存后在 Anda 桌面端或浏览器侧边栏点击刷新模型，或运行 `anda models reload`。对于 API Key，也可以在启动 Anda 之前导出对应的环境变量。
-
-也可以直接使用符合条件的 ChatGPT Plus / Pro 套餐，无需 API Key：
-
-```bash
-anda auth login chatgpt
-anda auth accounts
-anda auth models <profile-id>
-anda auth use <profile-id> <model-slug>
-anda auth logout <profile-id>
-```
-
-在 Anda 桌面端选择**连接模型 → 使用 ChatGPT 登录**，然后确认所选模型。完整账号管理仍位于**设置 → Agent 配置 → 模型**；在扩展中打开配置页的“模型”分区，或侧边栏设置中的模型区域。点击 **Continue with ChatGPT**，完成浏览器授权，再选择“使用所选模型”。TUI 中可按 **Ctrl+G** 登录；CLI/TUI 默认选用账号模型目录中的首个模型，CLI 可通过 `--model <slug>` 指定。模型未配置时 daemon 只运行经过身份验证的设置服务；选择模型后才启动 Brain、渠道和 cron。三端共享同一 `ANDA_HOME` 下的账号和刷新状态，凭证加密保存于 `chatgpt/accounts.cose`，不写入配置文件或浏览器存储。
-
-切换 ChatGPT 套餐模型需要先等待运行中的任务和子代理空闲。ChatGPT 套餐 provider 仅供本地 owner 使用；启用此类 provider 时，其他用户及外部 IM 请求会被拒绝。音视频和转录仍需独立 provider。额度耗尽不会自动切换到收费 API key，可前往 [ChatGPT 用量设置](https://chatgpt.com/settings/usage) 管理。旧版 `.codex/auth.json` 配置仍兼容，但新接入应使用上述正式登录流程。
-
-无浏览器或 SSH 环境可运行 `anda auth login chatgpt --no-browser --port 1455`，并将浏览器所在机器的 `127.0.0.1:1455` 转发到运行 daemon 的机器。会话迁移使用 `anda auth export <profile-id> --output /absolute/path/session.json`（断开源机器），通过 SSH 传输并保持文件权限为 `0600`，在目标机器运行 `anda auth import /absolute/path/session.json`。导入后转移文件会被删除，目标机器保留自己的 host ID，使用 `anda auth use <profile-id> <model-slug>` 激活模型。不要让两台机器同时刷新同一份会话。
-
-最小模型配置示例：
-
-```yaml
-model:
-  active: "deepseek-v4-pro"
-  providers:
-    - family: anthropic
-      model: "deepseek-v4-pro"
-      api_base: "https://api.deepseek.com/anthropic"
-      api_key: "YOUR_API_KEY" # 设置 DEEPSEEK_API_KEY 时可留空
-      labels: ["pro", "brain"]
-      disabled: false
-```
-
-支持的模型密钥环境变量包括 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY`、`GOOGLE_API_KEY`、`DEEPSEEK_API_KEY`、`MINIMAX_API_KEY`、`MIMO_API_KEY`、`MOONSHOT_API_KEY`、`KIMI_API_KEY`、`BIGMODEL_API_KEY` 和 `GLM_API_KEY`。如果 `config.yaml` 中已经填写了 `api_key`，会优先使用配置文件里的值。已识别的 API 地址会优先选择其服务商密钥，再考虑模型名称：OpenRouter、Groq 和 SiliconFlow 分别使用 `OPENROUTER_API_KEY`、`GROQ_API_KEY` 和 `SILICONFLOW_API_KEY`，即使托管的是其他厂商的模型。
-
-`brain` 标签表示该模型配置将优先用于记忆大脑的生成与处理。若无 provider 携带该标签，则默认使用当前激活的模型。
-
-`image`、`audio`、`video` 标签指定理解对应附件的 provider。当前激活的模型也带有 `image` 标签时，消息中 5 MiB 以内的 PNG、JPEG、GIF 和 WebP 图片会直接随消息发给它，在该消息开启的任务内有效；不能读图的模型不要加这个标签。
-
-如果你想为不同身份或项目准备独立记忆，可以换一个 home 目录：
-
-```bash
-anda --home /path/to/.anda
-```
-
-## 交互与快捷键
-
-终端 UI 启动后：
-
-- Enter 发送消息。
-- Shift+Enter 插入换行；如果终端不支持区分 Shift+Enter，可以用 Ctrl+J。
-- 上/下方向键在多行输入中移动光标。
-- Ctrl+U 清空输入。
-- Ctrl+A / Ctrl+E 跳到输入开头或结尾。
-- 修改 `config.yaml` 中的模型 provider 后，可以运行 `anda models reload`，或在 Anda 桌面端 / 浏览器侧边栏点击刷新模型。Brain 会继续使用启动时的模型，直到 daemon 重启。
-- 修改仍需要重启的 daemon 设置后，再输入 `/reload`。
-- 输入 `/stop` 打断当前任务，取消其后台任务和待审批动作，清除活动目标，并让会话回到 idle 状态以接收下一条消息。
-- 输入 `/cancel` 停止上述工作，并关闭当前活动会话。
-- 输入 `/steer ...` 可以给正在生成的回复追加引导。
-- Esc 查看状态，Ctrl+C 退出。
-
-输入会保留文本和代码中的空格，光标移动与删除会将组合 emoji 作为一个字符处理。状态检查、对话轮询和 Brain 请求在后台进行，响应较慢时仍可操作界面并按 Ctrl+C 退出。启动界面会保留已有的终端滚动历史。`/new` 会清空屏幕和滚动历史后开始新对话。重新连接会保留输入草稿，只有恢复到进行中的对话时才替换已显示的记录。在支持 [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status)（OSC 7501）的终端中，标签页或会话列表会显示 Anda 正在工作、等待你的审批、回答或登录、已完成还是失败；其他终端会忽略它。
-
-### 命令审批
-
-有风险的 Shell 命令、MCP 服务连接，以及需要你同意的 MCP 工具调用，会先弹出审批卡片：
-
-- 输入框为空时，按 `y` 批准，按 `n` 拒绝。Shell 命令的审批卡片还提供 `a`：批准本次运行，并在本会话内不再询问这条完全相同的命令；MCP 工具的审批卡片提供 `a`（始终允许）：批准本次调用，之后不再询问这个工具。
-- 输入框中已有内容时，这两个按键会被当作普通输入。此时输入 `y`/`yes` 或 `n`/`no` 再按 Enter 即可回应，也可以按 Ctrl+U 清空输入后继续用单键快捷方式。底部状态栏会提示当前可用的是哪一种。
-- 审批卡片 10 分钟后过期，对应的工具调用随之失败。
-
-审批卡片会按终端宽度换行，完整展示命令、详情和选项；命令指定了工作目录时卡片会一并显示。命令可以读取当前工作区之外的内容，但在工作区之外写入、移动或删除需要审批。风险检查还会记住你在本会话中对之前卡片的回答：批准过的操作，之后相同或范围更小的操作不再询问；推送、发布、发版、部署和上传则每次都会询问。状态变化会追加到对话记录。提交错误优先于快捷键帮助显示；文字选项提交失败后会保留草稿，方便修改和重试。
-
-用 `anda --full-access` 启动终端 UI，可以让本次会话跳过审批卡片；开启后状态行会显示 `full-access`。
-
-Cron 定时任务和自主目标模式（`/goal ...`）始终以完全访问权限运行：这些场景没有人在旁边回应卡片，否则任务只能等到卡片过期后失败。 定时任务会等待 Agent 或 Shell 命令实际结束才记录完成，修改计划会保留暂停状态。Cron 工具仅供可信用户使用；从 CLI 创建的任务会保存创建时验证过的工作目录授权，daemon 重启后仍然有效。
-
-成功完成的对话会在后台提交给 Anda Brain 形成长期记忆。用户不需要手动维护记忆文件。Formation 接受 ID 与 Recall 交付收据会持久保留，接受、完成、实际使用分别记录。
-
-可选 `brain.runtime_config`（环境变量 `BRAIN_RUNTIME_CONFIG` 优先）在加载 Space 前安装原生持久待办。浏览器 Brain 页面及 TUI `/brain inbox`、`/brain status` 提供调用者隔离的入口。`learning` 是独立 Cargo feature，语义求值、utility、trust、自动学习均需显式配置及原生授权；现有 IM 发送接口未作为自动动作适配器。配置、收据语义及业务合同见 [Brain 运行时集成](docs/brain-integration_cn.md)。
-
-适合长期记忆的说法：
-
-```text
-记住：我喜欢简短的发布说明，但要保留风险段落。
-你还记得支付迁移项目的背景吗？
-我以前默认用 provider A，现在这个 workspace 默认用 provider B。
-以后我们提到 Alice，指的是移动端团队的设计师。
-```
-
-## 常用命令
-
-运行 Anda Bot：
+在无桌面环境的 Linux 上，Anda 需要可用且已解锁的 Secret Service 密钥环。**全新安装**且没有密钥环时，可在启动 Anda 前显式运行 `anda user init-file-keys`，使用文件身份密钥。此命令不用于恢复已有安装，详见[身份配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/channels.mdx)。
 
 ```bash
 anda
 ```
 
-把安装脚本安装的发布版更新到最新版本：
+该命令打开 TUI，并在需要时启动后台服务。首次启动会创建 `~/.anda/config.yaml`。没有配置模型时，Anda 提供设置入口；完成模型配置后，智能体、Brain、消息渠道和 cron 才会启用。
+
+### 连接模型
+
+可以选择 ChatGPT 登录或模型服务商 API Key。
+
+**ChatGPT 登录**
 
 ```bash
-anda update
+anda auth login chatgpt
+anda
 ```
 
-Homebrew 安装会拒绝 `anda update`，请使用 `brew upgrade anda`。Anda 桌面端的托盘和设置页执行的也是同一个更新。
+CLI 通过浏览器完成登录，并选择第一个可用模型；添加 `--model <model-slug>` 可以指定模型。用 `anda auth accounts`、`anda auth models <profile-id>` 和 `anda auth use <profile-id> <model-slug>` 管理选择。TUI 中也可以按 Ctrl+G 登录。
 
-把当前 `anda` 安装到共享的 CLI 位置（Anda 桌面端就是这样安装内置副本的；不会降级，`--dir` 可指定其他目录）：
+ChatGPT 套餐连接使用独立的加密凭据，无需 API Key。启用 ChatGPT 套餐模型期间，后台服务只接受本地所有者的智能体请求，其他可信用户和外部 IM 发送者无法使用。语音和附件处理能力可能需要单独的服务商。无桌面环境下可用 `anda auth login chatgpt --no-browser --port 1455` 配合 SSH 隧道完成登录。
 
-```bash
-anda install
+**API 服务商**
+
+编辑生成的 `config.yaml`，或使用桌面端的「设置 → 智能体配置」。[内置配置](anda_bot/assets/config.yaml) 提供了服务商预设。下面是基于当前默认预设的最小示例：
+
+```yaml
+model:
+  active: "deepseek-flash"
+  providers:
+    - family: anthropic
+      model: "deepseek-flash"
+      api_base: "https://api.deepseek.com/anthropic"
+      api_key: "YOUR_API_KEY"
+      labels: ["memory"]
+      stream: true
+      disabled: false
 ```
 
-本地构建版本较新时，会保留现有程序和内置技能。使用 `anda update --force` 可明确安装最新发布版，即使它比本地版本旧。此规则也适用于 `anda update --skills`。
+将 `model.active` 设为对应服务商条目的模型 ID。`api_key` 留空时，可以读取匹配的环境变量，例如 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `GEMINI_API_KEY`。配置文件中的密钥优先。环境变量必须对后台服务进程可见；登录时启动的服务不会继承你后来在终端中导出的变量。
 
-管理后台 daemon：
+修改模型配置后执行：
 
 ```bash
-anda status
-anda start
-anda stop
-anda restart
 anda models reload
-anda autostart status
 ```
 
-自启动注册会保存绝对 home 路径，包括通过相对 `--home` 指定的目录；注册失败会返回错误。指定具体 `addr` 时，CLI 和 Brain 内部连接也使用该地址，只有通配监听地址（`0.0.0.0` 或 `::`）会替换为回环地址。
+模型重载会更新智能体的服务商配置。Brain 保持启动时选定的模型，直到执行 `anda restart`。它优先选择带 `brain` 标签的模型，其次是 `memory`，最后回退到当前模型。`image`、`audio` 和 `video` 标签用于选择附件处理模型，只应赋予支持相应输入的模型。
 
-不打开终端 UI，直接发起一次请求并等待完整结果：
+## 日常使用
+
+在项目目录中运行 `anda`，或在桌面端为新对话选择文件夹。会话启动时会读取该工作区根目录下的 `AGENTS.md`，让项目约定随任务一起进入上下文。
+
+| 对话命令 | 用途 |
+| --- | --- |
+| `/new` | 开始新对话。 |
+| `/goal <objective>` | 围绕目标持续工作，由监督智能体检查进度。 |
+| `/steer <instruction>` | 调整正在进行的工作。 |
+| `/side <question>` 或 `/btw <question>` | 发起独立的临时侧线请求。 |
+| `/skill <name> <task>` 或 `$<name> <task>` | 调用运行时技能。 |
+| `/stop` | 停止当前工作及其后台任务，保留对话以便继续输入。 |
+| `/cancel` | 停止工作并关闭当前对话会话。 |
+
+TUI 中，Enter 发送，Shift+Enter 或 Ctrl+J 换行，Ctrl+U 清空输入，Ctrl+C 退出客户端。退出客户端不会关闭后台服务；停止服务请用 `anda stop`。
+
+不打开 TUI，直接执行一次请求：
 
 ```bash
-anda agent run --prompt "总结一下你记得的当前项目背景"
+anda agent run --workspace . --prompt "介绍这个项目的结构"
 ```
 
-`--prompt` 与 `--prompt-file` 必须且只能提供一个。添加 `--wait-timeout-secs 120` 可限制提交请求与等待完成的总时间，默认 `0` 表示不设总超时。超时只停止 CLI 等待，daemon 中的任务可能继续运行。
+命令会等待任务完成，并以 JSON 输出结果。可以用 `--prompt-file` 代替 `--prompt` 从文件读取输入，用 `--output-json` 保存结果，或用 `--wait-timeout-secs 120` 限制等待时间。超时只结束 CLI 的等待，后台任务可能仍在运行。
 
-使用 `anda memory inbox` 读取记忆待办。如果还有下一页，运行输出提示中的 `anda memory inbox --cursor <next_cursor>`；`--json` 在 `result.next_cursor` 中返回游标。
+默认文件工作区是 `~/.anda/workspace`，可通过 `config.yaml` 的 `workspaces` 增加持久工作区。经过本地客户端认证并选择的项目目录也会成为该对话的 shell 工作目录，并按照审批策略开放文件读取和搜索。文件编辑工具仍限于配置的根目录，其他位置的修改通过 shell 审批处理。详见[运行时配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
-启动语音对话：
+### 审批与无人值守任务
+
+交互会话会按照策略，为有风险的 shell 操作和 MCP 动作请求审批。审批卡片展示将执行的内容，并提供允许与拒绝选项。会话内的 shell 审批可以覆盖相同或更小范围的操作；MCP 权限可以按服务或工具设置。
+
+`anda --full-access` 以完全访问模式启动交互会话，在策略允许的范围内跳过审批。**Cron 任务和处于活动状态的目标任务使用完全访问权限。** MCP 事件自动化不会获得这一权限提升，需要审批的操作会被拒绝。显式配置的 MCP `ask` 策略在完全访问模式下也仍然要求审批。这些是本地运行时的控制，shell 命令以你的操作系统用户权限执行。
+
+## 长期记忆
+
+配置好模型后即可使用日常记忆，无需部署独立 Brain 服务或启用可选编译特性。Brain 在后台将对话整理为结构化记忆，召回相关上下文，并持续维护图谱。
+
+可以先告诉 Anda 一条稳定的偏好，等待后台整理，再用 `/new` 开新对话，请它回忆这条偏好。助手回复「记住了」不代表记忆处理已经完成。
 
 ```bash
-anda voice --record-secs 8
+anda memory guide     # 离线入门指南
+anda memory           # 连接与处理状态
+anda memory activity  # 已记录的处理活动
 ```
 
-语音模式需要 `transcription.enabled: true`。如果还想让我说出回答，需要 `tts.enabled: true`，并且 PATH 中有音频播放器（`ffplay`、macOS 的 `afplay` 或 SoX 的 `play`），首次录音前会检查；如果只想语音输入、文字输出，可以加 `--no-playback`。 语音模式会等本轮答复完成后再开始下一轮录音；某一轮失败时会提示错误，然后继续下一轮录音。Ctrl-C 也可停止语音合成和播放。
+TUI 提供 `/memory` 和 `/memory activity`。桌面端和扩展仪表盘的「记忆」工作区支持查看记录、实体关系、来源引用，以及经过预览确认的更正和删除。状态查询不调用模型；记忆召回和整理可能调用模型。
 
-Google 转写接受不超过 60 秒的 WAV/FLAC 录音，Chrome 扩展会将其他录音格式转换为 WAV。`transcription.initial_prompt` 为 Groq/OpenAI Whisper 提供词汇提示。Edge 合成需要 PATH 中存在 `edge-tts`；`tts.default_format` 仅控制 StepFun，Edge/OpenAI/Google 输出 MP3。详见[语音服务限制与配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#语音服务)。
+可以为新对话限制记忆使用：
 
-## 多场景集成
+```bash
+anda agent run --memory-mode no-store --prompt "协助完成任务，但不保存长期记忆"
+anda agent run --memory-mode off --prompt "只使用这次新对话的信息"
+```
 
-Anda Bot 既可以运行在终端中，也可以作为 Chrome 侧边栏插件使用，或通过配置 `~/.anda/config.yaml` 接入各大主流即时通讯频道。
+`no-store` 允许召回，但不新增 Brain 记忆；`off` 同时禁用读取和写入。这些模式也会阻止尚不支持相应限制的嵌套智能体和持久化工具。聊天历史、文件、日志和服务商处理仍然保留。
+
+可选的持久待办可以请你澄清记忆或响应变化。`anda memory inbox setup` 会先预览配置；按输出中的命令应用并重启后才会启用。自动学习是需要明确配置的独立能力，并不会因为启用了记忆而默认开启。记忆控制、删除范围、待办和可选学习能力见 [Brain 集成指南](docs/brain-integration_cn.md)。
+
+### 与其他智能体共享记忆
+
+为 Claude Code、Codex 或其他本地 MCP 客户端创建独立授权：
+
+```bash
+anda memory agents add claude-code --write
+anda memory agents
+```
+
+第一条命令只展示一次令牌，并打印 Streamable HTTP 接口的连接说明，默认地址为 `http://127.0.0.1:8042/mcp/memory`。省略 `--write` 可创建只读授权。授权包含 `recall_memory`、`search_memory` 和 `read_memory_entity`；可写授权还包含 `remember` 和 `memory_note_status`。笔记会归属于写入它的智能体。
+
+这类授权可以读取所有者的记忆，只应发给可信客户端。接口要求令牌、只接受回环主机名，并拒绝网页来源。用 `anda memory agents revoke <id-or-client>` 撤销访问。
+
+## 集成
 
 ### Chrome 侧边栏
 
-仓库里提供了一个可直接加载的 Chrome 扩展：[chrome-extension](chrome-extension)。它会将 Anda Bot 嵌入 Chrome 的原生侧边栏（Side Panel）中，允许智能体利用专用的浏览器工具读取页面内容并管理标签页，在切换标签页时保持同一个对话会话。
-
-侧边栏与 Dashboard 同步连接设置；切换 daemon 时会清理旧会话和资源缓存。Dashboard 按需加载各工作区。语音录制始终绑定开始录音的标签页。`open_download` 会在文件夹中显示下载文件，由用户点击打开文件。
-
-侧边栏也可以收藏 assistant 消息。收藏会保存在本机 daemon 中，可以放进文件夹，并能从侧边栏或 dashboard 跳回原始对话。
-
-为扩展生成本地 bearer token：
+[Chrome 扩展](chrome-extension/README.md) 将浏览器连接到后台服务，让 Anda 查看网页、管理标签页并操作网站。使用 Node.js 和 pnpm 从本仓库构建：
 
 ```bash
+pnpm install --frozen-lockfile --filter ./chrome-extension
+pnpm --dir chrome-extension build
 anda browser token --days 30
 ```
 
-然后在 `chrome://extensions` 开启开发者模式，加载 [chrome-extension](chrome-extension)，把命令输出的 Gateway URL 和 token 粘贴到侧边栏设置中，就可以在任意网页里开始聊天。
+在 Chrome 116 或更新版本中打开 `chrome://extensions`，启用开发者模式，选择「加载已解压的扩展程序」，并选中 **`chrome-extension/dist`**。打开侧边栏，在设置中填写命令输出的 Gateway URL 和令牌。如果后台服务尚未运行，用 `anda start` 启动。
 
-daemon 管理接口要求已配置的可信身份，未登记密钥的有效签名不授予访问权限。浏览器连接会对后续请求重新检查凭据有效期，过期后请生成新 token 并更新扩展设置。会话来源列表和绑定删除仅限调用者自己的会话。
+桌面端内置浏览器使用独立的用户配置；Chrome 扩展则将 Anda 连接到你的 Chrome 会话。
 
 ### MCP 服务
 
-Anda Bot 可以连接 MCP 服务，并把远端工具暴露给 agent。把可移植 MCP 配置放到
-`~/.anda/mcp.json`，然后运行 `anda mcp reload`（或重启 daemon）。`mcp.json` 同时支持 `mcpServers` 和
-`servers` 两种 root key，方便直接粘贴其它 MCP 工具里的配置。
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$ANDA_WORKSPACE"]
-    },
-    "remote": {
-      "type": "http",
-      "url": "https://mcp.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${secret:MCP_REMOTE_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-配置字符串支持 `$VAR` 和 `${VAR}` 环境变量展开，变量可能未设置时可写
-`${VAR:-default}`。`ANDA_HOME` 和 `ANDA_WORKSPACE` 是内置变量；未配置 `cwd` 时，
-stdio 服务默认在第一个 Anda workspace 中启动。`${secret:NAME}` 展开为保存在
-`mcp.json` 之外的密钥，存放在仅所有者可读的 `~/.anda/mcp_secrets.json` 中；用
-`anda mcp secret set NAME`（不回显地读取输入，也可以从管道读取）或在 MCP 页面设置。
-引用的密钥未设置时，该服务会被跳过，设置后自动启动；删除服务时，只有它使用的密钥也会
-一并删除。
-
-每个条目单独加载，MCP 不会阻止 daemon 启动：无法使用的条目（环境变量未设置、
-不支持的 `type`，如已弃用的 `sse`、重复的 id）会被跳过，并在 daemon 日志中记录
-警告。服务在 daemon 启动后于后台连接；如需在 daemon 报告就绪前完成工具发现，
-可为条目设置 `"startup": "eager"`。stdio 服务与 shell 工具使用相同的扩展
-`PATH`，即使 daemon 作为登录服务运行也能找到 `npx` 和 `uvx`；登录服务看不到
-shell 配置文件中导出的变量。
-
-条目还可以调整服务的运行方式：`timeouts`，单位为秒（`setup_secs` 默认 90、
-`list_secs` 30、`request_secs` 180、`call_secs` 600）；`concurrency`（默认
-`serial`，可选 `read_only_parallel` 或 `parallel`）；`limits.output_text_bytes`
-（智能体从一次结果中得到的文本，默认 32768）；`lifecycle`、`tasks`、`resources` 和
-`elicitation`（两者默认开启，设为 `false` 关闭，见下文），以及本地服务的
-`inherit_env`。本地服务默认获得 daemon 的全部环境变量；设为 `"inherit_env": false`
-后，只获得平台必需的变量（`PATH`、`HOME` 等）和它自己的 `env`。可以在 MCP 页面或用
-`anda mcp options` 修改。
-
-在终端中用 `anda mcp` 管理服务：
+桌面端和扩展仪表盘的 MCP 页面支持添加服务、浏览 MCP Registry、导入已有配置、管理密钥和审阅工具。CLI 提供相同的管理功能：
 
 ```bash
-anda mcp list                                         # 每个服务的状态、工具数和最近错误
-anda mcp add context7 -- npx -y @upstash/context7-mcp
-anda mcp add docs --url https://docs.example.com/mcp --header 'Authorization: Bearer ${DOCS_TOKEN}'
-anda mcp add-json notes '{"type":"http","url":"https://notes.example.com/mcp"}'
-anda mcp login linear --url https://mcp.linear.app/mcp  # OAuth 登录
-anda mcp tool github delete_repository --hide         # 不让智能体使用某个工具
-anda mcp secret set MCP_REMOTE_TOKEN                  # 另有 secret list、secret unset
-anda mcp disable context7                             # 另有 enable、remove、reconnect、logout
-anda mcp options github --call-timeout 900            # 高级设置；用 `default` 清除某项
-anda mcp import --dry-run                             # 其他应用里配置的服务
-anda mcp import github notes=work-notes --from cursor # 导入它们；不写名称则导入全部新服务
+anda mcp list
+anda mcp add docs --url https://mcp.example.com/mcp
+anda mcp import --dry-run
+anda mcp reload
 ```
 
-Anda Desktop 和扩展仪表盘（`#mcp`）提供 MCP 页面，功能与 CLI 相同：每个服务的状态、
-最近错误和说明，工具及其审批策略和审查后的变化，登录，密钥（只写：保存后不再显示），
-高级设置，以及“添加”菜单：填 URL、命令，或粘贴其他应用的 JSON，保存前先测试连接，
-并把其中的令牌存为密钥；从其他应用导入；浏览官方 MCP Registry。在 Anda Desktop 中，
-`anda://mcp/install?name=<id>&config=<base64url JSON>` 链接会打开“添加”对话框，
-填入该配置并提示你先检查；在你点击添加之前不会保存任何内容。
+示例 URL 是占位符，请替换为实际服务地址。本地服务通过 stdio 连接，需要预先安装相应命令或运行时；远程服务通过 HTTP 连接，并可支持 OAuth 登录。配置保存在 `~/.anda/mcp.json`，与 `config.yaml` 分开，支持 `mcpServers` 和 `servers` 两种根键。手动编辑后需要重载。
 
-`anda mcp import` 和页面上的导入会读取 Claude Desktop、Claude Code（`~/.claude.json`）、
-Cursor、VS Code（以及 GitHub Copilot 的 CLI）、Windsurf 和 Codex（`~/.codex/config.toml`）
-的 MCP 设置，以及 Claude Code 记录的项目、当前目录或 daemon 工作区中的项目文件（`.mcp.json`、
-`.cursor/mcp.json`、`.vscode/mcp.json`）。这些文件只会被读取。
-每个服务都会显示导入后的结果：名称已被占用的会换一个名称导入，Anda 已经在运行的会被
-略过。导入时，请求头的值、令牌和密钥会转存为密钥（`--keep-plaintext` 则保留在
-`mcp.json` 中）；VS Code 的输入项和 daemon 没有的环境变量会变成待设置的密钥，导入时会
-询问它们的值；本地服务会设为 `"inherit_env": false`。
+用 `anda mcp secret set NAME` 保存密钥，再通过 `${secret:NAME}` 引用。MCP 工具受审批策略和定义变更审阅约束。服务还可以提供可附加到消息中的资源，或在工具执行期间请求用户输入。
 
-MCP Registry 由 daemon 搜索，使用 daemon 的代理设置。安装服务时默认写入它的远程端点，
-因为这不会在你的电脑上运行任何程序；也可以选择它的 npm、PyPI、OCI（Docker）或 NuGet
-包，作为本地命令运行，且不获得 daemon 的全部环境变量。你为密钥字段填写的值会存入密钥库。
-Registry 只说明服务已经发布，并不代表它安全：在你放行之前，它的工具运行前仍会先询问。
+支持 MCP Events 的服务可以通过 Events 页签或 `anda mcp triggers` 创建事件自动化。这类任务有事件批处理、频率限制和连续失败自动暂停机制。配置、导入、OAuth、权限与事件投递详见 [MCP 配置指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
-daemon 运行时，修改立即生效，连接失败的服务会在后台重试；daemon 未运行时，命令
-只修改 `mcp.json`，在 daemon 启动时生效。`list` 也会列出被跳过的条目及原因。修改
-会保留 Anda 不读取的字段和 `${VAR}` 引用；`remove` 还会删除该服务已保存的登录凭据。
+### 即时通讯渠道
 
-每次调用 MCP 工具都要经过审批检查。在默认的 `auto` 策略下，没有完全访问权限的会话
-调用服务未标为只读的工具前会先询问；定时任务和目标模式以完全访问权限运行。可以为
-服务或其中某个工具设置策略：
-
-```bash
-anda mcp approval github allow                          # github 的工具都不再询问
-anda mcp approval github ask --tool merge_pull_request  # 总是询问，即使拥有完全访问权限
-anda mcp review github                                  # 确认审查后发生变化的工具
-```
-
-在 MCP 工具的审批卡片上选择“始终允许”，会把该工具设为 `allow`。
-Anda 会记住服务第一次提供的每个工具定义：之后发生变化的工具或新增的工具，即使在
-`allow` 下也会重新询问，直到你批准它的一次调用，或用 `anda mcp review` 确认
-（`anda mcp diff <id> <tool>` 显示具体变化）。服务给模型的说明也会这样记录，
-变化后 MCP 页面会提示。外部 IM 用户的请求只有在执行
-`anda mcp external-users <id> on` 之后才能使用该服务，而且不能调用需要审批的工具。
-为其他智能体编写的技能可以用 `mcp__<server>__<tool>` 指代工具。
-
-支持 MCP Events 的服务会上报事件，例如新的 issue 或新的评论。自动化会在事件到来时
-按你的指令运行智能体，回复出现在你的一个对话中，或回到创建它的 IM 聊天里。可以在
-MCP 页面服务的“事件”标签页、用 `anda mcp triggers add`，或让智能体
-（`create_event_trigger`，会先请求你的批准）创建自动化：
-
-```bash
-anda mcp events github                                # 服务上报哪些事件
-anda mcp triggers add github issue.opened --args '{"repo":"owner/name"}' \
-    --instructions "给每个新 issue 加标签并写一段摘要"
-anda mcp triggers                                     # 另有：get、update、pause、resume、delete
-```
-
-在自动化的批处理窗口（默认 30 秒）内到达的事件会合并到一次运行中处理。事件数据来自
-服务，属于不可信内容，所以这些运行不像定时任务那样拥有完全访问权限：只能使用只读工具
-和设为 `allow` 的工具，需要审批的操作一律拒绝。运行次数超过每小时上限（默认 12 次）
-或连续失败五次的自动化会自行暂停。Anda 通过推送或轮询接收事件。只通过 webhook 投递
-的事件需要 dMsg 代为接收：在 `mcp.json` 中加入 dMsg 并设置
-`"events": {"webhook_ingress": true}`，Anda 会为每个这样的自动化在 dMsg 上创建端点，
-并让服务向它投递。可以在“事件”标签页或用 `anda mcp triggers update` 修改自动化；对话框
-会列出该服务在自动化中会被拒绝的工具。自动化自行暂停、服务需要重新登录或服务终止订阅时，
-Anda 会在自动化回复的地方告诉你。
-
-服务还可以提供资源，例如按 URI 访问的文件或记录。智能体用 `mcp_resources` 列出和读取
-资源，输入框的 + 菜单也可以添加一个资源作为附件（MCP 资源）。读取资源和只读工具一样遵循
-服务的审批策略。服务也可以在工具运行期间向你请求输入（MCP elicitation）：输入框上方会出现
-卡片，表单按字段逐个询问，或提供一个要打开的页面。选择拒绝或直接在聊天中回复，请求就会被
-取消；在无人能回答的场合（自动化、定时任务、IM 聊天）也会取消。答案会交给服务，请勿在这里
-输入密码或密钥。在服务条目上设置 `"resources": false` 或 `"elicitation": false`
-可以分别关闭这两项功能。
-
-智能体也可以在对话中调用 `add_mcp_server` 连接新的 MCP 服务。`persist: false`
-表示只对当前 daemon 生效；`persist: true` 会把服务写回 `~/.anda/mcp.json`，
-重启后继续保留。它的服务字段与一条 `mcp.json` 配置保持一致：`type`、
-`command`、`args`、`env`、`cwd`、`url`、`headers`、`enabled`、`include` 和
-`exclude`，另外再加 tool 专用的 `id` 和 `persist`。`manage_mcp_server` 让智能体
-查看各服务的状态和最近错误，并重连某个服务；启用、停用、删除或登出服务前会先请求
-你的批准。
-
-OAuth 服务可通过 `connect_mcp_server` 完成授权并保存连接。重新授权会保留工具允许/排除列表、自定义 headers、client ID 和传输设置，并保存更新后的 scopes。浏览器启动器失败时，工具会返回授权 URL，供手动打开。回调使用网关端口及相同 IP 地址族的回环地址；远程或绑定特定网卡的部署，需要将浏览器侧的该回环地址隧道转发到实际监听地址。
-
-当前支持：
-
-- Telegram
-- WeChat
-- Discord
-- Lark / 飞书
-
-多个可信用户可以共享同一个 daemon 和同一个 Anda agent。先创建用户 key，然后在 channel 条目的 `user` 中引用对应 id。未配置 `user` 时，channel 消息仍以操作系统安全凭证库里的本地 owner 身份运行。daemon 管理操作（修改配置、重载与切换模型、安装更新、关停）仍只允许本地 owner 执行。
-
-```bash
-anda user create alice
-anda user list
-```
-
-命令会把新用户的公钥写入顶层 `users`，并把匹配的私钥保存到 `~/.anda/credentials/` 下的本地加密凭证库。凭证文件里是加密的 COSE Key，加密密钥从本地 daemon 身份密钥派生。如果明确需要文件 key，请使用下面的 `anda user export`。
-
-在 Linux 上，如果没有可用或已解锁的 Secret Service provider，Anda 可以读取**已有的** daemon/owner 私钥文件 `~/.anda/keys/anda_bot.key` 和 `~/.anda/keys/user.key`，并在终端和日志中显示提醒。两个文件必须完整存在：凭据库不可用时不会生成替代身份。已有安装应解锁 provider 或恢复原始密钥；可信用户私钥仍使用从原始 daemon 身份派生的密钥加密保存。
-
-对于**没有操作系统凭据库的全新安装**，请先显式运行 `anda user init-file-keys`，再运行 `anda start`。该命令创建缺失的私钥文件，不覆盖已有文件；若已有本地数据库/凭据数据，或能读取到 keyring 中的身份，则拒绝初始化。不要用它恢复已有安装。导入的 COSE 密钥必须标明 Ed25519 曲线；算法字段存在时必须为 EdDSA，私钥附带的公钥必须与其匹配。原始 32 字节 Base64 密钥继续受支持。
-
-若要使用 Secret Service，请在用户 D-Bus session 中启动并解锁 provider，例如运行 `gnome-keyring-daemon --start --components=secrets`，确认 Anda 能拿到 `DBUS_SESSION_BUS_ADDRESS`，然后重启；KDE 用户也可以解锁 KWallet。已有文件身份会一起迁移到一个 keyring bundle，只有完整保存成功后才删除源文件。
-
-如果需要把已有身份私钥导出到文件，使用 `anda user export`。身份可以是 `daemon`、`owner`、`default` 或可信用户 id：
-
-```bash
-anda user export daemon --key-path ./anda-daemon.key
-anda user export owner --key-path ./anda-owner.key
-anda user export alice --key-path ./alice.key
-```
-
-导出的私钥文件不要放进代码仓库或共享目录。
-
-配置仍是这样：
-
-```yaml
-users:
-  - id: alice
-    pubkey: "ALICE_ED25519_PUBLIC_KEY"
-  - id: ops
-    pubkey: "OPS_ED25519_PUBLIC_KEY"
-```
-
-Telegram 最小示例：
+Telegram、微信、Discord 和 Lark/飞书在 `config.yaml` 的 `channels` 下配置，例如：
 
 ```yaml
 channels:
   telegram:
     - id: personal
-      user: alice
       bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
       username: "YOUR_TELEGRAM_BOT_USERNAME"
-      allowed_users:
-        - "*"
+      allowed_users: ["YOUR_TELEGRAM_USER_ID"]
       allow_external_users: false
       mention_only: false
 ```
 
-微信最小示例：
+用 `anda channel list` 查看已配置条目，修改后执行 `anda restart`。已配置的微信条目可以用 `anda channel init wechat` 完成扫码登录。
 
-```yaml
-channels:
-  wechat:
-    - id: personal
-      user: alice
-      # 可选，留空时可通过运行 anda channel init wechat 命令初始化，扫码登录获得 token
-      bot_token: ""
-      username: anda-wechat
-      allowed_users:
-        - "*"
-      allow_external_users: false
-      route_tag:
-```
+`allowed_users` 校验平台发送者。可选的 `user` 将渠道绑定到通过 `anda user create <id>` 创建的 Anda 可信用户；省略时使用本地所有者身份。`allow_external_users: true` 允许其他发送者以不可信的 `$external_user` 身份交互，不会将他们视为所有者。回复保留原始渠道和线程/会话路由。配置方法与限制见[渠道和身份指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/channels.mdx)。
 
-`allowed_users` 仍然用于校验平台发送者，例如 Telegram 账号、微信 `wxid`、Discord 用户 id 或 Lark open id。`user` 决定这条 channel 消息以哪个可信 Anda caller 身份创建会话、资源和记忆上下文。
+### 语音与附件
 
-频道投递保留 Telegram topic、Discord 线程和 Lark/飞书回复线程。文本分段与附件分别重试，不重发已成功投递的部分。`https_proxy` 同时覆盖 WebSocket 流量；微信不需要代理，不经过它。Lark/飞书对 HTTP(S) 附件发送链接，本地或二进制附件则上传为图片或文件消息。备份数据库时请同时保留频道工作区中的附件文件。
+通过 `transcription` 启用语音输入，通过 `tts` 启用语音回复，两者独立于主聊天模型。客户端也支持附件，并按模型的能力标签路由处理。
 
-设置 `allow_external_users: true` 后，非 `allowed_users` 的 IM 发送者会以 `$external_user` 身份进入对话。它们可以与机器人交互，但会被视为不可信外部用户，而不是 owner/partner。
-
-MCP 服务参考上面的 `mcp.json` 示例；更多渠道、语音转写和 TTS 配置可以参考 [anda_bot/assets/config.yaml](anda_bot/assets/config.yaml)。
-
-### 与其他智能体共享记忆
-
-同一台机器上的 Claude Code、Codex 和其他 MCP 客户端可以使用 Anda 的记忆。为每个智能体单独创建令牌：
+在 macOS 和 Windows 上，可以通过 CLI 使用麦克风输入：
 
 ```bash
-anda memory agents add claude-code --write
+anda voice --record-secs 8 --no-playback
 ```
 
-命令只显示一次令牌，并给出接入 Claude Code 的命令（`claude mcp add --transport http --scope user anda-memory http://127.0.0.1:8042/mcp/memory --header "Authorization: Bearer …"`），以及 Codex 的 `[mcp_servers.anda-memory]` 配置（从 `ANDA_MEMORY_TOKEN` 读取令牌）。端点是 daemon 地址上 `/mcp/memory` 的 Streamable HTTP 服务，只接受回环主机名（`localhost`、`127.0.0.1` 或 `::1`）并拒绝网页发起的请求；每个请求仍须携带令牌，其他机器上的客户端需通过隧道接入。
+去掉 `--no-playback` 可播放语音回复，需要配置 TTS，并在 `PATH` 中提供 `ffplay`、macOS 的 `afplay` 或 SoX 的 `play`。Edge TTS 需要 `edge-tts`。Linux 未启用 CLI 录音。详见[语音配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
-所有令牌都能使用 `recall_memory`（用 Anda 的记忆模型回答一个问题），以及 `search_memory` 和 `read_memory_entity`（查找实体及其带来源的记录，不调用模型）。用 `--write` 创建的令牌还能使用 `remember`，以智能体自己的名义告诉 Anda 一件事；`memory_note_status` 说明这条笔记是否已整理完。笔记是智能体自己的陈述，归属于具名参与者（例如“Claude Code”），绝不会算作你的话。它保存在一个来源为 `agent:claude-code` 的独立会话中；由它形成的记忆在“记忆”工作区中带着这个来源显示，可以更正、停用或删除。
+## 技能与定时任务
 
-令牌能读到 Anda 能读到的内容，所以只交给你信任的智能体，并注意它读到的内容会发给它的模型服务商。`anda memory agents` 列出所有授权，`anda memory agents revoke <id|client>` 立即让令牌失效。令牌默认 90 天有效，可用 `--days` 设为其他期限（最长 3650 天）。Anda 只保存令牌的摘要，丢失的令牌无法再次显示：撤销后重新创建即可。
+在桌面端或扩展仪表盘的技能工作区中管理运行时技能。个人技能位于 `~/.anda/skills`，发行版管理的技能位于 `~/.anda/bundled-skills`，也可以发现 `~/.agents/skills` 下的共享技能。仓库的 [skills](skills) 包含研究、文档处理、编程工具和技能编写等工作流；具体技能可能需要额外工具。
 
-## 文件、技能与自动化
+可以直接请 Anda 定时执行提示词或 shell 命令，也可以使用桌面端的「自动化」页面。Cron 支持一次性、固定间隔和 cron 表达式调度，提供本地执行历史及暂停/恢复控制。定时任务需要后台服务保持运行。MCP 事件自动化在 MCP 页面管理。
 
-Anda Bot 的本地工作区默认位于 `~/.anda/workspace`。文件与 Shell 工具默认在该目录下执行。Shell 命令在短暂的前台等待（默认 10 秒，最多 30 秒）后仍未结束时，会转入后台继续运行，最长 24 小时：输出会回报到对话中，agent 可以用 `shell_session` 查询或停止它，`/stop` 会取消它。交互式 CLI 连接时，会使用本机 owner 身份向 daemon 注册启动目录；该 CLI 会话的原生 Shell 命令从已注册的目录运行。进入 Chrome 扩展或 Anda 桌面端中的文件目录会话时，客户端也会注册该目录，此会话的 Shell 命令从该目录启动。daemon 只在内存中保留这些注册，最长 24 小时，重启后即失效，因此各客户端每次发送消息时都会重新注册该目录。其他来源不能只靠请求元数据指定任意 Shell 目录。文件工具仍只能访问已配置的工作区。附件理解也可读取 owner 已注册且授权尚未过期的目录；请求元数据本身不能授权新目录。
+## 服务管理与本地数据
 
-单次请求可使用 `anda agent run --workspace . --prompt "总结这个项目"`，CLI 会在提交提示词前注册目录，并默认使用对应的 `cli:<path>` source。`--workspace` 的相对路径基于 CLI 当前目录解析。`--meta` 中显式指定的 `source`、`workspace` 仍然优先；文件工具仍受已配置工作区限制。
+| 命令 | 用途 |
+| --- | --- |
+| `anda status` | 查看后台服务状态，加 `--json` 输出结构化结果。 |
+| `anda start` / `anda stop` / `anda restart` | 管理后台服务。 |
+| `anda daemon` | 在前台运行服务。 |
+| `anda models reload` | 重载模型服务商配置。 |
+| `anda autostart install` / `uninstall` / `status` | 管理登录启动。 |
+| `anda update` | 更新脚本安装的发行版；Homebrew 安装使用 `brew upgrade anda`。 |
+| `anda update --skills` | 更新内置技能。 |
+| `anda validate-config` | 从标准输入校验 YAML，不启动服务或创建数据目录。 |
+| `anda --help` | 查看命令；子命令也支持 `--help`。 |
 
-会话启动的目录根部若有 `AGENTS.md`，其内容会加入该会话的系统提示词，仓库因此可以一次性写明给 agent 的约定，而不必由用户在每次提示词里重复。文件在会话创建时读取，最多 64 KiB：之后的修改从下一个会话开始生效，agent 也可以在会话中用 `read_file` 重新读取。指向工作区之外的链接、非文本文件会被忽略。
+桌面端可通过托盘或设置中的「检查更新」更新；Homebrew 管理的组件使用 Homebrew 升级。内置运行时与平台差异见[桌面端更新说明](desktop/README.md#updates--更新)。
 
-用户可将自定义运行时技能放入 `~/.anda/skills`。发布版内置技能会安装到 `~/.anda/bundled-skills`，而在 `~/.agents/skills` 下的跨 Agent 技能可在 Dashboard 中导入到个人库。内置的 Cron 任务调度器支持安排未来的 Shell 任务或 Agent 提示词，并保留运行历史。
+默认网关地址为 `127.0.0.1:8042`。运行时状态位于 `~/.anda`，Windows 对应 `%USERPROFILE%\.anda`：
 
-## 本地数据与隐私
+| 路径 | 内容 |
+| --- | --- |
+| `config.yaml` | 模型、渠道、工作区、语音和启动设置。 |
+| `db/` | 对话、记忆图谱、任务状态和其他持久记录。 |
+| `workspace/` | 默认工作文件。 |
+| `channels/` | 渠道状态和附件。 |
+| `skills/`、`bundled-skills/` | 个人技能和发行版管理的技能。 |
+| `mcp.json`、`mcp_secrets.json`、`mcp_state.json` | MCP 配置、本地受保护的密钥，以及连接与审阅状态。 |
+| `credentials/`、`chatgpt/` | 加密的可信用户凭据和 ChatGPT 账户状态。 |
+| `logs/` | 运行日志。 |
 
-默认情况下，Anda Bot 的所有状态和配置均保存在 `~/.anda` 中：
+后台服务和所有者的身份密钥通常保存在操作系统安全凭据库中；显式初始化的文件密钥和 Linux 回退密钥使用 `keys/`。桌面端还会在操作系统应用数据目录中保存界面偏好和浏览器配置。本地存储不代表离线推理：已配置的模型服务商和外部服务会接收调用所需的内容。
 
-```text
-~/.anda/
-  config.yaml
-  credentials/ # 本地加密可信用户凭证
-  db/
-  keys/ # 显式导出的文件 key 或 Linux Secret Service fallback key
-  logs/
-  channels/
-  bundled-skills/
-  sandbox/
-  skills/
-  skills-manifest.json
-  skill-backups/
-  skill-trash/
-  workspace/
+使用 `anda --home /absolute/path/to/anda-home` 隔离状态。若同时运行多个后台服务，应为它们配置不同的 `addr` 端口。升级前备份数据和身份密钥，旧 Brain 数据库可能需要迁移；兼容性与回滚限制见 [Brain 指南](docs/brain-integration_cn.md#产品-api-与开发依赖)。
+
+## 开发
+
+Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **Rust 1.95 或更新版本**、本地 C/C++ 构建工具链，以及 `PATH` 中的 `protoc`。CI 会安装这些前置依赖，各平台配置见[测试工作流](.github/workflows/test.yml)和[发布工作流](.github/workflows/release.yml)。
+
+```bash
+git clone https://github.com/ldclabs/anda-bot.git
+cd anda-bot
+cargo build --locked -p anda_bot --bin anda
+cargo run --locked -p anda_bot --bin anda --
 ```
 
-记忆图谱、会话、渠道状态、定时任务、日志、个人 Skills、内置 Skills 和工作区数据都会放在这里。daemon 和 owner 身份私钥默认保存在操作系统安全凭证库，可信用户私钥保存在 `~/.anda/credentials/` 下的本地加密凭证库；显式导出的文件 key 和 Linux Secret Service fallback key 可能位于 `~/.anda/keys/`。请注意，配置的模型提供方（Model Provider）仍会接收 prompt 和记忆处理请求，建议根据数据隐私需求选择合适的提供商或部署私有大模型接口。
+共享的 Brain/DB/KIP/Core/Engine 依赖由 Cargo 解析，无需在同级目录克隆 `anda-brain`。精确版本记录在 `Cargo.lock` 中。可选的 `learning` 和 `mib` 特性互相独立：前者提供需要配置的学习集成，后者增加隔离的 [MIB 评测宿主](docs/mib-integration_cn.md)。日常记忆不需要它们，编译这些特性也不会自动开启学习。
 
-## 继续了解
+JavaScript 子项目由根目录的 pnpm workspace 管理。使用 Node.js 22.12+（CI 使用 Node.js 24）和 pnpm：
 
-- [Anda Bot 源码](anda_bot/README.md)
-- [Anda Brain 源码](https://github.com/ldclabs/anda-brain)
-- [Anda Brain 产品站](https://brain.anda.ai/)
+```bash
+pnpm install --frozen-lockfile
+pnpm --dir desktop dev
+```
+
+| 目录 | 职责 |
+| --- | --- |
+| `anda_bot/src/` | CLI、后台服务、引擎、Brain 集成、渠道、cron、语音和 TUI。 |
+| `anda_bot/assets/` | 默认配置、提示词和运行时示例。 |
+| `desktop/` | Electron + Svelte 桌面应用，复用扩展的 UI 组件。 |
+| `chrome-extension/` | Svelte + TypeScript Chrome 侧边栏与仪表盘。 |
+| `skills/` | 内置运行时技能包。 |
+| `docsite/` | Docusaurus 文档和翻译。 |
+| `website/` | SvelteKit 官网。 |
+| `scripts/` | 安装、签名和发布脚本。 |
+| `docs/` | 集成指南、设计文档和实施记录。 |
+
+按修改的组件运行检查。Rust：
+
+```bash
+cargo fmt --check
+RUST_MIN_STACK=16777216 cargo test --locked -p anda_bot -- --nocapture
+cargo clippy --locked --all-targets --all-features
+```
+
+`make test` 使用所有特性运行 Rust 工作区测试，并设置相同的测试线程栈大小。直接运行测试命令时保留 `RUST_MIN_STACK=16777216`，以满足内嵌 Brain 调试构建的栈需求。
+
+| 组件 | 检查 |
+| --- | --- |
+| 桌面端 | `pnpm --dir desktop check`、`test`、`build` |
+| Chrome 扩展 | `pnpm --dir chrome-extension check`、`test`、`i18n`、`build` |
+| 官网 | `pnpm --dir website check`、`test`、`lint`、`build` |
+| 文档站 | `pnpm --dir docsite typecheck`、`build` |
+
+表中每个脚本都使用相同的 `pnpm --dir <directory>` 前缀。仓库约定见 [AGENTS.md](AGENTS.md)，GUI 检查见[桌面端验证说明](desktop/README.md#validation)。
 
 ## 许可证
 
-项目基于 Apache-2.0 许可证发布，见 [LICENSE](LICENSE)。
+[Apache-2.0](LICENSE)。内置的第三方技能可能包含各自的许可证文件。
