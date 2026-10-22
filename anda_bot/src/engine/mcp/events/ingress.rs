@@ -18,6 +18,7 @@ use anda_engine::extension::mcp::{
     McpWebhookSubscription,
 };
 use rmcp::model::CallToolResult;
+use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -33,6 +34,24 @@ const BIND: &str = "dmsg_events_bind";
 const ACK: &str = "dmsg_events_ack";
 /// Bound on the runtime's own calls to dMsg and the upstream server.
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// dMsg tools use snake_case, independently of MCP Events' camelCase wire format.
+#[derive(Serialize)]
+struct BindEndpoint<'a> {
+    endpoint_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subscription_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_before: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct AckEndpoint<'a> {
+    endpoint_id: &'a str,
+    through: &'a str,
+}
 
 /// The ingress server and how it relays.
 pub(crate) struct Ingress {
@@ -195,18 +214,15 @@ impl DmsgIngress {
         trigger: &EventTrigger,
         webhook: &WebhookState,
     ) -> Result<(), BoxError> {
-        let refresh_before = webhook.refresh_before.and_then(|ms| {
-            chrono::DateTime::from_timestamp_millis(ms as i64).map(|time| time.to_rfc3339())
-        });
         self.call(
             &webhook.ingress,
             BIND,
-            json!({
-                "endpoint_id": webhook.endpoint_id,
-                "server": trigger.server_id,
-                "subscription_id": webhook.subscription_id,
-                "refreshBefore": refresh_before,
-            }),
+            serde_json::to_value(BindEndpoint {
+                endpoint_id: &webhook.endpoint_id,
+                server: self.manager.server_url(&trigger.server_id)?,
+                subscription_id: webhook.subscription_id.as_deref(),
+                refresh_before: webhook.refresh_before,
+            })?,
         )
         .await?;
         Ok(())
@@ -235,22 +251,22 @@ impl DmsgIngress {
         )
     }
 
-    /// Lets dMsg clean up what has been stored. Best effort: the relay
-    /// cursor, not the acknowledgement, decides where reading resumes.
-    pub(crate) async fn ack(&self, webhook: &WebhookState, cursor: Option<String>) {
-        let Some(cursor) = cursor else {
-            return;
-        };
-        if let Err(err) = self
+    /// Confirms the durable position, checking dMsg's receipt before recording it.
+    pub(crate) async fn ack(&self, webhook: &WebhookState, cursor: &str) -> Result<(), BoxError> {
+        let receipt = self
             .call(
                 &webhook.ingress,
                 ACK,
-                json!({"endpoint_id": webhook.endpoint_id, "cursor": cursor}),
+                serde_json::to_value(AckEndpoint {
+                    endpoint_id: &webhook.endpoint_id,
+                    through: cursor,
+                })?,
             )
-            .await
-        {
-            log::debug!("{ACK} for endpoint {} failed: {err}", webhook.endpoint_id);
+            .await?;
+        if receipt["through"].as_str() != Some(cursor) || receipt["acked"].as_u64().is_none() {
+            return Err(format!("{ACK} returned an invalid acknowledgement receipt").into());
         }
+        Ok(())
     }
 
     /// Ends the upstream subscription and deletes the endpoint and its secret.

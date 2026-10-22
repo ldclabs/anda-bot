@@ -178,7 +178,17 @@ pub(crate) async fn serve_events(mock: EventsMock) -> String {
                     }
                     "tools/call" => {
                         let name = params["name"].as_str().unwrap_or_default();
+                        if let Err(message) = validate_dmsg_tool(name, &params["arguments"]) {
+                            return Json(json!({"jsonrpc": "2.0", "id": id, "result": {
+                                "content": [{"type": "text", "text": message}], "isError": true
+                            }}))
+                            .into_response();
+                        }
                         match mock.tools.read().get(name) {
+                            Some(result) if result.get("error").is_some() => json!({
+                                "content": [{"type": "text", "text": result.to_string()}],
+                                "isError": true,
+                            }),
                             Some(result) => json!({
                                 "content": [{"type": "text", "text": result.to_string()}],
                                 "structuredContent": result,
@@ -217,4 +227,57 @@ pub(crate) async fn serve_events(mock: EventsMock) -> String {
         }),
     );
     format!("{}/mcp", crate::test_support::spawn_http_mock(app).await)
+}
+
+/// Enforce the actual dMsg daemon contract, rather than accepting every payload.
+/// The live stdio tests additionally obtain these schemas from `dmsg mcp` itself.
+pub(crate) fn validate_dmsg_tool(name: &str, input: &Value) -> Result<(), String> {
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Bind {
+        endpoint_id: String,
+        server: Option<String>,
+        subscription_id: Option<String>,
+        refresh_before: Option<u64>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Ack {
+        endpoint_id: String,
+        through: String,
+    }
+    match name {
+        "dmsg_events_bind" => {
+            let bind: Bind =
+                serde_json::from_value(input.clone()).map_err(|err| err.to_string())?;
+            if bind.endpoint_id.is_empty() {
+                return Err("endpoint_id".into());
+            }
+            if let Some(server) = bind.server {
+                let url = reqwest::Url::parse(&server).map_err(|err| err.to_string())?;
+                let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+                if url.scheme() != "https" && !(local && url.scheme() == "http") {
+                    return Err("server".into());
+                }
+            }
+            if bind
+                .subscription_id
+                .as_ref()
+                .is_some_and(|id| id.len() > 256)
+            {
+                return Err("subscription_id".into());
+            }
+            let _ = bind.refresh_before;
+        }
+        "dmsg_events_ack" => {
+            let ack: Ack = serde_json::from_value(input.clone()).map_err(|err| err.to_string())?;
+            if ack.endpoint_id.is_empty() {
+                return Err("endpoint_id".into());
+            }
+            ack.through.parse::<u64>().map_err(|err| err.to_string())?;
+        }
+        _ => {}
+    }
+    Ok(())
 }

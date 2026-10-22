@@ -30,7 +30,7 @@ pub(crate) const DEFAULT_MAX_RUNS_PER_HOUR: u64 = 12;
 pub(crate) const MAX_RUNS_PER_HOUR: u64 = 120;
 /// Processed events and runs kept per trigger; older ones are pruned.
 const MAX_RECORDS_PER_TRIGGER: usize = 500;
-const MAX_RUNS_PER_TRIGGER: usize = 100;
+const MAX_RUNS_PER_TRIGGER: usize = MAX_RUNS_PER_HOUR as usize + 1;
 /// Events waiting for a run, per trigger; past it the oldest are dropped.
 pub(crate) const MAX_PENDING_EVENTS: usize = 500;
 
@@ -100,6 +100,16 @@ pub(crate) struct WebhookState {
     /// Position in the ingress's relay stream.
     #[serde(default)]
     pub relay_cursor: Option<String>,
+    /// Older records rebind once on restart using the corrected dMsg contract.
+    #[serde(default)]
+    pub bound: bool,
+    #[serde(default)]
+    pub acked_cursor: Option<String>,
+    #[serde(default)]
+    pub ack_error: Option<String>,
+    /// A relay control notice asks the supervisor to renew, outside the stream sink.
+    #[serde(default)]
+    pub refresh_requested: bool,
 }
 
 /// An automation: when `server_id` reports `event` with `arguments`, the
@@ -136,7 +146,7 @@ pub(crate) struct EventTrigger {
     pub last_error: Option<String>,
     pub last_event_at: Option<u64>,
     pub last_run_at: Option<u64>,
-    /// When the server last said events were lost.
+    /// When events were lost upstream or dropped from the bounded local queue.
     pub missed_events_at: Option<u64>,
     pub events_received: u64,
     pub runs: u64,
@@ -175,7 +185,7 @@ pub(crate) struct EventRecord {
     #[field_type = "Json"]
     pub data: Value,
     pub received_at: u64,
-    /// The run that handled it; 0 while it waits.
+    /// The successful run that handled it; 0 while it waits or needs retrying.
     pub run_id: u64,
     /// How the event was verified on its way in: `v1a` (end to end), `v1`
     /// (by the relay), or none for poll and push.
@@ -373,15 +383,24 @@ impl TriggerStore {
         Ok(added)
     }
 
-    /// Drops the oldest waiting events past [`MAX_PENDING_EVENTS`]; returns
-    /// whether any were dropped.
-    async fn drop_overflow(&self, trigger_id: u64) -> Result<bool, BoxError> {
+    /// Records the loss before dropping the oldest events past the queue limit.
+    async fn drop_overflow(&self, trigger_id: u64) -> Result<(), BoxError> {
         let pending = self.pending(trigger_id, usize::MAX).await?;
         let excess = pending.len().saturating_sub(MAX_PENDING_EVENTS);
+        if excess > 0 {
+            self.modify(trigger_id, |trigger| {
+                trigger.missed_events_at = Some(unix_ms());
+                Ok(())
+            })
+            .await?;
+            log::warn!(
+                "MCP event automation {trigger_id}: dropped {excess} pending events at the queue limit"
+            );
+        }
         for record in &pending[..excess] {
             self.events.remove(record._id).await?;
         }
-        Ok(excess > 0)
+        Ok(())
     }
 
     async fn records_of(&self, trigger_id: u64) -> Result<Vec<EventRecord>, BoxError> {
@@ -443,7 +462,7 @@ impl TriggerStore {
         Ok(run)
     }
 
-    /// Records a finished run and marks its events handled.
+    /// Records an attempt. Only success consumes its events; failures stay pending.
     pub(crate) async fn finish_run(
         &self,
         mut run: TriggerRun,
@@ -457,7 +476,7 @@ impl TriggerStore {
         run.conversation_id = result.conversation_id;
         let patch = patch_of(&self.runs, &run)?;
         self.runs.update(run._id, patch).await?;
-        for record in events {
+        for record in events.iter().filter(|_| result.error.is_none()) {
             match self
                 .events
                 .update(
@@ -505,6 +524,28 @@ impl TriggerStore {
             .iter()
             .filter(|run| run.started_at >= since_ms)
             .count())
+    }
+
+    /// Failed/interrupted attempts since the last edit or resume, newest first.
+    /// Stored history makes the retry budget survive a daemon restart.
+    pub(crate) async fn failures_since(
+        &self,
+        trigger_id: u64,
+        since_ms: u64,
+    ) -> Result<(u32, u64), BoxError> {
+        let runs = self.list_runs(trigger_id, MAX_RUNS_PER_TRIGGER).await?;
+        let failed: Vec<_> = runs
+            .iter()
+            .take_while(|run| {
+                run.started_at >= since_ms && (run.error.is_some() || run.finished_at == 0)
+            })
+            .collect();
+        Ok((
+            failed.len() as u32,
+            failed
+                .first()
+                .map_or(0, |run| run.finished_at.max(run.started_at)),
+        ))
     }
 
     async fn prune(&self, trigger_id: u64) -> Result<(), BoxError> {
@@ -751,5 +792,103 @@ pub(crate) mod tests {
             bounded_data(serde_json::json!({"a": 1})),
             serde_json::json!({"a": 1})
         );
+    }
+
+    #[tokio::test]
+    async fn failed_attempts_survive_reopening_and_success_consumes_them() {
+        let db = crate::test_support::memory_db("retry_events").await;
+        let store = TriggerStore::connect(db.clone()).await.unwrap();
+        let trigger = store.insert(trigger("gh", "issue.opened")).await.unwrap();
+        store
+            .record_events(trigger._id, vec![event("e1")])
+            .await
+            .unwrap();
+        let pending = store.pending(trigger._id, 20).await.unwrap();
+        let run = store.start_run(trigger._id, 1).await.unwrap();
+        store
+            .finish_run(
+                run,
+                &pending,
+                &CronJobResult {
+                    error: Some("temporary failure".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        drop(store);
+        let reopened = TriggerStore::connect(db).await.unwrap();
+        assert_eq!(
+            reopened.pending(trigger._id, 20).await.unwrap()[0].key,
+            pending[0].key
+        );
+        assert_eq!(reopened.failures_since(trigger._id, 0).await.unwrap().0, 1);
+        // Interrupted attempts count too, but never consume the event.
+        reopened.start_run(trigger._id, 1).await.unwrap();
+        assert_eq!(reopened.failures_since(trigger._id, 0).await.unwrap().0, 2);
+        let retry = reopened.start_run(trigger._id, 1).await.unwrap();
+        reopened
+            .finish_run(retry, &pending, &CronJobResult::default())
+            .await
+            .unwrap();
+        assert!(reopened.pending(trigger._id, 20).await.unwrap().is_empty());
+        assert_eq!(reopened.failures_since(trigger._id, 0).await.unwrap().0, 0);
+    }
+
+    #[tokio::test]
+    async fn queue_overflow_records_loss_before_dropping_events() {
+        let store = store().await;
+        let trigger = store.insert(trigger("gh", "issue.opened")).await.unwrap();
+        store
+            .record_events(
+                trigger._id,
+                (0..MAX_PENDING_EVENTS + 3)
+                    .map(|i| event(&i.to_string()))
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        let pending = store.pending(trigger._id, usize::MAX).await.unwrap();
+        assert_eq!(pending.len(), MAX_PENDING_EVENTS);
+        assert_eq!(pending[0].event_id, "3");
+        assert!(
+            store
+                .get(trigger._id)
+                .await
+                .unwrap()
+                .missed_events_at
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn pruning_keeps_enough_history_for_the_highest_hourly_limit() {
+        let store = store().await;
+        let trigger = store.insert(trigger("gh", "issue.opened")).await.unwrap();
+        for _ in 0..MAX_RUNS_PER_HOUR + 5 {
+            let run = store.start_run(trigger._id, 0).await.unwrap();
+            store
+                .finish_run(run, &[], &CronJobResult::default())
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            store.runs_since(trigger._id, 0).await.unwrap(),
+            MAX_RUNS_PER_TRIGGER
+        );
+        assert!(store.runs_since(trigger._id, 0).await.unwrap() >= MAX_RUNS_PER_HOUR as usize);
+    }
+
+    #[test]
+    fn existing_webhook_records_rebind_without_a_schema_change() {
+        // WebhookState is stored as Map<Text, Json>; the added keys are optional.
+        let state: WebhookState = serde_json::from_value(serde_json::json!({
+            "ingress": "dmsg", "endpoint_id": "ep", "url": "https://hooks.example/ep",
+            "secret_name": "secret", "subscription_id": "sub", "relay_cursor": "42"
+        }))
+        .unwrap();
+        assert!(!state.bound);
+        assert_eq!(state.relay_cursor.as_deref(), Some("42"));
+        assert!(state.acked_cursor.is_none() && state.ack_error.is_none());
     }
 }

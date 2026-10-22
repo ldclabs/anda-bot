@@ -217,7 +217,7 @@ anda mcp reload
 
 用 `anda mcp secret set NAME` 保存密钥，再通过 `${secret:NAME}` 引用。MCP 工具受审批策略和定义变更审阅约束。服务还可以提供可附加到消息中的资源，或在工具执行期间请求用户输入。
 
-支持 MCP Events 的服务可以通过 Events 页签或 `anda mcp triggers` 创建事件自动化。这类任务有事件批处理、频率限制和连续失败自动暂停机制。配置、导入、OAuth、权限与事件投递详见 [MCP 配置指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
+支持 MCP Events 的服务可以通过 Events 页签或 `anda mcp triggers` 创建事件自动化。这类任务支持事件批处理、可跨重启恢复的失败重试、频率限制和连续失败自动暂停。dMsg 可通过获得 `events.endpoint` 授权的专用 Agent ID 中转 webhook 事件。配置、导入、OAuth、权限与事件投递详见 [MCP 配置指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
 ### 即时通讯渠道
 

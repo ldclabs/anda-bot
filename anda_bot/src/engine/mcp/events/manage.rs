@@ -124,6 +124,25 @@ pub(crate) fn arguments_from_json(text: Option<&str>) -> Result<Map<String, Valu
     }
 }
 
+/// Process-local MCP sessions change on restart; relay selectors must be stable.
+pub(super) fn validate_relay_arguments(event: &str, arguments: &Value) -> Result<(), BoxError> {
+    if event != super::ingress::RELAY_EVENT {
+        return Ok(());
+    }
+    let nonempty = |value: &Value| value.as_str().is_some_and(|s| !s.trim().is_empty());
+    let valid = nonempty(&arguments["endpoint_id"])
+        || nonempty(&arguments["session"])
+        || arguments["endpoint_ids"]
+            .as_array()
+            .is_some_and(|ids| !ids.is_empty() && ids.len() <= 16 && ids.iter().all(nonempty));
+    if !valid {
+        return Err(McpError::invalid(
+            "dmsg.relay.delivery requires endpoint_id, endpoint_ids or a stable context session; the default MCP session changes on restart",
+        ));
+    }
+    Ok(())
+}
+
 impl McpEventRuntime {
     /// Creates a trigger. The server must be configured; when it can be
     /// reached, it must offer the event too.
@@ -160,6 +179,8 @@ impl McpEventRuntime {
             }
         }
         let now = unix_ms();
+        let arguments = arguments_of(input.arguments)?;
+        validate_relay_arguments(&event, &arguments)?;
         let trigger = EventTrigger {
             _id: 0,
             name: match input.name.as_deref() {
@@ -168,7 +189,7 @@ impl McpEventRuntime {
             },
             server_id,
             event,
-            arguments: arguments_of(input.arguments)?,
+            arguments,
             instructions: instructions_of(&input.instructions)?,
             origin,
             delivery: input.delivery.unwrap_or_default(),
@@ -245,6 +266,7 @@ impl McpEventRuntime {
                 if let Some(runs) = runs {
                     trigger.max_runs_per_hour = runs;
                 }
+                validate_relay_arguments(&trigger.event, &trigger.arguments)?;
                 if trigger.subscription_key() != before.subscription_key() {
                     trigger.cursor = None;
                     trigger.webhook = None;
@@ -262,6 +284,7 @@ impl McpEventRuntime {
         if trigger.subscription_key() != before.subscription_key() {
             self.stop(&before, true).await;
         }
+        self.reset_failures(id);
         self.wake();
         Ok(trigger)
     }
@@ -452,7 +475,7 @@ pub(crate) fn trigger_view(trigger: &EventTrigger, pending: usize) -> Value {
         "max_runs_per_hour": trigger.max_runs_per_hour,
         "enabled": trigger.enabled,
         "state": trigger.state,
-        "last_error": trigger.last_error,
+        "last_error": trigger.last_error.as_deref().or_else(|| trigger.webhook.as_ref().and_then(|webhook| webhook.ack_error.as_deref())),
         "last_event_at": trigger.last_event_at,
         "last_run_at": trigger.last_run_at,
         "missed_events_at": trigger.missed_events_at,
@@ -466,6 +489,9 @@ pub(crate) fn trigger_view(trigger: &EventTrigger, pending: usize) -> Value {
             "endpoint_id": webhook.endpoint_id,
             "subscribed": webhook.subscription_id.is_some(),
             "refresh_before": webhook.refresh_before,
+            "bound": webhook.bound,
+            "ack_pending": webhook.relay_cursor != webhook.acked_cursor,
+            "ack_error": webhook.ack_error,
         })),
         "created_by": trigger.created_by,
         "created_at": trigger.created_at,

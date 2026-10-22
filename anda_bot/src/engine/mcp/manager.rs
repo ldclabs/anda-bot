@@ -409,6 +409,20 @@ impl McpManager {
         &self.inner.provider
     }
 
+    /// The configured upstream URL, for dMsg's webhook signature key discovery.
+    /// A stdio server has no public origin; never substitute its local id.
+    pub(crate) fn server_url(&self, id: &str) -> Result<Option<String>, BoxError> {
+        let view = self.inner.view.read();
+        let registered = view
+            .registered
+            .get(id)
+            .ok_or_else(|| McpError::not_found(id))?;
+        Ok(match &registered.config.transport {
+            McpTransportConfig::StreamableHttp(http) => Some(http.url.clone()),
+            McpTransportConfig::Stdio(_) => None,
+        })
+    }
+
     /// The enabled mcp.json server marked to receive webhooks for event
     /// automations (`events.webhook_ingress`).
     pub(crate) fn webhook_ingress(&self) -> Option<String> {

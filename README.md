@@ -217,7 +217,7 @@ The example URL is a placeholder; replace it with your server. Local servers use
 
 Store secrets with `anda mcp secret set NAME` and reference them as `${secret:NAME}`. MCP tools have approval policies and definition-change review. Servers may also provide resources to attach to a message or request input during a tool call.
 
-Servers that support MCP Events can drive automations through the Events tab or `anda mcp triggers`. These runs are subject to batching, rate limits, and automatic pause after repeated failures. See the [MCP guide](docsite/docs/runtime/configuration.mdx#mcp-servers) for configuration, imports, OAuth, permissions, and event delivery.
+Servers that support MCP Events can drive automations through the Events tab or `anda mcp triggers`. These runs support batching, durable retries, rate limits, and automatic pause after repeated failures. dMsg can relay webhook events through a dedicated Agent ID with the `events.endpoint` grant. See the [MCP guide](docsite/docs/runtime/configuration.mdx#mcp-servers) for configuration, imports, OAuth, permissions, and event delivery.
 
 ### Messaging channels
 

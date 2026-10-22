@@ -360,7 +360,12 @@ anda mcp triggers pause 3                      # also: resume, delete
   An automation pauses itself when it would run more often than its hourly
   limit (`max_runs_per_hour`, 12 by default), which also stops a feedback loop
   such as replying to an issue and receiving that comment as a new event, and
-  after five failed runs in a row. Resume it when ready.
+  after five failed or interrupted runs in a row. The limit accepts 1–120 runs.
+  Failed events stay pending and retry with 30, 60, 120 and 240 second backoffs;
+  retry counts and pending events survive restarts. Resuming a paused automation
+  resets its budget and retries the waiting events. External actions may already
+  have completed before a failure: check their result and derive a stable action
+  key from the event's `idempotency_key` when the service supports idempotency.
 - **Trust.** Event data comes from the server and is untrusted: runs show it to
   the model as data, not instructions, and do not record it as yours. These runs
   do not get the full access scheduled jobs have: they can call read-only tools
@@ -377,24 +382,54 @@ anda mcp triggers pause 3                      # also: resume, delete
   words are, so Formation never records it as yours.
 - **Delivery.** Anda keeps a push stream open, or polls, as the event type
   allows, and keeps the position it reached, so events that arrived while the
-  daemon was stopped are replayed when the server supports it; an event already
-  seen is not run twice. When the server says events were lost, the automation
-  shows it. An automation whose server is disabled, removed or failing waits,
+  daemon was stopped are replayed when the server supports it. Recent event ids
+  are deduplicated, but execution is at least once: a crash after an external
+  action can replay it. Each trigger keeps at most 500 pending events; overflow
+  drops the oldest and records a loss notice, as upstream gaps do. An automation whose server is disabled, removed or failing waits,
   one whose server needs sign-in says so, and both resume when the server is back.
 - **Webhooks through dMsg.** Some servers deliver events only by webhook, and
   Anda listens on no public port. Mark dMsg's entry with
   `"events": {"webhook_ingress": true}`: for each such automation Anda creates an
   endpoint there, subscribes the server to it and renews the subscription before
   it expires, and dMsg relays the deliveries it verified. Without an ingress the
-  automation waits in the `needs_ingress` state.
+  automation waits in the `needs_ingress` state. A failed binding stays visible
+  and is retried without creating another endpoint. Anda acknowledges only
+  durable deliveries, validates the acknowledgement receipt, and retries failed
+  acknowledgements after reconnect or restart. `anda mcp triggers get ID` shows
+  binding status and pending/failed acknowledgements. HTTP upstreams supply their
+  URL for dMsg's signature key discovery; stdio upstreams have no such origin,
+  so they rely on the shared-secret signature (`v1`), not `v1a`.
 
 ```json
 {
   "mcpServers": {
-    "dmsg": { "command": "dmsg", "args": ["mcp"], "events": { "webhook_ingress": true } }
+    "dmsg": {
+      "command": "dmsg",
+      "args": ["mcp"],
+      "env": { "DMSG_AGENT_TOKEN": "${secret:DMSG_AGENT_TOKEN}" },
+      "events": { "webhook_ingress": true }
+    }
   }
 }
 ```
+
+Create a dedicated dMsg Agent ID, give it `events.endpoint` (for example,
+`dmsg grants add anda events.endpoint`), and save its credential with
+`anda mcp secret set DMSG_AGENT_TOKEN`. The dMsg daemon must be running and
+unlocked. Listing event types alone does not prove the grant is available.
+Anda supports 64 triggers in total; dMsg currently allows 16 active endpoints
+per account, including endpoints used by other clients.
+
+A direct `dmsg.relay.delivery` trigger observes existing endpoints. It requires
+`endpoint_id`, nonempty `endpoint_ids`, or a stable endpoint `context.session`
+passed as `session`; the default process-local MCP session changes on restart.
+Verification chatter is ignored and unverified business events are rejected.
+Other control envelopes remain explicit in the prompt: `gap`/`relay_gap` report
+loss, `refresh_due` asks for renewal and `terminated` reports termination. The
+endpoint owner remains responsible for renewal, deletion and acknowledgements;
+Anda does not delete another consumer's records. Use an upstream event trigger
+with webhook delivery for automatic lifecycle management. Relay deliveries are
+not dMsg chat, room or mail notifications.
 
 Automations, the events they received and their runs are kept in the daemon's
 database; an endpoint's signing secret is kept in the MCP secret store.
