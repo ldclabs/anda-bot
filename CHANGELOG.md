@@ -4,11 +4,21 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.7] — 2026-10-22
+
 ### Fixed
 
 - **Plan checks stay with the request they belong to**: checks are marked as runtime notices for chat display and memory attribution. They wait until the next idle tick so a new request can clear the old plan before any check is sent. Keepalive pings do not reset the one-check limit, and stopping a task suppresses its remaining check.
 - **The plan no longer freezes on its last steps**: the tool told the model its final reply would check off the last step, but the runtime completes only the step in progress, and only when no step is left pending. A request that ended with two steps left, such as verifying and then committing, therefore kept showing the first as in progress and the second as pending after both were done, and nothing said so. The tool now states that rule, and a turn that ends with steps the model never marked gets one plan check: the model is asked once, inside the same request, to mark what it finished, or to leave the plan alone when it stopped to wait for the user. A new request clears the check together with the plan.
 - **A plan update can no longer be lost between two calls**: a response that holds two `update_plan` calls runs them concurrently, and each one loaded the list, applied its own change and wrote the whole list back, so the later write silently dropped the earlier update; the publishes could also land in the other order, leaving the client on the older list. The session now holds one write lock, installed on the context the whole turn shares so every call takes that same one, and the turn-end completion takes it as well.
+- **dMsg webhook subscriptions bind, renew and acknowledge correctly**: binding now uses the upstream's HTTPS URL for signature key discovery, the `refresh_before` deadline in milliseconds, and `through` cursors for acknowledgements. Plain-HTTP and stdio upstreams omit the key-discovery URL and keep shared-secret signature verification, so dMsg no longer rejects their binding. Binding and acknowledgement progress persist, failed operations retry after reconnect or restart, and acknowledgement receipts are checked before recording success. Relay-requested renewal runs without rolling back delivery cursors.
+- **Failed event automations retain their pending events**: failed or interrupted batches stay pending, with retry budgets and backoff surviving daemon restarts. Resuming a paused automation resets its budget and schedules the waiting events again. Hourly limits account for the full supported range of 1–120 runs, and queue overflow or upstream gaps report lost events. Delivery is at least once: a retry can repeat an external action that completed before the failure.
+- **Direct dMsg relay observers use stable endpoint selectors**: a `dmsg.relay.delivery` trigger requires an endpoint ID, endpoint IDs, or a stable endpoint session instead of relying on a process-local MCP session that changes at restart. Verification chatter is ignored, unverified business events are rejected, and loss, renewal and termination envelopes remain identifiable as control notices. The existing endpoint owner retains lifecycle and acknowledgement responsibility.
+
+### Changed
+
+- **README guides reflect the current runtime**: the English and Chinese READMEs now organize installation, model setup, memory, integrations, permissions and development around the current implementation, with detailed configuration linked to the relevant guides.
+- **Version 0.14.7**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.7.
 
 ## [0.14.6] — 2026-10-20
 
