@@ -219,6 +219,8 @@ Store secrets with `anda mcp secret set NAME` and reference them as `${secret:NA
 
 Servers that support MCP Events can drive automations through the Events tab or `anda mcp triggers`. These runs support batching, durable retries, rate limits, and automatic pause after repeated failures. dMsg can relay webhook events through a dedicated Agent ID with the `events.endpoint` grant. See the [MCP guide](docsite/docs/runtime/configuration.mdx#mcp-servers) for configuration, imports, OAuth, permissions, and event delivery.
 
+Native dMsg Mail events can trigger Anda without a polling job; see the [Mail push setup](docsite/docs/runtime/configuration.mdx#dmsg-mail-push).
+
 ### Messaging channels
 
 Telegram, WeChat, Discord, and Lark/Feishu are configured under `channels` in `config.yaml`. For example:

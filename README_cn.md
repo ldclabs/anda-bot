@@ -219,6 +219,8 @@ anda mcp reload
 
 支持 MCP Events 的服务可以通过 Events 页签或 `anda mcp triggers` 创建事件自动化。这类任务支持事件批处理、可跨重启恢复的失败重试、频率限制和连续失败自动暂停。dMsg 可通过获得 `events.endpoint` 授权的专用 Agent ID 中转 webhook 事件。配置、导入、OAuth、权限与事件投递详见 [MCP 配置指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
+原生 dMsg Mail 事件可直接触发 Anda，无需收信定时脚本；参见 [Mail 推送配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#dmsg-mail-推送)。
+
 ### 即时通讯渠道
 
 Telegram、微信、Discord 和 Lark/飞书在 `config.yaml` 的 `channels` 下配置，例如：
