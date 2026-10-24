@@ -121,7 +121,7 @@ function hasProse(message: ChatMessage): boolean {
 
 /** Only tool calls/results or reasoning. Runtime notices (tool role, no calls) stand alone. */
 function isBareStep(message: ChatMessage): boolean {
-  if (hasProse(message)) {
+  if (message.noticeKind || hasProse(message)) {
     return false
   }
   if (message.role === 'tool') {

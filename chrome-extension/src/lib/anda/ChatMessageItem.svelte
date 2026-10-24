@@ -152,7 +152,13 @@
   const hasThinkingText = $derived(Boolean(thinkingText))
   const tools = $derived(message.tools || [])
   // Runtime-injected notices arrive as tool messages that carry text, not calls.
-  const notices = $derived(isTool && !tools.length ? runtimeNotices(thinkingText) : [])
+  const notices = $derived(
+    message.noticeKind && thinkingText
+      ? [{ kind: message.noticeKind, body: thinkingText }]
+      : isTool && !tools.length
+        ? runtimeNotices(thinkingText)
+        : []
+  )
   const groupedTools = $derived(groupTools && tools.length > 1)
   const toolStatuses = $derived(groupedTools ? tools.map(toolCallStatus) : [])
   const toolGroupStatus = $derived(

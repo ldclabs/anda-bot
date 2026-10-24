@@ -268,6 +268,8 @@ export interface ChatMessage {
   text: string
   externalUser?: ExternalUserMessageInfo
   thinkingText?: string
+  /** Internal agent prose shown as a collapsed runtime detail, not a reply. */
+  noticeKind?: 'goal' | 'compact' | 'handoff'
   /** Tool calls this message made, or tool results it carries (role `tool`). */
   tools?: ChatToolCall[]
   attachments?: ChatAttachment[]

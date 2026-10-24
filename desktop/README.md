@@ -101,6 +101,10 @@ With a current runtime, `/ws/app/v1` sends caller-scoped state invalidations aft
 
 The sidebar filters chat titles as you type (Enter searches conversation history, as does ⌘K), keeps pinned chats in their own section, and can group the rest by date or by project from the filter button, which also shows archived chats. Each row leads with its state: working, waiting for your approval, failed or unread. Back and forward (⌘[ / ⌘], Alt+←/→ on Windows) walk the chats and pages visited in the window; Ctrl+Tab and Ctrl+Shift+Tab step through the sidebar's chats.
 
+Goal evaluations, context compaction summaries and handoffs use the same compact, collapsed rows as tool details. Expand a row to read its full content.
+
+目标评估、上下文压缩摘要和交接消息与工具详情一样，默认显示为紧凑的折叠行，展开后可查看完整内容。
+
 The chat title opens a menu to rename, pin, archive, copy the conversation as Markdown or show its folder; the chip beside it names the folder and its Git branch. A new chat's folder is chosen from the menu under the composer, keeping the draft; choosing a folder from a chat that has already started opens a new chat there. Message actions appear on hover, and consecutive tool calls fold into one expandable row. A pending approval or choice docks above the composer, as in the Chrome extension: a click, its number key or Enter answers a row, the last row replies in chat instead, and ⌘⇧↩ approves and ⌘⇧⌫ denies an approval (Ctrl+Shift on Windows); the transcript keeps the answer. Long chats show a mark per prompt along the transcript's edge.
 
 ## Workbench

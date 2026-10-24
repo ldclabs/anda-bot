@@ -95,6 +95,8 @@ the daemon configuration preserves the selected approval policy.
 The Dashboard loads workspaces on demand and does not restore chat histories in
 the background. Chat renders Markdown and math with bundled styles; raw HTML is
 shown as text. Image previews load when their messages become visible.
+Goal evaluations, context compaction summaries and handoffs appear as compact,
+collapsed tool-level rows; expand a row to read its full content.
 
 Voice capture stays attached to the tab where it started, including when another
 tab becomes active. It runs in the extension's isolated world, so the page's own

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyActionResponseToGroups,
   conversationToGroup,
+  type NormalizedMessageCache,
   mergeKnownActionState,
   normalizeMessage,
   normalizeMessages
@@ -21,6 +22,27 @@ function resource(overrides: Partial<Resource> = {}): Resource {
 }
 
 describe('normalizeMessage', () => {
+  it('shows goal supervisor prose as a tool notice while preserving its complete content', () => {
+    const text = 'Goal paused: waiting for your input.\n\nSupervisor evaluation:\nChoose a target.'
+    const normalized = normalizeMessage(
+      {
+        role: 'assistant',
+        name: 'supervisor_agent',
+        content: [{ type: 'Text', text }],
+        timestamp: 1234
+      },
+      { conversation: 55, index: 1 }
+    )
+    expect(normalized).toMatchObject({
+      id: 'm-55-1',
+      role: 'tool',
+      text: '',
+      thinkingText: text,
+      noticeKind: 'goal',
+      timestamp: 1234
+    })
+  })
+
   it('maps message resources to chat attachments', () => {
     const message: Message = {
       role: 'user',
@@ -368,6 +390,95 @@ describe('normalizeMessage', () => {
         { id: 'wait', label: 'Wait' }
       ]
     })
+  })
+})
+
+describe('internal conversation notices', () => {
+  function conversation(messages: Message[], ancestors: number[] = []): Conversation {
+    return {
+      _id: 55,
+      user: 'owner',
+      status: 'completed',
+      messages,
+      ancestors,
+      usage: { input_tokens: 0, output_tokens: 0, cached_tokens: 0, requests: 0 },
+      created_at: 1,
+      updated_at: 1234
+    }
+  }
+  const text = (role: Message['role'], body: string): Message => ({
+    role,
+    content: [{ type: 'Text', text: body }]
+  })
+
+  it.each(['"', '\\"'])(
+    'collapses the summary after a compaction prompt with %s quotes',
+    (quote) => {
+      const prompt = `[$system: kind=${quote}context compaction${quote}]\nCompress the conversation.`
+      const summary = '## Handoff\n\nDone: implementation.\nRemaining: validation.'
+      const source = conversation([
+        text('user', 'Continue the task'),
+        { ...text('user', prompt), name: '$system' },
+        text('assistant', summary),
+        text('user', 'What changed?'),
+        text('assistant', 'The goal, compact and handoff messages now collapse.')
+      ])
+      const shown = conversationToGroup(source).messages
+      expect(shown[2]).toMatchObject({
+        role: 'tool',
+        text: '',
+        thinkingText: summary,
+        noticeKind: 'compact'
+      })
+      expect(shown[4]).toMatchObject({
+        role: 'assistant',
+        text: 'The goal, compact and handoff messages now collapse.'
+      })
+      expect(source.messages?.[2]).toEqual(text('assistant', summary))
+    }
+  )
+
+  it('collapses a child handoff and keeps real prompts and replies visible', () => {
+    const summary = text('assistant', 'Earlier work and remaining tasks')
+    const cache: NormalizedMessageCache = new WeakMap()
+    const messages = [summary, text('user', 'Continue'), text('assistant', 'Finished.')]
+    expect(conversationToGroup(conversation(messages), cache).messages[0]?.role).toBe('assistant')
+    const child = conversation(messages, [54])
+    const shown = conversationToGroup(child, cache).messages
+    expect(shown[0]).toMatchObject({
+      role: 'tool',
+      text: '',
+      thinkingText: 'Earlier work and remaining tasks',
+      noticeKind: 'handoff'
+    })
+    expect(shown.slice(1).map((message) => message.role)).toEqual(['user', 'assistant'])
+    expect(conversationToGroup(child, cache).messages[0]).toBe(shown[0])
+    const newChat = conversation(
+      [text('user', 'New task'), text('assistant', 'Here is the answer.')],
+      [54]
+    )
+    expect(conversationToGroup(newChat).messages.map((message) => message.role)).toEqual([
+      'user',
+      'assistant'
+    ])
+  })
+
+  it('does not classify a continuation or mixed user prompt as a summary request', () => {
+    for (const prompt of [
+      text('user', '[$system: kind="context compaction continuation"]\nContinue the task.'),
+      {
+        role: 'user',
+        content: [
+          { type: 'Text', text: '[$system: kind="context compaction"]\nCompress.' },
+          { type: 'Text', text: 'Please answer my question.' }
+        ]
+      } satisfies Message
+    ]) {
+      const shown = conversationToGroup(
+        conversation([prompt, text('assistant', 'User-facing answer')])
+      ).messages
+      expect(shown.at(-1)).toMatchObject({ role: 'assistant', text: 'User-facing answer' })
+    }
   })
 })
 

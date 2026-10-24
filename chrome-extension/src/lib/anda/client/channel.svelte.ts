@@ -7,6 +7,7 @@ import { isImmediatePromptCommand, parsePromptCommand } from './commands'
 import {
   applyActionResponseToGroups,
   conversationToGroup,
+  conversationNoticeKind,
   mergeKnownActionState,
   type NormalizedMessageCache,
   normalizeMessages
@@ -594,7 +595,8 @@ export class Channel extends EventTarget {
           normalizeMessages(message, {
             conversation: conversationId,
             index: offset + index,
-            fallbackTimestamp: conversation.updated_at
+            fallbackTimestamp: conversation.updated_at,
+            noticeKind: conversationNoticeKind(conversation, offset + index)
           })
         )
         .filter((message) => message.role === 'assistant')

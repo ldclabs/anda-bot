@@ -18,7 +18,12 @@ import type {
 
 export type NormalizedMessageCache = WeakMap<
   Message,
-  { conversation: number; index: number; messages: ChatMessage[] }
+  {
+    conversation: number
+    index: number
+    noticeKind?: ChatMessage['noticeKind']
+    messages: ChatMessage[]
+  }
 >
 
 export function conversationToGroup(
@@ -27,15 +32,21 @@ export function conversationToGroup(
 ): MessageGroup {
   const messages = mergeRepeatedActionMessages(
     (conversation.messages || []).flatMap((message, index) => {
+      const noticeKind = conversationNoticeKind(conversation, index)
       const cached = cache?.get(message)
-      if (cached?.conversation === conversation._id && cached.index === index)
+      if (
+        cached?.conversation === conversation._id &&
+        cached.index === index &&
+        cached.noticeKind === noticeKind
+      )
         return cached.messages
       const messages = normalizeMessages(message, {
         conversation: conversation._id,
         index,
-        fallbackTimestamp: conversation.updated_at
+        fallbackTimestamp: conversation.updated_at,
+        noticeKind
       })
-      cache?.set(message, { conversation: conversation._id, index, messages })
+      cache?.set(message, { conversation: conversation._id, index, noticeKind, messages })
       return messages
     })
   )
@@ -60,6 +71,31 @@ export function conversationToGroup(
     messages,
     current: false
   }
+}
+
+/** The engine seeds a compacted child with an assistant handoff and records
+ * automatic compaction as a runtime prompt followed by its summary. Use that
+ * structure, never keywords in ordinary user/assistant prose. */
+export function conversationNoticeKind(
+  conversation: Conversation,
+  index: number
+): ChatMessage['noticeKind'] {
+  const raw = conversation.messages?.[index]
+  if (raw?.role !== 'assistant' || raw.name) return undefined
+  if (index === 0 && conversation.ancestors?.length) return 'handoff'
+  const previous = conversation.messages?.[index - 1]
+  if (previous?.role !== 'user' || (previous.name && previous.name !== '$system')) return undefined
+  const content = previous.content as ContentPart[] | string
+  const parts = typeof content === 'string' ? [content] : content
+  if (
+    parts.length &&
+    parts.every((part) => {
+      const text = typeof part === 'string' ? part : part.type === 'Text' ? part.text : ''
+      return /^\[\$system:\s*kind=\\?"(?:context )?compaction\\?"\]/.test(text.trimStart())
+    })
+  )
+    return 'compact'
+  return undefined
 }
 
 export function applyActionResponseToGroups(
@@ -286,13 +322,24 @@ export function normalizeMessage(
 
 export function normalizeMessages(
   raw: Message,
-  context: { conversation: number; index: number; fallbackTimestamp?: number }
+  context: {
+    conversation: number
+    index: number
+    fallbackTimestamp?: number
+    noticeKind?: ChatMessage['noticeKind']
+  }
 ): ChatMessage[] {
   const attachments = resourcesToAttachments(messageResources(raw))
   const content = contentToMessageContent(raw.content, {
     hideSystemRuntimeText: Boolean(raw.name?.startsWith('$') && attachments.length > 0)
   })
   const externalUser = content.externalUser || externalUserFromName(raw.name)
+  const noticeKind =
+    raw.role === 'assistant' && !externalUser
+      ? raw.name === 'supervisor_agent'
+        ? 'goal'
+        : context.noticeKind
+      : undefined
   if (
     raw.name?.startsWith('$') &&
     attachments.length === 0 &&
@@ -329,10 +376,13 @@ export function normalizeMessages(
     messages.push({
       id: baseId,
       conversation: context.conversation,
-      role: externalUser ? 'external_user' : raw.role,
-      text: content.text,
+      role: externalUser ? 'external_user' : noticeKind ? 'tool' : raw.role,
+      text: noticeKind ? '' : content.text,
       externalUser,
-      thinkingText: content.thinkingText,
+      thinkingText: noticeKind
+        ? [content.text, content.thinkingText].filter(Boolean).join('\n\n')
+        : content.thinkingText,
+      noticeKind,
       tools: content.tools.length ? content.tools : undefined,
       attachments: attachments.length ? attachments : undefined,
       actions: content.actions.length ? content.actions : undefined,
