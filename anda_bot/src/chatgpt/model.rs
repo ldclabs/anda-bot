@@ -16,11 +16,31 @@ use tokio_util::sync::CancellationToken;
 use super::{ChatGptService, ProviderError};
 const NAMESPACE: &str = "anda";
 
-pub fn completion_model(
+pub async fn completion_model(
     service: Arc<ChatGptService>,
     profile: String,
     config: &crate::config::ModelProvider,
 ) -> Model {
+    // Older selections persisted zero and therefore used the engine's 100k
+    // fallback compaction threshold, even for models with much larger windows.
+    // Resolve those on startup/reload too; an explicit configured budget wins.
+    let context_window = if config.context_window > 0 {
+        config.context_window
+    } else {
+        match service.models(&profile).await {
+            Ok(models) => models
+                .iter()
+                .find(|model| model.slug == config.model)
+                .map_or(0, |model| model.context_window),
+            Err(error) => {
+                log::warn!(
+                    "Could not resolve ChatGPT context window for {}: {error}",
+                    config.model
+                );
+                0
+            }
+        }
+    };
     let mut model = Model::new(Arc::new(ChatGPTCompleter {
         service,
         profile,
@@ -29,7 +49,7 @@ pub fn completion_model(
         effort: config.effort,
     }))
     .with_labels(config.labels.clone());
-    model.context_window = config.context_window;
+    model.context_window = context_window;
     // Plan requests cannot enforce max_output_tokens on the server.
     model
 }

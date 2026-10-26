@@ -127,8 +127,8 @@ impl ChatGptApi {
                 let model = self
                     .saved_model(&profile_id)
                     .await
-                    .filter(|saved| catalog.iter().any(|m| &m.slug == saved))
-                    .or_else(|| catalog.first().map(|m| m.slug.clone()))
+                    .and_then(|saved| catalog.iter().find(|m| m.slug == saved))
+                    .or_else(|| catalog.first())
                     .ok_or("No models are available for this ChatGPT account")?;
                 self.select_model(profile_id, model).await?
             }
@@ -137,18 +137,14 @@ impl ChatGptApi {
                 json!({"models":self.service.models(&profile_id).await?})
             }
             Request::ModelSelect { profile_id, model } => {
-                if !self
+                let model = self
                     .service
                     .models(&profile_id)
                     .await?
-                    .iter()
-                    .any(|m| m.slug == model)
-                {
-                    return Err(
-                        "This model is not available to the selected ChatGPT account".into(),
-                    );
-                }
-                self.select_model(profile_id, model).await?
+                    .into_iter()
+                    .find(|m| m.slug == model)
+                    .ok_or("This model is not available to the selected ChatGPT account")?;
+                self.select_model(profile_id, &model).await?
             }
         })
     }
@@ -167,7 +163,11 @@ impl ChatGptApi {
         saved.sort_by_key(|p| p.disabled);
         saved.into_iter().next().map(|p| p.model)
     }
-    async fn select_model(&self, profile_id: String, model: String) -> Result<Value, BoxError> {
+    async fn select_model(
+        &self,
+        profile_id: String,
+        model: &super::CatalogModel,
+    ) -> Result<Value, BoxError> {
         if let Some(runtime) = &self.runtime {
             runtime.check_plan_switch(true)?;
         }
@@ -178,7 +178,8 @@ impl ChatGptApi {
         let mut config: Value = serde_saphyr::from_str(&original)?;
         let mut provider = crate::config::ModelProvider {
             family: "openai-response".into(),
-            model,
+            model: model.slug.clone(),
+            context_window: model.context_window,
             api_base: super::API_BASE.into(),
             auth: crate::config::ModelAuth::Chatgpt {
                 profile: profile_id.clone(),
@@ -203,6 +204,9 @@ impl ChatGptApi {
             // Keep existing labels and budgets when selecting a saved provider.
             provider = serde_json::from_value(existing.clone())?;
             provider.disabled = false;
+            if provider.context_window == 0 {
+                provider.context_window = model.context_window;
+            }
             *existing = serde_json::to_value(&provider)?;
         } else {
             providers.push(serde_json::to_value(provider)?);

@@ -4,6 +4,18 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.8] — 2026-10-26
+
+### Fixed
+
+- **ChatGPT sessions use the model's actual context window**: model selection discarded the catalog's window and saved `0`, so the engine used its conservative 100,000-input-token threshold and could compact immediately after the first reply. Selection now saves the advertised window, and startup and model reload resolve missing windows in older configurations. Explicit nonzero budgets remain unchanged; unavailable or incomplete catalogs retain the conservative fallback.
+- **Recent conversation excerpts cannot fill a new context unchecked**: background history previously limited message count but not text size. Excerpts now have a shared 32 KiB limit including JSON encoding and metadata, with at most 4 KiB of text per message. The conversation being continued and its newest messages take priority, runtime notices and tool traffic are excluded, and shortened text is marked. Stored conversations remain complete.
+- **Internal agent notices stay in tool rows**: Desktop and the Chrome extension show goal evaluations, context compaction summaries and handoffs as collapsible tool rows, preserving their full detail content and keeping ordinary prompts and replies visible when conversation updates arrive incrementally.
+
+### Changed
+
+- **Version 0.14.8**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.8.
+
 ## [0.14.7] — 2026-10-22
 
 ### Fixed

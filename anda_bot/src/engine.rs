@@ -286,8 +286,9 @@ impl RuntimeModels {
                 .iter()
                 .any(|p| !p.disabled && matches!(p.auth, config::ModelAuth::Chatgpt { .. })),
         )?;
-        let next_models =
-            config.models_with_chatgpt(self.http_client.clone(), self.chatgpt.clone());
+        let next_models = config
+            .models_with_chatgpt(self.http_client.clone(), self.chatgpt.clone())
+            .await;
         let next_brain_models =
             brain_models_from(&next_models).ok_or("No model found in config.yaml")?;
 

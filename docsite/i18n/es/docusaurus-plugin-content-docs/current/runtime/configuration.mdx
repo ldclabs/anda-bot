@@ -12,6 +12,8 @@ De manera predeterminada, Anda almacena el estado del runtime en `~/.anda`. El a
 
 El proveedor activo debe incluir los campos `family`, `model` y `api_base`. La clave `api_key` se puede escribir en el archivo de configuración o dejarse vacía y suministrarse a través de una variable de entorno.
 
+Configure `context_window` con la ventana de tokens admitida por el proveedor. La compactación automática comienza al alcanzar el 80% de esa ventana; si se desconoce (`0`), se usa un umbral conservador de 100.000 tokens de entrada. Al seleccionar un modelo del plan ChatGPT se guarda la ventana publicada en el catálogo de la cuenta. El inicio y la recarga de modelos también resuelven las ventanas ausentes en configuraciones antiguas de ChatGPT, respetando los valores explícitos distintos de cero. Si el catálogo no está disponible o no indica la ventana, se mantiene el umbral conservador.
+
 ```yaml
 model:
   active: "deepseek-v4-pro"

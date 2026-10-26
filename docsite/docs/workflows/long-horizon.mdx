@@ -18,6 +18,8 @@ Anda Bot is designed for complex goals that need continuity, not only one answer
 
 When the main agent is idle, the goal checker evaluates whether the current result is complete. If more work is needed, it can generate a follow-up for the main agent. If the work can only continue with your input, such as a decision, credentials, or an approval, the goal pauses and says what it needs; your next message resumes it. As the context fills, Anda can compact it itself at a task or phase boundary, writing its own handoff; if the context grows too long first, Anda compacts the current state automatically. Either way, it opens a linked conversation to continue the same session.
 
+A fresh conversation may receive excerpts from recent conversations. These excerpts are limited to 32 KiB in total, with at most 20 text messages per conversation and 4 KiB of text per message. The conversation being continued has priority, and newer messages are retained first. Runtime notices and tool traffic are excluded; shortened text is marked as an excerpt. The stored conversations remain complete and can be retrieved when more detail is needed.
+
 ## Use /loop
 
 `/loop` runs a prompt or slash command repeatedly. Describe the interval in the request using whatever wording is natural, such as `every 5 minutes`, `5m`, or localized time units. The model interprets the interval and can create a recurring agent cron job when needed:

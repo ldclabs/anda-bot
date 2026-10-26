@@ -12,6 +12,8 @@ Anda stocke l'état du runtime dans `~/.anda` par défaut. Le fichier de configu
 
 Le fournisseur actif doit inclure `family`, `model` et `api_base`. La clé `api_key` peut être écrite dans le fichier de configuration ou laissée vide et fournie via une variable d'environnement.
 
+Définissez `context_window` sur la taille de fenêtre de tokens prise en charge par le fournisseur. La compaction automatique démarre à 80% de cette fenêtre ; si elle est inconnue (`0`), le runtime utilise un seuil prudent de 100 000 tokens d’entrée. La sélection d’un modèle d’abonnement ChatGPT enregistre la fenêtre annoncée dans le catalogue du compte. Le démarrage et le rechargement des modèles complètent aussi les fenêtres manquantes des anciennes configurations ChatGPT, tout en conservant les valeurs explicites non nulles. Si le catalogue est indisponible ou ne fournit pas la fenêtre, le seuil prudent reste applicable.
+
 ```yaml
 model:
   active: "deepseek-v4-pro"

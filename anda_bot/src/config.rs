@@ -364,25 +364,29 @@ impl Config {
         issues
     }
 
-    #[cfg(test)]
     pub fn models(&self, http_client: reqwest::Client) -> Models {
-        self.models_with_chatgpt(http_client, None)
-    }
-
-    pub fn models_with_chatgpt(
-        &self,
-        http_client: reqwest::Client,
-        chatgpt: Option<std::sync::Arc<crate::chatgpt::ChatGptService>>,
-    ) -> Models {
-        let providers = self.model.providers_with_env_api_keys();
-        let ordinary: Vec<_> = providers
+        let ordinary: Vec<_> = self
+            .model
+            .providers_with_env_api_keys()
             .iter()
             .filter(|p| matches!(p.auth, ModelAuth::ApiKey))
             .map(ModelProvider::engine_config)
             .collect();
-        let models = Models::from_configs(&ordinary, http_client.clone());
+        let models = Models::from_configs(&ordinary, http_client);
+        if let Some(model) = models.get(self.model.active.trim()) {
+            models.set_model(model);
+        }
+        models
+    }
+
+    pub async fn models_with_chatgpt(
+        &self,
+        http_client: reqwest::Client,
+        chatgpt: Option<std::sync::Arc<crate::chatgpt::ChatGptService>>,
+    ) -> Models {
+        let models = self.models(http_client);
         if let Some(service) = chatgpt {
-            for provider in &providers {
+            for provider in &self.model.providers {
                 if !provider.disabled
                     && let ModelAuth::Chatgpt { profile } = &provider.auth
                 {
@@ -390,7 +394,8 @@ impl Config {
                         service.clone(),
                         profile.clone(),
                         provider,
-                    );
+                    )
+                    .await;
                     models.set(provider.selection_id(), model);
                 }
             }

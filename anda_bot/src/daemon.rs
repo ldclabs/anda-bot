@@ -354,7 +354,8 @@ impl Daemon {
         }
         let models = Arc::new(
             self.cfg
-                .models_with_chatgpt(outer_http_client.clone(), Some(chatgpt.clone())),
+                .models_with_chatgpt(outer_http_client.clone(), Some(chatgpt.clone()))
+                .await,
         );
         let engine_ref: Arc<EngineRef> = Arc::new(EngineRef::new());
         let user_registry = self.cfg.user_registry(user_pubkey.clone())?;

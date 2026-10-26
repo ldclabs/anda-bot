@@ -18,6 +18,8 @@ Le commande `/goal` marque une requête comme un objectif à long terme :
 
 Lorsque l'agent principal est inactif, le vérificateur d'objectif évalue si le résultat actuel est complet. Si du travail supplémentaire est requis, il peut générer un suivi pour l'agent principal. Si le travail ne peut avancer qu'avec votre intervention, comme une décision, des identifiants ou une approbation, l'objectif se met en pause et indique ce dont il a besoin ; votre prochain message le relance. Lorsque le contexte devient trop long, Anda condense l'état actuel et ouvre une conversation liée pour poursuivre la même session.
 
+Une nouvelle conversation peut recevoir des extraits de conversations récentes. Leur taille totale est limitée à 32 KiB, avec au plus 20 messages textuels par conversation et 4 KiB de texte par message. La conversation poursuivie est prioritaire et les messages les plus récents sont conservés en premier. Les notifications du runtime et les messages des outils sont exclus ; les textes raccourcis sont signalés comme des extraits. Les conversations enregistrées restent complètes et peuvent être consultées pour obtenir davantage de détails.
+
 ## Utiliser /loop
 
 Le commande `/loop` exécute un prompt ou une commande slash de manière répétée. Décrivez l'intervalle dans la requête en utilisant la formulation qui vous semble naturelle, comme `every 5 minutes` (toutes les 5 minutes), `5m`, ou des unités de temps localisées. Le modèle interprète l'intervalle et peut créer une tâche cron d'agent récurrente si nécessaire :

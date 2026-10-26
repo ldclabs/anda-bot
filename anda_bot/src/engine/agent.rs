@@ -793,7 +793,7 @@ impl AndaBot {
     }
 
     /// The caller's latest conversations as context for a conversation that
-    /// starts fresh, each cut to its recent text messages.
+    /// starts fresh, bounded by both message count and serialized size.
     async fn history_conversations_message(
         &self,
         caller: &Principal,
@@ -811,7 +811,7 @@ impl AndaBot {
         {
             conversations.push(conv.clone());
         }
-        let conversations = self
+        let mut conversations = self
             .inner
             .conversations
             .filter_memory_sources(conversations)
@@ -820,13 +820,19 @@ impl AndaBot {
             return Ok(None);
         }
 
-        let documents = Documents::new(
-            "user_history_conversations".to_string(),
-            conversations
-                .into_iter()
-                .map(|conv| Document::from(recent_text_messages(conv)))
-                .collect(),
-        );
+        // Spend the shared budget on the conversation being continued first,
+        // then on the newest other conversations.
+        conversations.sort_by_key(|conv| {
+            std::cmp::Reverse((
+                current.is_some_and(|current| current._id == conv._id),
+                conv.updated_at,
+                conv._id,
+            ))
+        });
+        let documents = history_documents(conversations);
+        if documents.is_empty() {
+            return Ok(None);
+        }
         Ok(Some(Message {
             role: "user".into(),
             content: vec![documents.to_string().into()],
@@ -1528,6 +1534,34 @@ fn recent_ancestors(conversation: &Conversation) -> Vec<u64> {
 /// How many text messages of each past conversation a fresh conversation
 /// sees as history.
 const HISTORY_TEXT_MESSAGES: usize = 20;
+// These are background excerpts, not the active conversation. A count alone
+// lets a few long pasted texts consume the context on the very first turn.
+const HISTORY_MESSAGE_BYTES: usize = 4 * 1024;
+const HISTORY_CONTEXT_BYTES: usize = 32 * 1024;
+
+/// Bound the final encoded prompt, including JSON escaping and metadata.
+/// `conversations` is ordered by priority; retain the newest messages in each.
+fn history_documents(conversations: Vec<Conversation>) -> Documents {
+    let mut documents = Documents::new("user_history_conversations".into(), Vec::new());
+    for conversation in conversations {
+        let mut document = Document::from(recent_text_messages(conversation));
+        document
+            .metadata
+            .insert("history_excerpt".into(), json!(true));
+        loop {
+            if document.content.as_array().is_none_or(Vec::is_empty) {
+                break;
+            }
+            documents.append(document);
+            if documents.to_string().len() <= HISTORY_CONTEXT_BYTES {
+                break;
+            }
+            document = documents.pop().unwrap();
+            document.content.as_array_mut().unwrap().remove(0);
+        }
+    }
+    documents
+}
 
 /// `conversation` cut to its last [`HISTORY_TEXT_MESSAGES`] messages that
 /// carry text, with only their text: its saved history can be as long as the
@@ -1541,9 +1575,30 @@ fn recent_text_messages(mut conversation: Conversation) -> Conversation {
         let Ok(mut message) = serde_json::from_value::<Message>(value.clone()) else {
             continue;
         };
-        message
-            .content
-            .retain(|part| matches!(part, ContentPart::Text { .. }));
+        // Runtime notices and injected history must not be imported as user
+        // turns when an old conversation becomes background context again.
+        if !matches!(message.role.as_str(), "user" | "assistant")
+            || message.name.as_deref() == Some(SYSTEM_PERSON_NAME)
+        {
+            continue;
+        }
+        let mut remaining = HISTORY_MESSAGE_BYTES;
+        let mut truncated = false;
+        message.content.retain_mut(|part| {
+            let ContentPart::Text { text } = part else {
+                return false;
+            };
+            truncated |= anda_engine::truncate_utf8_to_max_bytes(text, remaining).is_some();
+            remaining = remaining.saturating_sub(text.len());
+            !text.is_empty()
+        });
+        if truncated {
+            message.content.push(
+                "[History excerpt truncated; retrieve the original conversation for full details.]"
+                    .to_string()
+                    .into(),
+            );
+        }
         if !message.content.is_empty()
             && let Ok(value) = serde_json::to_value(message)
         {
@@ -2556,6 +2611,94 @@ mod tests {
                 text: "answer".to_string()
             }]
         );
+    }
+
+    #[test]
+    fn history_excerpts_bound_multipart_unicode_text_and_skip_runtime_messages() {
+        let conversation = recent_text_messages(Conversation {
+            messages: vec![
+                json!(Message {
+                    role: "user".into(),
+                    content: vec!["recent question".to_string().into()],
+                    ..Default::default()
+                }),
+                json!(Message {
+                    role: "assistant".into(),
+                    content: vec!["你好🦀".repeat(2_000).into(), "oversized second part".repeat(1_000).into()],
+                    ..Default::default()
+                }),
+                json!(Message {
+                    role: "user".into(),
+                    name: Some(SYSTEM_PERSON_NAME.into()),
+                    content: vec!["<user_history_conversations>old injected context</user_history_conversations>".to_string().into()],
+                    ..Default::default()
+                }),
+                json!(Message { role: "tool".into(), content: vec!["large tool text".repeat(10_000).into()], ..Default::default() }),
+                json!({"malformed": true}),
+            ],
+            ..Default::default()
+        });
+        assert_eq!(conversation.messages.len(), 2);
+        let message: Message = serde_json::from_value(conversation.messages[1].clone()).unwrap();
+        let ContentPart::Text { text } = &message.content[0] else {
+            panic!("missing text");
+        };
+        assert!(text.len() <= HISTORY_MESSAGE_BYTES);
+        assert!("你好🦀".repeat(2_000).starts_with(text));
+        assert!(
+            message
+                .text()
+                .unwrap()
+                .contains("History excerpt truncated")
+        );
+        assert!(!message.text().unwrap().contains("oversized second part"));
+    }
+
+    #[test]
+    fn history_context_bounds_serialized_size_and_retains_latest_messages() {
+        let conversations = (1..=3)
+            .map(|id| Conversation {
+                _id: id,
+                messages: (0..30)
+                    .map(|index| {
+                        json!(Message {
+                            role: "user".into(),
+                            // JSON escaping costs substantially more than the source text.
+                            content: vec![
+                                format!(
+                                    "conversation {id} message {index}: {}",
+                                    "\n\"\0中".repeat(10_000)
+                                )
+                                .into()
+                            ],
+                            ..Default::default()
+                        })
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+        let documents = history_documents(conversations);
+        let rendered = documents.to_string();
+        assert!(rendered.len() <= HISTORY_CONTEXT_BYTES);
+        assert!(!documents.is_empty());
+        assert_eq!(documents[0].metadata["_id"], json!(1));
+        assert_eq!(documents[0].metadata["history_excerpt"], json!(true));
+        let messages = documents[0].content.as_array().unwrap();
+        assert!(messages.len() < HISTORY_TEXT_MESSAGES);
+        assert!(
+            messages
+                .last()
+                .unwrap()
+                .to_string()
+                .contains("conversation 1 message 29:")
+        );
+        assert!(!rendered.contains("conversation 1 message 0:"));
+        assert!(rendered.contains("History excerpt truncated"));
+        // The documents remain valid JSON; no serialized record is cut in half.
+        for line in rendered.lines().skip(1).take(documents.len()) {
+            serde_json::from_str::<Document>(line).unwrap();
+        }
     }
 
     #[tokio::test]

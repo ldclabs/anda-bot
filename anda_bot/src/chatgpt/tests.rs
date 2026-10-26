@@ -322,7 +322,7 @@ async fn chatgpt_setup_activates_model_without_an_api_key_or_brain() {
     )
     .unwrap();
     let mut service = service(home.path());
-    let base=crate::test_support::spawn_http_mock(Router::new().route("/models",get(||async{Json(serde_json::json!({"models":[{"slug":"test-model","display_name":"Test model","visibility":"list"}]}))}))).await;
+    let base=crate::test_support::spawn_http_mock(Router::new().route("/models",get(||async{Json(serde_json::json!({"models":[{"slug":"test-model","display_name":"Test model","visibility":"list","context_window":500_000}]}))}))).await;
     Arc::get_mut(&mut service).unwrap().endpoints.api = base;
     service
         .accounts
@@ -402,14 +402,192 @@ async fn chatgpt_setup_activates_model_without_an_api_key_or_brain() {
     let config = crate::config::Config::from_contents(&saved).unwrap();
     assert!(config.setup_issues().is_empty());
     assert_eq!(config.model.active, "chatgpt:p:test-model");
+    assert_eq!(config.model.providers[0].context_window, 500_000);
     assert!(!home.path().join("db").exists());
     assert_eq!(
         config
             .models_with_chatgpt(http, Some(service))
+            .await
             .get_model()
             .unwrap()
             .model_name(),
         "chatgpt:p:test-model"
+    );
+}
+
+#[tokio::test]
+async fn chatgpt_model_selection_repairs_unknown_window_and_preserves_explicit_budget() {
+    let home = tempfile::tempdir().unwrap();
+    let mut service = service(home.path());
+    let base = crate::test_support::spawn_http_mock(Router::new().route(
+        "/models",
+        get(|| async {
+            Json(serde_json::json!({"models": [{
+                "slug": "test-model", "display_name": "Test", "visibility": "list",
+                "context_window": 500_000
+            }]}))
+        }),
+    ))
+    .await;
+    Arc::get_mut(&mut service).unwrap().endpoints.api = base;
+    service
+        .accounts
+        .lock()
+        .await
+        .profiles
+        .insert("p".into(), profile("p"));
+    let (api, _) = owner_api(service, home.path());
+    for (configured, expected) in [(0, 500_000), (250_000, 250_000)] {
+        let config = serde_json::json!({"model": {
+            "active": "chatgpt:p:test-model", "providers": [{
+                "family": "openai-response", "model": "test-model", "api_base": API_BASE,
+                "auth": {"type": "chatgpt", "profile": "p"},
+                "context_window": configured, "max_output": 8192, "labels": ["memory"],
+                "disabled": true
+            }]
+        }});
+        std::fs::write(
+            home.path().join("config.yaml"),
+            serde_saphyr::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        // Returning to an account uses the same catalog metadata as ModelSelect.
+        api.execute(api::Request::AccountSelect {
+            profile_id: "p".into(),
+        })
+        .await
+        .unwrap();
+        let saved = crate::config::Config::from_file(&home.path().join("config.yaml"))
+            .await
+            .unwrap();
+        let provider = &saved.model.providers[0];
+        assert_eq!(provider.context_window, expected);
+        assert_eq!(provider.max_output, 8192);
+        assert_eq!(provider.labels, ["memory"]);
+        assert!(!provider.disabled);
+    }
+}
+
+#[tokio::test]
+async fn chatgpt_legacy_window_uses_catalog_before_first_turn_compaction_check() {
+    use anda_core::CompletionRequest;
+    use anda_engine::engine::EngineBuilder;
+    let home = tempfile::tempdir().unwrap();
+    let mut service = service(home.path());
+    let catalog_calls = Arc::new(AtomicUsize::new(0));
+    let seen_catalog = catalog_calls.clone();
+    let response_calls = Arc::new(AtomicUsize::new(0));
+    let seen_responses = response_calls.clone();
+    let base = crate::test_support::spawn_http_mock(Router::new()
+        .route("/models", get(move || {
+            seen_catalog.fetch_add(1, Ordering::SeqCst);
+            async { Json(serde_json::json!({"models": [{
+                "slug": "test-model", "display_name": "Test", "visibility": "list",
+                "context_window": 500_000
+            }]})) }
+        }))
+        .route("/responses", post(move || {
+            let input_tokens = if seen_responses.fetch_add(1, Ordering::SeqCst) == 0 { 125_000 } else { 410_000 };
+            async move {
+                let response = serde_json::json!({"type": "response.completed", "response": {
+                    "id": "r", "created_at": 1, "model": "test-model", "status": "completed",
+                    "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Done"}]}],
+                    "usage": {"input_tokens": input_tokens, "output_tokens": 100, "total_tokens": input_tokens + 100}
+                }});
+                ([("content-type", "text/event-stream")], format!("data: {response}\n\n"))
+            }
+        }))
+    ).await;
+    Arc::get_mut(&mut service).unwrap().endpoints.api = base;
+    service
+        .accounts
+        .lock()
+        .await
+        .profiles
+        .insert("p".into(), profile("p"));
+    // This is the zero-window config written by the old model-selection flow.
+    let mut config = crate::config::Config::from_contents(
+        &serde_saphyr::to_string(&serde_json::json!({"model": {
+            "active": "chatgpt:p:test-model", "providers": [{
+                "family": "openai-response", "model": "test-model", "api_base": API_BASE,
+                "auth": {"type": "chatgpt", "profile": "p"}, "context_window": 0
+            }]
+        }}))
+        .unwrap(),
+    )
+    .unwrap();
+    let models = config
+        .models_with_chatgpt(service.http.clone(), Some(service.clone()))
+        .await;
+    let model = models.get_model().unwrap();
+    assert_eq!(model.context_window, 500_000);
+    assert_eq!(catalog_calls.load(Ordering::SeqCst), 1);
+    let ctx = EngineBuilder::new().with_model(model).mock_ctx();
+    let mut runner = ctx
+        .completion_iter(
+            CompletionRequest {
+                prompt: "A short first turn".into(),
+                ..Default::default()
+            },
+            vec![],
+        )
+        .unbound();
+    assert!(runner.next().await.unwrap().is_some());
+    assert_eq!(runner.current_usage().input_tokens, 125_000);
+    assert!(
+        !runner.needs_compaction_with(|| 0),
+        "125k is below 80% of the advertised window"
+    );
+    runner.follow_up("Continue".to_string());
+    assert!(runner.next().await.unwrap().is_some());
+    assert!(
+        runner.needs_compaction_with(|| 0),
+        "the real 80% threshold must still compact"
+    );
+    assert_eq!(response_calls.load(Ordering::SeqCst), 2);
+
+    config.model.providers[0].context_window = 250_000;
+    let models = config
+        .models_with_chatgpt(service.http.clone(), Some(service))
+        .await;
+    assert_eq!(models.get_model().unwrap().context_window, 250_000);
+    assert_eq!(
+        catalog_calls.load(Ordering::SeqCst),
+        1,
+        "explicit budgets need no catalog fetch"
+    );
+}
+
+#[tokio::test]
+async fn chatgpt_unknown_catalog_window_keeps_conservative_fallback() {
+    let home = tempfile::tempdir().unwrap();
+    let mut service = service(home.path());
+    let base = crate::test_support::spawn_http_mock(Router::new().route("/models", get(|| async {
+        Json(serde_json::json!({"models": [{"slug": "test-model", "display_name": "Test", "visibility": "list"}]}))
+    }))).await;
+    Arc::get_mut(&mut service).unwrap().endpoints.api = base;
+    service
+        .accounts
+        .lock()
+        .await
+        .profiles
+        .insert("p".into(), profile("p"));
+    let config = crate::config::ModelProvider {
+        model: "test-model".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        model::completion_model(service.clone(), "p".into(), &config)
+            .await
+            .context_window,
+        0
+    );
+    // An unavailable catalog must not prevent loading the configured model.
+    assert_eq!(
+        model::completion_model(service, "disconnected".into(), &config)
+            .await
+            .context_window,
+        0
     );
 }
 
@@ -467,7 +645,7 @@ async fn chatgpt_tool_roundtrip_replays_calls_without_repeating_history() {
         },
         ..Default::default()
     };
-    let model = model::completion_model(service, "p".into(), &config);
+    let model = model::completion_model(service, "p".into(), &config).await;
     let first = model
         .completer
         .completion(CompletionRequest {

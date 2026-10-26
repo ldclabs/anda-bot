@@ -12,6 +12,8 @@ Anda stores runtime state in `~/.anda` by default. The main configuration file i
 
 The active provider must include `family`, `model`, and `api_base`. `api_key` can be written in the config file or left empty and supplied through an environment variable.
 
+Set `context_window` to the provider's supported token window. Automatic compaction starts at 80% of that window; when it is unknown (`0`), the runtime uses a conservative 100,000-input-token threshold. ChatGPT plan model selection saves the window advertised by the account's model catalog. Startup and model reload also resolve missing windows in older ChatGPT configurations, while preserving an explicitly configured nonzero budget. If the catalog is unavailable or omits the window, the conservative fallback remains in effect.
+
 ```yaml
 model:
   active: "deepseek-v4-pro"

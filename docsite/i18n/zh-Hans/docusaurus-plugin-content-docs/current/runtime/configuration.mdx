@@ -12,6 +12,8 @@ Anda 的运行状态默认保存在 `~/.anda`。主配置文件是 `~/.anda/conf
 
 active provider 必须包含 `family`、`model` 和 `api_base`。`api_key` 可以写在配置文件中，也可以留空并通过环境变量提供。
 
+将 `context_window` 设为 provider 支持的 token 窗口大小。自动压缩在达到该窗口的 80% 时触发；窗口未知（`0`）时，运行时采用保守的 100,000 输入 token 阈值。选择 ChatGPT 订阅模型时，会保存该账号模型目录公布的窗口大小；启动和重载模型时，也会为旧 ChatGPT 配置补齐缺失的窗口值，并保留显式设置的非零预算。如果目录不可用或未提供窗口大小，则继续使用保守阈值。
+
 ```yaml
 model:
   active: "deepseek-v4-pro"

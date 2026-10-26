@@ -86,6 +86,9 @@ pub struct CatalogModel {
     pub display_name: String,
     #[serde(default)]
     pub visibility: String,
+    /// The plan endpoint's advertised window; zero means it was not supplied.
+    #[serde(default)]
+    pub context_window: usize,
 }
 #[derive(Deserialize)]
 struct Catalog {
