@@ -386,18 +386,10 @@ impl Config {
     ) -> Models {
         let models = self.models(http_client);
         if let Some(service) = chatgpt {
-            for provider in &self.model.providers {
-                if !provider.disabled
-                    && let ModelAuth::Chatgpt { profile } = &provider.auth
-                {
-                    let model = crate::chatgpt::model::completion_model(
-                        service.clone(),
-                        profile.clone(),
-                        provider,
-                    )
-                    .await;
-                    models.set(provider.selection_id(), model);
-                }
+            for (id, model) in
+                crate::chatgpt::model::completion_models(&service, &self.model.providers).await
+            {
+                models.set(id, model);
             }
         }
         let active = self.model.active.trim();

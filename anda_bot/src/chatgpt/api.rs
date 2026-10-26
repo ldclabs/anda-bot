@@ -179,7 +179,7 @@ impl ChatGptApi {
         let mut provider = crate::config::ModelProvider {
             family: "openai-response".into(),
             model: model.slug.clone(),
-            context_window: model.context_window,
+            context_window: model.context_window.unwrap_or_default(),
             api_base: super::API_BASE.into(),
             auth: crate::config::ModelAuth::Chatgpt {
                 profile: profile_id.clone(),
@@ -205,7 +205,7 @@ impl ChatGptApi {
             provider = serde_json::from_value(existing.clone())?;
             provider.disabled = false;
             if provider.context_window == 0 {
-                provider.context_window = model.context_window;
+                provider.context_window = model.context_window.unwrap_or_default();
             }
             *existing = serde_json::to_value(&provider)?;
         } else {

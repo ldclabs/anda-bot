@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque, btree_map::Entry},
     sync::Arc,
     time::Duration,
 };
@@ -16,31 +16,56 @@ use tokio_util::sync::CancellationToken;
 use super::{ChatGptService, ProviderError};
 const NAMESPACE: &str = "anda";
 
-pub async fn completion_model(
+/// The enabled ChatGPT plan providers in `providers` as engine models, keyed
+/// by selection id.
+///
+/// Older selections persisted a zero window and therefore used the engine's
+/// 100k fallback compaction threshold, even for models with much larger
+/// windows. Those take the window from their account's catalog, fetched at
+/// most once per account however many models it has; an explicit configured
+/// budget wins.
+pub async fn completion_models(
+    service: &Arc<ChatGptService>,
+    providers: &[crate::config::ModelProvider],
+) -> Vec<(String, Model)> {
+    let mut catalogs: BTreeMap<&str, Vec<super::CatalogModel>> = BTreeMap::new();
+    let mut models = Vec::new();
+    for provider in providers {
+        let crate::config::ModelAuth::Chatgpt { profile } = &provider.auth else {
+            continue;
+        };
+        if provider.disabled {
+            continue;
+        }
+        let mut model = completion_model(service.clone(), profile.clone(), provider);
+        if model.context_window == 0 {
+            let catalog = match catalogs.entry(profile) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    entry.insert(service.models(profile).await.unwrap_or_else(|error| {
+                        log::warn!(
+                            "Could not load the ChatGPT model catalog for {profile}: {error}"
+                        );
+                        Vec::new()
+                    }))
+                }
+            };
+            model.context_window = catalog
+                .iter()
+                .find(|m| m.slug == provider.model)
+                .and_then(|m| m.context_window)
+                .unwrap_or_default();
+        }
+        models.push((provider.selection_id(), model));
+    }
+    models
+}
+
+pub fn completion_model(
     service: Arc<ChatGptService>,
     profile: String,
     config: &crate::config::ModelProvider,
 ) -> Model {
-    // Older selections persisted zero and therefore used the engine's 100k
-    // fallback compaction threshold, even for models with much larger windows.
-    // Resolve those on startup/reload too; an explicit configured budget wins.
-    let context_window = if config.context_window > 0 {
-        config.context_window
-    } else {
-        match service.models(&profile).await {
-            Ok(models) => models
-                .iter()
-                .find(|model| model.slug == config.model)
-                .map_or(0, |model| model.context_window),
-            Err(error) => {
-                log::warn!(
-                    "Could not resolve ChatGPT context window for {}: {error}",
-                    config.model
-                );
-                0
-            }
-        }
-    };
     let mut model = Model::new(Arc::new(ChatGPTCompleter {
         service,
         profile,
@@ -49,7 +74,7 @@ pub async fn completion_model(
         effort: config.effort,
     }))
     .with_labels(config.labels.clone());
-    model.context_window = context_window;
+    model.context_window = config.context_window;
     // Plan requests cannot enforce max_output_tokens on the server.
     model
 }

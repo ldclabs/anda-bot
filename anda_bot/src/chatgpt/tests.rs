@@ -484,6 +484,10 @@ async fn chatgpt_legacy_window_uses_catalog_before_first_turn_compaction_check()
             async { Json(serde_json::json!({"models": [{
                 "slug": "test-model", "display_name": "Test", "visibility": "list",
                 "context_window": 500_000
+            }, {
+                // A null window must not make the rest of the catalog unreadable.
+                "slug": "mini", "display_name": "Mini", "visibility": "list",
+                "context_window": null
             }]})) }
         }))
         .route("/responses", post(move || {
@@ -505,13 +509,17 @@ async fn chatgpt_legacy_window_uses_catalog_before_first_turn_compaction_check()
         .await
         .profiles
         .insert("p".into(), profile("p"));
-    // This is the zero-window config written by the old model-selection flow.
+    // This is the zero-window config written by the old model-selection flow;
+    // every earlier selection left its own enabled provider behind.
+    let providers = ["test-model", "mini"].map(|model| {
+        serde_json::json!({
+            "family": "openai-response", "model": model, "api_base": API_BASE,
+            "auth": {"type": "chatgpt", "profile": "p"}, "context_window": 0
+        })
+    });
     let mut config = crate::config::Config::from_contents(
         &serde_saphyr::to_string(&serde_json::json!({"model": {
-            "active": "chatgpt:p:test-model", "providers": [{
-                "family": "openai-response", "model": "test-model", "api_base": API_BASE,
-                "auth": {"type": "chatgpt", "profile": "p"}, "context_window": 0
-            }]
+            "active": "chatgpt:p:test-model", "providers": providers
         }}))
         .unwrap(),
     )
@@ -521,7 +529,12 @@ async fn chatgpt_legacy_window_uses_catalog_before_first_turn_compaction_check()
         .await;
     let model = models.get_model().unwrap();
     assert_eq!(model.context_window, 500_000);
-    assert_eq!(catalog_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(models.get("chatgpt:p:mini").unwrap().context_window, 0);
+    assert_eq!(
+        catalog_calls.load(Ordering::SeqCst),
+        1,
+        "one catalog fetch serves every model of the account"
+    );
     let ctx = EngineBuilder::new().with_model(model).mock_ctx();
     let mut runner = ctx
         .completion_iter(
@@ -546,7 +559,9 @@ async fn chatgpt_legacy_window_uses_catalog_before_first_turn_compaction_check()
     );
     assert_eq!(response_calls.load(Ordering::SeqCst), 2);
 
-    config.model.providers[0].context_window = 250_000;
+    for provider in &mut config.model.providers {
+        provider.context_window = 250_000;
+    }
     let models = config
         .models_with_chatgpt(service.http.clone(), Some(service))
         .await;
@@ -572,23 +587,17 @@ async fn chatgpt_unknown_catalog_window_keeps_conservative_fallback() {
         .await
         .profiles
         .insert("p".into(), profile("p"));
-    let config = crate::config::ModelProvider {
+    let providers = ["p", "disconnected"].map(|profile| crate::config::ModelProvider {
         model: "test-model".into(),
+        auth: crate::config::ModelAuth::Chatgpt {
+            profile: profile.into(),
+        },
         ..Default::default()
-    };
-    assert_eq!(
-        model::completion_model(service.clone(), "p".into(), &config)
-            .await
-            .context_window,
-        0
-    );
+    });
+    let models = model::completion_models(&service, &providers).await;
     // An unavailable catalog must not prevent loading the configured model.
-    assert_eq!(
-        model::completion_model(service, "disconnected".into(), &config)
-            .await
-            .context_window,
-        0
-    );
+    assert_eq!(models.len(), 2);
+    assert!(models.iter().all(|(_, model)| model.context_window == 0));
 }
 
 #[test]
@@ -645,7 +654,7 @@ async fn chatgpt_tool_roundtrip_replays_calls_without_repeating_history() {
         },
         ..Default::default()
     };
-    let model = model::completion_model(service, "p".into(), &config).await;
+    let model = model::completion_model(service, "p".into(), &config);
     let first = model
         .completer
         .completion(CompletionRequest {
