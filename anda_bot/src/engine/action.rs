@@ -51,6 +51,18 @@ const ACTION_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const CHOICE_DEFAULT_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 /// Marks a choice the user answered by writing in chat instead.
 const ANSWERED_IN_CHAT: &str = "answered_in_chat";
+const APPROVAL_MODE_CHANGED: &str = "approval_mode_changed";
+
+#[derive(Debug)]
+pub(crate) struct ApprovalModeChanged;
+
+impl std::fmt::Display for ApprovalModeChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Approval mode changed; recheck the operation")
+    }
+}
+
+impl std::error::Error for ApprovalModeChanged {}
 
 impl ApprovalMode {
     fn from_ctx(ctx: &BaseCtx, meta: &RequestMeta) -> Self {
@@ -266,6 +278,22 @@ impl ActionSession {
         self.runtime.cancel_session(&self.session_id)
     }
 
+    /// Release policy-dependent waits so their gates can decide again. This
+    /// does not approve an operation or record a user answer on its behalf.
+    pub(crate) async fn recheck_approvals(&self, mode: ApprovalMode) {
+        let pending = self.runtime.take_session(&self.session_id, |kind| {
+            matches!(kind, PendingActionKind::Approval { mode: Some(previous), .. } if *previous != mode)
+        });
+        for action in pending {
+            action
+                .resolve(ActionResponse::new(
+                    ActionStatus::Expired,
+                    json!({ "reason": "approval mode changed", APPROVAL_MODE_CHANGED: true }),
+                ))
+                .await;
+        }
+    }
+
     /// Hands the session runner a changed plan. A closed session has nobody
     /// to show it to.
     pub(crate) async fn publish_plan(&self, steps: Vec<PlanStep>) {
@@ -319,6 +347,22 @@ impl ActionSession {
         ctx: &BaseCtx,
         args: CommandArgs,
     ) -> Result<CommandArgs, BoxError> {
+        loop {
+            match self.request_shell_approval_once(ctx, args.clone()).await {
+                Err(err) if err.is::<ApprovalModeChanged>() => continue,
+                result => return result,
+            }
+        }
+    }
+
+    async fn request_shell_approval_once(
+        &self,
+        ctx: &BaseCtx,
+        args: CommandArgs,
+    ) -> Result<CommandArgs, BoxError> {
+        let updates = ctx
+            .get_state::<SessionRequestMeta>()
+            .map(|meta| meta.approval_mode_updates());
         let meta = live_request_meta(ctx);
         let approval_mode = ApprovalMode::from_ctx(ctx, &meta);
         if approval_mode == ApprovalMode::FullAccess {
@@ -329,18 +373,32 @@ impl ActionSession {
             .unwrap_or_default();
         let language_hint = shell_risk_language_hint(&meta)
             .or_else(|| crate::util::locale::persisted_ui_language(&self.home_dir));
-        let ShellApproval {
-            decision,
-            ledger_seq,
-        } = shell_approval_decision_with_model(
+        let classify = shell_approval_decision_with_model(
             &args,
             approval_mode,
             &workspace,
             self.models.as_ref(),
             language_hint.as_deref(),
             &self.shell_ledger,
-        )
-        .await;
+        );
+        // A slow risk model must not delay a mode the user just selected.
+        let approval = if let Some(mut updates) = updates {
+            tokio::select! {
+                approval = classify => approval,
+                _ = updates.changed() => return Err(ApprovalModeChanged.into()),
+            }
+        } else {
+            classify.await
+        };
+        let ShellApproval {
+            decision,
+            ledger_seq,
+        } = approval;
+        // Classification can call a model. A mode selected while it was
+        // running must govern the result, including a stricter new policy.
+        if ApprovalMode::from_ctx(ctx, &live_request_meta(ctx)) != approval_mode {
+            return Err(ApprovalModeChanged.into());
+        }
         let approval_reason = match decision {
             ApprovalDecision::Allow => return Ok(args),
             ApprovalDecision::Ask(reason) => reason,
@@ -393,6 +451,7 @@ impl ActionSession {
         // The third answer approves and stops asking about this exact command
         // for the rest of the session.
         let kind = PendingActionKind::Approval {
+            mode: Some(approval_mode),
             approved_payload: json!({
                 "tool": ShellTool::NAME,
                 "command": &args.command,
@@ -417,7 +476,9 @@ impl ActionSession {
             })),
             ..self.new_payload(ctx, &kind, "Approve shell command".to_string())
         };
-        let response = self.publish_and_wait(payload, kind, "shell command").await;
+        let response = self
+            .publish_and_wait(ctx, payload, kind, "shell command")
+            .await;
         record_answer(match &response {
             Ok(response) if response.status == ActionStatus::Approved => UserAnswer::Approved,
             // A stopped task resolves as denied too, but without the user.
@@ -447,6 +508,7 @@ impl ActionSession {
         title: String,
         card: McpApprovalCard,
         remember_label: Option<&str>,
+        approval_mode: Option<ApprovalMode>,
     ) -> Result<bool, BoxError> {
         let McpApprovalCard {
             message,
@@ -458,6 +520,7 @@ impl ActionSession {
             ActionToolRef::Labeled { name, .. } | ActionToolRef::Name(name) => name.clone(),
         };
         let kind = PendingActionKind::Approval {
+            mode: approval_mode,
             approved_payload: json!({
                 "tool": tool_name,
                 "summary": &summary,
@@ -476,24 +539,27 @@ impl ActionSession {
             metadata: Some(metadata),
             ..self.new_payload(ctx, &kind, title)
         };
-        self.request_approval(payload, kind, "MCP server").await
+        self.request_approval(ctx, payload, kind, "MCP server")
+            .await
     }
 
     /// Waits for an approval; `Ok(true)` when the user also asked not to be
     /// asked again.
     async fn request_approval(
         &self,
+        ctx: &BaseCtx,
         payload: ActionPayload,
         kind: PendingActionKind,
         what: &str,
     ) -> Result<bool, BoxError> {
-        approval_outcome(self.publish_and_wait(payload, kind, what).await?, what)
+        approval_outcome(self.publish_and_wait(ctx, payload, kind, what).await?, what)
     }
 
     /// Publishes an action card and waits for it to resolve. A card nobody
     /// answers in time resolves through [`PendingActionKind::unanswered`].
     async fn publish_and_wait(
         &self,
+        ctx: &BaseCtx,
         payload: ActionPayload,
         kind: PendingActionKind,
         what: &str,
@@ -501,6 +567,10 @@ impl ActionSession {
         let action_id = payload.id.clone();
         let conversation = payload.conversation;
         let timeout = kind.timeout();
+        let expected_mode = match &kind {
+            PendingActionKind::Approval { mode, .. } => *mode,
+            _ => None,
+        };
         let message = action_message(kind.message_name(), payload.into_value());
         let (tx, mut rx) = oneshot::channel();
         self.runtime.insert(PendingAction {
@@ -520,6 +590,13 @@ impl ActionSession {
         {
             self.runtime.take(&action_id);
             return Err(format!("failed to publish {what} request").into());
+        }
+
+        // Close the gap between evaluating the policy and registering the
+        // wait. A client update may have arrived before the card existed.
+        let mode = ApprovalMode::from_ctx(ctx, &live_request_meta(ctx));
+        if expected_mode.is_some_and(|expected| expected != mode) {
+            self.recheck_approvals(mode).await;
         }
 
         let cancelled = || -> BoxError { format!("{what} was cancelled").into() };
@@ -566,7 +643,10 @@ impl ActionSession {
             default_choice_id: args.default_choice_id,
             ..self.new_payload(ctx, &kind, args.title)
         };
-        choice_result(self.publish_and_wait(payload, kind, "user choice").await?)
+        choice_result(
+            self.publish_and_wait(ctx, payload, kind, "user choice")
+                .await?,
+        )
     }
 
     /// Shows one card of an MCP server's request for input and waits, at
@@ -604,7 +684,7 @@ impl ActionSession {
             event_sender: &self.event_sender,
         };
         let response = self
-            .publish_and_wait(payload, kind, "MCP server input")
+            .publish_and_wait(ctx, payload, kind, "MCP server input")
             .await?;
         let text = |key: &str| {
             response
@@ -698,6 +778,9 @@ impl PendingAction {
 
 enum PendingActionKind {
     Approval {
+        /// The policy that requested this approval; None for an explicit
+        /// MCP `ask`, which the composer's mode cannot override.
+        mode: Option<ApprovalMode>,
         approved_payload: Value,
         /// The card offers to approve without asking again.
         rememberable: bool,
@@ -743,6 +826,7 @@ impl PendingActionKind {
             Self::Approval {
                 approved_payload,
                 rememberable,
+                ..
             } => {
                 if !args.approve.ok_or("approve is required")? {
                     return Ok(ActionResponse::new(
@@ -1137,56 +1221,64 @@ pub(crate) async fn require_mcp_approval(
     details: Vec<ActionDetail>,
     metadata: Value,
 ) -> Result<(), BoxError> {
-    let meta = live_request_meta(ctx);
-    if ApprovalMode::from_ctx(ctx, &meta) == ApprovalMode::FullAccess {
-        return Ok(());
-    }
-    if let Some(reason) = unattended_run_reason(ctx, &meta) {
-        return Err(format!(
-            "{tool_name} needs the user's approval, which nobody can give in this {reason}"
-        )
-        .into());
-    }
-    let Some(session) = ctx.get_state::<ActionSession>() else {
-        let what = match kind {
-            McpApprovalKind::Connect => "adding or connecting an MCP server",
-            McpApprovalKind::Change => "changing an MCP server",
-            McpApprovalKind::Automation => "creating or changing an MCP event automation",
+    loop {
+        let meta = live_request_meta(ctx);
+        let mode = ApprovalMode::from_ctx(ctx, &meta);
+        if mode == ApprovalMode::FullAccess {
+            return Ok(());
+        }
+        if let Some(reason) = unattended_run_reason(ctx, &meta) {
+            return Err(format!(
+                "{tool_name} needs the user's approval, which nobody can give in this {reason}"
+            )
+            .into());
+        }
+        let Some(session) = ctx.get_state::<ActionSession>() else {
+            let what = match kind {
+                McpApprovalKind::Connect => "adding or connecting an MCP server",
+                McpApprovalKind::Change => "changing an MCP server",
+                McpApprovalKind::Automation => "creating or changing an MCP event automation",
+            };
+            return Err(format!(
+                "{what} requires user approval, which is not available in this context"
+            )
+            .into());
         };
-        return Err(format!(
-            "{what} requires user approval, which is not available in this context"
-        )
-        .into());
-    };
-    let (title, message) = match kind {
-        McpApprovalKind::Connect => (
-            "Approve MCP server connection",
-            "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
-        ),
-        McpApprovalKind::Change => (
-            "Approve MCP server change",
-            "The agent wants to change an MCP server you configured.",
-        ),
-        McpApprovalKind::Automation => (
-            "Approve MCP event automation",
-            "The agent wants to run on its own whenever an MCP server reports an event. Event data comes from the server and is untrusted; those runs cannot use tools that need approval.",
-        ),
-    };
-    session
-        .request_mcp_approval(
-            ctx,
-            ActionToolRef::labeled(tool_name, "MCP server"),
-            title.to_string(),
-            McpApprovalCard {
-                message: message.to_string(),
-                summary,
-                details,
-                metadata,
-            },
-            None,
-        )
-        .await
-        .map(|_| ())
+        let (title, message) = match kind {
+            McpApprovalKind::Connect => (
+                "Approve MCP server connection",
+                "The agent wants to connect an MCP server, which can run a local program or reach a remote endpoint.",
+            ),
+            McpApprovalKind::Change => (
+                "Approve MCP server change",
+                "The agent wants to change an MCP server you configured.",
+            ),
+            McpApprovalKind::Automation => (
+                "Approve MCP event automation",
+                "The agent wants to run on its own whenever an MCP server reports an event. Event data comes from the server and is untrusted; those runs cannot use tools that need approval.",
+            ),
+        };
+        let result = session
+            .request_mcp_approval(
+                ctx,
+                ActionToolRef::labeled(tool_name, "MCP server"),
+                title.to_string(),
+                McpApprovalCard {
+                    message: message.to_string(),
+                    summary: summary.clone(),
+                    details: details.clone(),
+                    metadata: metadata.clone(),
+                },
+                None,
+                Some(mode),
+            )
+            .await
+            .map(|_| ());
+        match result {
+            Err(err) if err.is::<ApprovalModeChanged>() => continue,
+            result => return result,
+        }
+    }
 }
 
 /// Who answers an approval for the request being served.
@@ -1234,6 +1326,7 @@ pub(crate) async fn request_mcp_tool_approval(
     tool_name: &str,
     title: String,
     card: McpApprovalCard,
+    approval_mode: Option<ApprovalMode>,
 ) -> Result<bool, BoxError> {
     let session = ctx
         .get_state::<ActionSession>()
@@ -1245,6 +1338,7 @@ pub(crate) async fn request_mcp_tool_approval(
             title,
             card,
             Some("Always allow"),
+            approval_mode,
         )
         .await
 }
@@ -1254,6 +1348,7 @@ pub(crate) async fn request_mcp_resource_approval(
     ctx: &BaseCtx,
     title: String,
     card: McpApprovalCard,
+    approval_mode: Option<ApprovalMode>,
 ) -> Result<(), BoxError> {
     let session = ctx
         .get_state::<ActionSession>()
@@ -1265,6 +1360,7 @@ pub(crate) async fn request_mcp_resource_approval(
             title,
             card,
             None,
+            approval_mode,
         )
         .await
         .map(|_| ())
@@ -1314,6 +1410,9 @@ fn normalize_choice_args(args: &mut UserChoiceArgs) -> Result<(), BoxError> {
 /// Maps an approval's resolution to the go-ahead; `Ok(true)` when the user
 /// also asked not to be asked again.
 fn approval_outcome(response: ActionResponse, what: &str) -> Result<bool, BoxError> {
+    if response.payload[APPROVAL_MODE_CHANGED] == true {
+        return Err(ApprovalModeChanged.into());
+    }
     match response.status {
         ActionStatus::Approved => Ok(response.payload["remember"] == true),
         // Approvals never pass by default: an unanswered one is refused, and
@@ -1764,6 +1863,7 @@ mod tests {
 
         // Approvals never pass by default.
         let approval = PendingActionKind::Approval {
+            mode: None,
             approved_payload: json!({"tool": "shell"}),
             rememberable: false,
         };
@@ -1778,6 +1878,112 @@ mod tests {
         mpsc::Receiver<ActionEvent>,
     ) {
         test_session_with(ctx, Models::default(), std::env::temp_dir())
+    }
+
+    #[tokio::test]
+    async fn approval_mode_change_rechecks_a_waiting_shell_without_a_user_answer() {
+        for mode in [ApprovalMode::OnRisk, ApprovalMode::FullAccess] {
+            let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+            let meta =
+                SessionRequestMeta::new(meta_with(&[("approval_mode", json!("request_approval"))]));
+            ctx.set_state(meta.clone());
+            let (runtime, session, mut events) = test_session(&ctx);
+            let asking = session.clone();
+            let request_ctx = ctx.clone();
+            let task = tokio::spawn(async move {
+                asking
+                    .request_shell_approval(
+                        &request_ctx,
+                        CommandArgs {
+                            command: "pwd".into(),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+            });
+            let card = next_card(&mut events).await;
+            meta.set_approval_mode(mode);
+            session.recheck_approvals(mode).await;
+            let Some(ActionEvent::Resolve {
+                action_id,
+                status,
+                response,
+                ..
+            }) = events.recv().await
+            else {
+                panic!("expected the obsolete approval to close");
+            };
+            assert_eq!(action_id, card["id"].as_str().unwrap());
+            assert_eq!(status, ActionStatus::Expired);
+            assert_eq!(response[APPROVAL_MODE_CHANGED], true);
+            assert!(response.get("approve").is_none());
+            let args = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(args.command, "pwd");
+            assert!(runtime.pending.lock().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_mode_change_keeps_explicit_mcp_asks_and_closes_the_publish_race() {
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let meta = SessionRequestMeta::new(RequestMeta::default());
+        ctx.set_state(meta.clone());
+        let (runtime, session, mut events) = test_session(&ctx);
+        ctx.set_state(session.clone());
+        let card = || McpApprovalCard {
+            message: "Explicit tool approval".into(),
+            summary: "Run tool".into(),
+            details: vec![],
+            metadata: json!({}),
+        };
+        let request_ctx = ctx.clone();
+        let explicit_card = card();
+        let task = tokio::spawn(async move {
+            request_mcp_tool_approval(
+                &request_ctx,
+                "mcp_write",
+                "Approve".into(),
+                explicit_card,
+                None,
+            )
+            .await
+        });
+        let payload = next_card(&mut events).await;
+        meta.set_approval_mode(ApprovalMode::FullAccess);
+        session.recheck_approvals(ApprovalMode::FullAccess).await;
+        assert!(!task.is_finished());
+        assert_eq!(runtime.pending.lock().len(), 1);
+        runtime
+            .respond(
+                &ctx.caller().to_text(),
+                9,
+                ActionResponseArgs {
+                    action_id: payload["id"].as_str().unwrap().into(),
+                    approve: Some(false),
+                    choice_id: None,
+                    choice_text: None,
+                    remember: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(task.await.unwrap().is_err());
+        // The policy changed before this old decision managed to publish.
+        let err = request_mcp_tool_approval(
+            &ctx,
+            "mcp_read",
+            "Approve".into(),
+            card(),
+            Some(ApprovalMode::OnRisk),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.is::<ApprovalModeChanged>());
+        assert!(runtime.pending.lock().is_empty());
     }
 
     fn test_session_with(
@@ -1908,6 +2114,88 @@ mod tests {
     }
 
     struct AskingCompleter(Arc<std::sync::Mutex<Vec<anda_core::CompletionRequest>>>);
+
+    struct WaitingClassifier {
+        called: Arc<tokio::sync::Notify>,
+        resume: Arc<tokio::sync::Notify>,
+    }
+
+    impl anda_engine::model::CompletionFeaturesDyn for WaitingClassifier {
+        fn model_name(&self) -> String {
+            "waiting-risk".into()
+        }
+        fn completion(
+            &self,
+            _: anda_core::CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<anda_core::AgentOutput, BoxError>> {
+            let called = self.called.clone();
+            let resume = self.resume.clone();
+            Box::pin(async move {
+                called.notify_one();
+                resume.notified().await;
+                Ok(anda_core::AgentOutput {
+                    content: r#"{"decision":"allow","reason":"safe"}"#.into(),
+                    ..Default::default()
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_mode_tightening_during_classification_rejects_the_stale_allow() {
+        let called = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let models = Models::default();
+        models.set(
+            "lite".into(),
+            anda_engine::model::Model::with_completer(Arc::new(WaitingClassifier {
+                called: called.clone(),
+                resume: resume.clone(),
+            })),
+        );
+        let ctx = anda_engine::engine::EngineBuilder::new().mock_ctx().base;
+        let meta = SessionRequestMeta::new(RequestMeta::default());
+        ctx.set_state(meta.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let (runtime, session, mut events) = test_session_with(&ctx, models, dir.path().into());
+        let request_ctx = ctx.clone();
+        let task = tokio::spawn(async move {
+            session
+                .request_shell_approval(
+                    &request_ctx,
+                    CommandArgs {
+                        command: "pnpm add lodash".into(),
+                        ..Default::default()
+                    },
+                )
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(3), called.notified())
+            .await
+            .unwrap();
+        meta.set_approval_mode(ApprovalMode::RequestApproval);
+        let card = tokio::time::timeout(Duration::from_secs(3), next_card(&mut events))
+            .await
+            .unwrap();
+        resume.notify_one();
+        assert_eq!(card["metadata"]["approval_mode"], "request_approval");
+        assert!(!task.is_finished());
+        runtime
+            .respond(
+                &ctx.caller().to_text(),
+                9,
+                ActionResponseArgs {
+                    action_id: card["id"].as_str().unwrap().into(),
+                    approve: Some(false),
+                    choice_id: None,
+                    choice_text: None,
+                    remember: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(task.await.unwrap().is_err());
+    }
 
     impl anda_engine::model::CompletionFeaturesDyn for AskingCompleter {
         fn completion(
@@ -2047,6 +2335,7 @@ mod tests {
             caller: "caller".to_string(),
             conversation: 9,
             kind: PendingActionKind::Approval {
+                mode: None,
                 approved_payload: json!({}),
                 rememberable: false,
             },
@@ -2192,6 +2481,7 @@ mod tests {
     #[test]
     fn approval_response_preserves_tool_payload() {
         let kind = PendingActionKind::Approval {
+            mode: None,
             approved_payload: json!({
                 "tool": "payments",
                 "payment_id": "pay_1"
@@ -2219,6 +2509,7 @@ mod tests {
     fn only_a_card_that_offers_it_remembers_an_approval() {
         let answer = |rememberable: bool, approve: bool| {
             PendingActionKind::Approval {
+                mode: None,
                 approved_payload: json!({ "tool": "mcp_docs_search" }),
                 rememberable,
             }
@@ -2241,6 +2532,7 @@ mod tests {
     #[test]
     fn approval_response_requires_explicit_decision() {
         let kind = PendingActionKind::Approval {
+            mode: None,
             approved_payload: json!({"tool": "payments"}),
             rememberable: false,
         };
@@ -2347,6 +2639,7 @@ mod tests {
             caller: "caller".into(),
             conversation: 1,
             kind: PendingActionKind::Approval {
+                mode: None,
                 approved_payload: json!({}),
                 rememberable: false,
             },

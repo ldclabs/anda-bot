@@ -72,6 +72,22 @@ describe('desktop host boundaries', () => {
   })
   it('restricts renderer RPC and tool selection', () => {
     expect(() =>
+      validateRpc('set_approval_mode', [
+        {
+          source: 'desktop:one',
+          conversation: 5,
+          mode: 'full_access'
+        }
+      ])
+    ).not.toThrow()
+    for (const update of [
+      { source: 'desktop:one', conversation: 5, mode: 'invalid' },
+      { source: 'desktop:one', conversation: -1, mode: 'on_risk' },
+      { source: '', conversation: 0, mode: 'on_risk' },
+      { source: 'wechat:reply_target:user', conversation: 5, mode: 'full_access' }
+    ])
+      expect(() => validateRpc('set_approval_mode', [update])).toThrow()
+    expect(() =>
       validateRpc('tool_call', [{ name: 'shell', args: { command: 'anything' } }])
     ).toThrow()
     expect(() => validateRpc('auto_update_install_and_restart', [])).toThrow()

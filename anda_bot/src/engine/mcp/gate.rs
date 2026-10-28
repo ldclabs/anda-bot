@@ -80,67 +80,77 @@ impl McpGate {
         route: &McpToolRoute,
         args: &Json,
     ) -> Result<Option<ToolOutput<Json>>, BoxError> {
-        let scope = approval_scope(ctx);
-        let policy = self
-            .manager
-            .tool_policy(&route.server_id, &route.remote_name);
-        if scope.external_user && !policy.allow_external_users {
-            return Ok(Some(refusal(
-                route,
-                "external_user",
-                format!(
-                    "MCP server {} is not available to external users, so {} was not called.",
-                    route.server_id, route.remote_name
-                ),
-                format!(
-                    "The owner can make it available with `anda mcp external-users {} on`.",
-                    route.server_id
-                ),
-            )));
-        }
+        loop {
+            let scope = approval_scope(ctx);
+            let policy = self
+                .manager
+                .tool_policy(&route.server_id, &route.remote_name);
+            if scope.external_user && !policy.allow_external_users {
+                return Ok(Some(refusal(
+                    route,
+                    "external_user",
+                    format!(
+                        "MCP server {} is not available to external users, so {} was not called.",
+                        route.server_id, route.remote_name
+                    ),
+                    format!(
+                        "The owner can make it available with `anda mcp external-users {} on`.",
+                        route.server_id
+                    ),
+                )));
+            }
 
-        let (review, digest) = self.manager.review(route).await;
-        let reviewed = review == McpReview::Trusted;
-        if !must_ask(policy.approval, scope.mode, reviewed, read_only(route)) {
+            let (review, digest) = self.manager.review(route).await;
+            if approval_scope(ctx).mode != scope.mode {
+                continue;
+            }
+            let reviewed = review == McpReview::Trusted;
+            if !must_ask(policy.approval, scope.mode, reviewed, read_only(route)) {
+                return Ok(None);
+            }
+            if let Some(reason) = scope.unanswerable {
+                return Ok(Some(refusal(
+                    route,
+                    "approval_required",
+                    format!(
+                        "Calling {} on MCP server {} needs the user's approval, which nobody can give in this {reason}; it was not called.",
+                        route.remote_name, route.server_id
+                    ),
+                    allow_hint(route),
+                )));
+            }
+
+            let (title, card) = approval_card(route, policy.approval, review, &digest, args);
+            let mode = (policy.approval != McpApproval::Ask).then_some(scope.mode);
+            let always = match request_mcp_tool_approval(ctx, &route.name, title, card, mode).await
+            {
+                Err(err) if err.is::<crate::engine::action::ApprovalModeChanged>() => continue,
+                result => result?,
+            };
+            // The card showed the tool as new or changed: approving it accepts
+            // the definition, so it is not asked about as new again.
+            if !reviewed {
+                self.manager.accept_definition(route).await;
+            }
+            // "Always allow" is the owner's answer on the card, written to the
+            // server's entry like any other policy. The call goes ahead either
+            // way: it was approved.
+            if always {
+                let change = McpChange::SetApproval {
+                    id: route.server_id.clone(),
+                    tool: Some(route.remote_name.clone()),
+                    approval: Some(McpApproval::Allow),
+                };
+                if let Err(err) = self.manager.apply(change, None, McpSource::Manual).await {
+                    log::warn!(
+                        "MCP tool {} of {} was approved, but always allowing it failed: {err}",
+                        route.remote_name,
+                        route.server_id
+                    );
+                }
+            }
             return Ok(None);
         }
-        if let Some(reason) = scope.unanswerable {
-            return Ok(Some(refusal(
-                route,
-                "approval_required",
-                format!(
-                    "Calling {} on MCP server {} needs the user's approval, which nobody can give in this {reason}; it was not called.",
-                    route.remote_name, route.server_id
-                ),
-                allow_hint(route),
-            )));
-        }
-
-        let (title, card) = approval_card(route, policy.approval, review, &digest, args);
-        let always = request_mcp_tool_approval(ctx, &route.name, title, card).await?;
-        // The card showed the tool as new or changed: approving it accepts
-        // the definition, so it is not asked about as new again.
-        if !reviewed {
-            self.manager.accept_definition(route).await;
-        }
-        // "Always allow" is the owner's answer on the card, written to the
-        // server's entry like any other policy. The call goes ahead either
-        // way: it was approved.
-        if always {
-            let change = McpChange::SetApproval {
-                id: route.server_id.clone(),
-                tool: Some(route.remote_name.clone()),
-                approval: Some(McpApproval::Allow),
-            };
-            if let Err(err) = self.manager.apply(change, None, McpSource::Manual).await {
-                log::warn!(
-                    "MCP tool {} of {} was approved, but always allowing it failed: {err}",
-                    route.remote_name,
-                    route.server_id
-                );
-            }
-        }
-        Ok(None)
     }
 }
 

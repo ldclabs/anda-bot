@@ -290,8 +290,17 @@
   "memoryModeReadOnlyDescription": {
     "message": "Memoria de solo lectura: Anda Brain puede consultar recuerdos existentes sin guardar nuevos. Desactívala para iniciar una conversación sin memoria."
   },
-  "memoryModeNewConversation": {
-    "message": "Tu próximo mensaje inicia una conversación nueva con esta opción de memoria. Los mensajes anteriores se conservan en el historial."
+  "memoryModeEnable": {
+    "message": "Activar memoria"
+  },
+  "memoryModeDisable": {
+    "message": "Desactivar memoria"
+  },
+  "memoryModeEnabled": {
+    "message": "Memoria activada"
+  },
+  "memoryModeDisabled": {
+    "message": "Memoria desactivada"
   },
   "memoryModeStartWithMessage": {
     "message": "Envía un mensaje o usa /new seguido de un mensaje para iniciar una conversación con la opción de memoria elegida antes de usar otros comandos."

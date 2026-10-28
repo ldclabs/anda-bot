@@ -18,6 +18,7 @@ import { getMessage } from '$lib/i18n'
 import type {
   AgentInput,
   AgentOutput,
+  ApprovalMode,
   ActionApiOutput,
   ChatAttachment,
   ChatMessage,
@@ -98,6 +99,9 @@ export class Channel extends EventTarget {
   #conversation: Conversation | null = $state.raw(null)
   #memoryMode: MemoryMode = $state('standard')
   #pendingMemoryMode: MemoryMode | null = $state(null)
+  #approvalMode: ApprovalMode | undefined
+  #approvalRevision = 0
+  #approvalWrites: Promise<void> = Promise.resolve()
   #messageGroups: MessageGroup[] = $state.raw([])
   #sideMessages: ChatMessage[] = $state.raw([])
   #sending: boolean = $state(false)
@@ -188,6 +192,27 @@ export class Channel extends EventTarget {
     // Existing policies are immutable. Keep the selection local until a
     // message can create the new conversation atomically with its policy.
     this.#pendingMemoryMode = this.#conversation && mode === this.#memoryMode ? null : mode
+  }
+
+  async setApprovalMode(mode: ApprovalMode): Promise<void> {
+    this.#approvalMode = mode
+    this.#approvalRevision += 1
+    if (this.conversationId || this.#sending) await this.syncApprovalMode()
+  }
+
+  private syncApprovalMode(conversation = this.conversationId): Promise<void> {
+    // Serialize changes so a slow earlier request cannot undo the user's
+    // latest selection. Reading the mode here also coalesces queued changes.
+    const update = this.#approvalWrites
+      .catch(() => {})
+      .then(async () => {
+        const mode = this.#approvalMode
+        if (!mode) return
+        await this.#api.rpc('set_approval_mode', [{ source: this.source, conversation, mode }])
+        this.wakePolling()
+      })
+    this.#approvalWrites = update
+    return update
   }
 
   get latestActivityAt(): number {
@@ -329,6 +354,7 @@ export class Channel extends EventTarget {
     }
     const resources = attachments.map((attachment) => attachment.resource)
     let sendEpoch = this.#sendEpoch
+    const approvalRevision = this.#approvalRevision
     // A bare /new only detaches the current session; the daemon answers with
     // the old conversation id, which must not be re-fetched into the display
     // that was just cleared.
@@ -434,6 +460,16 @@ export class Channel extends EventTarget {
       const conversationId = bareNew ? 0 : output.conversation || 0
       const hasConversation = conversationId > 0
       if (hasConversation) {
+        if (this.#approvalRevision !== approvalRevision) {
+          // A mode may have changed while this submission was creating or
+          // joining the session with an older metadata snapshot.
+          await this.syncApprovalMode(conversationId).catch((error) => {
+            this.#api.updateStatus('approval mode update failed', {
+              kind: 'error',
+              text: errorToMessage(error)
+            })
+          })
+        }
         if (command?.kind === 'new' && !output.failed_reason) {
           this.#memoryMode = memoryMode
           this.#pendingMemoryMode = null

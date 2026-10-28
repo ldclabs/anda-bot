@@ -468,6 +468,143 @@ describe('Channel.plan', () => {
   })
 })
 
+describe('Channel live approval mode', () => {
+  it('updates the displayed session directly and serializes rapid changes', async () => {
+    const backend = createBackend({
+      conversations: [conversation({ status: 'completed' })],
+      sourceState: { c: 5 }
+    })
+    const originalRpc = backend.api.rpc
+    const updates: unknown[] = []
+    let release!: () => void
+    backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> => {
+      if (method !== 'set_approval_mode') return originalRpc<Result>(method, args)
+      updates.push(args[0])
+      if (updates.length === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      return { applied: true } as Result
+    }
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      await channel.init()
+      const first = channel.setApprovalMode('full_access')
+      await vi.waitFor(() => expect(updates).toHaveLength(1))
+      const last = channel.setApprovalMode('request_approval')
+      expect(updates).toEqual([{ source: 'browser:test', conversation: 5, mode: 'full_access' }])
+      release()
+      await Promise.all([first, last])
+      expect(updates.at(-1)).toEqual({
+        source: 'browser:test',
+        conversation: 5,
+        mode: 'request_approval'
+      })
+      expect(backend.rpcCalls.some((call) => call.method === 'agent_run')).toBe(false)
+      expect(channel.messageGroups[0]?.messages).toHaveLength(2)
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('reapplies a change after an in-flight submission creates the session', async () => {
+    let accepted!: (output: AgentOutput) => void
+    const agentRun = vi.fn(
+      (_input: AgentInput) =>
+        new Promise<AgentOutput>((resolve) => {
+          accepted = resolve
+        })
+    )
+    const backend = createBackend({
+      conversations: [conversation({ status: 'completed' })],
+      agentRun
+    })
+    const originalRpc = backend.api.rpc
+    const updates: unknown[] = []
+    backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> => {
+      if (method !== 'set_approval_mode') return originalRpc<Result>(method, args)
+      updates.push(args[0])
+      return { applied: updates.length > 1 } as Result
+    }
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      const sending = channel.sendPrompt('hello', [])
+      await vi.waitFor(() => expect(agentRun).toHaveBeenCalledTimes(1))
+      await channel.setApprovalMode('full_access')
+      expect(updates).toEqual([{ source: 'browser:test', conversation: 0, mode: 'full_access' }])
+      accepted({ content: '', usage: conversation().usage, conversation: 5 })
+      await sending
+      expect(updates.at(-1)).toEqual({
+        source: 'browser:test',
+        conversation: 5,
+        mode: 'full_access'
+      })
+      expect(agentRun).toHaveBeenCalledTimes(1)
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('retains the latest selection for retry after an RPC failure', async () => {
+    const backend = createBackend({
+      conversations: [conversation({ status: 'completed' })],
+      sourceState: { c: 5 }
+    })
+    const originalRpc = backend.api.rpc
+    const update = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ applied: true })
+    backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> =>
+      method === 'set_approval_mode' ? update(args[0]) : originalRpc<Result>(method, args)
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      await channel.init()
+      await expect(channel.setApprovalMode('full_access')).rejects.toThrow('offline')
+      await channel.setApprovalMode('request_approval')
+      expect(update).toHaveBeenLastCalledWith({
+        source: 'browser:test',
+        conversation: 5,
+        mode: 'request_approval'
+      })
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('does not overwrite preferences changed in another chat with a cached local selection', async () => {
+    const agentRun = vi.fn(async (_input: AgentInput) => ({
+      content: '',
+      usage: conversation().usage,
+      conversation: 5
+    }))
+    const backend = createBackend({
+      conversations: [conversation({ status: 'completed' })],
+      sourceState: { c: 5 },
+      agentRun
+    })
+    const originalRpc = backend.api.rpc
+    const update = vi.fn().mockResolvedValue({ applied: true })
+    backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> =>
+      method === 'set_approval_mode' ? update(args[0]) : originalRpc<Result>(method, args)
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      await channel.init()
+      await channel.setApprovalMode('full_access')
+      backend.api.requestExtra = async () => ({ approval_mode: 'request_approval' })
+      await channel.sendPrompt('new message after changing preferences elsewhere', [])
+      expect(agentRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meta: expect.objectContaining({ approval_mode: 'request_approval' })
+        })
+      )
+      expect(update).toHaveBeenCalledTimes(1)
+    } finally {
+      channel.destroy()
+    }
+  })
+})
+
 describe('Channel memory mode', () => {
   it('defaults to enabled and sends the policy with the first message', async () => {
     const agentRun = vi.fn(async () => ({ content: '', usage: conversation().usage }))

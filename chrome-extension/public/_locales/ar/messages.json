@@ -290,8 +290,17 @@
   "memoryModeReadOnlyDescription": {
     "message": "الذاكرة للقراءة فقط: يمكن لـ Anda Brain قراءة الذكريات السابقة دون حفظ ذكريات جديدة. عطّلها لبدء محادثة بلا ذاكرة."
   },
-  "memoryModeNewConversation": {
-    "message": "تبدأ رسالتك التالية محادثة جديدة بإعداد الذاكرة المحدد. تبقى الرسائل السابقة في السجل."
+  "memoryModeEnable": {
+    "message": "تفعيل الذاكرة"
+  },
+  "memoryModeDisable": {
+    "message": "تعطيل الذاكرة"
+  },
+  "memoryModeEnabled": {
+    "message": "الذاكرة مفعّلة"
+  },
+  "memoryModeDisabled": {
+    "message": "الذاكرة معطّلة"
   },
   "memoryModeStartWithMessage": {
     "message": "أرسل رسالة أو استخدم /new متبوعًا برسالة لبدء محادثة بإعداد الذاكرة المحدد قبل استخدام أوامر أخرى."

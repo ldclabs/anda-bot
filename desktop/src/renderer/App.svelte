@@ -1421,6 +1421,7 @@
               voiceCapabilities={client.voice.capabilities}
               onVoiceSend={(recording) => client.sendVoiceTurn(recording)}
               approvalMode={client.preferences.approvalMode}
+              approvalModeDisabled={!client.authorized || client.readOnly}
               onApprovalModeChange={(mode) => preference({ approvalMode: mode })}
               memoryMode={channel?.memoryMode}
               memoryModeChangePending={channel?.memoryModeChangePending}

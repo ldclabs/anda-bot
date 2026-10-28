@@ -189,6 +189,33 @@ afterEach(() => {
   vi.resetModules()
 })
 
+describe('AndaSidePanelClient.saveApprovalMode', () => {
+  it('syncs the active session immediately without waiting for preference storage', async () => {
+    const chromeApi = createChromeApi()
+    vi.stubGlobal('chrome', chromeApi)
+    const { AndaSidePanelClient } = await importSidePanelModule()
+    const client = new AndaSidePanelClient()
+    client.settings = { ...client.settings, token: 'token', approvalMode: 'on_risk' }
+    let stored!: () => void
+    vi.mocked(chromeApi.storage.local.set).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          stored = resolve
+        })
+    )
+    const setApprovalMode = vi.fn().mockResolvedValue(undefined)
+    client.activeChannel = { setApprovalMode } as any
+    const saving = client.saveApprovalMode('full_access')
+    expect(client.settings.approvalMode).toBe('full_access')
+    expect(setApprovalMode).toHaveBeenCalledWith('full_access')
+    stored()
+    await saving
+    setApprovalMode.mockRejectedValueOnce(new Error('daemon unavailable'))
+    await expect(client.saveApprovalMode('request_approval')).rejects.toThrow('daemon unavailable')
+    expect(client.settings.approvalMode).toBe('request_approval')
+  })
+})
+
 describe('AndaSidePanelClient.saveAppearanceTheme', () => {
   it('persists the appearance theme without saving unrelated draft fields', async () => {
     const chromeApi = createChromeApi({

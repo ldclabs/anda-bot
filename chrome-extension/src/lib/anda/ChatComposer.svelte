@@ -53,6 +53,7 @@
     type McpResourceSource
   } from '$lib/anda/composer/McpResourcePicker.svelte'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
+  import MemoryIcon from '$lib/anda/MemoryIcon.svelte'
   import { isImmediatePromptCommand, parsePromptCommand } from '$lib/anda/client/commands'
   import {
     buildPromptCommandSuggestions,
@@ -76,7 +77,6 @@
   } from '$lib/anda/ui'
   import {
     ArrowUp,
-    BrainCircuit,
     Keyboard,
     Check,
     LoaderCircle,
@@ -122,6 +122,7 @@
     onRemoveQuickPrompt,
     onClearQuickPrompts,
     approvalMode = 'on_risk',
+    approvalModeDisabled,
     onApprovalModeChange,
     memoryMode = 'standard',
     memoryModeChangePending = false,
@@ -160,6 +161,7 @@
     onRemoveQuickPrompt?: (prompt: QuickPrompt) => Promise<void> | void
     onClearQuickPrompts?: () => Promise<void> | void
     approvalMode?: ApprovalMode
+    approvalModeDisabled?: boolean
     onApprovalModeChange?: (mode: ApprovalMode) => Promise<void> | void
     memoryMode?: MemoryMode
     memoryModeChangePending?: boolean
@@ -218,6 +220,8 @@
   let promptSkillsLoadedAt = $state(0)
   let promptSkillsError = $state('')
   let approvalMenuOpen = $state(false)
+  let approvalModePending = $state(false)
+  let approvalModeError = $state('')
   let clearQuickPromptsOpen = $state(false)
   let approvalMenuElement: HTMLDivElement | null = $state(null)
   let lastIncomingAttachmentId = ''
@@ -240,6 +244,9 @@
 
   const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
   const memoryEnabled = $derived(memoryMode !== 'off')
+  const memoryActionLabel = $derived(
+    memoryEnabled ? getMessage('memoryModeDisable') : getMessage('memoryModeEnable')
+  )
   const memoryTitle = $derived(
     memoryMode === 'off'
       ? getMessage('memoryModeOffDescription')
@@ -578,10 +585,15 @@
 
   async function selectApprovalMode(mode: ApprovalMode) {
     approvalMenuOpen = false
-    if (mode === approvalMode) {
-      return
+    approvalModeError = ''
+    approvalModePending = true
+    try {
+      await onApprovalModeChange?.(mode)
+    } catch (error) {
+      approvalModeError = error instanceof Error ? error.message : String(error)
+    } finally {
+      approvalModePending = false
     }
-    await onApprovalModeChange?.(mode)
   }
 
   function approvalModeLabel(option: ApprovalModeOption): string {
@@ -1089,8 +1101,16 @@
       </div>
     {/if}
 
+    {#if approvalModeError}
+      <div role="alert" class={alertClass('px-2 py-1 text-xs')}>
+        <div class={alertDescriptionClass('text-xs')}>{approvalModeError}</div>
+      </div>
+    {/if}
+
     {#if memoryModeChangePending}
-      <p class="composer-memory-notice" role="status">{getMessage('memoryModeNewConversation')}</p>
+      <p class="composer-memory-notice" role="status" title={memoryTitle}>
+        {memoryEnabled ? getMessage('memoryModeEnabled') : getMessage('memoryModeDisabled')}
+      </p>
     {/if}
 
     <div class="composer-toolbar">
@@ -1135,7 +1155,7 @@
             role="switch"
             aria-checked={memoryEnabled}
             aria-label={getMessage('memoryModeToggle')}
-            title={memoryTitle}
+            title={`${memoryActionLabel}\n${memoryTitle}`}
             class={buttonClass(
               'ghost',
               'sm',
@@ -1144,7 +1164,7 @@
             disabled={disabled || sending || working || recorder.stage !== 'idle'}
             onclick={() => onMemoryModeChange?.(memoryEnabled ? 'off' : 'standard')}
           >
-            <BrainCircuit class="size-4" />
+            <MemoryIcon class="composer-memory-icon size-4.5" />
             <span class="composer-memory-track" aria-hidden="true"></span>
           </button>
         {/if}
@@ -1157,13 +1177,18 @@
               'sm',
               'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 rounded-full px-2.5 font-normal'
             )}
-            {disabled}
+            disabled={(approvalModeDisabled ?? disabled) || approvalModePending}
             aria-haspopup="menu"
             aria-expanded={approvalMenuOpen}
+            aria-busy={approvalModePending}
             title={approvalModeDescription(currentApprovalMode)}
             onclick={() => (approvalMenuOpen = !approvalMenuOpen)}
           >
-            <CurrentApprovalIcon class="size-4" />
+            {#if approvalModePending}
+              <LoaderCircle class="size-4 animate-spin" />
+            {:else}
+              <CurrentApprovalIcon class="size-4" />
+            {/if}
             <span class="truncate">{approvalModeLabel(currentApprovalMode)}</span>
           </button>
 
@@ -1595,6 +1620,10 @@
 
   .composer-memory-toggle {
     flex-shrink: 0;
+  }
+
+  .composer-memory-toggle[aria-checked='true'] :global(.composer-memory-icon) {
+    color: color-mix(in srgb, var(--chat-accent, #10b981) 72%, var(--message-text, #171717));
   }
 
   .composer-memory-track {

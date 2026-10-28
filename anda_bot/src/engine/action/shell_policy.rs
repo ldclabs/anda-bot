@@ -17,7 +17,7 @@ use anda_engine::{
 };
 use parking_lot::Mutex;
 use rust_i18n::t;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -28,7 +28,8 @@ use crate::util::request_meta::keys;
 
 /// How much the session's user asked to be consulted. Shell commands and MCP
 /// tool calls both decide by it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum ApprovalMode {
     RequestApproval,
     OnRisk,

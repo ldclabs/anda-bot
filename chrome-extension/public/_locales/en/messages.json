@@ -290,8 +290,17 @@
   "memoryModeReadOnlyDescription": {
     "message": "Memory read-only: Anda Brain can recall existing memories without saving new ones. Turn off to start a new conversation without memory."
   },
-  "memoryModeNewConversation": {
-    "message": "Your next message starts a new conversation with this memory setting. Previous messages stay in history."
+  "memoryModeEnable": {
+    "message": "Enable memory"
+  },
+  "memoryModeDisable": {
+    "message": "Disable memory"
+  },
+  "memoryModeEnabled": {
+    "message": "Memory enabled"
+  },
+  "memoryModeDisabled": {
+    "message": "Memory disabled"
   },
   "memoryModeStartWithMessage": {
     "message": "Send a message or use /new with a message to start a conversation with the selected memory setting before using other commands."

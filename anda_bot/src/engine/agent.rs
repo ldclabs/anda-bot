@@ -464,6 +464,44 @@ impl AndaBot {
         self.live_sessions().get(key).cloned()
     }
 
+    /// A client control, never a model tool: update only this caller's live
+    /// session, without queueing a prompt or replacing its routing metadata.
+    pub(crate) async fn set_approval_mode(
+        &self,
+        caller: Principal,
+        source: &str,
+        conversation: u64,
+        mode: super::action::ApprovalMode,
+    ) -> Result<bool, BoxError> {
+        if source.trim().is_empty() || source.contains(":reply_target:") {
+            return Err("Approval mode can only be changed for a local chat".into());
+        }
+        let thread = if conversation > 0 {
+            let saved = self
+                .latest_conversation_in_chain(conversation, Some(caller))
+                .await?
+                .ok_or("Conversation does not belong to this caller")?;
+            Some(saved.thread.ok_or("Conversation has no session")?)
+        } else {
+            None
+        };
+        let session = self
+            .live_sessions()
+            .values()
+            .find(|session| {
+                session.caller == caller.to_string()
+                    && session.source_key == source
+                    && thread.is_none_or(|id| id == session.id)
+            })
+            .cloned();
+        let Some(session) = session else {
+            return Ok(false);
+        };
+        session.request_meta.set_approval_mode(mode);
+        session.actions.recheck_approvals(mode).await;
+        Ok(true)
+    }
+
     /// The live session `caller` can join: the one with id `key`, otherwise
     /// the caller's session for `source_key`. A session is only joinable by
     /// the caller that owns it: several managers without an explicit
@@ -2932,6 +2970,94 @@ mod tests {
         bot.persist_conversation_state(&conv).await.unwrap();
         let state = bot.inner.conversations.get_source_state(&source).unwrap();
         assert_eq!(state.status, ConversationStatus::Working);
+    }
+
+    #[tokio::test]
+    async fn approval_mode_control_updates_only_the_callers_current_session() {
+        use super::super::action::ApprovalMode;
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, bot) = build_bot_engine(dir.path().to_path_buf()).await;
+        let caller = test_caller();
+        let source = "desktop:approval-mode";
+        let output = engine
+            .agent_run(caller, input_for_source("first", source))
+            .await
+            .unwrap();
+        let conversation = output.conversation.unwrap();
+        let session = bot
+            .active_sessions()
+            .into_iter()
+            .find(|session| session.source_key == source)
+            .unwrap();
+        let before = session.request_meta.get();
+        assert!(
+            bot.set_approval_mode(caller, source, conversation, ApprovalMode::FullAccess)
+                .await
+                .unwrap()
+        );
+        let mut expected = before;
+        expected
+            .extra
+            .insert(keys::APPROVAL_MODE.into(), json!("full_access"));
+        assert_eq!(
+            serde_json::to_value(session.request_meta.get()).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert!(
+            !bot.set_approval_mode(
+                caller,
+                "desktop:other",
+                conversation,
+                ApprovalMode::RequestApproval
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            bot.set_approval_mode(
+                Principal::self_authenticating(b"other caller"),
+                source,
+                conversation,
+                ApprovalMode::RequestApproval
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            bot.set_approval_mode(
+                caller,
+                "wechat:reply_target:someone",
+                0,
+                ApprovalMode::FullAccess
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            !bot.set_approval_mode(caller, "desktop:empty", 0, ApprovalMode::FullAccess)
+                .await
+                .unwrap()
+        );
+        let fresh = engine
+            .agent_run(caller, input_for_source("/new fresh", source))
+            .await
+            .unwrap();
+        assert_ne!(fresh.conversation, Some(conversation));
+        assert!(
+            !bot.set_approval_mode(caller, source, conversation, ApprovalMode::FullAccess)
+                .await
+                .unwrap()
+        );
+        assert!(
+            bot.set_approval_mode(
+                caller,
+                source,
+                fresh.conversation.unwrap(),
+                ApprovalMode::RequestApproval
+            )
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]

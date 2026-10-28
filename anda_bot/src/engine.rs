@@ -979,6 +979,7 @@ impl Engines {
             events: self.mcp_events.clone(),
         };
         let browser_ws_state = BrowserWebSocketState {
+            bot: Some(self.bot.clone()),
             admission: self.bot.admission(),
             mcp: mcp_api_state.clone(),
             app_protocol: false,

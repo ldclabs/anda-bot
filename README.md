@@ -144,6 +144,8 @@ The default file workspace is `~/.anda/workspace`; configure `workspaces` in `co
 
 ### Approvals and unattended work
 
+Changing the approval mode in the desktop or Chrome extension composer synchronizes it with the current session immediately, without sending another message. Pending approvals that follow the session policy are re-evaluated; operations already executing continue.
+
 Interactive sessions request approval for risky shell operations and MCP actions according to their policy. Cards show what will run and let you approve or deny it. Shell approvals can apply to the same or narrower operations during the session; MCP permissions can be set per server or tool.
 
 `anda --full-access` starts an interactive session with approval prompts bypassed where the policy permits. **Cron jobs and active goals run with full access.** MCP event automations do not receive that elevation: operations that need approval are refused. An explicit MCP `ask` policy still requires approval, including in full-access mode. These controls govern the local runtime; shell commands execute with your OS user's permissions.

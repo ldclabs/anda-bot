@@ -426,10 +426,14 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   async saveApprovalMode(approvalMode: ApprovalMode): Promise<void> {
     const normalized = normalizeApprovalMode(approvalMode)
     if ((this.settings.approvalMode || defaultSettings.approvalMode) === normalized) {
+      if (this.authorized) await this.activeChannel?.setApprovalMode(normalized)
       return
     }
     this.settings = normalizeSettings({ ...this.settings, approvalMode: normalized })
-    await this.chrome.storage.local.set({ approvalMode: this.settings.approvalMode })
+    await Promise.all([
+      this.chrome.storage.local.set({ approvalMode: this.settings.approvalMode }),
+      this.authorized ? this.activeChannel?.setApprovalMode(normalized) : undefined
+    ])
   }
 
   async testConnection(settings: SettingsState): Promise<void> {

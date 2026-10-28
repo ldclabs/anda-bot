@@ -495,11 +495,17 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     if (added.length) await this.savePreferences({ chats: [...this.preferences.chats, ...added] })
   }
   async savePreferences(patch: Partial<Preferences>): Promise<void> {
+    const approvalChanged = patch.approvalMode !== undefined
     this.preferences = { ...this.preferences, ...patch }
     const snapshot = $state.snapshot(patch)
     const write = this.prefWrites.catch(() => {}).then(() => window.anda.preferences(snapshot))
     this.prefWrites = write
-    await write
+    await Promise.all([
+      write,
+      approvalChanged && this.authorized && !this.readOnly
+        ? this.activeChannel?.setApprovalMode(this.preferences.approvalMode)
+        : undefined
+    ])
   }
   async updateChat(source: string, patch: Partial<ChatEntry>): Promise<void> {
     const chats = this.preferences.chats.map((c) => (c.source === source ? { ...c, ...patch } : c))

@@ -139,6 +139,7 @@ impl SessionControl {
 #[derive(Clone)]
 pub struct SessionRequestMeta {
     meta: Arc<RwLock<RequestMeta>>,
+    approval_changes: tokio::sync::watch::Sender<()>,
     cron_workspace: Arc<RwLock<Option<crate::cron::CronWorkspaceGrant>>>,
 }
 
@@ -146,12 +147,35 @@ impl SessionRequestMeta {
     pub fn new(meta: RequestMeta) -> Self {
         Self {
             meta: Arc::new(RwLock::new(meta)),
+            approval_changes: tokio::sync::watch::channel(()).0,
             cron_workspace: Default::default(),
         }
     }
 
     pub fn get(&self) -> RequestMeta {
         self.meta.read().clone()
+    }
+
+    pub(crate) fn set_approval_mode(&self, mode: crate::engine::action::ApprovalMode) {
+        let value: Value = mode.as_str().into();
+        let previous = self.meta.write().extra.insert(
+            crate::util::request_meta::keys::APPROVAL_MODE.into(),
+            value.clone(),
+        );
+        if previous.as_ref() != Some(&value) {
+            self.approval_changes.send_replace(());
+        }
+    }
+
+    pub(crate) fn approval_mode_updates(&self) -> tokio::sync::watch::Receiver<()> {
+        self.approval_changes.subscribe()
+    }
+
+    pub(super) fn set_conversation(&self, conversation: u64) {
+        self.meta.write().extra.insert(
+            crate::util::request_meta::keys::CONVERSATION.into(),
+            conversation.into(),
+        );
     }
 
     pub(crate) fn cron_workspace(&self) -> Option<crate::cron::CronWorkspaceGrant> {
@@ -163,7 +187,16 @@ impl SessionRequestMeta {
     }
 
     pub(super) fn set(&self, meta: RequestMeta) {
-        *self.meta.write() = meta;
+        let changed = {
+            let mut current = self.meta.write();
+            let key = crate::util::request_meta::keys::APPROVAL_MODE;
+            let changed = current.extra.get(key) != meta.extra.get(key);
+            *current = meta;
+            changed
+        };
+        if changed {
+            self.approval_changes.send_replace(());
+        }
     }
 }
 

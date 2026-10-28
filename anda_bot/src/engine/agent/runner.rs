@@ -610,13 +610,7 @@ impl SessionRunner {
         {
             log::error!("Failed to update_source_state: {:?}", err);
         }
-        let current_meta = self.session.request_meta.get();
-        self.session
-            .request_meta
-            .set(super::meta::request_meta_for_conversation(
-                &current_meta,
-                child_id,
-            ));
+        self.session.request_meta.set_conversation(child_id);
         let session_id = self.session.id.to_string();
         let mut source = crate::brain::product::source_identity(
             &self.session.caller,

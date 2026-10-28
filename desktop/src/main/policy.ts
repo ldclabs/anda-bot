@@ -77,6 +77,7 @@ const rpcMethods = new Set([
   'capabilities',
   'model_names',
   'set_model',
+  'set_approval_mode',
   'reload_models',
   'register_workspace',
   'agent_run',
@@ -170,8 +171,7 @@ export function validateRpc(method: unknown, params: unknown): asserts params is
     throw new Error('Request exceeds 32 MiB')
   if (method === 'tool_call') {
     const input = params[0] as
-      | { name?: unknown; args?: unknown; meta?: { source?: unknown } }
-      | undefined
+      { name?: unknown; args?: unknown; meta?: { source?: unknown } } | undefined
     if (
       !input ||
       typeof input.name !== 'string' ||
@@ -185,8 +185,7 @@ export function validateRpc(method: unknown, params: unknown): asserts params is
   }
   if (method === 'agent_run') {
     const input = params[0] as
-      | { name?: unknown; prompt?: unknown; meta?: { source?: unknown } }
-      | undefined
+      { name?: unknown; prompt?: unknown; meta?: { source?: unknown } } | undefined
     if (
       !input ||
       (input.name !== '' && input.name !== undefined) ||
@@ -195,6 +194,21 @@ export function validateRpc(method: unknown, params: unknown): asserts params is
       throw new Error('Invalid chat submission')
     if (String(input.meta?.source || '').includes(':reply_target:'))
       throw new Error('Channel conversations are read-only. Start a new local chat to respond.')
+  }
+  if (method === 'set_approval_mode') {
+    const input = params[0] as
+      { source?: unknown; conversation?: unknown; mode?: unknown } | undefined
+    if (
+      !input ||
+      typeof input.source !== 'string' ||
+      !input.source.trim() ||
+      !Number.isSafeInteger(input.conversation) ||
+      Number(input.conversation) < 0 ||
+      !['request_approval', 'on_risk', 'full_access', 'custom'].includes(String(input.mode))
+    )
+      throw new Error('Invalid approval mode update')
+    if (input.source.includes(':reply_target:'))
+      throw new Error('Channel conversations are read-only in the desktop client.')
   }
 }
 

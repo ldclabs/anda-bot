@@ -290,8 +290,17 @@
   "memoryModeReadOnlyDescription": {
     "message": "Память только для чтения: Anda Brain читает прежние воспоминания, не сохраняя новые. Выключите её, чтобы начать беседу без памяти."
   },
-  "memoryModeNewConversation": {
-    "message": "Следующее сообщение начнёт новую беседу с выбранным режимом памяти. Прежние сообщения останутся в истории."
+  "memoryModeEnable": {
+    "message": "Включить память"
+  },
+  "memoryModeDisable": {
+    "message": "Выключить память"
+  },
+  "memoryModeEnabled": {
+    "message": "Память включена"
+  },
+  "memoryModeDisabled": {
+    "message": "Память выключена"
   },
   "memoryModeStartWithMessage": {
     "message": "Прежде чем использовать другие команды, отправьте сообщение или /new с сообщением, чтобы начать беседу с выбранным режимом памяти."

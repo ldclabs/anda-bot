@@ -68,7 +68,7 @@ enum ResourcesAction {
 enum Access {
     Allowed,
     /// The user must approve first.
-    Ask,
+    Ask(crate::engine::action::ApprovalMode),
     Refused(String),
 }
 
@@ -91,7 +91,7 @@ impl McpResourcesTool {
                  can give in this {reason}",
                 server.id
             )),
-            None => Access::Ask,
+            None => Access::Ask(scope.mode),
         }
     }
 
@@ -103,24 +103,39 @@ impl McpResourcesTool {
         what: &str,
         uri: Option<&str>,
     ) -> Result<(), BoxError> {
-        match self.access(ctx, server) {
-            Access::Allowed => Ok(()),
-            Access::Refused(reason) => Err(reason.into()),
-            Access::Ask => {
-                let mut details = vec![approval_detail("Server", &server.id, "text")];
-                if let Some(uri) = uri {
-                    details.push(approval_detail("URI", uri, "text"));
-                }
-                let card = McpApprovalCard {
-                    message: "The agent wants to read from an MCP server. What the server \
+        loop {
+            return match self.access(ctx, server) {
+                Access::Allowed => Ok(()),
+                Access::Refused(reason) => Err(reason.into()),
+                Access::Ask(mode) => {
+                    let mut details = vec![approval_detail("Server", &server.id, "text")];
+                    if let Some(uri) = uri {
+                        details.push(approval_detail("URI", uri, "text"));
+                    }
+                    let card = McpApprovalCard {
+                        message: "The agent wants to read from an MCP server. What the server \
                               returns is its own, untrusted content."
-                        .to_string(),
-                    summary: format!("{what} · {}", server.id),
-                    details,
-                    metadata: json!({ "server_id": server.id, "uri": uri }),
-                };
-                request_mcp_resource_approval(ctx, format!("{what}: {}", server.id), card).await
-            }
+                            .to_string(),
+                        summary: format!("{what} · {}", server.id),
+                        details,
+                        metadata: json!({ "server_id": server.id, "uri": uri }),
+                    };
+                    let mode = (server.approval != crate::config::McpApproval::Ask).then_some(mode);
+                    match request_mcp_resource_approval(
+                        ctx,
+                        format!("{what}: {}", server.id),
+                        card,
+                        mode,
+                    )
+                    .await
+                    {
+                        Err(err) if err.is::<crate::engine::action::ApprovalModeChanged>() => {
+                            continue;
+                        }
+                        result => result,
+                    }
+                }
+            };
         }
     }
 }
@@ -239,7 +254,7 @@ impl McpResourcesTool {
             .map(|server| async {
                 match self.access(ctx, server) {
                     Access::Refused(_) => None,
-                    Access::Ask => Some(json!({
+                    Access::Ask(_) => Some(json!({
                         "server_id": server.id,
                         "note": "Listing it asks the user first: list it by its id.",
                     })),

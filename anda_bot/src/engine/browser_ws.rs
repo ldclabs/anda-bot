@@ -42,6 +42,7 @@ const EXPIRY_CHECK_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct BrowserWebSocketState {
+    pub(super) bot: Option<Arc<super::AndaBot>>,
     pub(super) admission: Arc<crate::runtime_admission::Admission>,
     pub(super) events: Arc<super::app_protocol::AppEvents>,
     pub(super) submissions: Arc<super::app_protocol::Submissions>,
@@ -59,6 +60,14 @@ pub struct BrowserWebSocketState {
     pub home_dir: PathBuf,
     pub(crate) runtime_models: RuntimeModels,
     pub(super) cli_workspaces: CliWorkspaceGrants,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetApprovalMode {
+    source: String,
+    conversation: u64,
+    mode: super::action::ApprovalMode,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -470,7 +479,11 @@ async fn dispatch_browser_ws_request(
     // Daemon lifecycle and machine-wide settings belong to the local owner.
     if (matches!(
         method,
-        "pick_workspace" | "register_workspace" | "reload_models" | "set_model"
+        "pick_workspace"
+            | "register_workspace"
+            | "reload_models"
+            | "set_model"
+            | "set_approval_mode"
     ) || method.starts_with("mcp_"))
         && !connection.is_owner()
     {
@@ -517,6 +530,19 @@ async fn dispatch_browser_ws_request(
             boxed(run_agent(connection, input)).await
         }
         "tool_call" => boxed(handle_tool_call(params, connection)).await,
+        "set_approval_mode" => {
+            let (args,): (SetApprovalMode,) = params_from_value(params)?;
+            let bot = state.bot.as_ref().ok_or("Anda Bot is not available")?;
+            let applied = boxed(bot.set_approval_mode(
+                connection.caller,
+                &args.source,
+                args.conversation,
+                args.mode,
+            ))
+            .await
+            .map_err(|err| err.to_string())?;
+            Ok(json!({ "applied": applied }))
+        }
         "brain_status" => boxed(handle_brain_status(state)).await,
         method if method.starts_with("memory_") => Ok(boxed(state.memory.websocket_dispatch(
             &state.auth_headers,
@@ -1021,6 +1047,7 @@ mod tests {
             .sign_cwt(crate::identity::expiring_claims(std::time::Duration::from_secs(60)).unwrap())
             .unwrap();
         let state = BrowserWebSocketState {
+            bot: None,
             admission: Arc::new(crate::runtime_admission::Admission::default()),
             app_protocol: false,
             events: Arc::new(super::super::app_protocol::AppEvents::default()),
@@ -1081,6 +1108,46 @@ mod tests {
             writer,
         };
         (Arc::new(connection), frames, commands)
+    }
+
+    #[tokio::test]
+    async fn approval_mode_rpc_is_owner_only_and_validates_the_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (state, _, key) = build_ws_state(dir.path().into()).await;
+        let (connection, mut frames, _) = connect(&state, Principal::self_authenticating(b"other"));
+        handle_browser_ws_request(
+            serde_json::from_value(json!({
+                "id": 1, "method": "set_approval_mode",
+                "params": [{ "source": "desktop:one", "conversation": 1, "mode": "full_access" }]
+            }))
+            .unwrap(),
+            &connection,
+        )
+        .await;
+        let response: Value = serde_json::from_str(&frames.recv().await.unwrap()).unwrap();
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("Only the local owner")
+        );
+        let (owner, mut frames, _) = connect(&state, key.id());
+        handle_browser_ws_request(
+            serde_json::from_value(json!({
+                "id": 2, "method": "set_approval_mode",
+                "params": [{ "source": "desktop:one", "conversation": 1, "mode": "invalid" }]
+            }))
+            .unwrap(),
+            &owner,
+        )
+        .await;
+        let response: Value = serde_json::from_str(&frames.recv().await.unwrap()).unwrap();
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap()
+                .contains("unknown variant")
+        );
     }
 
     #[tokio::test]
