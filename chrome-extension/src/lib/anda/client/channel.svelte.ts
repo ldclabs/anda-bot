@@ -442,9 +442,10 @@ export class Channel extends EventTarget {
           name: '',
           prompt,
           resources,
-          ...(command?.kind === 'new' || !this.conversationId
-            ? { meta: { memory_mode: memoryMode } }
-            : {})
+          // Only /new selects a policy. Before history finishes loading, a
+          // zero local ID can still resolve to an existing daemon session.
+          // Fresh sources already default to standard on the daemon.
+          ...(command?.kind === 'new' ? { meta: { memory_mode: memoryMode } } : {})
         },
         isRequestStale
       )
@@ -464,11 +465,20 @@ export class Channel extends EventTarget {
           // A mode may have changed while this submission was creating or
           // joining the session with an older metadata snapshot.
           await this.syncApprovalMode(conversationId).catch((error) => {
-            this.#api.updateStatus('approval mode update failed', {
-              kind: 'error',
-              text: errorToMessage(error)
-            })
+            if (!isRequestStale()) {
+              this.#api.updateStatus('approval mode update failed', {
+                kind: 'error',
+                text: errorToMessage(error)
+              })
+            }
           })
+          // /new can supersede this submission while the control RPC waits.
+          // Acknowledge its delivery without changing the new chat's state.
+          if (isRequestStale()) {
+            applied = true
+            poller.finish()
+            return poller
+          }
         }
         if (command?.kind === 'new' && !output.failed_reason) {
           this.#memoryMode = memoryMode

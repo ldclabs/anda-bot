@@ -572,6 +572,67 @@ describe('Channel live approval mode', () => {
     }
   })
 
+  it.each([false, true])(
+    'discards a superseded approval update (RPC failure: %s)',
+    async (fails) => {
+      const old = conversation({ status: 'completed' })
+      let accepted!: (output: AgentOutput) => void
+      const agentRun = vi
+        .fn<(input: AgentInput) => Promise<AgentOutput>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise<AgentOutput>((resolve) => {
+              accepted = resolve
+            })
+        )
+        .mockResolvedValue({ content: '', usage: old.usage, conversation: old._id })
+      const backend = createBackend({ conversations: [old], agentRun })
+      const finish = vi.fn(async (_applied: boolean) => {})
+      backend.api.agentRun = async (input) => ({
+        output: await backend.agentRun(input),
+        ...(input.prompt === '/new first' ? { id: 'first-submission', finish } : {})
+      })
+      const originalRpc = backend.api.rpc
+      const updates: unknown[] = []
+      let release!: () => void
+      backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> => {
+        if (method !== 'set_approval_mode') return originalRpc<Result>(method, args)
+        updates.push(args[0])
+        if (updates.length === 2) {
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+          if (fails) throw new Error('obsolete update failed')
+        }
+        return { applied: true } as Result
+      }
+      const channel = new Channel('browser:test', backend.api)
+      try {
+        const first = channel.sendPrompt('/new first', [])
+        await vi.waitFor(() => expect(agentRun).toHaveBeenCalledTimes(1))
+        await channel.setApprovalMode('request_approval')
+        accepted({ content: '', usage: old.usage, conversation: old._id })
+        await vi.waitFor(() => expect(updates).toHaveLength(2))
+
+        await channel.sendPrompt('/new', [])
+        channel.setMemoryMode('off')
+        expect(channel.memoryModeChangePending).toBe(true)
+        release()
+        await first
+
+        expect(channel.conversationId).toBe(0)
+        expect(channel.messageGroups).toEqual([])
+        expect(channel.memoryMode).toBe('off')
+        expect(channel.memoryModeChangePending).toBe(true)
+        expect(backend.statusUpdates).not.toContain('approval mode update failed')
+        expect(finish).toHaveBeenCalledWith(true)
+      } finally {
+        release?.()
+        channel.destroy()
+      }
+    }
+  )
+
   it('does not overwrite preferences changed in another chat with a cached local selection', async () => {
     const agentRun = vi.fn(async (_input: AgentInput) => ({
       content: '',
@@ -606,7 +667,54 @@ describe('Channel live approval mode', () => {
 })
 
 describe('Channel memory mode', () => {
-  it('defaults to enabled and sends the policy with the first message', async () => {
+  it.each(
+    (['off', 'no_store'] as const).flatMap((mode) =>
+      ['continue', '/stop', '/cancel'].map((prompt) => ({ mode, prompt }))
+    )
+  )(
+    'preserves the server $mode policy for $prompt before history restoration finishes',
+    async ({ mode, prompt }) => {
+      const saved = conversation({ status: 'completed', extra: { memory_policy: { mode } } })
+      const agentRun = vi.fn(async (input: AgentInput) => {
+        if (input.meta?.memory_mode && input.meta.memory_mode !== mode)
+          throw new Error('Change memory mode in a new conversation with /new')
+        return { content: '', usage: saved.usage, conversation: saved._id }
+      })
+      const backend = createBackend({
+        conversations: [saved],
+        sourceState: { c: saved._id },
+        agentRun
+      })
+      const originalRpc = backend.api.rpc
+      let release!: () => void
+      let restoring = false
+      backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> => {
+        const input = args[0] as { args?: { type?: string } } | undefined
+        if (method === 'tool_call' && input?.args?.type === 'GetConversation' && !restoring) {
+          restoring = true
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+        }
+        return originalRpc<Result>(method, args)
+      }
+      const channel = new Channel('browser:test', backend.api)
+      const initializing = channel.init()
+      try {
+        await vi.waitFor(() => expect(restoring).toBe(true))
+        expect(channel.conversationId).toBe(0)
+        await channel.sendPrompt(prompt, [])
+        expect(agentRun).toHaveBeenCalledWith(expect.objectContaining({ prompt }))
+        expect(channel.memoryMode).toBe(mode)
+      } finally {
+        release?.()
+        await initializing
+        channel.destroy()
+      }
+    }
+  )
+
+  it('defaults to enabled and leaves implicit creation to the daemon policy', async () => {
     const agentRun = vi.fn(async () => ({ content: '', usage: conversation().usage }))
     const backend = createBackend({ agentRun })
     const channel = new Channel('browser:test', backend.api)
@@ -616,7 +724,7 @@ describe('Channel memory mode', () => {
       expect(agentRun).toHaveBeenCalledWith(
         expect.objectContaining({
           prompt: 'hello',
-          meta: expect.objectContaining({ memory_mode: 'standard' })
+          meta: expect.not.objectContaining({ memory_mode: expect.anything() })
         })
       )
     } finally {
