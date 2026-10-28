@@ -278,6 +278,24 @@
   "quickPromptsUpdateFailed": {
     "message": "Impossible de mettre à jour les saisies rapides : $1"
   },
+  "memoryModeToggle": {
+    "message": "Mémoire Anda Brain"
+  },
+  "memoryModeOnDescription": {
+    "message": "Mémoire activée : Anda Brain peut consulter et enregistrer des souvenirs. Le changement ouvre une nouvelle conversation au prochain message."
+  },
+  "memoryModeOffDescription": {
+    "message": "Mémoire désactivée : Anda Brain ne lit ni ne crée de souvenirs. Le changement ouvre une nouvelle conversation au prochain message."
+  },
+  "memoryModeReadOnlyDescription": {
+    "message": "Mémoire en lecture seule : Anda Brain peut consulter les souvenirs existants sans en créer. Désactivez-la pour ouvrir une conversation sans mémoire."
+  },
+  "memoryModeNewConversation": {
+    "message": "Votre prochain message ouvre une nouvelle conversation avec ce réglage de mémoire. Les anciens messages restent dans l’historique."
+  },
+  "memoryModeStartWithMessage": {
+    "message": "Envoyez un message ou utilisez /new suivi d’un message pour ouvrir une conversation avec le réglage choisi avant d’utiliser d’autres commandes."
+  },
   "approvalModeRequestApprovalLabel": {
     "message": "Demander l’approbation"
   },

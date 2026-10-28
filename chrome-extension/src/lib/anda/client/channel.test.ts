@@ -8,6 +8,7 @@ import {
   type API
 } from './channel.svelte'
 import type {
+  AgentInput,
   AgentOutput,
   ChatMessage,
   Conversation,
@@ -62,7 +63,7 @@ interface MockBackend {
   api: API
   rpcCalls: Array<{ method: string; type?: string }>
   statusUpdates: string[]
-  agentRun: (input: { prompt: string }) => Promise<AgentOutput>
+  agentRun: (input: AgentInput) => Promise<AgentOutput>
   // Workspaces passed to register_workspace, in call order.
   registered: string[]
   registerWorkspace: (workspace: string) => Promise<void>
@@ -76,7 +77,7 @@ interface MockBackend {
 function createBackend(options: {
   conversations?: Conversation[]
   sourceState?: SourceState | null
-  agentRun?: (input: { prompt: string }) => Promise<AgentOutput>
+  agentRun?: (input: AgentInput) => Promise<AgentOutput>
   registerWorkspace?: (workspace: string) => Promise<void>
 }): MockBackend {
   const backend: MockBackend = {
@@ -108,7 +109,7 @@ function createBackend(options: {
       }
       backend.rpcCalls.push({ method, type: input.args?.type })
       if (method === 'agent_run') {
-        return (await backend.agentRun(input as { prompt: string })) as Result
+        return (await backend.agentRun(input as AgentInput)) as Result
       }
       if (method === 'register_workspace') {
         const workspace = String(tupleArgs[0])
@@ -462,6 +463,236 @@ describe('Channel.plan', () => {
       await vi.waitFor(() => expect(channel.plan).toBeUndefined())
     } finally {
       clearInterval(wakeTimer)
+      channel.destroy()
+    }
+  })
+})
+
+describe('Channel memory mode', () => {
+  it('defaults to enabled and sends the policy with the first message', async () => {
+    const agentRun = vi.fn(async () => ({ content: '', usage: conversation().usage }))
+    const backend = createBackend({ agentRun })
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      expect(channel.memoryMode).toBe('standard')
+      await channel.sendPrompt('hello', [])
+      expect(agentRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          prompt: 'hello',
+          meta: expect.objectContaining({ memory_mode: 'standard' })
+        })
+      )
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it.each(['standard', 'no_store', 'off'] as const)(
+    'restores the persisted %s policy without changing it on a follow-up',
+    async (mode) => {
+      const saved = conversation({ status: 'completed', extra: { memory_policy: { mode } } })
+      const agentRun = vi.fn(async (_input: AgentInput) => ({
+        content: '',
+        usage: saved.usage,
+        conversation: saved._id
+      }))
+      const backend = createBackend({
+        conversations: [saved],
+        sourceState: { c: saved._id },
+        agentRun
+      })
+      const channel = new Channel('browser:test', backend.api)
+      try {
+        await channel.init()
+        expect(channel.memoryMode).toBe(mode)
+        expect(channel.memoryModeChangePending).toBe(false)
+        await channel.sendPrompt('continue', [])
+        const input = agentRun.mock.calls[0]?.[0] as AgentInput | undefined
+        expect(input?.prompt).toBe('continue')
+        expect(input?.meta?.memory_mode).toBeUndefined()
+        expect(channel.memoryMode).toBe(mode)
+      } finally {
+        channel.destroy()
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'starts a new conversation for both toggle directions (native transport: %s)',
+    async (native) => {
+      const old = conversation({ status: 'completed' })
+      const inputs: AgentInput[] = []
+      const backend = createBackend({ conversations: [old], sourceState: { c: old._id } })
+      backend.agentRun = async (input) => {
+        inputs.push(input)
+        const id = old._id + inputs.length
+        backend.conversations.set(
+          id,
+          conversation({
+            _id: id,
+            status: 'completed',
+            extra: { memory_policy: { mode: input.meta?.memory_mode } }
+          })
+        )
+        return { content: '', usage: old.usage, conversation: id }
+      }
+      if (native)
+        backend.api.agentRun = async (input) => ({ output: await backend.agentRun(input) })
+      const channel = new Channel('browser:test', backend.api)
+      try {
+        await channel.init()
+        for (const mode of ['off', 'standard'] as const) {
+          channel.setMemoryMode(mode)
+          expect(channel.memoryMode).toBe(mode)
+          expect(channel.memoryModeChangePending).toBe(true)
+          await channel.sendPrompt('next message', [])
+          expect(inputs.at(-1)).toMatchObject({
+            prompt: '/new next message',
+            meta: { memory_mode: mode, source: 'browser:test' }
+          })
+          expect(channel.memoryMode).toBe(mode)
+          expect(channel.memoryModeChangePending).toBe(false)
+          expect(channel.conversationId).not.toBe(old._id)
+        }
+        expect(backend.conversations.get(old._id)).toBe(old)
+      } finally {
+        channel.destroy()
+      }
+    }
+  )
+
+  it('keeps a pending policy across a failed delivery and a bare /new', async () => {
+    const old = conversation({ status: 'completed' })
+    const next = conversation({
+      _id: 6,
+      status: 'completed',
+      extra: { memory_policy: { mode: 'off' } }
+    })
+    const agentRun = vi
+      .fn<(input: AgentInput) => Promise<AgentOutput>>()
+      .mockRejectedValueOnce(new Error('daemon unreachable'))
+      .mockResolvedValueOnce({ content: '', usage: old.usage, conversation: old._id })
+      .mockResolvedValueOnce({ content: '', usage: next.usage, conversation: next._id })
+    const backend = createBackend({
+      conversations: [old, next],
+      sourceState: { c: old._id },
+      agentRun
+    })
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      await channel.init()
+      channel.setMemoryMode('off')
+      await expect(channel.sendPrompt('private message', [])).rejects.toThrow('daemon unreachable')
+      expect(channel.memoryMode).toBe('off')
+      expect(channel.memoryModeChangePending).toBe(true)
+      await channel.sendPrompt('/new', [])
+      expect(channel.memoryModeChangePending).toBe(true)
+      expect(channel.conversationId).toBe(0)
+      const attachment = {
+        id: 'file',
+        name: 'note.txt',
+        resource: { name: 'note.txt', tags: ['text'] }
+      }
+      await channel.sendPrompt('', [attachment])
+      expect(agentRun.mock.calls[2]?.[0]).toMatchObject({
+        prompt: '/new ',
+        resources: [attachment.resource],
+        meta: { memory_mode: 'off' }
+      })
+      expect(channel.memoryMode).toBe('off')
+      expect(channel.memoryModeChangePending).toBe(false)
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it('can cancel a pending change and keeps session controls on the current conversation', async () => {
+    const saved = conversation({ status: 'completed' })
+    const agentRun = vi.fn(async (_input: AgentInput) => ({
+      content: '',
+      usage: saved.usage,
+      conversation: saved._id
+    }))
+    const backend = createBackend({
+      conversations: [saved],
+      sourceState: { c: saved._id },
+      agentRun
+    })
+    const channel = new Channel('browser:test', backend.api)
+    try {
+      await channel.init()
+      channel.setMemoryMode('off')
+      for (const command of [
+        '/goal plan',
+        '/skill example',
+        '/side question',
+        '/steer correction',
+        '/ping',
+        '$example use this skill'
+      ]) {
+        await expect(channel.sendPrompt(command, [])).rejects.toThrow()
+      }
+      expect(agentRun).not.toHaveBeenCalled()
+      for (const command of ['/stop', '/cancel']) {
+        await channel.sendPrompt(command, [])
+        expect(agentRun).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            prompt: command,
+            meta: expect.objectContaining({ conversation: saved._id })
+          })
+        )
+        expect(channel.memoryModeChangePending).toBe(true)
+      }
+      channel.setMemoryMode('standard')
+      expect(channel.memoryModeChangePending).toBe(false)
+      await channel.sendPrompt('continue', [])
+      expect(agentRun).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: 'continue' }))
+    } finally {
+      channel.destroy()
+    }
+  })
+
+  it.each(['/tmp/project please inspect this folder', '/loop check the build every hour'])(
+    'preserves ordinary slash-prefixed text when switching memory: %s',
+    async (prompt) => {
+      const agentRun = vi.fn(async (_input: AgentInput) => ({
+        content: '',
+        usage: conversation().usage
+      }))
+      const channel = new Channel('browser:test', createBackend({ agentRun }).api)
+      try {
+        channel.setMemoryMode('off')
+        await channel.sendPrompt(prompt, [])
+        expect(agentRun).toHaveBeenCalledWith(
+          expect.objectContaining({
+            prompt: `/new ${prompt}`,
+            meta: expect.objectContaining({ memory_mode: 'off' })
+          })
+        )
+      } finally {
+        channel.destroy()
+      }
+    }
+  )
+
+  it('does not turn a concurrent ordinary send into a second /new request', async () => {
+    let finish!: (output: AgentOutput) => void
+    const agentRun = vi.fn(
+      (_input: AgentInput) =>
+        new Promise<AgentOutput>((resolve) => {
+          finish = resolve
+        })
+    )
+    const channel = new Channel('browser:test', createBackend({ agentRun }).api)
+    try {
+      channel.setMemoryMode('off')
+      const first = channel.sendPrompt('first', [])
+      await vi.waitFor(() => expect(agentRun).toHaveBeenCalledTimes(1))
+      expect(await channel.sendPrompt('second', [])).toBeNull()
+      expect(agentRun).toHaveBeenCalledTimes(1)
+      finish({ content: '', usage: conversation().usage })
+      await first
+    } finally {
       channel.destroy()
     }
   })

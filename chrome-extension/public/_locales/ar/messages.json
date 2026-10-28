@@ -278,6 +278,24 @@
   "quickPromptsUpdateFailed": {
     "message": "تعذّر تحديث الإدخالات السريعة: $1"
   },
+  "memoryModeToggle": {
+    "message": "ذاكرة Anda Brain"
+  },
+  "memoryModeOnDescription": {
+    "message": "الذاكرة مفعّلة: يمكن لـ Anda Brain قراءة الذكريات وحفظها. يبدأ التبديل محادثة جديدة عند إرسال رسالتك التالية."
+  },
+  "memoryModeOffDescription": {
+    "message": "الذاكرة معطّلة: لن يقرأ Anda Brain الذكريات أو يحفظها. يبدأ التبديل محادثة جديدة عند إرسال رسالتك التالية."
+  },
+  "memoryModeReadOnlyDescription": {
+    "message": "الذاكرة للقراءة فقط: يمكن لـ Anda Brain قراءة الذكريات السابقة دون حفظ ذكريات جديدة. عطّلها لبدء محادثة بلا ذاكرة."
+  },
+  "memoryModeNewConversation": {
+    "message": "تبدأ رسالتك التالية محادثة جديدة بإعداد الذاكرة المحدد. تبقى الرسائل السابقة في السجل."
+  },
+  "memoryModeStartWithMessage": {
+    "message": "أرسل رسالة أو استخدم /new متبوعًا برسالة لبدء محادثة بإعداد الذاكرة المحدد قبل استخدام أوامر أخرى."
+  },
   "approvalModeRequestApprovalLabel": {
     "message": "طلب الموافقة"
   },

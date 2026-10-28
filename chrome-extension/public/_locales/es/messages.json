@@ -278,6 +278,24 @@
   "quickPromptsUpdateFailed": {
     "message": "No se pudieron actualizar las entradas rápidas: $1"
   },
+  "memoryModeToggle": {
+    "message": "Memoria de Anda Brain"
+  },
+  "memoryModeOnDescription": {
+    "message": "Memoria activada: Anda Brain puede consultar y guardar recuerdos. Al cambiar, tu próximo mensaje inicia una conversación nueva."
+  },
+  "memoryModeOffDescription": {
+    "message": "Memoria desactivada: Anda Brain no lee ni guarda recuerdos. Al cambiar, tu próximo mensaje inicia una conversación nueva."
+  },
+  "memoryModeReadOnlyDescription": {
+    "message": "Memoria de solo lectura: Anda Brain puede consultar recuerdos existentes sin guardar nuevos. Desactívala para iniciar una conversación sin memoria."
+  },
+  "memoryModeNewConversation": {
+    "message": "Tu próximo mensaje inicia una conversación nueva con esta opción de memoria. Los mensajes anteriores se conservan en el historial."
+  },
+  "memoryModeStartWithMessage": {
+    "message": "Envía un mensaje o usa /new seguido de un mensaje para iniciar una conversación con la opción de memoria elegida antes de usar otros comandos."
+  },
   "approvalModeRequestApprovalLabel": {
     "message": "Solicitar aprobación"
   },

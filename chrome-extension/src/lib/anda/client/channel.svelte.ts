@@ -14,6 +14,7 @@ import {
 } from './conversations'
 import { PollConversation } from './poll-conversation'
 import { workspaceFromCliSource } from './workspace'
+import { getMessage } from '$lib/i18n'
 import type {
   AgentInput,
   AgentOutput,
@@ -25,6 +26,7 @@ import type {
   ConversationDelta,
   ConversationStatus,
   MessageGroup,
+  MemoryMode,
   PlanStep,
   RequestMeta,
   RpcOutput,
@@ -94,6 +96,8 @@ export class Channel extends EventTarget {
   #messageCache: NormalizedMessageCache = new WeakMap()
   #restoreTimer: ReturnType<typeof setTimeout> | null = null
   #conversation: Conversation | null = $state.raw(null)
+  #memoryMode: MemoryMode = $state('standard')
+  #pendingMemoryMode: MemoryMode | null = $state(null)
   #messageGroups: MessageGroup[] = $state.raw([])
   #sideMessages: ChatMessage[] = $state.raw([])
   #sending: boolean = $state(false)
@@ -169,6 +173,21 @@ export class Channel extends EventTarget {
 
   get conversationId(): number {
     return this.#conversation?._id || this.#sourceState?.c || this.#sourceState?.conv_id || 0
+  }
+
+  get memoryMode(): MemoryMode {
+    return this.#pendingMemoryMode ?? this.#memoryMode
+  }
+
+  get memoryModeChangePending(): boolean {
+    return this.#pendingMemoryMode !== null
+  }
+
+  setMemoryMode(mode: MemoryMode): void {
+    if (this.#sending || this.#syncing || mode === this.memoryMode) return
+    // Existing policies are immutable. Keep the selection local until a
+    // message can create the new conversation atomically with its policy.
+    this.#pendingMemoryMode = this.#conversation && mode === this.#memoryMode ? null : mode
   }
 
   get latestActivityAt(): number {
@@ -278,12 +297,30 @@ export class Channel extends EventTarget {
     prompt: string,
     attachments: ChatAttachment[]
   ): Promise<PollConversation | null> {
-    const command = parsePromptCommand(prompt)
-    const immediate = isImmediatePromptCommand(command)
-    if ((this.#sending && !immediate) || (!prompt && attachments.length === 0)) {
+    let command = parsePromptCommand(prompt)
+    if (
+      (this.#sending && !isImmediatePromptCommand(command)) ||
+      (!prompt && attachments.length === 0)
+    ) {
       return null
     }
-
+    const sessionControl = command?.kind === 'stop' || command?.kind === 'cancel'
+    const memoryMode = sessionControl ? this.#memoryMode : this.memoryMode
+    if (this.#pendingMemoryMode !== null && !sessionControl && command?.kind !== 'new') {
+      // Wrapping /goal, /skill or /side in /new would turn a command into
+      // literal text. Do not execute it against the old memory policy either.
+      const trimmed = prompt.trim()
+      if (
+        command ||
+        /^\/(?:goal|skill)(?:\s|$)/i.test(trimmed) ||
+        trimmed.toLowerCase() === '/ping' ||
+        /^\$\S+\s+\S/.test(trimmed)
+      ) {
+        throw new Error(getMessage('memoryModeStartWithMessage'))
+      }
+      prompt = `/new ${prompt}`
+      command = parsePromptCommand(prompt)
+    }
     // A /side request runs a detached subagent and can take a long time; it
     // must not hold the sending flag and freeze the composer for other input.
     const ownsSendingFlag = (!this.#sending || command?.kind === 'new') && command?.kind !== 'side'
@@ -304,6 +341,11 @@ export class Channel extends EventTarget {
     try {
       const poller = new PollConversation()
       if (command && command.kind === 'new') {
+        // A bare /new does not persist a new policy on the daemon. Carry it
+        // into the first real message, including when delivery is retried.
+        if (this.#pendingMemoryMode !== null || memoryMode !== 'standard') {
+          this.#pendingMemoryMode = memoryMode
+        }
         this.clearConversationDisplay()
         sendEpoch = this.#sendEpoch
         if (ownsSendingFlag) {
@@ -373,7 +415,10 @@ export class Channel extends EventTarget {
         {
           name: '',
           prompt,
-          resources
+          resources,
+          ...(command?.kind === 'new' || !this.conversationId
+            ? { meta: { memory_mode: memoryMode } }
+            : {})
         },
         isRequestStale
       )
@@ -389,6 +434,10 @@ export class Channel extends EventTarget {
       const conversationId = bareNew ? 0 : output.conversation || 0
       const hasConversation = conversationId > 0
       if (hasConversation) {
+        if (command?.kind === 'new' && !output.failed_reason) {
+          this.#memoryMode = memoryMode
+          this.#pendingMemoryMode = null
+        }
         this.subscribePoll(
           conversationId,
           poller,
@@ -936,6 +985,9 @@ export class Channel extends EventTarget {
     }
 
     this.#conversation = conversation
+    const policy = conversation.extra?.memory_policy
+    const mode = policy && typeof policy === 'object' && 'mode' in policy ? policy.mode : undefined
+    this.#memoryMode = mode === 'off' || mode === 'no_store' ? mode : 'standard'
     this.#api.updateStatus(conversation.status, null)
     const group = conversationToGroup(conversation, this.#messageCache)
     const existingGroup = this.#messageGroups.find((existing) => existing._id === conversation._id)

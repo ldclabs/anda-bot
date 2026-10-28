@@ -278,6 +278,24 @@
   "quickPromptsUpdateFailed": {
     "message": "Could not update quick inputs: $1"
   },
+  "memoryModeToggle": {
+    "message": "Anda Brain memory"
+  },
+  "memoryModeOnDescription": {
+    "message": "Memory on: Anda Brain can recall and save memories. Switching starts a new conversation with your next message."
+  },
+  "memoryModeOffDescription": {
+    "message": "Memory off: Anda Brain will not read or write memory. Switching starts a new conversation with your next message."
+  },
+  "memoryModeReadOnlyDescription": {
+    "message": "Memory read-only: Anda Brain can recall existing memories without saving new ones. Turn off to start a new conversation without memory."
+  },
+  "memoryModeNewConversation": {
+    "message": "Your next message starts a new conversation with this memory setting. Previous messages stay in history."
+  },
+  "memoryModeStartWithMessage": {
+    "message": "Send a message or use /new with a message to start a conversation with the selected memory setting before using other commands."
+  },
   "approvalModeRequestApprovalLabel": {
     "message": "Request approval"
   },

@@ -3,6 +3,7 @@
   import type {
     ChatAttachment,
     ApprovalMode,
+    MemoryMode,
     PageAudioResult,
     PromptSkill,
     QuickPrompt,
@@ -75,6 +76,7 @@
   } from '$lib/anda/ui'
   import {
     ArrowUp,
+    BrainCircuit,
     Keyboard,
     Check,
     LoaderCircle,
@@ -121,6 +123,9 @@
     onClearQuickPrompts,
     approvalMode = 'on_risk',
     onApprovalModeChange,
+    memoryMode = 'standard',
+    memoryModeChangePending = false,
+    onMemoryModeChange,
     submitKeyMode = 'enter',
     incomingAttachment = null,
     incomingDraft = null,
@@ -156,6 +161,9 @@
     onClearQuickPrompts?: () => Promise<void> | void
     approvalMode?: ApprovalMode
     onApprovalModeChange?: (mode: ApprovalMode) => Promise<void> | void
+    memoryMode?: MemoryMode
+    memoryModeChangePending?: boolean
+    onMemoryModeChange?: (mode: MemoryMode) => void
     incomingAttachment?: ChatAttachment | null
     incomingDraft?: PromptDraftRequest | null
     initialDraft?: ComposerSubmitPayload
@@ -231,6 +239,14 @@
   let draggingFiles = $state(false)
 
   const hasDraft = $derived(Boolean(text.trim()) || attachments.length > 0)
+  const memoryEnabled = $derived(memoryMode !== 'off')
+  const memoryTitle = $derived(
+    memoryMode === 'off'
+      ? getMessage('memoryModeOffDescription')
+      : memoryMode === 'no_store'
+        ? getMessage('memoryModeReadOnlyDescription')
+        : getMessage('memoryModeOnDescription')
+  )
   const draftCommand = $derived(parsePromptCommand(text))
   const draftBypassesSending = $derived(isImmediatePromptCommand(draftCommand))
   const canSend = $derived(
@@ -1073,6 +1089,10 @@
       </div>
     {/if}
 
+    {#if memoryModeChangePending}
+      <p class="composer-memory-notice" role="status">{getMessage('memoryModeNewConversation')}</p>
+    {/if}
+
     <div class="composer-toolbar">
       <div class="composer-toolbar-group">
         {#if mcpResources}
@@ -1106,6 +1126,26 @@
             {:else}
               <Plus class="size-4.5" />
             {/if}
+          </button>
+        {/if}
+
+        {#if onMemoryModeChange}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={memoryEnabled}
+            aria-label={getMessage('memoryModeToggle')}
+            title={memoryTitle}
+            class={buttonClass(
+              'ghost',
+              'sm',
+              'composer-memory-toggle composer-icon-button h-8 gap-1.5 rounded-full px-2'
+            )}
+            disabled={disabled || sending || working || recorder.stage !== 'idle'}
+            onclick={() => onMemoryModeChange?.(memoryEnabled ? 'off' : 'standard')}
+          >
+            <BrainCircuit class="size-4" />
+            <span class="composer-memory-track" aria-hidden="true"></span>
           </button>
         {/if}
 
@@ -1551,6 +1591,44 @@
   /* The right-hand controls keep their size; the left group gives way. */
   .composer-toolbar-group:last-child {
     flex-shrink: 0;
+  }
+
+  .composer-memory-toggle {
+    flex-shrink: 0;
+  }
+
+  .composer-memory-track {
+    width: 1.25rem;
+    height: 0.75rem;
+    padding: 2px;
+    border-radius: 999px;
+    background: var(--message-muted-soft, #a0a0a0);
+    transition: background-color 120ms ease-out;
+  }
+
+  .composer-memory-track::after {
+    display: block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #fff;
+    content: '';
+  }
+
+  .composer-memory-toggle[aria-checked='true'] .composer-memory-track {
+    background: var(--chat-accent, #10b981);
+  }
+
+  .composer-memory-toggle[aria-checked='true'] .composer-memory-track::after {
+    transform: translateX(0.5rem);
+  }
+
+  .composer-memory-notice {
+    margin: 0;
+    padding: 0 0.375rem;
+    color: var(--message-muted, #737373);
+    font-size: 0.75rem;
+    line-height: 1.1rem;
   }
 
   .prompt-input-wrap {

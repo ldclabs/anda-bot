@@ -162,7 +162,9 @@ anda memory activity  # Recorded processing activity
 
 The TUI provides `/memory` and `/memory activity`. Desktop and the extension dashboard provide a **Memory** workspace with records, entity relationships, source quotes, and reviewed corrections/removals. Status checks do not call a model; recall and memory processing can.
 
-For a fresh conversation with restricted memory:
+The desktop and Chrome extension composers include an **Anda Brain memory** switch, enabled by default. Turning it off disables Brain reads and writes. After switching, send a message (or `/new` followed by a message) to start a new conversation with that setting; existing conversations keep their memory policy and history.
+
+For a fresh conversation with restricted memory from the CLI:
 
 ```bash
 anda agent run --memory-mode no-store --prompt "Help without saving long-term memory"

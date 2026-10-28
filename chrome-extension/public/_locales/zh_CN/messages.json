@@ -278,6 +278,24 @@
   "quickPromptsUpdateFailed": {
     "message": "无法更新快捷输入：$1"
   },
+  "memoryModeToggle": {
+    "message": "Anda Brain 记忆"
+  },
+  "memoryModeOnDescription": {
+    "message": "记忆已开启：Anda Brain 可以读取和保存记忆。切换后，下一条消息将开始新对话。"
+  },
+  "memoryModeOffDescription": {
+    "message": "记忆已关闭：Anda Brain 不读取也不写入记忆。切换后，下一条消息将开始新对话。"
+  },
+  "memoryModeReadOnlyDescription": {
+    "message": "记忆只读：Anda Brain 可以读取已有记忆，不保存新记忆。关闭后将开始不使用记忆的新对话。"
+  },
+  "memoryModeNewConversation": {
+    "message": "下一条消息将按所选记忆设置开始新对话，原有消息保留在历史记录中。"
+  },
+  "memoryModeStartWithMessage": {
+    "message": "请先发送一条消息，或使用 /new 加消息，按所选记忆设置开始新对话，再使用其他命令。"
+  },
   "approvalModeRequestApprovalLabel": {
     "message": "请求批准"
   },

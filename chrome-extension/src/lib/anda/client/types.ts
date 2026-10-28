@@ -40,6 +40,8 @@ export type Json = string | number | boolean | null | { [key: string]: Json } | 
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool' | 'external_user'
 
+export type MemoryMode = 'standard' | 'no_store' | 'off'
+
 export interface AttachmentSummary {
   id: string
   name: string

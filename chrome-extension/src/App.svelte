@@ -714,6 +714,11 @@
         voiceCapabilities={andaClient.voice.capabilities}
         approvalMode={andaClient.settings.approvalMode || 'on_risk'}
         onApprovalModeChange={(mode) => andaClient.saveApprovalMode(mode)}
+        memoryMode={andaClient.activeChannel?.memoryMode}
+        memoryModeChangePending={andaClient.activeChannel?.memoryModeChangePending}
+        onMemoryModeChange={andaClient.activeChannel && !andaClient.activeChannel.syncing
+          ? (mode) => andaClient.activeChannel?.setMemoryMode(mode)
+          : undefined}
         submitKeyMode={andaClient.settings.submitKeyMode}
         onSend={sendPrompt}
         onStop={stopActiveTask}

@@ -1422,6 +1422,11 @@
               onVoiceSend={(recording) => client.sendVoiceTurn(recording)}
               approvalMode={client.preferences.approvalMode}
               onApprovalModeChange={(mode) => preference({ approvalMode: mode })}
+              memoryMode={channel?.memoryMode}
+              memoryModeChangePending={channel?.memoryModeChangePending}
+              onMemoryModeChange={channel && !channel.syncing
+                ? (mode) => channel?.setMemoryMode(mode)
+                : undefined}
               submitKeyMode={client.preferences.submitKeyMode}
               onLoadSkills={client.authorized ? () => client.skills.listPrompts() : undefined}
               mcpResources={client.authorized ? client.mcp : undefined}
