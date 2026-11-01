@@ -197,7 +197,9 @@ export class Channel extends EventTarget {
   async setApprovalMode(mode: ApprovalMode): Promise<void> {
     this.#approvalMode = mode
     this.#approvalRevision += 1
-    if (this.conversationId || this.#sending) await this.syncApprovalMode()
+    // History may still be loading. With conversation 0 the daemon resolves
+    // this source's live session; a fresh source simply has nothing to update.
+    await this.syncApprovalMode()
   }
 
   private syncApprovalMode(conversation = this.conversationId): Promise<void> {

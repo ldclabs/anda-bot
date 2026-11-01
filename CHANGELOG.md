@@ -4,6 +4,24 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.9] — 2026-11-01
+
+### Added
+
+- **Brain memory controls in chat**: Anda Desktop and the Chrome extension share an enabled-by-default memory switch. Turning it off disables Brain reads and writes. The next message starts a new conversation with the selected policy, preserving existing history and the draft's attachments. Restored conversations display their saved policy, including recall without storage, and the controls and guidance are available in all six UI languages.
+
+### Changed
+
+- **Approval mode changes apply to the running session**: changing the composer's approval mode takes effect without another message. Pending approvals that depend on the session policy are re-evaluated, and shell risk checks in progress stop using the old mode. Explicit MCP `ask` rules still require approval, and operations already executing continue. Approval controls remain available while a pending card blocks the chat input.
+- **KIP and Nexus 0.14.5**: the shared dependency graph uses KIP 0.14.5 and Cognitive Nexus 0.14.5, including the updated cognitive-memory and general-domain revisions bundled by Nexus.
+- **Version 0.14.9**: the `anda_bot` crate, its lockfile entry, Anda Desktop and the Chrome extension advertise 0.14.9.
+
+### Fixed
+
+- **Restricted memory survives restoration and retries**: sending a message, `/stop` or `/cancel` before history finishes loading leaves the saved memory policy to the daemon. A pending selection survives failed delivery and a bare `/new`; other commands cannot accidentally run against the previous policy. Responses superseded by a newer `/new` cannot restore the old chat or overwrite its memory selection while approval synchronization is waiting.
+- **Approval changes reach sessions whose history is still loading**: the client now asks the daemon to resolve the current session by source when its conversation ID is not yet known. Previously the menu changed locally without updating the running session, so its previous approval policy remained in force.
+- **ChatGPT catalogs tolerate unknown context windows**: a `null` context window no longer makes the whole catalog fail to load. Startup and model reload fetch each account's catalog at most once when resolving older model selections with missing windows, while retaining explicit configured budgets and the fallback for unknown windows.
+
 ## [0.14.8] — 2026-10-26
 
 ### Fixed

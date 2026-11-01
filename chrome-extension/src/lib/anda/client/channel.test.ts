@@ -469,6 +469,46 @@ describe('Channel.plan', () => {
 })
 
 describe('Channel live approval mode', () => {
+  it.each(['request_approval', 'full_access'] as const)(
+    'syncs %s by source while the initial history is still loading',
+    async (mode) => {
+      const backend = createBackend({
+        conversations: [conversation({ status: 'completed' })],
+        sourceState: { c: 5 }
+      })
+      const originalRpc = backend.api.rpc
+      const update = vi.fn().mockResolvedValue({ applied: true })
+      let release!: () => void
+      backend.api.rpc = async <Result>(method: string, args: unknown[]): Promise<Result> => {
+        if (method === 'set_approval_mode') return update(args[0])
+        const input = args[0] as { args?: { type?: string } } | undefined
+        if (method === 'tool_call' && input?.args?.type === 'GetConversation') {
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+        }
+        return originalRpc<Result>(method, args)
+      }
+      const channel = new Channel('browser:test', backend.api)
+      const initializing = channel.init()
+      try {
+        await vi.waitFor(() => expect(release).toBeDefined())
+        expect(channel.conversationId).toBe(0)
+        await channel.setApprovalMode(mode)
+        expect(update).toHaveBeenCalledExactlyOnceWith({
+          source: 'browser:test',
+          conversation: 0,
+          mode
+        })
+        expect(backend.rpcCalls.some((call) => call.method === 'agent_run')).toBe(false)
+      } finally {
+        release?.()
+        await initializing
+        channel.destroy()
+      }
+    }
+  )
+
   it('updates the displayed session directly and serializes rapid changes', async () => {
     const backend = createBackend({
       conversations: [conversation({ status: 'completed' })],
