@@ -13,9 +13,9 @@ anda memory evaluate run --plan ./memory-plan.json --output ./memory-run
 anda memory evaluate report ./memory-run
 ```
 
-`plan` 不调用模型，`report` 仅重建已有记录。`run` 拒绝覆盖已有输出目录，也拒绝计划、可执行文件、模型、数据或提示词摘要不匹配。每个 case/repeat/arm 都使用独立原生运行及命名空间。四个冻结合成样例覆盖偏好保持、事实更新、项目同名区分和信息缺失，仅支持 `persistent` 与 `no_memory`。`memory` Track 在记忆宿主外固定业务模型和提示词；`agent` Track 衡量现有有界 Agent 适配器，不代表完整桌面 daemon。预期答案和评分材料不进入训练观察。
+`plan` 不调用模型，`report` 仅重建已有记录。`run` 拒绝覆盖已有输出目录，也拒绝计划、可执行文件、模型、数据或提示词摘要不匹配。每个 case/repeat/arm 都使用独立原生运行及命名空间。四个冻结合成样例覆盖偏好保持、事实更新、项目同名区分和信息缺失，仅支持 `persistent` 与 `no_memory`。`memory` Track 在记忆宿主外固定业务模型和提示词；`agent` Track 衡量现有有界 Agent 适配器，不代表完整桌面 daemon。预期答案和评分材料不进入训练观察。两条 Track 的业务模型请求都不设置 temperature，因为自行固定采样的模型会拒绝该参数；两个对照臂使用同一个服务商默认值，descriptor 的 `decoding_digest` 与 `budget_digest` 记录 `temperature: null`。`memory` Track 的 `run` 会先发送一次与真实答题形状相同的小请求，它不属于任何样例，也不计入成本快照；模型拒绝该请求时，`run` 在形成任何记忆、写出任何输出之前带着服务商的错误信息退出。
 
-输出包含 `plan.json`、`manifest.json`、`events.jsonl`、`cases/*.json`、`report.json`、`report.md`。报告保留完成、无效、未开始和未知样例，有效配对分母、最后累计成本快照、清理结果和原生能力描述。重建报告会在末尾日志写入中断时恢复此前完整的最新成本事件，不重试或重跑样例。Ctrl+C 和评测截止时间会请求本地宿主关闭；在途结果保留 unknown，外部服务商的最终结算可能仍无法测量。
+输出包含 `plan.json`、`manifest.json`、`events.jsonl`、`cases/*.json`、`report.json`、`report.md`。报告保留完成、无效、未开始和未知样例，有效配对分母、最后累计成本快照、清理结果和原生能力描述。`memory` Track 的每条样例记录还保留 `memory_supplied`（交给答题模型的召回条目）和 `raw_answer`（它写出的内容），使错误答案可以追溯到形成、召回或答题本身；样例均为合成数据。无效运行在 `failure_detail` 中保留错误文本（有长度上限，并去除模型密钥），`report.md` 在 Failures 一节列出。重建报告会在末尾日志写入中断时恢复此前完整的最新成本事件，不重试或重跑样例。Ctrl+C 和评测截止时间会请求本地宿主关闭；在途结果保留 unknown，外部服务商的最终结算可能仍无法测量。
 
 计划限制协议操作数、时间、输出 token 和局部 Recall 结果包/规划上下文。这些不是总金额硬上限，也不能限制每次服务商内部重试。`accounting_complete=false`，未知费用为 null，不确定性为 `not_estimated`。内置模板只是小型合成对照，不构成泛化提升或业务学习校准证据。本实现仅运行机制夹具，没有运行付费试验。
 

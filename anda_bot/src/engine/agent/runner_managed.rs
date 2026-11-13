@@ -34,8 +34,9 @@ impl AndaBot {
             prompt: json!({"request": input, "memory_context": memory, "current_task": transient})
                 .to_string(),
             tools,
+            // No temperature: models that fix their own sampling reject the parameter,
+            // so the provider default applies and the MIB descriptor declares it.
             max_output_tokens: Some(max_output_tokens),
-            temperature: Some(0.0),
             ..Default::default()
         }
     }

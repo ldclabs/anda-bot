@@ -422,7 +422,7 @@ impl Host {
                         "tools_digest": identity.tools_digest,
                         "budget_digest": identity.budget_digest,
                         "business_prompt_digest": self.business_prompt_digest,
-                        "decoding_digest": digest(&json!({"temperature":0.0,"max_output_tokens":self.max_output})),
+                        "decoding_digest": digest(&json!({"temperature":null,"max_output_tokens":self.max_output})),
                     },
                     "execution_guard_digest": digest(&"anda_bot_runner_managed_v1:runner_schemas_only;one_pending_tool;matching_feedback;no_local_effects;native_learning_unbound"),
                     "native_comparison_and_review": false,
@@ -1318,7 +1318,7 @@ async fn create_host(cmd: &MibCommand) -> Result<Arc<Host>, BoxError> {
         model_digest: digest(&public),
         tools_digest: digest(&"MIB runner schemas per task; no local effects"),
         budget_digest: digest(
-            &json!({"timeout":cmd.timeout_seconds,"output_tokens":cmd.max_output_tokens,"temperature":0.0,"recall_budget":recall_budget}),
+            &json!({"timeout":cmd.timeout_seconds,"output_tokens":cmd.max_output_tokens,"temperature":null,"recall_budget":recall_budget}),
         ),
     };
     Ok(Arc::new(Host::new(

@@ -123,6 +123,15 @@ struct CaseResult {
     answer: Option<String>,
     correct: Option<bool>,
     failure: Option<String>,
+    /// The error behind `failure`, so an invalid run says why without a rerun.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure_detail: Option<String>,
+    /// Track A: the recalled items the answering model was given, and what it wrote.
+    /// Without them a wrong answer cannot be traced to formation, recall or the answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    memory_supplied: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    raw_answer: Option<String>,
     last_costs: Value,
     cleanup: Option<Value>,
 }
@@ -321,6 +330,19 @@ pub async fn run(command: &EvaluationCommand) -> Result<(), BoxError> {
                     .await?,
                 );
             }
+            if frozen.plan.track == EvaluationTrack::Memory
+                && let Err(error) = preflight(&hosts[1], &frozen.plan).await
+            {
+                for host in &hosts {
+                    host.close_all().await;
+                }
+                let secret = std::env::var(&frozen.plan.api_key_env).ok();
+                return Err(format!(
+                    "Business model preflight failed; no memory was formed and no output was written: {}",
+                    failure_detail(&error, secret.as_deref())
+                )
+                .into());
+            }
             evaluate(&frozen, output, &hosts, "synthetic_demonstration", true).await
         }
         EvaluationCommand::Report { directory } => {
@@ -329,6 +351,75 @@ pub async fn run(command: &EvaluationCommand) -> Result<(), BoxError> {
             Ok(())
         }
     }
+}
+
+/// The evaluator's own Track A answering call. The preflight sends the same shape.
+/// Like the Track B request it sets no temperature: models that fix their own sampling
+/// reject the parameter, and both arms of a pair use the same provider default.
+fn business_request(
+    plan: &Plan,
+    question: &str,
+    options: &[String],
+    memory: &Value,
+) -> CompletionRequest {
+    CompletionRequest {
+        instructions: TRACK_A_PROMPT.into(),
+        prompt: json!({"question":question,"options":options,"memory":memory}).to_string(),
+        max_output_tokens: Some(plan.max_output_tokens),
+        ..Default::default()
+    }
+}
+
+fn business_answer(output: &anda_core::AgentOutput) -> Result<Option<String>, BoxError> {
+    if let Some(reason) = output.failed_reason.as_ref() {
+        return Err(format!("Business model failed: {reason}").into());
+    }
+    if !output.tool_calls.is_empty() {
+        return Err("Business model requested tools".into());
+    }
+    let value: Value = serde_json::from_str(&output.content)
+        .map_err(|e| format!("Business model answer is not the requested JSON object: {e}"))?;
+    Ok(value["answer"].as_str().map(str::to_string))
+}
+
+/// An error's own text for a report: one bounded line, with the model key removed in
+/// case a provider or transport echoed it.
+fn failure_detail(error: &BoxError, secret: Option<&str>) -> String {
+    let mut text = error.to_string().replace(['\n', '\r'], " ");
+    if let Some(secret) = secret.filter(|s| !s.is_empty()) {
+        text = text.replace(secret, "[REDACTED]");
+    }
+    if text.chars().count() > 512 {
+        text = text.chars().take(512).collect::<String>() + "…";
+    }
+    text
+}
+
+/// One small Track A request before any memory is formed. The answering call is the
+/// last step of every run, so a model that rejects its shape would otherwise invalidate
+/// the whole evaluation only after formation and maintenance had been paid for.
+async fn preflight(host: &Host, plan: &Plan) -> Result<(), BoxError> {
+    let options = ["ready".to_string(), "unknown".to_string()];
+    let request = business_request(
+        plan,
+        "What is the preflight answer?",
+        &options,
+        &json!([{"id":"preflight","content":"The preflight answer is ready."}]),
+    );
+    let model = host
+        .models
+        .get_model()
+        .ok_or("business model unavailable")?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(plan.operation_seconds),
+        model.completion(request),
+    )
+    .await
+    .map_err(|_| "Business model timed out")??;
+    business_answer(&output)?
+        .filter(|answer| options.contains(answer))
+        .ok_or("Invalid structured answer")?;
+    Ok(())
 }
 
 async fn write_new(path: &Path, value: &impl Serialize) -> Result<(), BoxError> {
@@ -411,6 +502,9 @@ async fn evaluate(
                     answer: None,
                     correct: None,
                     failure: None,
+                    failure_detail: None,
+                    memory_supplied: None,
+                    raw_answer: None,
                     last_costs: Value::Null,
                     cleanup: None,
                 });
@@ -491,9 +585,11 @@ async fn execute_cases(
             directory,
         )
         .await;
-        if result.is_err() {
+        if let Err(error) = result {
             entry.status = "invalid".into();
             entry.failure = Some("execution_failure".into());
+            let secret = std::env::var(&frozen.plan.api_key_env).ok();
+            entry.failure_detail = Some(failure_detail(&error, secret.as_deref()));
         }
         let close = send(
             host,
@@ -592,6 +688,7 @@ async fn execute_case(
         if recall["body"]["truncated"] == true {
             return Err("Recall packet omitted".into());
         }
+        entry.memory_supplied = Some(recall["body"]["items"].clone());
         let run = host
             .runs
             .lock()
@@ -599,22 +696,20 @@ async fn execute_case(
             .get(&(MEMORY.into(), entry.run_id.clone()))
             .cloned()
             .ok_or("Run unavailable")?;
-        let request = CompletionRequest {
-            instructions: TRACK_A_PROMPT.into(),
-            prompt: json!({"question":case.question,"options":case.options,"memory":recall["body"]["items"]}).to_string(),
-            max_output_tokens: Some(plan.max_output_tokens), temperature: Some(0.0), ..Default::default()
-        };
+        let request = business_request(
+            plan,
+            &case.question,
+            &case.options,
+            &recall["body"]["items"],
+        );
         let output = tokio::time::timeout(
             Duration::from_secs(plan.operation_seconds),
             host.complete_business(&run, request),
         )
         .await;
         let output = output.map_err(|_| "Business model timed out; result unknown")??;
-        if output.failed_reason.is_some() || !output.tool_calls.is_empty() {
-            return Err("Business model failed or requested tools".into());
-        }
-        let value: Value = serde_json::from_str(&output.content)?;
-        value["answer"].as_str().map(str::to_string)
+        entry.raw_answer = Some(output.content.clone());
+        business_answer(&output)?
     };
     let answer = answer
         .filter(|a| case.options.contains(a))
@@ -790,6 +885,20 @@ async fn write_report(directory: &Path) -> Result<(), BoxError> {
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "unknown".into())
         ));
+    }
+    let mut failures = BTreeMap::<(&str, &str), usize>::new();
+    for c in &manifest.cases {
+        if let Some(detail) = c.failure_detail.as_deref() {
+            *failures
+                .entry((c.failure.as_deref().unwrap_or("unknown"), detail))
+                .or_default() += 1;
+        }
+    }
+    if !failures.is_empty() {
+        markdown.push_str("\n## Failures\n\n");
+        for ((failure, detail), count) in failures {
+            markdown.push_str(&format!("- {count} × `{failure}`: {detail}\n"));
+        }
     }
     markdown.push_str("\nSee report.json for per-run final cost snapshots, cleanup results and invalid/unknown runs. Do not sum cumulative responses within a run.\n");
     let path = directory.join("report.md");
@@ -1024,6 +1133,17 @@ mod tests {
                     .unwrap();
             assert_eq!(before["counts"]["completed"], 8);
             assert_eq!(before["valid_pairs"], 4);
+            for case in before["cases"].as_array().unwrap() {
+                // Only Track A answers outside the host, so only it can show its inputs.
+                assert_eq!(
+                    case["memory_supplied"].is_array(),
+                    track == EvaluationTrack::Memory
+                );
+                assert_eq!(
+                    case["raw_answer"] == r#"{"answer":"unknown"}"#,
+                    track == EvaluationTrack::Memory
+                );
+            }
             assert_eq!(before["paired_success_difference"], 0.0);
             let id = before["cases"][0]["run_id"].as_str().unwrap();
             append_event(
@@ -1059,6 +1179,90 @@ mod tests {
         }
     }
 
+    /// A model that fixes its own sampling: it refuses any request that sets a temperature.
+    struct RejectsTemperature;
+    impl anda_engine::model::CompletionFeaturesDyn for RejectsTemperature {
+        fn model_name(&self) -> String {
+            "fixture".into()
+        }
+        fn completion(
+            &self,
+            request: anda_core::CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<anda_core::AgentOutput, BoxError>> {
+            if request.temperature.is_some() {
+                Box::pin(async {
+                    Err("400 Bad Request: Unsupported parameter: 'temperature'".into())
+                })
+            } else {
+                anda_engine::model::CompletionFeaturesDyn::completion(&Abstain, request)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_evaluation_requests_set_no_temperature_on_either_track() {
+        for track in [EvaluationTrack::Memory, EvaluationTrack::Agent] {
+            let directory = tempfile::tempdir().unwrap();
+            let output = directory.path().join("run");
+            let hosts = [
+                super::super::tests::host(Mode::Persistent).0,
+                super::super::tests::host(Mode::NoMemory).0,
+            ];
+            for host in &hosts {
+                host.models
+                    .set_model(anda_engine::model::Model::with_completer(Arc::new(
+                        RejectsTemperature,
+                    )));
+            }
+            let frozen = plan(track);
+            preflight(&hosts[1], &frozen.plan).await.unwrap();
+            evaluate(&frozen, &output, &hosts, "mechanism_fixture", false)
+                .await
+                .unwrap();
+            let report: Value =
+                serde_json::from_slice(&tokio::fs::read(output.join("report.json")).await.unwrap())
+                    .unwrap();
+            assert_eq!(report["counts"]["completed"], 8, "{report}");
+        }
+    }
+
+    struct Refuses;
+    impl anda_engine::model::CompletionFeaturesDyn for Refuses {
+        fn model_name(&self) -> String {
+            "fixture".into()
+        }
+        fn completion(
+            &self,
+            _request: anda_core::CompletionRequest,
+        ) -> anda_core::BoxPinFut<Result<anda_core::AgentOutput, BoxError>> {
+            Box::pin(async {
+                Err("400 Bad Request: Unsupported parameter (fixture-secret)".into())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_evaluation_preflight_reports_a_rejected_answer_request_before_any_run() {
+        let host = super::super::tests::host(Mode::NoMemory).0;
+        let frozen = plan(EvaluationTrack::Memory);
+        host.models
+            .set_model(anda_engine::model::Model::with_completer(Arc::new(Refuses)));
+        let error = preflight(&host, &frozen.plan).await.unwrap_err();
+        let detail = failure_detail(&error, Some("fixture-secret"));
+        assert!(detail.contains("Unsupported parameter"), "{detail}");
+        assert!(!detail.contains("fixture-secret"), "{detail}");
+        assert!(host.runs.lock().await.is_empty());
+
+        host.models
+            .set_model(anda_engine::model::Model::with_completer(Arc::new(Abstain)));
+        preflight(&host, &frozen.plan).await.unwrap();
+
+        let long: BoxError = "x\n".repeat(600).into();
+        let bounded = failure_detail(&long, None);
+        assert_eq!(bounded.chars().count(), 513);
+        assert!(!bounded.contains('\n'));
+    }
+
     #[tokio::test]
     async fn memory_evaluation_fixture_records_invalid_answers_and_closes_both_arms() {
         for track in [EvaluationTrack::Memory, EvaluationTrack::Agent] {
@@ -1082,6 +1286,14 @@ mod tests {
             assert_eq!(report["paired_success_difference"], Value::Null);
             assert_eq!(report["accounting_complete"], false);
             assert_eq!(report["evidence_kind"], "mechanism_fixture");
+            assert_eq!(report["cases"][0]["failure"], "execution_failure");
+            let detail = report["cases"][0]["failure_detail"].as_str().unwrap();
+            assert!(!detail.is_empty());
+            let markdown = tokio::fs::read_to_string(output.join("report.md"))
+                .await
+                .unwrap();
+            assert!(markdown.contains("## Failures"), "{markdown}");
+            assert!(markdown.contains(detail), "{markdown}");
             for host in hosts {
                 assert!(host.shutdown.is_cancelled());
                 assert!(
