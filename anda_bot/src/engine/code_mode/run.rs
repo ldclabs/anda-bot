@@ -736,7 +736,7 @@ impl WorkerRun {
             Err(e)
                 if matches!(
                     e.code.as_str(),
-                    "scope_denied" | "approval_denied" | "approval_required"
+                    "scope_denied" | "approval_denied" | "approval_required" | "external_user"
                 ) =>
             {
                 "denied"
@@ -760,7 +760,9 @@ impl WorkerRun {
         site: CallSite,
     ) -> Result<Value, Failure> {
         let name = name.to_ascii_lowercase();
-        if matches!(name.as_str(), super::EXEC | "tools_select") || !dispatch.permits(ctx, &name) {
+        if matches!(name.as_str(), super::EXEC | "tools_select" | "tools_search")
+            || !dispatch.permits(ctx, &name)
+        {
             return Err(Failure::new(
                 "scope_denied",
                 "tool is not permitted in this script",
@@ -777,10 +779,17 @@ impl WorkerRun {
         site.release();
         let mut output = result.map_err(|err| {
             let message = err.to_string();
-            let code = if message.contains("action denied:") {
+            let code = if message.contains("action denied:")
+                || (message.contains("approval for the") && message.contains("expired:"))
+            {
                 "approval_denied"
-            } else if message.contains("approval_required") || message.contains("nobody can") {
+            } else if message.contains("approval_required")
+                || message.contains("nobody can")
+                || message.contains("requires user approval")
+            {
                 "approval_required"
+            } else if message.contains("external users may only") {
+                "scope_denied"
             } else {
                 "tool_error"
             };
@@ -811,6 +820,7 @@ impl WorkerRun {
                 code: error["code"].as_str().unwrap_or("tool_error").into(),
                 message: error["message"]
                     .as_str()
+                    .or_else(|| error.as_str())
                     .or_else(|| output.output.as_str())
                     .unwrap_or("tool failed")
                     .into(),

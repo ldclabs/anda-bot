@@ -77,12 +77,33 @@ def inspect_source(source):
             schema["description"] = "Python default: " + repr(value)
         props[arg.arg] = schema
         signature.append(spec)
-    returns = py_type(type_schema(fn.returns)) if fn.returns is not None else "JsonValue"
+    returns = return_type(fn.returns) if fn.returns is not None else "JsonValue"
     # Verify the body also compiles, without executing definitions or defaults.
     compile(source, "<registered>", "exec")
     return {"name": "script__" + fn.name, "description": doc.strip(),
             "signature": "(" + ", ".join(signature) + ") -> " + returns, "defaults": allowed_defaults,
             "parameters": {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}}
+
+
+def return_type(node):
+    kind = type(node).__name__
+    if kind == "Constant" and node.value is None:
+        return "None"
+    if kind == "Name" and node.id == "dict":
+        return "dict"
+    if kind == "Subscript" and getattr(node.value, "id", None) == "dict":
+        elts = getattr(node.slice, "elts", None)
+        if type(node.slice).__name__ == "Tuple" and len(elts) == 2 and type(elts[0]).__name__ == "Name" and elts[0].id == "str":
+            return "dict[str, " + return_type(elts[1]) + "]"
+    if kind == "Subscript" and getattr(node.value, "id", None) == "list":
+        return "list[" + return_type(node.slice) + "]"
+    if kind == "BinOp" and type(node.op).__name__ == "BitOr":
+        for value, none in ((node.left, node.right), (node.right, node.left)):
+            if type(none).__name__ == "Constant" and none.value is None:
+                inner = return_type(value)
+                if inner != "None" and not inner.endswith(" | None"):
+                    return inner + " | None"
+    return py_type(type_schema(node))
 
 
 def py_type(schema):

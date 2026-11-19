@@ -7,5 +7,5 @@ runs:
       shell: bash
       run: |
         git init -q -b main ../anda
-        git -C ../anda fetch --depth=1 https://github.com/ldclabs/anda.git 9d98f77766854f953044b0aab9ca4feed5006839
+        git -C ../anda fetch --depth=1 https://github.com/ldclabs/anda.git 24091e028c55c512891c9f40494cf2c7c7d3940a
         git -C ../anda checkout --detach FETCH_HEAD

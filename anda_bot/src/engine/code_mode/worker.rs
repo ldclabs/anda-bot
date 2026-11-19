@@ -157,16 +157,35 @@ fn evaluate(vm: &VirtualMachine, request: Value) -> Value {
     })();
     match result {
         Ok(obj) => {
+            let tool_error = obj
+                .downcast_ref::<rustpython_vm::builtins::PyDict>()
+                .and_then(|dict| dict.get_item("tool_error", vm).ok());
+            if let Some(error) = tool_error {
+                if let Ok(bytes) = encode(vm, &error, FRAME_LIMIT / 2)
+                    && let Ok(error) = serde_json::from_slice::<Value>(&bytes)
+                {
+                    return json!({"op":"failed","code":error["code"],"message":error["message"],"data":error["data"]});
+                }
+                let dict = error.downcast_ref::<rustpython_vm::builtins::PyDict>();
+                let field = |key| {
+                    dict.and_then(|d| d.get_item(key, vm).ok())
+                        .and_then(|v| encode(vm, &v, 4096).ok())
+                        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+                };
+                return json!({
+                    "op": "failed",
+                    "code": field("code").unwrap_or_else(|| json!("tool_error")),
+                    "message": field("message").unwrap_or_else(|| json!("tool failed")),
+                    "data": Value::Null,
+                });
+            }
             let bound = if inspecting {
                 FRAME_LIMIT / 2
             } else {
-                OUTPUT_LIMIT + 5 * 1024
+                // Worst-case JSON escaping expands 4 KiB stdout up to 24 KiB.
+                OUTPUT_LIMIT + 32 * 1024
             };
             match encode(vm, &obj, bound).and_then(|b| Ok(serde_json::from_slice::<Value>(&b)?)) {
-                Ok(value) if value.get("tool_error").is_some() => {
-                    let error = &value["tool_error"];
-                    json!({"op":"failed","code":error["code"],"message":error["message"],"data":error["data"]})
-                }
                 Ok(value)
                     if inspecting
                         || serde_json::to_vec(&value["value"])

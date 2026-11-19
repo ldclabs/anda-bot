@@ -56,6 +56,7 @@ fn parameter_type(schema: &Value) -> bool {
     if obj
         .keys()
         .any(|k| !matches!(k.as_str(), "type" | "description" | "items"))
+        || !obj.get("description").is_none_or(Value::is_string)
     {
         return false;
     }

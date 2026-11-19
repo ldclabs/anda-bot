@@ -92,11 +92,13 @@
   let drafts = $state<Record<string, string>>({})
   let now = $state(Date.now())
   let shownActionId = ''
+  let shownBatchId = ''
   let shownAt = 0
 
   const action = $derived(pending[0])
+  const approval = $derived(Boolean(action && isApprovalAction(action)))
   const batch = $derived(
-    action?.payload.batch_id && action.payload.parent_run_id
+    approval && action?.payload.batch_id && action.payload.parent_run_id
       ? pending.filter((item) => isApprovalAction(item) &&
           item.payload.batch_id === action.payload.batch_id &&
           item.payload.parent_run_id === action.payload.parent_run_id &&
@@ -104,7 +106,6 @@
           item.payload.conversation === action.payload.conversation)
       : []
   )
-  const approval = $derived(Boolean(action && isApprovalAction(action)))
   const title = $derived(action ? actionTitle(action) || actionKindLabel(action) : '')
   const message = $derived(action ? actionMessage(action) || '' : '')
   const defaultChoiceId = $derived(action ? actionDefaultChoiceId(action) : '')
@@ -170,6 +171,12 @@
   // A new choice takes keyboard focus when nothing else holds it, so its
   // number keys work at once. Approvals never do: a stray Enter must not run a command.
   $effect(() => {
+    const batchId =
+      approval && typeof action?.payload.batch_id === 'string' ? action.payload.batch_id : ''
+    if (batchId !== shownBatchId) {
+      shownBatchId = batchId
+      selected = []
+    }
     const id = action?.id || ''
     if (id === shownActionId) return
     shownActionId = id

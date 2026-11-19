@@ -122,7 +122,7 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 # lines patch the shared stack from sibling checkouts for development; keep one
 # DB/KIP/Core type identity (verify with `cargo metadata`).
 # anda_brain = { path = "../anda-brain/anda_brain" }
-# Use ldclabs/anda at 9d98f77 pending the Code Mode release. Engine depends on its
+# Use ldclabs/anda at 24091e0 pending the Code Mode release. Engine depends on its
 # sibling Core by path, so patch both to share types with Brain and the server.
 anda_core = { path = "../anda/anda_core" }
 anda_engine = { path = "../anda/anda_engine" }

@@ -145,7 +145,8 @@ impl CodeMode {
         let workspace = match call_workspace(Some(&self.grants), &base).await? {
             Some(path) => path,
             None => {
-                let workspace = request_meta_extra_as::<PathBuf>(meta, keys::WORKSPACE);
+                let workspace = request_meta_extra_as::<PathBuf>(meta, keys::WORKSPACE)
+                    .filter(|p| !p.as_os_str().is_empty());
                 tokio::fs::canonicalize(workspace.as_ref().unwrap_or(&self.workspace)).await?
             }
         };
@@ -253,7 +254,7 @@ impl RequestCatalog for CodeMode {
             .map(|s| s.revision.clone())
     }
     fn interface(&self, ctx: &BaseCtx, def: &FunctionDefinition) -> Option<String> {
-        if matches!(def.name.as_str(), EXEC | "tools_select") {
+        if matches!(def.name.as_str(), EXEC | "tools_select" | "tools_search") {
             return None;
         }
         let output = match def.name.as_str() {
@@ -286,7 +287,7 @@ impl RequestCatalog for CodeMode {
             })
             .unwrap_or_default();
         if def.name.contains('-') {
-            Some(format!("tools[{:?}](**kwargs) -> {output}", def.name))
+            Some(format!("tools[{:?}]({params}) -> {output}", def.name))
         } else {
             Some(format!("tools.{}({params}) -> {output}", def.name))
         }

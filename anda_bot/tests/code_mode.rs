@@ -86,6 +86,14 @@ fn code_mode_worker_validates_declarations_and_defaults_without_running_the_func
         declaration["value"]["parameters"]["properties"]["label"]["type"],
         json!(["string", "null"])
     );
+    for ret in ["None", "dict", "dict[str, int]", "list[dict] | None"] {
+        let annotated = source.replace("-> int:", &format!("-> {ret}:"));
+        assert_eq!(
+            execute(json!({"op":"inspect","source":annotated}))["op"],
+            "done",
+            "expected return annotation {ret} to be accepted"
+        );
+    }
     for bad in ["import json\n", "@tools.decorator\n"] {
         assert_eq!(
             execute(json!({"op":"inspect","source":format!("{bad}{source}")}))["code"],
@@ -116,6 +124,13 @@ fn code_mode_worker_limits_output_and_imports() {
     assert_eq!(result["value"]["stdout_truncated"], true);
     let multiline = execute(json!({"op":"exec","source":"return \"\"\"first\nsecond\"\"\""}));
     assert_eq!(multiline["value"]["value"], "first\nsecond", "{multiline}");
+    let escaped_stdout =
+        execute(json!({"op":"exec","source":"print('\\n' * 4096)\nreturn 'x' * 30000"}));
+    assert_eq!(escaped_stdout["op"], "done", "{escaped_stdout}");
+    assert_eq!(
+        escaped_stdout["value"]["value"].as_str().unwrap().len(),
+        30000
+    );
     assert_eq!(
         execute(json!({"op":"exec","source":"return 'x' * 50000"}))["code"],
         "resource_limit"

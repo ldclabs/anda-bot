@@ -226,6 +226,10 @@ impl App {
         }
 
         if text.split_whitespace().next() == Some("/batch") {
+            if self.action_response_pending() {
+                self.notice = "Waiting for the current action response to finish.".to_string();
+                return;
+            }
             match super::action::batch_answers(&self.chat.messages, &text) {
                 Ok(answers) => {
                     self.clear_input();

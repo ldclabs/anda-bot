@@ -307,7 +307,7 @@ Until the Code Mode Engine is released, source builds of this revision require t
 
 ```bash
 git clone https://github.com/ldclabs/anda.git
-git -C anda checkout 9d98f77766854f953044b0aab9ca4feed5006839
+git -C anda checkout 24091e028c55c512891c9f40494cf2c7c7d3940a
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo build --locked -p anda_bot --bin anda

@@ -291,6 +291,23 @@ impl SessionRunner {
             .await
     }
 
+    #[cfg(feature = "code-mode")]
+    async fn acknowledge_code_mode_runs(&self) {
+        if let Some(done) = self
+            .ctx
+            .base
+            .get_state::<crate::engine::code_mode::FinishedRuns>()
+        {
+            let user_replied = self
+                .ctx
+                .base
+                .get_state::<crate::engine::code_mode::RecoveryHold>()
+                .is_some_and(|hold| !hold.waiting());
+            done.acknowledge(&self.conversation.messages, user_replied)
+                .await;
+        }
+    }
+
     async fn drain_action_events(&mut self) -> Result<(), BoxError> {
         let mut changed = false;
         while let Ok(event) = self.action_rx.try_recv() {
@@ -585,6 +602,8 @@ impl SessionRunner {
         // 把新的 conversation 设为原 conversation 的 child，延续同一个 session，客户端可以读取连续的 conversation 记录来展示给用户
         self.conversation.child = Some(child_id);
         self.persist_conversation_state().await?;
+        #[cfg(feature = "code-mode")]
+        self.acknowledge_code_mode_runs().await;
         self.submit_pending_formation(now_ms).await;
 
         self.session.submit_formation_at.store(0, Ordering::SeqCst);
@@ -1367,19 +1386,7 @@ impl SessionRunner {
                 }
                 self.persist_conversation_state().await?;
                 #[cfg(feature = "code-mode")]
-                if let Some(done) = self
-                    .ctx
-                    .base
-                    .get_state::<crate::engine::code_mode::FinishedRuns>()
-                {
-                    let user_replied = self
-                        .ctx
-                        .base
-                        .get_state::<crate::engine::code_mode::RecoveryHold>()
-                        .is_some_and(|hold| !hold.waiting());
-                    done.acknowledge(&self.conversation.messages, user_replied)
-                        .await;
-                }
+                self.acknowledge_code_mode_runs().await;
                 if cron_finished {
                     self.cron_receipts.finish();
                 }

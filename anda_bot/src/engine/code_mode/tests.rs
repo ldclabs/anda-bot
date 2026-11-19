@@ -229,6 +229,14 @@ async fn code_mode_register_restart_and_reuse_through_runner() {
     assert!(!bot.mode.visible(&bot.ctx.base, REGISTER));
     let denied=bot.call(EXEC,json!({"code":"return tools.code_register(action='remove', name='script__cron_failure_count', source=None, expected_revision='x')"}),None).await;
     assert_eq!(denied.output["error"]["code"], "scope_denied");
+    let search_denied = bot
+        .call(
+            EXEC,
+            json!({"code":"return tools.tools_search(query='cron')"}),
+            None,
+        )
+        .await;
+    assert_eq!(search_denied.output["error"]["code"], "scope_denied");
 }
 
 #[tokio::test]
