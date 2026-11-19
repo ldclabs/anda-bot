@@ -46,12 +46,16 @@ pub(crate) mod mcp;
 mod memory_api;
 mod memory_mcp;
 pub(crate) use memory_mcp::MEMORY_MCP_PATH;
+#[cfg(feature = "code-mode")]
+pub(crate) mod code_mode;
 mod multimodal;
 mod plan;
 mod project_fs;
 mod prompt;
 mod resources;
 mod shell_runtime;
+#[cfg(feature = "code-mode")]
+pub(crate) use action::approve_im_send;
 pub(crate) use shell_runtime::CliWorkspaceGrants;
 mod side;
 mod skill_library;
@@ -133,6 +137,8 @@ pub struct EngineConfig {
     pub models: Arc<Models>,
     pub brain_models: Arc<Models>,
     pub brain_base_url: String,
+    #[cfg(feature = "code-mode")]
+    pub code_mode_enabled: bool,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub workspaces: Vec<PathBuf>,
@@ -659,25 +665,40 @@ impl Engines {
         // fully idle and the last sleep is more than 12 hours old.
         let idle_hooks: Vec<Arc<dyn IdleHook>> =
             vec![Arc::new(BrainSleepIdleHook::new(brain_client.clone()))];
-        let bot = Arc::new(
-            AndaBot::new(
-                brain_client.clone(),
-                cfg.models.clone(),
+        let bot = AndaBot::new(
+            brain_client.clone(),
+            cfg.models.clone(),
+            cfg.home_dir.clone(),
+            conversations_tool.clone(),
+            resource_store.clone(),
+            completion_hooks,
+            idle_hooks,
+            skill_library.clone(),
+            browser_tabs_tool.clone(),
+            tts_manager.clone(),
+            transcription_manager.clone(),
+            active_im_channels,
+        )
+        .with_plan_owner(cfg.owner)
+        .with_admission(cron_runtime.admission.clone())
+        .with_memory_access(memory_access.clone());
+        #[cfg(feature = "code-mode")]
+        let code_mode = cfg.code_mode_enabled.then(|| {
+            code_mode::CodeMode::new(
                 cfg.home_dir.clone(),
-                conversations_tool.clone(),
-                resource_store.clone(),
-                completion_hooks,
-                idle_hooks,
-                skill_library.clone(),
-                browser_tabs_tool.clone(),
-                tts_manager.clone(),
-                transcription_manager.clone(),
-                active_im_channels,
+                default_workspace.clone(),
+                cfg.owner,
+                cli_workspaces.clone(),
+                root_secret,
             )
-            .with_plan_owner(cfg.owner)
-            .with_admission(cron_runtime.admission.clone())
-            .with_memory_access(memory_access.clone()),
-        );
+        });
+        #[cfg(feature = "code-mode")]
+        if let Some(mode) = &code_mode {
+            mode.verify_platform().await?
+        }
+        #[cfg(feature = "code-mode")]
+        let bot = bot.with_code_mode(code_mode.clone());
+        let bot = Arc::new(bot);
         runtime_models.bot = Some(bot.clone());
         let media_agents = [
             MediaUnderstandingAgent::image,
@@ -850,6 +871,13 @@ impl Engines {
         }
         // Every agent call to an MCP tool passes the gate, which asks first
         // when the server's policy says so.
+        #[cfg(feature = "code-mode")]
+        if let Some(mode) = code_mode {
+            for name in [code_mode::EXEC, code_mode::REGISTER, code_mode::LIST] {
+                engine_builder =
+                    engine_builder.register_tool(record_artifacts(Arc::new(mode.tool(name))))?;
+            }
+        }
         engine_builder = engine_builder.register_tool_provider(Arc::new(
             resources::ArtifactProvider(Arc::new(mcp::McpGate::new(
                 mcp_provider,

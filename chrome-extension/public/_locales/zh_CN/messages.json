@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "已在聊天中回复"
   },
+  "codeBatchSelect": {
+    "message": "勾选要批准的调用。未勾选的调用将被拒绝。"
+  },
+  "codeBatchApply": {
+    "message": "提交本批决定"
+  },
   "actionDockMore": {
     "message": "还有 $1 项"
   },

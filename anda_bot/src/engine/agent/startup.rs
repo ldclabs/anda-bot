@@ -137,9 +137,6 @@ impl AndaBot {
             return Ok(());
         }
         let chat_history = conversation_chat_history(&conversation);
-        if chat_history.is_empty() {
-            return Ok(());
-        }
 
         let now_ms = unix_ms();
         let mut meta = request_meta_from_conversation(&conversation, &candidate.source_key);
@@ -164,6 +161,40 @@ impl AndaBot {
 
         let agent_label = ctx.label.clone();
         let ctx = ctx.child(Self::NAME, &agent_label)?;
+        #[cfg(feature = "code-mode")]
+        let recovery = if let Some(mode) = &self.inner.code_mode {
+            ctx.base.set_state(SessionRequestMeta::new(meta.clone()));
+            ctx.base
+                .set_state(crate::engine::code_mode::FinishedRuns::default());
+            mode.attach(&ctx, &meta).await?;
+            // The model's replay history has already dropped unanswered calls.
+            // Reconciliation needs the original call IDs to recognize them.
+            let recorded: Vec<_> = conversation
+                .messages
+                .iter()
+                .filter_map(|m| serde_json::from_value(m.clone()).ok())
+                .collect();
+            match mode
+                .recovery(&ctx.base, &meta, conversation._id, &recorded)
+                .await
+            {
+                Ok(summary) => summary,
+                Err(err) => {
+                    log::warn!(conversation=conversation._id;"Code Mode receipts could not be read: {err}");
+                    ctx.base
+                        .set_state(crate::engine::code_mode::RecoveryHold::default());
+                    Some("Code Mode receipts could not be read. Ask the user to check the outcome before starting new operations.".into())
+                }
+            }
+        } else {
+            None
+        };
+        #[cfg(not(feature = "code-mode"))]
+        let recovery: Option<String> = None;
+        if chat_history.is_empty() && recovery.is_none() {
+            return Ok(());
+        }
+        let prompt = recovery.map_or(prompt.clone(), |summary| format!("{prompt}\n{summary}"));
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let available_tools = available_tool_names(&ctx).await;
         let instructions = self
@@ -185,6 +216,11 @@ impl AndaBot {
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
             ..Default::default()
+        };
+        #[cfg(feature = "code-mode")]
+        let initial_req = match &self.inner.code_mode {
+            Some(mode) => mode.initial_interfaces(&ctx.base, initial_req),
+            None => initial_req,
         };
 
         let session_request_meta = SessionRequestMeta::new(meta.clone());

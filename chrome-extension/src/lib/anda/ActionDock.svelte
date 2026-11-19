@@ -88,12 +88,22 @@
   let focused = $state({ actionId: '', index: -1 })
   let failure = $state({ actionId: '', text: '' })
   let respondingRow = $state('')
+  let selected = $state<string[]>([])
   let drafts = $state<Record<string, string>>({})
   let now = $state(Date.now())
   let shownActionId = ''
   let shownAt = 0
 
   const action = $derived(pending[0])
+  const batch = $derived(
+    action?.payload.batch_id && action.payload.parent_run_id
+      ? pending.filter((item) => isApprovalAction(item) &&
+          item.payload.batch_id === action.payload.batch_id &&
+          item.payload.parent_run_id === action.payload.parent_run_id &&
+          item.payload.session === action.payload.session &&
+          item.payload.conversation === action.payload.conversation)
+      : []
+  )
   const approval = $derived(Boolean(action && isApprovalAction(action)))
   const title = $derived(action ? actionTitle(action) || actionKindLabel(action) : '')
   const message = $derived(action ? actionMessage(action) || '' : '')
@@ -240,6 +250,20 @@
     }
   }
 
+  async function answerBatch() {
+    if (disabled || batch.length < 2) return
+    // Snapshot the exact visible IDs before the first reply changes the dock.
+    const answers = batch.map((item) => ({ actionId: item.id, approve: selected.includes(item.id) }))
+    respondingRow = 'batch'
+    const results = await Promise.allSettled(answers.map((answer) => andaClient.respondAction(answer)))
+    const errors = results.filter((result) => result.status === 'rejected')
+    if (errors.length) {
+      failure = { actionId: action?.id || '', text: errors.map((result) => String(result.reason)).join('\n') }
+    }
+    respondingRow = ''
+    selected = []
+  }
+
   /** Answers the docked approval; the host's shortcuts call this. */
   export function respond(approve: boolean): Promise<void> {
     const row = approval ? rows.find((r) => r.kind === (approve ? 'approve' : 'deny')) : undefined
@@ -329,6 +353,24 @@
     </header>
 
     {#if !collapsed}
+      {#if batch.length > 1}
+        <fieldset class="action-dock-body scrollbar-slim" {disabled}>
+          <legend>{getMessage('codeBatchSelect')}</legend>
+          {#each batch as item (item.id)}
+            <label class="batch-item">
+              <input type="checkbox" bind:group={selected} value={item.id} />
+              <span>{item.summary || item.command || actionTitle(item)}
+                {#each item.details || [] as detail}
+                  <small>{actionDetailLabel(detail)} · {actionDetailText(detail)}</small>
+                {/each}
+              </span>
+            </label>
+          {/each}
+          <button type="button" class="action-dock-option" onclick={answerBatch}>
+            {getMessage('codeBatchApply')}
+          </button>
+        </fieldset>
+      {/if}
       {#if message || action.summary || action.details?.length || action.command}
         <div class="action-dock-body scrollbar-slim">
           {#if message}
@@ -466,6 +508,8 @@
 {/if}
 
 <style>
+  .batch-item { display: flex; align-items: baseline; gap: .5rem; margin: .5rem 0; }
+  .batch-item small { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
   /* Reads the host's --message-* palette, like the composer card it sits on. */
   .action-dock {
     display: grid;

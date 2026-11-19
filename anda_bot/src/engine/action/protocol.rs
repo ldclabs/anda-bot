@@ -151,6 +151,12 @@ pub(crate) struct ActionPayload {
     pub agent: String,
     pub conversation: u64,
     pub session: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_id: Option<u32>,
     pub title: String,
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

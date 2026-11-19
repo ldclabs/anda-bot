@@ -51,6 +51,9 @@ pub struct Config {
     pub brain: BrainSettings,
 
     #[serde(default)]
+    pub code_mode: CodeModeSettings,
+
+    #[serde(default)]
     pub tts: TtsConfig,
 
     #[serde(default)]
@@ -68,6 +71,12 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct BrainSettings {
     pub runtime_config: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CodeModeSettings {
+    pub enabled: bool,
 }
 
 impl BrainSettings {
@@ -119,6 +128,7 @@ impl Default for Config {
             workspaces: Vec::new(),
             model: ModelSettings::default(),
             brain: BrainSettings::default(),
+            code_mode: CodeModeSettings::default(),
             users: Vec::new(),
             channels: ChannelSettings::default(),
             tts: TtsConfig::default(),

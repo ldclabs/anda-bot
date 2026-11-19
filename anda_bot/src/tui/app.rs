@@ -74,6 +74,7 @@ pub(super) struct App {
     pub(super) pending_memory: Option<oneshot::Receiver<MemoryResult>>,
     pub(super) memory_inbox: Option<AttentionPage>,
     pub(super) pending_action_response: Option<oneshot::Receiver<ActionResponseResult>>,
+    batch_answers: std::collections::VecDeque<TuiActionResponseRequest>,
     pub(super) choice_input: Option<TuiActionChoiceDraft>,
     pub(super) full_access: bool,
     pub(super) input_layouts: RefCell<InputLayouts>,
@@ -114,6 +115,7 @@ impl App {
             pending_memory: None,
             memory_inbox: None,
             pending_action_response: None,
+            batch_answers: Default::default(),
             choice_input: None,
             full_access,
             input_layouts: RefCell::default(),
@@ -223,6 +225,19 @@ impl App {
             return;
         }
 
+        if text.split_whitespace().next() == Some("/batch") {
+            match super::action::batch_answers(&self.chat.messages, &text) {
+                Ok(answers) => {
+                    self.clear_input();
+                    self.batch_answers = answers.into();
+                    if let Some(first) = self.batch_answers.pop_front() {
+                        self.start_action_response(first);
+                    }
+                }
+                Err(message) => self.notice = message,
+            }
+            return;
+        }
         if text == "/reload" {
             self.clear_input();
             self.start_bootstrap();
@@ -482,6 +497,7 @@ impl App {
         self.pending_memory = None;
         self.memory_inbox = None;
         self.pending_action_response = None;
+        self.batch_answers.clear();
         // A choice draft answers an action of the session being replaced;
         // an ordinary draft survives the reconnect.
         if self.choice_input.take().is_some() {
@@ -787,6 +803,9 @@ impl App {
         match result {
             Some(result) => self.apply_action_response_result(result),
             None => self.notice = "Action response task cancelled.".to_string(),
+        }
+        if let Some(next) = self.batch_answers.pop_front() {
+            self.start_action_response(next);
         }
         true
     }

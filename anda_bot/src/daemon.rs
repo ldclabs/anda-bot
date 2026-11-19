@@ -317,6 +317,11 @@ impl Daemon {
         id_key: identity::Ed25519Key,
         user_pubkey: identity::Ed25519PubKey,
     ) -> Result<(), BoxError> {
+        if !cfg!(feature = "code-mode") && self.cfg.code_mode.enabled {
+            return Err(
+                "code_mode.enabled requires an anda binary built with --features code-mode".into(),
+            );
+        }
         let _pid_guard = self.acquire_pid_file().await?;
 
         let mut addr = self.cfg.socket_addr()?;
@@ -385,6 +390,8 @@ impl Daemon {
             models: models.clone(),
             brain_models,
             brain_base_url: self.cfg.brain_base_url(),
+            #[cfg(feature = "code-mode")]
+            code_mode_enabled: self.cfg.code_mode.enabled,
             home_dir: self.home.clone(),
             skills_dir: self.skills_dir_path(),
             workspaces: self.workspaces(),

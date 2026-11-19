@@ -179,6 +179,8 @@ impl MemoryPolicy {
         // Tools that persist on the owner's behalf, named by their constants so
         // a rename cannot silently reopen them.
         let persisting = [
+            #[cfg(feature = "code-mode")]
+            crate::engine::code_mode::REGISTER,
             crate::cron::CreateCronTool::NAME,
             crate::cron::UpdateCronJobTool::NAME,
             crate::cron::ManageCronJobTool::NAME,

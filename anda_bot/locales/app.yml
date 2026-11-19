@@ -1,5 +1,20 @@
 _version: 2
 
+code_mode.batch_hint:
+  en: "Batch %{batch}, item %{child}. Reply with /batch %{batch} +1 -2 to approve or deny displayed items."
+  zh-Hans: "批次 %{batch}，第 %{child} 项。输入 /batch %{batch} +1 -2 可批准或拒绝已显示的项目。"
+  es: "Lote %{batch}, elemento %{child}. Usa /batch %{batch} +1 -2 para aprobar o rechazar elementos visibles."
+  fr: "Lot %{batch}, élément %{child}. Utilisez /batch %{batch} +1 -2 pour accepter ou refuser les éléments affichés."
+  ru: "Пакет %{batch}, вызов %{child}. Введите /batch %{batch} +1 -2, чтобы одобрить или отклонить показанные вызовы."
+  ar: "الدفعة %{batch}، العنصر %{child}. استخدم ‎/batch %{batch} +1 -2 لقبول العناصر المعروضة أو رفضها."
+code_mode.batch_usage:
+  en: "Use /batch BATCH +1 -2 with the numbers of pending calls."
+  zh-Hans: "使用 /batch 批次号 +1 -2，并填写待批调用的编号。"
+  es: "Usa /batch LOTE +1 -2 con las llamadas pendientes."
+  fr: "Utilisez /batch LOT +1 -2 avec les numéros des appels en attente."
+  ru: "Введите /batch ПАКЕТ +1 -2 с номерами ожидающих вызовов."
+  ar: "استخدم ‎/batch BATCH +1 -2 مع أرقام الاستدعاءات المعلقة."
+
 launcher.retired_title:
   en: Anda Bot tray moved to Anda Desktop
   zh-Hans: Anda Bot 托盘已并入 Anda 桌面端

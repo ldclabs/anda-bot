@@ -865,6 +865,14 @@ impl SessionRunner {
         // authorize another check of the same unfinished plan.
         if new_request {
             self.plan_nudge_sent = false;
+            #[cfg(feature = "code-mode")]
+            if let Some(hold) = self
+                .ctx
+                .base
+                .get_state::<crate::engine::code_mode::RecoveryHold>()
+            {
+                hold.user_replied();
+            }
         }
 
         // A request from the caller to an idle session starts a new turn, so
@@ -1342,6 +1350,14 @@ impl SessionRunner {
                     }
                 }
                 self.persist_conversation_state().await?;
+                #[cfg(feature = "code-mode")]
+                if let Some(done) = self
+                    .ctx
+                    .base
+                    .get_state::<crate::engine::code_mode::FinishedRuns>()
+                {
+                    done.acknowledge(&self.conversation.messages).await;
+                }
                 if cron_finished {
                     self.cron_receipts.finish();
                 }

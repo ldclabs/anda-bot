@@ -150,6 +150,10 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 `anda --full-access` 以完全访问模式启动交互会话，在策略允许的范围内跳过审批。**Cron 任务和处于活动状态的目标任务使用完全访问权限。** MCP 事件自动化不会获得这一权限提升，需要审批的操作会被拒绝。显式配置的 MCP `ask` 策略在完全访问模式下也仍然要求审批。这些是本地运行时的控制，shell 命令以你的操作系统用户权限执行。
 
+### Python Code Mode
+
+使用带 `code-mode` Cargo feature 的构建，在 `~/.anda/config.yaml` 中添加 `code_mode: { enabled: true }` 并重启服务。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
+
 ## 长期记忆
 
 配置好模型后即可使用日常记忆，无需部署独立 Brain 服务或启用可选编译特性。Brain 在后台将对话整理为结构化记忆，召回相关上下文，并持续维护图谱。
@@ -298,6 +302,8 @@ anda voice --record-secs 8 --no-playback
 ## 开发
 
 Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **Rust 1.95 或更新版本**、本地 C/C++ 构建工具链，以及 `PATH` 中的 `protoc`。CI 会安装这些前置依赖，各平台配置见[测试工作流](.github/workflows/test.yml)和[发布工作流](.github/workflows/release.yml)。
+
+在支持 Code Mode 的 Engine 发布前，构建本次提交需要把包含这次 Engine 改动的 `anda` 仓库放在 `anda-bot` 的同级目录。Cargo 从 `../anda` 同时读取 `anda_engine` 和它依赖的 `anda_core`。
 
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git

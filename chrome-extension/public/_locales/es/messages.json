@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "Respondido en el chat"
   },
+  "codeBatchSelect": {
+    "message": "Selecciona las llamadas que quieres aprobar. Las demás se rechazarán."
+  },
+  "codeBatchApply": {
+    "message": "Aplicar las decisiones"
+  },
   "actionDockMore": {
     "message": "+$1 más"
   },

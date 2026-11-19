@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "تمت الإجابة في المحادثة"
   },
+  "codeBatchSelect": {
+    "message": "حدّد الاستدعاءات المطلوب قبولها. ستُرفض الاستدعاءات غير المحددة."
+  },
+  "codeBatchApply": {
+    "message": "تطبيق القرارات"
+  },
   "actionDockMore": {
     "message": "+$1 أخرى"
   },

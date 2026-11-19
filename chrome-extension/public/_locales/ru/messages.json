@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "Ответ дан в чате"
   },
+  "codeBatchSelect": {
+    "message": "Отметьте вызовы для одобрения. Остальные будут отклонены."
+  },
+  "codeBatchApply": {
+    "message": "Применить решения"
+  },
   "actionDockMore": {
     "message": "ещё $1"
   },

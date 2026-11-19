@@ -114,6 +114,16 @@ impl Tool<BaseCtx> for SendImMessageTool {
         let conversation =
             request_meta_extra_as::<u64>(&meta, keys::CONVERSATION).filter(|conv_id| *conv_id > 0);
 
+        #[cfg(feature = "code-mode")]
+        crate::engine::approve_im_send(
+            &ctx,
+            &channel,
+            &recipient,
+            thread.as_deref(),
+            &args.content,
+            &resources,
+        )
+        .await?;
         let message = SendMessage::new(args.content, recipient.clone())
             .in_thread(thread.clone())
             .with_attachments(resources);

@@ -10,8 +10,8 @@
 //! MCP tool, so a skill written for them reaches the same tool.
 
 use anda_core::{
-    BoxError, BoxFut, FunctionDefinition, Json, Resource, ToolGroup, ToolInput, ToolOutput,
-    ToolProvider, validate_function_name,
+    BoxError, BoxFut, FunctionDefinition, Json, Resource, StateFeatures, ToolGroup, ToolInput,
+    ToolOutput, ToolProvider, validate_function_name,
 };
 use anda_engine::{
     context::BaseCtx,
@@ -127,6 +127,26 @@ impl McpGate {
                 Err(err) if err.is::<crate::engine::action::ApprovalModeChanged>() => continue,
                 result => result?,
             };
+            let Some(current) = self.route(&route.name) else {
+                return Err("MCP tool was removed while awaiting approval".into());
+            };
+            if current.server_generation != route.server_generation || current.tool != route.tool {
+                return Err(
+                    "MCP tool changed while awaiting approval; select its current definition"
+                        .into(),
+                );
+            }
+            let current_policy = self
+                .manager
+                .tool_policy(&route.server_id, &route.remote_name);
+            let current_scope = approval_scope(ctx);
+            if current_scope.mode != scope.mode
+                || current_scope.external_user != scope.external_user
+                || current_policy.approval != policy.approval
+                || current_policy.allow_external_users != policy.allow_external_users
+            {
+                continue;
+            }
             // The card showed the tool as new or changed: approving it accepts
             // the definition, so it is not asked about as new again.
             if !reviewed {
@@ -238,16 +258,75 @@ impl ToolProvider<BaseCtx> for McpGate {
                     &route.server_id,
                     &ctx,
                     self.manager.elicitation_timeout(&route.server_id),
-                    self.provider.call(ctx.clone(), input),
+                    self.provider.call_route_with_cancellation(
+                        route.clone(),
+                        input,
+                        ctx.cancellation_token(),
+                    ),
                 )
                 .await;
             let failed = result
                 .as_ref()
                 .map_or(true, |output| output.is_error == Some(true));
             self.manager.record_call(&route.server_id, failed);
+            #[cfg(feature = "code-mode")]
+            if ctx
+                .get_state::<crate::engine::code_mode::CallSite>()
+                .is_some()
+            {
+                return result.map(|output| python_output(ctx.caller(), &route.name, output));
+            }
             result
         })
     }
+}
+
+#[cfg(feature = "code-mode")]
+fn python_output(
+    caller: &anda_core::Principal,
+    tool: &str,
+    mut output: ToolOutput<Json>,
+) -> ToolOutput<Json> {
+    let view = output.model_output.take().unwrap_or_default();
+    let mut resources: Vec<_> = output.output["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| match item["type"].as_str() {
+            Some("resource") => item["resource"]["uri"].as_str(),
+            Some("resource_link") => item["uri"].as_str(),
+            _ => None,
+        })
+        .take(128)
+        .map(|uri| json!({"uri":uri}))
+        .collect();
+    let media = view
+        .media
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| Resource {
+            name: format!("{tool}-{}", i + 1),
+            size: Some(m.data.len() as u64),
+            tags: m.mime_type.split('/').take(1).map(str::to_owned).collect(),
+            mime_type: Some(m.mime_type),
+            blob: Some(m.data),
+            ..Default::default()
+        })
+        .collect();
+    let media = anda_core::update_resources(caller, media);
+    resources.extend(
+        media
+            .iter()
+            .map(|r| json!({"name":r.name,"mime_type":r.mime_type,"size":r.size,"hash":r.hash})),
+    );
+    output.artifacts.extend(media);
+    let structured = output.output.get_mut("structured_content").map(Json::take);
+    output.output = if output.is_error == Some(true) {
+        json!({"error":{"code":"tool_error","message":view.text,"data":structured}})
+    } else {
+        json!({"structured_content":structured,"text":view.text,"resources":resources})
+    };
+    output
 }
 
 /// Whether a call must be approved first. The most specific setting wins: a
@@ -406,6 +485,33 @@ fn approval_card(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "code-mode")]
+    #[test]
+    fn code_mode_mcp_projection_keeps_media_and_omits_private_metadata() {
+        use anda_core::{Principal, ToolMedia, ToolOutput, ToolPresentation};
+        use serde_json::json;
+        let mut out = ToolOutput::new(
+            json!({"_meta":{"credential":"private"},"structured_content":{"n":2},
+            "content":[{"type":"resource_link","uri":"fixture://one","_meta":{"x":"private"}}]}),
+        );
+        out.model_output = Some(ToolPresentation {
+            text: "fixture".into(),
+            media: vec![ToolMedia {
+                mime_type: "image/png".into(),
+                data: vec![1, 2, 3].into(),
+            }],
+        });
+        let projected = super::python_output(&Principal::anonymous(), "mcp_fixture_read", out);
+        assert_eq!(projected.output["structured_content"], json!({"n":2}));
+        assert_eq!(
+            projected.output["resources"][0],
+            json!({"uri":"fixture://one"})
+        );
+        assert_eq!(projected.output["resources"][1]["size"], 3);
+        assert!(projected.output["resources"][1]["hash"].is_string());
+        assert_eq!(projected.artifacts.len(), 1);
+        assert!(!projected.output.to_string().contains("private"));
+    }
     use super::*;
     use crate::{
         config::McpSettings,

@@ -8,6 +8,26 @@ description: Configure proveedores de modelos, directorios locales, proxies, lí
 
 De manera predeterminada, Anda almacena el estado del runtime en `~/.anda`. El archivo de configuración principal es `~/.anda/config.yaml`, que se crea automáticamente en el primer lanzamiento. La configuración opcional del servidor MCP se almacena en `~/.anda/mcp.json`.
 
+## Code Mode con Python
+
+Compila con `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode` (Rust 1.96 o posterior). Activa `code_mode.enabled` en `config.yaml` y ejecuta `anda restart`. El valor predeterminado es `false`.
+
+```yaml
+code_mode:
+  enabled: true
+```
+
+`code_exec` ejecuta el cuerpo de una función Python. Usa argumentos con nombre y `parallel` para llamadas independientes. Guarda una función anotada con docstring mediante `code_register`. Encuéntrala con `code_list` y carga su definición con `tools_select`. La biblioteca es privada por propietario y espacio de trabajo. Para actualizar o eliminar se requiere la revisión actual. Desactivar la función conserva los scripts.
+
+El worker ofrece el módulo `json`. Usa las herramientas autorizadas de la sesión para archivos, red y mensajería.
+
+En el modo `request_approval`, los cambios en las funciones guardadas y los envíos proactivos de mensajes necesitan confirmación. En `on_risk` también se pide confirmar un envío a otra conversación o con archivos adjuntos. Con `parallel` puedes aprobar o rechazar cada destino mostrado por separado. Este ejemplo de `code_exec` cuenta las ejecuciones fallidas de la tarea 42.
+
+```python
+page = tools.list_cron_runs(job_id=42, cursor=None, limit=20)
+return sum("error" in row for row in page["result"])
+```
+
 ## Proveedores de modelos
 
 El proveedor activo debe incluir los campos `family`, `model` y `api_base`. La clave `api_key` se puede escribir en el archivo de configuración o dejarse vacía y suministrarse a través de una variable de entorno.

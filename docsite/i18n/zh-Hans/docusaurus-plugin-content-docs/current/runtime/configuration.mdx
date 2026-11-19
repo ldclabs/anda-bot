@@ -8,6 +8,26 @@ description: 配置模型 provider、本地目录、代理、隐私边界和运�
 
 Anda 的运行状态默认保存在 `~/.anda`。主配置文件是 `~/.anda/config.yaml`，首次启动时会自动创建。可选 MCP 服务配置位于 `~/.anda/mcp.json`。
 
+## Python Code Mode
+
+源码构建使用 `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode`，需要 Rust 1.96 或更新版本。在 `config.yaml` 中启用 `code_mode.enabled` 后执行 `anda restart`。默认值为 `false`。
+
+```yaml
+code_mode:
+  enabled: true
+```
+
+`code_exec` 运行 Python 函数体。用具名参数调用工具，用 `parallel` 提交独立调用。`code_register` 保存带参数类型标注和文档字符串的函数。用 `code_list` 查名称和修订号，再用 `tools_select` 加载该函数即可直接调用。脚本库按所有者和工作区隔离，更新和删除需要当前修订号。关闭功能后，已保存的脚本仍在磁盘上。
+
+worker 内可导入 `json`。文件、网络和消息操作使用当前会话获准的宿主工具。
+
+在 `request_approval` 模式下，修改脚本库或主动发送 IM 消息需要确认。`on_risk` 模式也会对跨会话发送和带附件的发送请求确认。使用 `parallel` 时可以分别批准或拒绝每个已展示的目标。下面的 `code_exec` 示例统计任务 42 的失败次数。
+
+```python
+page = tools.list_cron_runs(job_id=42, cursor=None, limit=20)
+return sum("error" in row for row in page["result"])
+```
+
 ## 模型 provider
 
 active provider 必须包含 `family`、`model` 和 `api_base`。`api_key` 可以写在配置文件中，也可以留空并通过环境变量提供。

@@ -41,6 +41,21 @@ pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>
 }
 
 fn format_available_tools(available_tools: &[String]) -> String {
+    #[cfg(feature = "code-mode")]
+    if available_tools
+        .iter()
+        .any(|s| s == crate::engine::code_mode::EXEC)
+    {
+        let names: Vec<_> = available_tools
+            .iter()
+            .filter(|s| !s.starts_with("script__"))
+            .map(String::as_str)
+            .collect();
+        return format!(
+            "{}\nUse code_exec for pagination, joins and aggregation. Python tools use your current permissions. Select code_list to find saved functions, code_register to save one, and tools_select to load a saved function for direct calls.",
+            names.join(", ")
+        );
+    }
     if available_tools.is_empty() {
         "none".to_string()
     } else {
@@ -296,6 +311,17 @@ mod tests {
             format_available_tools(&["a".to_string(), "b".to_string()]),
             "a, b"
         );
+    }
+
+    #[cfg(feature = "code-mode")]
+    #[test]
+    fn code_mode_script_count_keeps_the_prompt_directory_stable() {
+        let base: Vec<_> = ["code_exec", "code_register", "code_list"]
+            .map(str::to_owned)
+            .into();
+        let mut full = base.clone();
+        full.extend((0..64).map(|n| format!("script__f{n}")));
+        assert_eq!(format_available_tools(&base), format_available_tools(&full));
     }
 
     #[test]

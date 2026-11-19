@@ -8,6 +8,26 @@ description: Configure model providers, local directories, proxies, privacy boun
 
 Anda stores runtime state in `~/.anda` by default. The main configuration file is `~/.anda/config.yaml`, created automatically on first launch. Optional MCP server configuration lives in `~/.anda/mcp.json`.
 
+## Python Code Mode
+
+Build with `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode` (Rust 1.96 or later). Set `code_mode.enabled` in `config.yaml` and run `anda restart`. The default is `false`.
+
+```yaml
+code_mode:
+  enabled: true
+```
+
+`code_exec` runs a Python function body. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_select` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.
+
+`json` is available in the worker. Use host tools for files, network access and messaging.
+
+With `request_approval`, changes to saved functions and proactive IM sends require confirmation. In `on_risk`, sending to a different conversation or attaching a file also prompts. With `parallel`, each displayed target can be approved or denied independently. This `code_exec` example counts failed runs for job 42.
+
+```python
+page = tools.list_cron_runs(job_id=42, cursor=None, limit=20)
+return sum("error" in row for row in page["result"])
+```
+
 ## Model Providers
 
 The active provider must include `family`, `model`, and `api_base`. `api_key` can be written in the config file or left empty and supplied through an environment variable.

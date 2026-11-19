@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "Réponse donnée dans la discussion"
   },
+  "codeBatchSelect": {
+    "message": "Cochez les appels à approuver. Les autres seront refusés."
+  },
+  "codeBatchApply": {
+    "message": "Appliquer ces décisions"
+  },
   "actionDockMore": {
     "message": "+$1 de plus"
   },

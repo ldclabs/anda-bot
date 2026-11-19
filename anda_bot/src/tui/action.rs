@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use anda_core::{ContentPart, Message, ToolInput};
 use ratatui::text::{Line, Span};
+use rust_i18n::t;
 use serde_json::Value;
 
 use super::{text::truncate_visual, theme};
@@ -17,6 +18,8 @@ const MAX_CHOICE_KEYS: usize = 6;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct TuiAction {
     pub(super) id: String,
+    batch: Option<String>,
+    child: Option<u64>,
     pub(super) kind: Option<String>,
     pub(super) status: String,
     pub(super) tool: Option<TuiActionTool>,
@@ -384,6 +387,43 @@ pub(super) fn active_pending_action(messages: &[Message]) -> Option<TuiAction> {
         })
 }
 
+/// Snapshot only the pending IDs explicitly named in this batch answer.
+pub(super) fn batch_answers(
+    messages: &[Message],
+    text: &str,
+) -> Result<Vec<TuiActionResponseRequest>, String> {
+    let mut parts = text.split_whitespace().skip(1);
+    let invalid = || t!("code_mode.batch_usage").to_string();
+    let batch = parts.next().ok_or_else(invalid)?;
+    let mut cards = std::collections::HashMap::new();
+    for part in messages.iter().flat_map(|m| &m.content) {
+        if let ContentPart::Action { name, payload, .. } = part
+            && payload["batch_id"].as_str() == Some(batch)
+            && let Some(action) = action_from_payload(name, payload)
+            && action.is_pending()
+            && action.is_approval()
+            && let Some(child) = action.child
+        {
+            cards.insert(child, action.id);
+        }
+    }
+    let mut answers = Vec::new();
+    for item in parts {
+        let (approve, number) = item
+            .strip_prefix('+')
+            .map(|n| (true, n))
+            .or_else(|| item.strip_prefix('-').map(|n| (false, n)))
+            .ok_or_else(invalid)?;
+        let child = number.parse::<u64>().map_err(|_| invalid())?;
+        let id = cards.remove(&child).ok_or_else(invalid)?;
+        answers.push(TuiActionResponseRequest::approve(id, approve));
+    }
+    if answers.is_empty() {
+        return Err(invalid());
+    }
+    Ok(answers)
+}
+
 pub(super) fn action_state_snapshot(messages: &[Message]) -> Vec<TuiActionState> {
     messages
         .iter()
@@ -429,6 +469,12 @@ pub(super) fn action_footer_line(
 
 pub(super) fn action_transcript_text(action: &TuiAction) -> String {
     let mut lines = vec![format!("⚡ {} · {}", action.display_title(), action.status)];
+    if let (Some(batch), Some(child)) = (&action.batch, action.child)
+        && action.is_pending()
+        && action.is_approval()
+    {
+        lines.push(t!("code_mode.batch_hint", batch = batch, child = child).to_string());
+    }
     if let Some(response) = action.response_label() {
         lines[0].push_str(" · ");
         lines[0].push_str(&response);
@@ -571,6 +617,8 @@ pub(super) fn action_from_payload(name: &str, payload: &Value) -> Option<TuiActi
 
     Some(TuiAction {
         id,
+        batch: string_field(payload, "batch_id"),
+        child: payload["child_id"].as_u64(),
         kind: string_field(payload, "kind"),
         status: string_field(payload, "status")
             .unwrap_or_else(|| ActionStatus::Pending.as_str().to_string()),

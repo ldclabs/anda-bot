@@ -178,8 +178,18 @@ const NO_OWNER_IDENTITY: &str = "No existing owner identity is available. Run `a
 /// ```bash
 /// cargo run -p anda_bot -- --help
 /// ```
+fn main() -> Result<(), BoxError> {
+    #[cfg(feature = "code-mode")]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(engine::code_mode::worker::ARG))
+    {
+        return engine::code_mode::worker::main();
+    }
+    application_main()
+}
+
 #[tokio::main]
-async fn main() -> Result<(), BoxError> {
+async fn application_main() -> Result<(), BoxError> {
     util::http_client::install_default_crypto_provider();
     // Clap builds the entire command tree, even for --version. Its generated
     // builders can exhaust the Windows main thread's stack in unoptimized builds.

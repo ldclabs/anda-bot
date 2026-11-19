@@ -386,6 +386,12 @@
   "actionStatusAnsweredInChat": {
     "message": "Answered in chat"
   },
+  "codeBatchSelect": {
+    "message": "Select the calls to approve. Unchecked calls will be denied."
+  },
+  "codeBatchApply": {
+    "message": "Apply these decisions"
+  },
   "actionDockMore": {
     "message": "+$1 more"
   },

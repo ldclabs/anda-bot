@@ -328,7 +328,15 @@ impl ActionSession {
     /// The fields every card shares; callers fill in their kind-specific ones.
     fn new_payload(&self, ctx: &BaseCtx, kind: &PendingActionKind, title: String) -> ActionPayload {
         let now_ms = unix_ms();
+        #[cfg(feature = "code-mode")]
+        let site = ctx.get_state::<super::code_mode::CallSite>();
         ActionPayload {
+            #[cfg(feature = "code-mode")]
+            parent_run_id: site.as_ref().map(|s| s.root_id().to_owned()),
+            #[cfg(feature = "code-mode")]
+            batch_id: site.as_ref().and_then(|s| s.batch_id.clone()),
+            #[cfg(feature = "code-mode")]
+            child_id: site.as_ref().map(|s| s.child_id),
             id: next_action_id(),
             kind: kind.payload_kind().to_string(),
             agent: ctx.agent.clone(),
@@ -572,6 +580,15 @@ impl ActionSession {
             _ => None,
         };
         let message = action_message(kind.message_name(), payload.into_value());
+        #[cfg(feature = "code-mode")]
+        let site = ctx.get_state::<super::code_mode::CallSite>();
+        #[cfg(feature = "code-mode")]
+        if let Some(site) = &site {
+            if matches!(kind, PendingActionKind::Approval { .. }) {
+                site.mark("prepared").await?;
+            }
+            site.release();
+        }
         let (tx, mut rx) = oneshot::channel();
         self.runtime.insert(PendingAction {
             session: self.session_id.clone(),
@@ -581,6 +598,12 @@ impl ActionSession {
             kind,
             event_sender: self.event_sender.clone(),
             tx,
+        });
+        #[cfg(feature = "code-mode")]
+        let _abandoned = site.as_ref().map(|_| AbandonGuard {
+            runtime: &self.runtime,
+            action_id: action_id.clone(),
+            event_sender: &self.event_sender,
         });
         if self
             .event_sender
@@ -600,7 +623,7 @@ impl ActionSession {
         }
 
         let cancelled = || -> BoxError { format!("{what} was cancelled").into() };
-        match tokio::time::timeout(timeout, &mut rx).await {
+        let result = match tokio::time::timeout(timeout, &mut rx).await {
             Ok(response) => response.map_err(|_| cancelled()),
             Err(_) => match self.runtime.take(&action_id) {
                 Some(pending) => {
@@ -615,7 +638,17 @@ impl ActionSession {
                 // its response is already on the way.
                 None => rx.await.map_err(|_| cancelled()),
             },
+        };
+        #[cfg(feature = "code-mode")]
+        if let Some(site) = &site
+            && result.as_ref().is_ok_and(|r| {
+                matches!(r.status, ActionStatus::Approved | ActionStatus::Selected)
+                    || r.payload[APPROVAL_MODE_CHANGED] == true
+            })
+        {
+            site.resume(ctx).await?;
         }
+        result
     }
 
     async fn request_choice(
@@ -1314,6 +1347,145 @@ pub(crate) fn approval_scope(ctx: &BaseCtx) -> ApprovalScope {
         mode,
         external_user,
         unanswerable,
+    }
+}
+
+/// The same proactive-send gate applies to Python and direct model calls.
+#[cfg(feature = "code-mode")]
+pub(crate) async fn approve_im_send(
+    ctx: &BaseCtx,
+    channel: &str,
+    recipient: &str,
+    thread: Option<&str>,
+    content: &str,
+    resources: &[anda_core::Resource],
+) -> Result<(), BoxError> {
+    if ctx
+        .get_state::<anda_engine::context::RequestToolCatalog>()
+        .is_none()
+    {
+        return Ok(());
+    }
+    loop {
+        let scope = approval_scope(ctx);
+        let meta = live_request_meta(ctx);
+        let original = meta.get_extra_as::<String>(keys::SOURCE).as_deref() == Some(channel)
+            && meta.get_extra_as::<String>(keys::REPLY_TARGET).as_deref() == Some(recipient)
+            && meta.get_extra_as::<String>(keys::THREAD).as_deref() == thread;
+        if scope.external_user && !original {
+            return Err("external users may only send to the original channel route".into());
+        }
+        if scope.mode == ApprovalMode::FullAccess
+            || (scope.mode != ApprovalMode::RequestApproval && original && resources.is_empty())
+        {
+            return Ok(());
+        }
+        if let Some(reason) = scope.unanswerable {
+            return Err(
+                format!("approval_required: nobody can approve this message in {reason}").into(),
+            );
+        }
+        let session = ctx
+            .get_state::<ActionSession>()
+            .ok_or("approval_required")?;
+        let target = format!("{channel} / {recipient}");
+        let mut details = vec![
+            approval_detail("Recipient", &target, "text"),
+            approval_detail("Message", content, "text"),
+        ];
+        if let Some(thread) = thread {
+            details.push(approval_detail("Thread", thread, "text"));
+        }
+        if !resources.is_empty() {
+            details.push(approval_detail(
+                "Attachments",
+                resources
+                    .iter()
+                    .map(|r| format!("{} ({})", r.name, r.mime_type.as_deref().unwrap_or("file")))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                "text",
+            ));
+        }
+        let kind = PendingActionKind::Approval {
+            mode: Some(scope.mode),
+            rememberable: false,
+            approved_payload: json!({"tool":"send_im_message","channel":channel,"recipient":recipient,"thread":thread}),
+        };
+        let payload = ActionPayload {
+            tool: Some(ActionToolRef::labeled("send_im_message", "IM")),
+            summary: Some(target),
+            details: Some(details),
+            approval: Some(ApprovalLabels::approve_deny()),
+            ..session.new_payload(ctx, &kind, "Send message".into())
+        };
+        match session
+            .request_approval(ctx, payload, kind, "send message")
+            .await
+        {
+            Err(e) if e.is::<ApprovalModeChanged>() => continue,
+            result => {
+                result?;
+            }
+        }
+        if scope.mode == approval_scope(ctx).mode && meta.extra == live_request_meta(ctx).extra {
+            return Ok(());
+        }
+    }
+}
+
+/// An explicitly requested approval covers a durable script creation, update
+/// or removal. The registry compares the revision again after the answer.
+#[cfg(feature = "code-mode")]
+pub(super) async fn approve_script_change(
+    ctx: &BaseCtx,
+    name: &str,
+    action: &str,
+    revision: Option<&str>,
+    source: Option<&str>,
+) -> Result<(), BoxError> {
+    loop {
+        let scope = approval_scope(ctx);
+        if scope.mode != ApprovalMode::RequestApproval {
+            return Ok(());
+        }
+        if let Some(reason) = scope.unanswerable {
+            return Err(
+                format!("approval_required: cannot approve a script change in {reason}").into(),
+            );
+        }
+        let session = ctx
+            .get_state::<ActionSession>()
+            .ok_or("approval_required")?;
+        let mut details = vec![
+            approval_detail("Function", name, "text"),
+            approval_detail("Revision", revision.unwrap_or("new"), "text"),
+        ];
+        if let Some(code) = source {
+            details.push(approval_detail("Python", code, "code"));
+        }
+        let kind = PendingActionKind::Approval {
+            mode: Some(scope.mode),
+            rememberable: false,
+            approved_payload: json!({"tool":super::code_mode::REGISTER,"action":action,"name":name,"revision":revision}),
+        };
+        let payload = ActionPayload {
+            tool: Some(ActionToolRef::labeled(super::code_mode::REGISTER, "Python")),
+            summary: Some(format!("{action} {name}")),
+            details: Some(details),
+            approval: Some(ApprovalLabels::approve_deny()),
+            ..session.new_payload(ctx, &kind, "Change saved function".into())
+        };
+        match session
+            .request_approval(ctx, payload, kind, "script change")
+            .await
+        {
+            Err(err) if err.is::<ApprovalModeChanged>() => continue,
+            result => {
+                result?;
+                return Ok(());
+            }
+        }
     }
 }
 

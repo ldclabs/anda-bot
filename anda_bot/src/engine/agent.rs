@@ -86,6 +86,8 @@ pub struct AndaBot {
 }
 
 struct AndaBotInner {
+    #[cfg(feature = "code-mode")]
+    code_mode: Option<super::code_mode::CodeMode>,
     admission: Arc<crate::runtime_admission::Admission>,
     memory_access: Option<Arc<brain::MemoryAccess>>,
     plan_owner: Option<Principal>,
@@ -254,6 +256,8 @@ impl AndaBot {
 
         Self {
             inner: Arc::new(AndaBotInner {
+                #[cfg(feature = "code-mode")]
+                code_mode: None,
                 admission: Arc::new(crate::runtime_admission::Admission::default()),
                 memory_access: None,
                 plan_owner: None,
@@ -291,6 +295,23 @@ impl AndaBot {
         Arc::get_mut(&mut self.inner)
             .expect("configure plan owner before sharing")
             .plan_owner = Some(owner);
+        self
+    }
+
+    #[cfg(feature = "code-mode")]
+    pub(crate) fn with_code_mode(mut self, mode: Option<super::code_mode::CodeMode>) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).expect("bot setup precedes sharing");
+        if mode.is_some() {
+            inner.tool_dependencies.extend(
+                [
+                    super::code_mode::EXEC,
+                    super::code_mode::REGISTER,
+                    super::code_mode::LIST,
+                ]
+                .map(str::to_owned),
+            );
+        }
+        inner.code_mode = mode;
         self
     }
 
@@ -423,6 +444,16 @@ impl AndaBot {
         });
 
         ctx.base.set_state(brain::RecallTurn::default());
+        #[cfg(feature = "code-mode")]
+        if self.inner.code_mode.is_some()
+            && ctx
+                .base
+                .get_state::<super::code_mode::FinishedRuns>()
+                .is_none()
+        {
+            ctx.base
+                .set_state(super::code_mode::FinishedRuns::default());
+        }
         ctx.base.set_state(super::resources::SessionArtifacts::new(
             self.inner.resource_store.clone(),
         ));
@@ -892,6 +923,12 @@ impl AndaBot {
         extra: Vec<String>,
     ) -> UniqueVec<String> {
         let mut tools = UniqueVec::from(base_tools());
+        #[cfg(feature = "code-mode")]
+        if self.inner.code_mode.is_some()
+            && available_tools.iter().any(|s| s == super::code_mode::EXEC)
+        {
+            tools.push(super::code_mode::EXEC.into());
+        }
         tools.extend(extra);
         if plan::shown_for(meta) {
             tools.push(UpdatePlanTool::NAME.to_string());
@@ -904,6 +941,18 @@ impl AndaBot {
         // must not come back that way.
         let mut loaded = tools.to_vec();
         loaded.push(UpdatePlanTool::NAME.to_string());
+        #[cfg(feature = "code-mode")]
+        loaded.extend(
+            available_tools
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.as_str(),
+                        super::code_mode::REGISTER | super::code_mode::LIST
+                    ) || s.starts_with("script__")
+                })
+                .cloned(),
+        );
         let most_used = self
             .inner
             .conversations
@@ -1182,6 +1231,10 @@ impl Agent<AgentCtx> for AndaBot {
             }
             if instructions.is_none() {
                 drop(guard);
+                #[cfg(feature = "code-mode")]
+                if let Some(mode) = &self.inner.code_mode {
+                    mode.attach(&ctx, ctx.meta()).await?;
+                }
                 available_tools = available_tool_names(&ctx).await;
                 instructions = Some(
                     self.build_system_instructions(
@@ -1402,6 +1455,11 @@ impl Agent<AgentCtx> for AndaBot {
             tools: ctx.definitions(Some(&tools)).await,
             tool_choice_required: false,
             ..Default::default()
+        };
+        #[cfg(feature = "code-mode")]
+        let req = match &self.inner.code_mode {
+            Some(mode) => mode.initial_interfaces(&ctx.base, req),
+            None => req,
         };
 
         self.spawn_session_runner(
