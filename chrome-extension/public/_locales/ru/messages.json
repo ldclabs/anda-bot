@@ -786,7 +786,7 @@
     "message": "Конфигурация"
   },
   "dashboardNoConnection": {
-    "message": "No connection"
+    "message": "Нет подключения"
   },
   "connectDashboardHint": {
     "message": "Подключитесь к службе Anda, чтобы открыть этот раздел."
@@ -843,7 +843,7 @@
     "message": "Серверы и секреты"
   },
   "dashboardConnectionSettings": {
-    "message": "Connection settings"
+    "message": "Настройки подключения"
   },
   "dashboardCollapseNavigation": {
     "message": "Collapse navigation"

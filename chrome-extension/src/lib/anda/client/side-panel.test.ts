@@ -318,6 +318,25 @@ describe('AndaSidePanelClient.testConnection', () => {
   )
 })
 
+it('loads models after saving a dashboard connection without opening a chat', async () => {
+  vi.stubGlobal('chrome', createChromeApi())
+  const { AndaSidePanelClient } = await importSidePanelModule()
+  const client = new AndaSidePanelClient()
+  const rpc = vi.spyOn(client, 'rpc').mockImplementation(async (method) => {
+    if (method === 'model_names') {
+      return { active_model: 'new-model', model_names: ['new-model'] }
+    }
+  })
+
+  await client.init({ conversations: false })
+  await client.saveSettings({ ...client.settings, token: 'new-token' })
+
+  expect(rpc).toHaveBeenCalledWith('model_names', [])
+  expect(client.modelState.activeModel).toBe('new-model')
+  expect(client.activeSource).toBeNull()
+  client.destroy()
+})
+
 describe('AndaSidePanelClient.saveAppearanceTheme', () => {
   it('persists the appearance theme without saving unrelated draft fields', async () => {
     const chromeApi = createChromeApi({

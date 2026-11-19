@@ -409,7 +409,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     this.applySettings(next)
     this.systemMessage = { kind: 'info', text: getMessage('settingsSaved') }
     await this.syncServiceWorker().catch(() => undefined)
-    await this.refreshConnectionData()
+    if (this.#chatEnabled) await this.refreshConnectionData()
+    else await this.refreshModelState().catch(() => undefined)
     this.syncUiLanguage().catch(() => undefined)
   }
 

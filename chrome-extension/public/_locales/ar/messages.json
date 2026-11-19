@@ -786,7 +786,7 @@
     "message": "التكوين"
   },
   "dashboardNoConnection": {
-    "message": "No connection"
+    "message": "غير متصل"
   },
   "connectDashboardHint": {
     "message": "اتصل بخدمة Anda لفتح مساحة العمل هذه."
@@ -843,7 +843,7 @@
     "message": "الخوادم والأسرار"
   },
   "dashboardConnectionSettings": {
-    "message": "Connection settings"
+    "message": "إعدادات الاتصال"
   },
   "dashboardCollapseNavigation": {
     "message": "Collapse navigation"

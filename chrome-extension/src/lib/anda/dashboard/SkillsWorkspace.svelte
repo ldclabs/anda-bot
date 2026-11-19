@@ -292,6 +292,12 @@
     })
   }
 
+  function clearFilters() {
+    searchQuery = ''
+    sourceFilter = 'all'
+    statusFilter = 'all'
+  }
+
   function cloneSelected(nextTab: DetailTab = 'files') {
     const skill = selectedSkill
     if (!skill) {
@@ -300,6 +306,7 @@
     void run('clone', async () => {
       const cloned = await andaClient.skills.clone(skill.id)
       await loadList()
+      if (!visibleSkills.some((item) => item.id === cloned.id)) clearFilters()
       showDetail(cloned)
       activeTab = nextTab
       return getMessage('skillCloned')
@@ -597,11 +604,7 @@
             {#if skills.length}<button
                 type="button"
                 class={buttonClass('outline', 'sm')}
-                onclick={() => {
-                  searchQuery = ''
-                  sourceFilter = 'all'
-                  statusFilter = 'all'
-                }}>{getMessage('clearFilters')}</button
+                onclick={clearFilters}>{getMessage('clearFilters')}</button
               >{/if}
           </div>
         {:else}

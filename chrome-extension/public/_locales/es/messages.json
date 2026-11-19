@@ -786,7 +786,7 @@
     "message": "Configuración"
   },
   "dashboardNoConnection": {
-    "message": "No connection"
+    "message": "Sin conexión"
   },
   "connectDashboardHint": {
     "message": "Conecta con tu servicio de Anda para abrir este espacio."
@@ -843,7 +843,7 @@
     "message": "Servidores y secretos"
   },
   "dashboardConnectionSettings": {
-    "message": "Connection settings"
+    "message": "Configuración de la conexión"
   },
   "dashboardCollapseNavigation": {
     "message": "Collapse navigation"

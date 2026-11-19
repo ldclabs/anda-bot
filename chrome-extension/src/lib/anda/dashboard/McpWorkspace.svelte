@@ -316,6 +316,15 @@
     if (id !== SECRETS) void loadDetail(id)
   }
 
+  function selectAddedServer(id: string) {
+    if (!visibleServers.some((server) => server.id === id)) {
+      search = ''
+      filter = 'all'
+    }
+    selectedId = ''
+    select(id)
+  }
+
   /** Makes a change to mcp.json or the secrets and reports what it did. */
   function change(action: string, request: McpChange, done: string) {
     void run(action, async () => {
@@ -494,10 +503,7 @@
     void run('import', async () => {
       await refresh()
       const ids = receipt.imported || []
-      if (ids[0]) {
-        selectedId = ''
-        select(ids[0])
-      }
+      if (ids[0]) selectAddedServer(ids[0])
       return receiptText(receipt, getMessage('mcpImported', ids.join(', ')))
     })
   }
@@ -506,8 +512,7 @@
   function installed(id: string, needsAuth: boolean) {
     void run('add', async () => {
       await refresh()
-      selectedId = ''
-      select(id)
+      selectAddedServer(id)
       if (needsAuth) return beginSignIn(id, false)
       return getMessage('mcpAdded', id)
     })
@@ -594,8 +599,7 @@
       }
       addOpen = false
       await refresh()
-      selectedId = ''
-      select(servers[0].id)
+      selectAddedServer(servers[0].id)
       // A server that signs in with OAuth asks for it right away.
       const first = tests[servers[0].id]
       if (servers.length === 1 && first !== 'testing' && first?.status === 'needs_auth') {

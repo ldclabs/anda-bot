@@ -88,6 +88,7 @@
   let savedSource = $state<string | null>(null)
   let invalidYaml = $state(false)
   let editVersion = 0
+  let disposed = false
   let statusMessage = $state('')
   let errorMessage = $state('')
   let formPanel = $state<HTMLElement | null>(null)
@@ -99,6 +100,9 @@
 
   onMount(() => {
     void loadConfig()
+    return () => {
+      disposed = true
+    }
   })
 
   $effect(() => {
@@ -120,7 +124,7 @@
       savedSource = source = response.content
       configRevision = response.revision
       invalidYaml = false
-      dirty = false
+      updateDirty()
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {
@@ -147,10 +151,17 @@
     await onModelsChanged?.()
   }
 
+  function updateDirty() {
+    // A replaced editor's late response must leave the current draft alone.
+    if (disposed) return
+    // Keep the editor mounted while a save can still change the baseline.
+    dirty = saving || source !== savedSource
+  }
+
   function markFormDirty() {
     editVersion++
     source = renderConfigYaml(draft, source)
-    dirty = source !== savedSource
+    updateDirty()
     statusMessage = ''
     errorMessage = ''
   }
@@ -165,7 +176,7 @@
     if (parsed) {
       draft = parsed
     }
-    dirty = source !== savedSource
+    updateDirty()
     statusMessage = ''
     errorMessage = ''
   }
@@ -231,7 +242,7 @@
   function formatFromForm() {
     editVersion++
     source = renderConfigYaml(draft, source)
-    dirty = source !== savedSource
+    updateDirty()
     statusMessage = getMessage('configFormatted')
   }
 
@@ -261,16 +272,14 @@
       if (version === editVersion) {
         draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
         source = response.content
-        dirty = false
         statusMessage = getMessage('configSaved')
-      } else {
-        dirty = source !== savedSource
       }
       if (response.models_error) errorMessage = response.models_error
     } catch (error) {
       errorMessage = errorToMessage(error)
     } finally {
       saving = false
+      updateDirty()
     }
   }
 </script>
@@ -704,13 +713,14 @@
         {#if invalidYaml}<p id="yaml-problem" role="alert" class="text-destructive">
             {getMessage('configInvalidYaml')}
           </p>
-        {:else if errorMessage}<p
+        {/if}
+        {#if errorMessage}<p
             role="alert"
             class="max-h-16 overflow-y-auto break-words text-destructive"
           >
             {errorMessage}
           </p>
-        {:else}<p role="status" class="text-muted-foreground">
+        {:else if !invalidYaml}<p role="status" class="text-muted-foreground">
             {statusMessage || (dirty ? getMessage('configUnsaved') : '')}
           </p>{/if}
       </div>

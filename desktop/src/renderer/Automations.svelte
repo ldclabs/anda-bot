@@ -99,13 +99,10 @@
     )
   )
   let scheduleDrafts: Record<string, string> = {}
-  function scheduleFormat(value: string) {
-    return value === 'every' || value === 'once' ? 'duration' : value
-  }
   function changeScheduleKind(next: string) {
-    scheduleDrafts[scheduleFormat(scheduleKind)] = schedule
+    scheduleDrafts[scheduleKind] = schedule
     scheduleKind = next
-    schedule = scheduleDrafts[scheduleFormat(next)] ?? ''
+    schedule = scheduleDrafts[next] ?? ''
   }
   let schedule = $state('1d')
   let timezone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone)
