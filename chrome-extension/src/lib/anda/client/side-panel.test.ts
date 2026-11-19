@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PollConversation } from './poll-conversation'
 import { daemonStateChangedMessageType } from '$lib/service-worker/settings'
 import type {
+  ActionApiOutput,
   ChromeApi,
   ChromeRuntimeMessageListener,
   ChromeTabInfo,
@@ -214,6 +215,67 @@ describe('AndaSidePanelClient.saveApprovalMode', () => {
     await expect(client.saveApprovalMode('request_approval')).rejects.toThrow('daemon unavailable')
     expect(client.settings.approvalMode).toBe('request_approval')
   })
+})
+
+it('applies an approval receipt to the chat that requested it after switching chats', async () => {
+  vi.stubGlobal('chrome', createChromeApi())
+  const { AndaSidePanelClient } = await importSidePanelModule()
+  const client = new AndaSidePanelClient()
+  client.settings.token = 'token'
+  const rpc = vi.spyOn(client, 'rpc')
+  async function openChat(id: number) {
+    rpc.mockResolvedValueOnce({ output: { result: { c: id } } }).mockResolvedValueOnce({
+      output: {
+        result: {
+          _id: id,
+          status: 'working',
+          created_at: 1,
+          updated_at: 1,
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                {
+                  type: 'Action',
+                  name: 'anda.tool_approval',
+                  payload: { id: `act_${id}`, kind: 'tool_approval', status: 'pending' }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    })
+    await client.switchChannel(`browser:chrome:${id}`)
+    return client.activeChannel!
+  }
+
+  const original = await openChat(1)
+  const wakeOriginal = vi.spyOn(original, 'wakePolling')
+  const receipt = Promise.withResolvers<{ output: ActionApiOutput }>()
+  rpc.mockReturnValueOnce(receipt.promise)
+  const actions = vi.spyOn(client, 'toolCall')
+  const answering = client.respondAction({ actionId: 'act_1', approve: true })
+  const other = await openChat(2)
+  const wakeOther = vi.spyOn(other, 'wakePolling')
+  const output = {
+    action_id: 'act_1',
+    conversation: 1,
+    status: 'approved',
+    response: { approve: true }
+  }
+  receipt.resolve({ output })
+
+  expect(await answering).toEqual(output)
+  expect(original.messageGroups[0]?.messages[0]?.actions?.[0]?.status).toBe('approved')
+  expect(other.messageGroups[0]?.messages[0]?.actions?.[0]?.status).toBe('pending')
+  expect(wakeOriginal).toHaveBeenCalledOnce()
+  expect(wakeOther).not.toHaveBeenCalled()
+  expect(actions).toHaveBeenCalledExactlyOnceWith(
+    'actions_api',
+    expect.objectContaining({ action_id: 'act_1' })
+  )
+  client.destroy()
 })
 
 describe('AndaSidePanelClient.saveAppearanceTheme', () => {

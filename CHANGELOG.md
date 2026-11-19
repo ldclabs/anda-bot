@@ -4,6 +4,11 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Fixed
+
+- Anda Desktop sends a voice transcript to the chat and workspace where it was submitted, even when you switch chats during transcription. A late folder registration can no longer overwrite the chat selection saved for the next launch.
+- The Chrome extension updates the original approval card when its response arrives after you switch chats.
+
 ## [0.14.9] — 2026-11-01
 
 ### Added

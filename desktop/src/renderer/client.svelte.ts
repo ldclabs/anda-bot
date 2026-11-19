@@ -111,6 +111,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
   private receiptRecovery: Promise<void> = Promise.resolve()
   private activeSubmissions = new Set<string>()
   private speechEpoch = 0
+  private channelSwitchEpoch = 0
   private ephemeralWorkspace = $state<string | undefined>()
   private draftTimer?: ReturnType<typeof setTimeout>
   private drafts = new Map<string, { text: string; attachments: ChatAttachment[] }>()
@@ -433,6 +434,7 @@ export class DesktopClient extends EventTarget implements DaemonApi {
         : source
   }
   newChat(workspace?: string): void {
+    this.channelSwitchEpoch++
     this.incomingDraft = null
     this.ephemeralWorkspace = workspace
     this.activeChannel = this.ensureChannel(`desktop:${crypto.randomUUID()}`)
@@ -441,11 +443,13 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     this.systemMessage = null
   }
   async switchChannel(source: string): Promise<void> {
+    const epoch = ++this.channelSwitchEpoch
+    const channel = this.ensureChannel(source)
     this.incomingDraft = null
     this.ephemeralWorkspace = undefined
     this.view = 'chat'
-    this.activeChannel = this.ensureChannel(source)
-    this.status = this.activeChannel.status
+    this.activeChannel = channel
+    this.status = channel.status
     this.systemMessage = null
     const workspace =
       this.preferences.chats.find((c) => c.source === source)?.workspace ||
@@ -453,11 +457,14 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     // A moved folder or a paused runtime must not hide the chat's history;
     // sending registers the workspace again and reports that error there.
     if (workspace && this.authorized)
-      await this.rpc('register_workspace', [workspace]).catch((error) => this.fail(error))
+      await this.rpc('register_workspace', [workspace]).catch((error) => {
+        if (epoch === this.channelSwitchEpoch) this.fail(error)
+      })
+    if (epoch !== this.channelSwitchEpoch) return
     await this.savePreferences({ activeSource: source })
-    if (this.authorized) {
-      await this.activeChannel.init()
-      this.activeChannel.wakePolling()
+    if (this.authorized && epoch === this.channelSwitchEpoch) {
+      await channel.init()
+      channel.wakePolling()
     }
   }
   async refresh(): Promise<void> {
@@ -511,10 +518,17 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     const chats = this.preferences.chats.map((c) => (c.source === source ? { ...c, ...patch } : c))
     await this.savePreferences({ chats })
   }
-  async sendPrompt(prompt: string, attachments: ChatAttachment[], speak = false): Promise<void> {
-    if (!this.activeChannel || !this.authorized)
-      throw new Error('Connect to the local daemon before sending')
-    const channel = this.activeChannel
+  sendPrompt(prompt: string, attachments: ChatAttachment[], speak = false): Promise<void> {
+    return this.sendToChannel(this.activeChannel, this.workspace, prompt, attachments, speak)
+  }
+  private async sendToChannel(
+    channel: Channel | null,
+    workspace: string | undefined,
+    prompt: string,
+    attachments: ChatAttachment[],
+    speak: boolean
+  ): Promise<void> {
+    if (!channel || !this.authorized) throw new Error('Connect to the local daemon before sending')
     if (!this.preferences.chats.some((c) => c.source === channel.source)) {
       await this.savePreferences({
         chats: [
@@ -522,15 +536,16 @@ export class DesktopClient extends EventTarget implements DaemonApi {
           {
             source: channel.source,
             title: prompt.replace(/^\/new\s+/, '').slice(0, 70) || 'New chat',
-            workspace: this.ephemeralWorkspace,
+            workspace,
             updatedAt: Date.now(),
             readAt: Date.now()
           }
         ],
-        activeSource: channel.source
+        ...(channel === this.activeChannel ? { activeSource: channel.source } : {})
       })
     }
-    const ownsSending = !this.sending && parsePromptCommand(prompt)?.kind !== 'side'
+    const ownsSending =
+      channel === this.activeChannel && !this.sending && parsePromptCommand(prompt)?.kind !== 'side'
     if (ownsSending) this.sending = true
     try {
       const poll = await channel.sendPrompt(prompt, attachments)
@@ -621,9 +636,12 @@ export class DesktopClient extends EventTarget implements DaemonApi {
     await this.refreshModelState()
   }
   async sendVoiceTurn(recording: VoiceRecordingInput): Promise<void> {
+    // A first voice turn can outlive the selection and its unsaved workspace.
+    const channel = this.activeChannel
+    const workspace = this.workspace
     const text =
       recording.transcript?.trim() || (await this.voice.transcribe(recording)).text.trim()
-    if (text) await this.sendPrompt(text, [], Boolean(recording.ttsEnabled))
+    if (text) await this.sendToChannel(channel, workspace, text, [], recording.ttsEnabled)
   }
   async toolCall<Result>(
     name: string,

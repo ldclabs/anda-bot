@@ -100,8 +100,9 @@ collapsed tool-level rows; expand a row to read its full content.
 
 Voice capture stays attached to the tab where it started, including when another
 tab becomes active. It runs in the extension's isolated world, so the page's own
-scripts cannot read the recording or the transcript. Choosing a memory policy for a new conversation temporarily
-disables voice input until the first text message starts that conversation.
+scripts cannot read the recording or the transcript. After you change the memory
+policy, your next ordinary message starts a conversation with that policy.
+You can type that message or dictate it.
 
 "Send this content to Anda" reads the right-clicked element only after you choose
 the menu item; ordinary right-clicks do not read page text.

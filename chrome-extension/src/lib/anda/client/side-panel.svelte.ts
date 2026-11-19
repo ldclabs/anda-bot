@@ -519,6 +519,7 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       throw new Error(getMessage('pasteTokenFirst'))
     }
 
+    const channel = this.activeChannel
     const { output } = await this.toolCall<ActionApiOutput>('actions_api', {
       type: 'RespondAction',
       action_id: input.actionId,
@@ -527,8 +528,8 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
       choice_text: input.choiceText ?? null,
       ...(input.remember ? { remember: true } : {})
     })
-    this.activeChannel?.applyActionResponse(output)
-    this.activeChannel?.wakePolling()
+    channel?.applyActionResponse(output)
+    channel?.wakePolling()
     return output
   }
 
