@@ -77,7 +77,7 @@ function Get-TargetArch {
     }
 
     switch -Regex ($arch) {
-        "^(AMD64|IA64)$" { return "x86_64" }
+        "^AMD64$" { return "x86_64" }
         "^ARM64$" { return "arm64" }
         default { Fail "Unsupported architecture: $arch" }
     }
@@ -370,6 +370,11 @@ try {
     }
     Verify-Checksum $downloadPath $checksumPath
 
+    $installedVersion = & $downloadPath --version
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Downloaded binary could not run on this machine."
+    }
+
     Stop-ExistingAndaInstall $InstallDir $AndaHome
     $installPath = Install-Binary $downloadPath $InstallDir $InstallName
 
@@ -398,12 +403,6 @@ try {
         Send-EnvironmentChanged
         Write-Success "Added $InstallDir to your Windows user PATH."
         Write-Info "Open a new terminal for the PATH change to take effect."
-    }
-
-    $installedVersion = "unknown"
-    try {
-        $installedVersion = & $installPath --version 2>$null
-    } catch {
     }
 
     Write-Success "$InstallName installed successfully! ($installedVersion)"

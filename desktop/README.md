@@ -55,7 +55,7 @@ The bottom of the sidebar shows the next step: **Download update** for a found d
 
 ## Build
 
-Requires a current Rust toolchain and Node.js 22.12+ with pnpm. The repository manages JavaScript dependencies through its pnpm workspace.
+Use the workspace Rust toolchain, Node.js 24 and pnpm 11.7.0 to match CI. The repository manages JavaScript dependencies through its pnpm workspace.
 
 ```bash
 pnpm install --filter @anda/desktop...

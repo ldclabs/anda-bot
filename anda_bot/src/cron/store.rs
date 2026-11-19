@@ -433,7 +433,6 @@ fn optional_text(value: &Option<String>) -> Fv {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
 
     async fn test_store() -> CronStore {
         let db = crate::test_support::memory_db("cron").await;
@@ -458,9 +457,7 @@ mod tests {
     }
 
     async fn insert_at_job(store: &CronStore, name: &str, at_ms: u64) -> CronJob {
-        let at = chrono::DateTime::from_timestamp_millis(at_ms as i64)
-            .unwrap()
-            .to_rfc3339();
+        let at = anda_engine::rfc3339_datetime(at_ms).unwrap();
         store
             .insert_job(
                 CreateCronJobArgs {
@@ -582,32 +579,13 @@ mod tests {
     #[tokio::test]
     async fn due_jobs_prefers_earliest_next_run() {
         let store = test_store().await;
-        let base = Utc::now();
-        let job_late = insert_at_job(
-            &store,
-            "late",
-            (base + Duration::seconds(30)).timestamp_millis() as u64,
-        )
-        .await;
-        let job_earliest = insert_at_job(
-            &store,
-            "earliest",
-            (base + Duration::seconds(10)).timestamp_millis() as u64,
-        )
-        .await;
-        let job_middle = insert_at_job(
-            &store,
-            "middle",
-            (base + Duration::seconds(20)).timestamp_millis() as u64,
-        )
-        .await;
+        let base = unix_ms();
+        let job_late = insert_at_job(&store, "late", base + 30_000).await;
+        let job_earliest = insert_at_job(&store, "earliest", base + 10_000).await;
+        let job_middle = insert_at_job(&store, "middle", base + 20_000).await;
 
         let due_ids = store
-            .due_job_ids(
-                (base + Duration::seconds(60)).timestamp_millis() as u64,
-                2,
-                &HashSet::new(),
-            )
+            .due_job_ids(base + 60_000, 2, &HashSet::new())
             .unwrap();
 
         assert_eq!(due_ids, vec![job_earliest._id, job_middle._id]);
@@ -617,30 +595,17 @@ mod tests {
     #[tokio::test]
     async fn due_jobs_does_not_starve_when_excluding_in_flight_jobs() {
         let store = test_store().await;
-        let base = Utc::now();
+        let base = unix_ms();
         // Insert in next_run order so the highest document ids are also the
         // ones the range query keeps first; excluding them previously emptied
         // the result even though earlier jobs were still due.
         let mut jobs = Vec::new();
         for secs in [10, 20, 30, 40, 50] {
-            jobs.push(
-                insert_at_job(
-                    &store,
-                    &format!("job-{secs}"),
-                    (base + Duration::seconds(secs)).timestamp_millis() as u64,
-                )
-                .await,
-            );
+            jobs.push(insert_at_job(&store, &format!("job-{secs}"), base + secs * 1000).await);
         }
         let exclude: HashSet<u64> = [jobs[3]._id, jobs[4]._id].into_iter().collect();
 
-        let due_ids = store
-            .due_job_ids(
-                (base + Duration::seconds(60)).timestamp_millis() as u64,
-                2,
-                &exclude,
-            )
-            .unwrap();
+        let due_ids = store.due_job_ids(base + 60_000, 2, &exclude).unwrap();
 
         // In-flight jobs must not use up the free slots, and the earliest
         // remaining jobs come first.

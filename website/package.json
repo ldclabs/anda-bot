@@ -15,12 +15,11 @@
 		"format": "prettier --write .",
 		"ncu": "npx npm-check-updates -u",
 		"test:unit": "vitest",
-		"test": "npm run test:unit -- --run"
+		"test": "vitest run"
 	},
 	"devDependencies": {
 		"@fontsource-variable/inter": "^5.2.8",
 		"@lucide/svelte": "^1.16.0",
-		"@sveltejs/adapter-auto": "latest",
 		"@sveltejs/adapter-cloudflare": "^7.2.8",
 		"@sveltejs/kit": "latest",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",

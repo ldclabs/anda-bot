@@ -250,7 +250,7 @@ fn create_cron_job_parameters() -> Value {
             },
             "schedule": {
                 "type": "string",
-                "description": "The schedule value. For 'cron', provide a standard 5-field expression (minute hour day-of-month month day-of-week, 0 or 7 = Sunday), such as '0 9 * * 1-5'; 6- and 7-field forms add seconds and year but count weekdays from 1 = Sunday, so use day names such as MON-FRI there. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
+                "description": "The schedule value. For 'cron', provide a standard 5-field expression (minute hour day-of-month month day-of-week, 0 or 7 = Sunday), such as '0 9 * * 1-5'; 6- and 7-field forms add seconds and year but count weekdays from 1 = Sunday, so use day names such as MON-FRI there. If both day-of-month and day-of-week are restricted, both must match. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units, such as '60', '5m', '2h', or '1d'. When omitted, the unit defaults to seconds."
             },
             "name": {
                 "type": ["string", "null"],
@@ -290,7 +290,7 @@ fn update_cron_job_parameters() -> Value {
             },
             "schedule": {
                 "type": ["string", "null"],
-                "description": "New schedule value, or null to leave unchanged. For 'cron', provide a standard 5-field expression (0 or 7 = Sunday); in 6- and 7-field forms use day names such as MON-FRI. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units."
+                "description": "New schedule value, or null to leave unchanged. For 'cron', provide a standard 5-field expression (0 or 7 = Sunday); in 6- and 7-field forms use day names such as MON-FRI. If both day-of-month and day-of-week are restricted, both must match. For 'at', provide an RFC3339 timestamp. For 'every' and 'once', provide a duration using optional s/m/h/d units."
             },
             "name": {
                 "type": ["string", "null"],

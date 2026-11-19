@@ -1,13 +1,17 @@
 use anda_core::{AgentOutput, Principal, RequestMeta, ToolOutput};
 use anda_db::schema::{AndaDBSchema, BoxError};
-use chrono::{DateTime, Utc};
-use cron::Schedule as CronExprSchedule;
+use jiff::{
+    SignedDuration, Timestamp,
+    tz::{Offset, TimeZone},
+};
+use jiff_cron::{Schedule as CronExprSchedule, TimeUnitSpec};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, str::FromStr, time::Duration};
 
 use crate::util::{
     number_or_string,
     request_meta::{keys, request_meta_extra_as},
+    time::rfc3339_to_unix_ms,
 };
 
 // Number.MAX_SAFE_INTEGER in JavaScript, used to represent "never" for disabled jobs
@@ -584,29 +588,42 @@ fn persisted_schedule(
 
 fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxError> {
     let normalized = normalize_expression(expr)?;
-    let from = i64::try_from(from_ms)
-        .ok()
-        .and_then(DateTime::from_timestamp_millis)
-        .ok_or("schedule reference time is out of range")?;
+    // Cron fires on whole seconds. Search strictly after the last whole second,
+    // including when the scheduler polls partway through it.
+    let from = Timestamp::from_second(i64::try_from(from_ms / 1000)?)?;
     let cron = CronExprSchedule::from_str(&normalized)
         .map_err(|err| format!("invalid cron expression '{expr}': {err}"))?;
 
     // The expression is evaluated in the job's timezone, or the host's.
-    let next = match tz {
-        Some(tz_name) => {
-            let timezone = chrono_tz::Tz::from_str(tz_name)
-                .map_err(|err| format!("invalid IANA timezone '{tz_name}': {err}"))?;
-            cron.after(&from.with_timezone(&timezone))
-                .next()
-                .map(|next| next.timestamp_millis())
+    let timezone = match tz {
+        Some(name) => {
+            TimeZone::get(name).map_err(|err| format!("invalid IANA timezone '{name}': {err}"))?
         }
-        None => cron
-            .after(&from.with_timezone(&chrono::Local))
-            .next()
-            .map(|next| next.timestamp_millis()),
+        None => TimeZone::system(),
     };
-    let next = next.ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
-    Ok(next as u64)
+    let mut start = from.to_zoned(timezone);
+    let weekdays = cron.days_of_week();
+    if !weekdays.is_all() {
+        // The cron iterator checks weekdays after its clock fields. Skip entire
+        // excluded days before a per-second or per-minute job enters that search.
+        let second = SignedDuration::from_secs(1);
+        let first_date = start.checked_add(second)?.date();
+        let mut date = first_date;
+        while !weekdays.includes(date.weekday().to_sunday_one_offset() as u32) {
+            date = date.tomorrow()?;
+        }
+        if date != first_date {
+            start = date
+                .to_zoned(start.time_zone().clone())?
+                .start_of_day()?
+                .checked_sub(second)?;
+        }
+    }
+    let next = cron
+        .after(start)
+        .next()
+        .ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
+    Ok(u64::try_from(next.timestamp().as_millisecond())?)
 }
 
 #[cfg(test)]
@@ -635,12 +652,7 @@ fn build_schedule_at(
             }
 
             Ok(Schedule::At {
-                at: datetime_to_unix_ms(
-                    DateTime::parse_from_rfc3339(
-                        normalize_required_text("schedule", value)?.as_str(),
-                    )?
-                    .with_timezone(&Utc),
-                )?,
+                at: rfc3339_to_unix_ms(&normalize_required_text("schedule", value)?)?,
             })
         }
         ScheduleKind::Every => {
@@ -708,15 +720,14 @@ fn normalize_required_text(field: &str, value: &str) -> Result<String, BoxError>
     }
 }
 
-fn datetime_to_unix_ms(dt: DateTime<Utc>) -> Result<u64, BoxError> {
-    u64::try_from(dt.timestamp_millis()).map_err(|_| "timestamp before unix epoch".into())
-}
-
 fn unix_ms_to_rfc3339(unix_ms: u64) -> Result<String, BoxError> {
-    let unix_ms = i64::try_from(unix_ms).map_err(|_| "timestamp after i64 range")?;
-    let dt = DateTime::from_timestamp_millis(unix_ms)
-        .ok_or_else(|| "timestamp is outside chrono range".to_string())?;
-    Ok(dt.to_rfc3339())
+    let dt = Timestamp::from_millisecond(i64::try_from(unix_ms)?)?;
+    let precision = if unix_ms.is_multiple_of(1000) { 0 } else { 3 };
+    Ok(format!(
+        "{:.*}",
+        precision,
+        dt.display_with_offset(Offset::UTC)
+    ))
 }
 
 fn normalize_expression(expression: &str) -> Result<String, BoxError> {
@@ -879,7 +890,7 @@ mod tests {
 
     #[test]
     fn cron_job_request_meta_prefers_last_conversation() {
-        let now_ms = Utc::now().timestamp_millis() as u64;
+        let now_ms = anda_db::unix_ms();
         let origin = CronJobOrigin {
             source: Some("wechat:daily".to_string()),
             reply_target: Some("alice".to_string()),
@@ -957,9 +968,9 @@ mod tests {
 
     #[test]
     fn build_schedule_once_returns_future_timestamp() {
-        let before = Utc::now().timestamp_millis() as u64;
+        let before = anda_db::unix_ms();
         let schedule = build_schedule(&ScheduleKind::Once, "30m", None).unwrap();
-        let after = Utc::now().timestamp_millis() as u64;
+        let after = anda_db::unix_ms();
 
         let Schedule::At { at } = schedule else {
             panic!("expected once schedule to map to Schedule::At");
@@ -973,7 +984,7 @@ mod tests {
 
     #[test]
     fn create_once_cron_job_keeps_next_run_in_sync_with_persisted_at_schedule() {
-        let now_ms = Utc::now().timestamp_millis() as u64;
+        let now_ms = anda_db::unix_ms();
         let job = CreateCronJobArgs {
             job_kind: JobKind::Agent,
             job: "Send the daily summary to me".to_string(),
@@ -987,12 +998,7 @@ mod tests {
 
         assert!(matches!(job.schedule_kind, ScheduleKind::At));
 
-        let stored_at = datetime_to_unix_ms(
-            DateTime::parse_from_rfc3339(&job.schedule)
-                .unwrap()
-                .with_timezone(&Utc),
-        )
-        .unwrap();
+        let stored_at = rfc3339_to_unix_ms(&job.schedule).unwrap();
 
         assert_eq!(job.next_run, stored_at.div_ceil(1000));
     }
@@ -1422,24 +1428,66 @@ mod tests {
 
     #[test]
     fn sunday_ranges_preserve_actual_days() {
-        let from = DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
-            .unwrap()
-            .timestamp_millis() as u64;
+        let from = rfc3339_to_unix_ms("2026-09-21T00:00:00Z").unwrap();
         for expression in ["0 9 * * 0-7", "0 9 * * 1-7"] {
             assert_eq!(
                 schedule_next(expression, from, Some("UTC")).unwrap(),
                 schedule_next("0 9 * * *", from, Some("UTC")).unwrap()
             );
         }
-        let friday = DateTime::parse_from_rfc3339("2026-09-25T09:00:00Z")
-            .unwrap()
-            .timestamp_millis() as u64;
+        let friday = rfc3339_to_unix_ms("2026-09-25T09:00:00Z").unwrap();
         assert_eq!(
             schedule_next("0 9 * * 5-7", from, Some("UTC")).unwrap(),
             friday
         );
         assert_eq!(normalize_weekday_field("MON,0").unwrap(), "MON,1");
         assert!(normalize_weekday_field("*/0").is_err());
+    }
+
+    #[test]
+    fn cron_respects_weekdays_years_and_local_clocks_across_dst() {
+        for (expr, from, expected) in [
+            // Every second on Mondays resumes at local midnight after the last tick.
+            (
+                "* * * * * MON",
+                "2026-11-03T04:59:59.100Z",
+                "2026-11-09T05:00:00Z",
+            ),
+            // A fractional Sunday reference must still honor the Monday field.
+            (
+                "0 9 * * 1",
+                "2026-03-08T12:59:59.400Z",
+                "2026-03-09T13:00:00Z",
+            ),
+            // 02:30 does not occur on the spring-forward Sunday.
+            ("30 2 * * *", "2026-03-08T05:00:00Z", "2026-03-09T06:30:00Z"),
+            // A Monday in the seven-field dialect uses 2. Noon is EST again.
+            (
+                "0 0 12 * * 2 2026",
+                "2026-10-31T16:00:00Z",
+                "2026-11-02T17:00:00Z",
+            ),
+        ] {
+            let next = schedule_next(
+                expr,
+                rfc3339_to_unix_ms(from).unwrap(),
+                Some("America/New_York"),
+            )
+            .unwrap();
+            assert_eq!(
+                next,
+                rfc3339_to_unix_ms(expected).unwrap(),
+                "{expr} after {from}"
+            );
+        }
+        assert_eq!(
+            unix_ms_to_rfc3339(100).unwrap(),
+            "1970-01-01T00:00:00.100+00:00"
+        );
+        assert_eq!(
+            unix_ms_to_rfc3339(1000).unwrap(),
+            "1970-01-01T00:00:01+00:00"
+        );
     }
 
     #[test]

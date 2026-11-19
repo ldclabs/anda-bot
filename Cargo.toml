@@ -24,37 +24,34 @@ async-trait = "0.1"
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.17" }
-anda_engine = { version = "0.17.4" }
-anda_engine_server = { version = "0.17" }
-anda_web3_client = { version = "0.17", features = ["client"] }
+anda_engine = { version = "0.18" }
+anda_engine_server = { version = "0.18" }
+anda_web3_client = { version = "0.19", features = ["client"] }
 anda_object_store = "0.14"
 anda_db = { version = "0.14", features = ["full"] }
 anda_db_tfs = { version = "0.14", features = ["full"] }
 anda_db_utils = { version = "0.14" }
-anda_brain = { version = "0.13" }
-anda_kip = "0.14.5"
-anda_cognitive_nexus = "0.14.5"
+anda_brain = { version = "0.13.7" }
+anda_kip = "0.15"
+anda_cognitive_nexus = "0.15"
 anydoc = "0.2"
 base64 = "0.23"
 cpal = { version = "0.18" }
 cbor2 = "1"
-cose2 = "0.5"
+cose2 = "0.6"
 ed25519-dalek = "3"
 # Keep this exact: credential-store initialization has regressed in keyring
 # patch releases before, so upgrades should be validated explicitly.
 keyring = "=4.2.0"
-chrono = { version = "0.4", default-features = false, features = [
-  "clock",
-  "std",
-] }
-chrono-tz = "0.10"
-cron = "0.17"
+# Keep named cron zones available in standalone installations without system tzdata.
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+jiff-cron = "0.3"
 futures = "0.3"
 hkdf = "0.13"
 http = "1.5"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
-parking_lot = "0.12"
+parking_lot = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 # Keep YAML parser upgrades within the validated 2.x release line.
@@ -93,7 +90,7 @@ rustls = { version = "0.23", default-features = false, features = [
 ] }
 tokio-util = "0.7"
 # Reads Codex's config.toml when importing MCP servers; already in the tree.
-toml = { version = "0.8", default-features = false, features = ["parse"] }
+toml = { version = "1.2", default-features = false, features = ["parse", "serde"] }
 zeroize = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
@@ -113,14 +110,13 @@ unicode-segmentation = "1"
 unicode-width = "0.2"
 weixin-agent = "0.3"
 windows-sys = "0.61"
-zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # Pin patches to explicit revs so builds stay reproducible even without the
 # lockfile; bump the rev when upstream main moves.
 [patch.crates-io]
-# Brain 0.13.5 (Memory Interface, DB/KIP 0.14) and Core/Engine 0.17 are
-# published on crates.io. The commented lines
-# patch the shared stack from sibling checkouts for development; keep one
+# The Brain, Engine and DB stack is published on crates.io. The commented
+# lines patch the shared stack from sibling checkouts for development; keep one
 # DB/KIP/Core type identity (verify with `cargo metadata`).
 # anda_brain = { path = "../anda-brain/anda_brain" }
 # anda_core = { path = "../anda/anda_core" }

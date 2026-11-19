@@ -1579,9 +1579,7 @@ async fn memory_interface_windows_replay_wait_and_keep_attention_cursors() {
     let submit = |messages: Vec<Message>, timestamp: String| {
         let client = client.clone();
         let mut submission = window(&messages);
-        submission.submitted_at = chrono::DateTime::parse_from_rfc3339(&timestamp)
-            .unwrap()
-            .timestamp_millis() as u64;
+        submission.submitted_at = crate::util::time::rfc3339_to_unix_ms(&timestamp).unwrap();
         let timestamp = Some(timestamp);
         async move {
             client

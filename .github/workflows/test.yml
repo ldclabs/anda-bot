@@ -16,19 +16,17 @@ jobs:
         with:
           tool: protoc@3.23.4
 
-      - name: Install Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       - name: Run clippy
         run: cargo clippy --locked --all-targets --all-features
@@ -40,6 +38,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            features: --all-features
     steps:
       - uses: actions/checkout@v6
 
@@ -47,12 +48,6 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: protoc@3.23.4
-
-      - name: Install Linux build dependencies
-        if: ${{ runner.os == 'Linux' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends -o Acquire::Retries=3 libasound2-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -64,4 +59,4 @@ jobs:
       - name: Run tests
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --locked --workspace --profile ci
+        run: cargo test --locked --workspace --profile ci ${{ matrix.features }}

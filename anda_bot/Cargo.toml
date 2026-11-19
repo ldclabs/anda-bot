@@ -45,11 +45,10 @@ anydoc = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 clap = { workspace = true }
-chrono = { workspace = true }
-chrono-tz = { workspace = true }
+jiff = { workspace = true }
+jiff-cron = { workspace = true }
 cbor2 = { workspace = true }
 cose2 = { workspace = true, features = ["crypto-aws-lc-rs"] }
-cron = { workspace = true }
 ed25519-dalek = { workspace = true }
 keyring = { workspace = true }
 futures = { workspace = true }

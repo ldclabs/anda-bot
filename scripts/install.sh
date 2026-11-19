@@ -19,9 +19,9 @@ GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-info() { printf "${CYAN}$1${NC}\n"; }
-success() { printf "${GREEN}$1${NC}\n"; }
-error() { printf "${RED}Error: $1${NC}\n" >&2; exit 1; }
+info() { printf '%b%s%b\n' "$CYAN" "$1" "$NC"; }
+success() { printf '%b%s%b\n' "$GREEN" "$1" "$NC"; }
+error() { printf '%bError: %s%b\n' "$RED" "$1" "$NC" >&2; exit 1; }
 
 print_banner() {
     printf "%s\n" "$BANNER_ART"
@@ -115,6 +115,8 @@ append_unix_path_profile() {
 
     mkdir -p "$PROFILE_DIR" 2>/dev/null || return 1
 
+    # Expand HOME and PATH when the profile is sourced.
+    # shellcheck disable=SC2016
     if [ "$SHELL_NAME" = "fish" ]; then
         if [ "$INSTALL_DIR" = "${HOME}/.local/bin" ]; then
             PATH_LINE='fish_add_path -g "$HOME/.local/bin"'
@@ -127,10 +129,10 @@ append_unix_path_profile() {
         PATH_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
     fi
 
+    if [ -s "$PROFILE_PATH" ]; then
+        printf '\n' >> "$PROFILE_PATH" || return 1
+    fi
     {
-        if [ -s "$PROFILE_PATH" ]; then
-            printf '\n'
-        fi
         printf '# anda-bot\n'
         printf '%s\n' "$PATH_LINE"
     } >> "$PROFILE_PATH"
@@ -198,15 +200,18 @@ ensure_windows_path() {
 
 install_binary() {
     INSTALL_PATH="${INSTALL_DIR}/${INSTALL_NAME}"
-    INSTALL_TMP="${INSTALL_DIR}/.${INSTALL_NAME}.$$"
+    INSTALL_TMP="${INSTALL_DIR}/.${BINARY_NAME}.$$${EXE_EXT}"
 
     rm -f "$INSTALL_TMP" 2>/dev/null || true
 
-    if ! mv "${TMPDIR}/${ASSET_NAME}" "$INSTALL_TMP"; then
+    if ! mv "${DOWNLOAD_DIR}/${ASSET_NAME}" "$INSTALL_TMP"; then
         error "Could not stage binary in ${INSTALL_DIR}"
     fi
 
-    chmod +x "$INSTALL_TMP" 2>/dev/null || true
+    if ! chmod +x "$INSTALL_TMP" || ! INSTALLED_VERSION=$("$INSTALL_TMP" --version); then
+        rm -f "$INSTALL_TMP"
+        error "Downloaded binary could not run in ${INSTALL_DIR}"
+    fi
 
     if mv -f "$INSTALL_TMP" "$INSTALL_PATH" 2>/dev/null; then
         return 0
@@ -297,7 +302,7 @@ install_skills_from_staging() {
         [ -e "$ENTRY" ] || continue
         FOUND_SKILL=1
         ENTRY_NAME=$(basename "$ENTRY")
-        rm -rf "${SKILLS_DIR}/${ENTRY_NAME}" || error "Could not replace ${SKILLS_DIR}/${ENTRY_NAME}"
+        rm -rf "${SKILLS_DIR:?}/${ENTRY_NAME}" || error "Could not replace ${SKILLS_DIR}/${ENTRY_NAME}"
         mv "$ENTRY" "${SKILLS_DIR}/${ENTRY_NAME}" || error "Could not install ${ENTRY_NAME}"
     done
 
@@ -309,12 +314,12 @@ install_skills_from_staging() {
 }
 
 download_and_install_skills() {
-    SKILLS_ARCHIVE_PATH="${TMPDIR}/${SKILLS_ARCHIVE_NAME}"
+    SKILLS_ARCHIVE_PATH="${DOWNLOAD_DIR}/${SKILLS_ARCHIVE_NAME}"
     SKILLS_CHECKSUM_NAME="${SKILLS_ARCHIVE_NAME}.sha256"
-    SKILLS_CHECKSUM_PATH="${TMPDIR}/${SKILLS_CHECKSUM_NAME}"
+    SKILLS_CHECKSUM_PATH="${DOWNLOAD_DIR}/${SKILLS_CHECKSUM_NAME}"
     SKILLS_URL="https://github.com/${REPO}/releases/download/${VERSION}/${SKILLS_ARCHIVE_NAME}"
     SKILLS_CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${SKILLS_CHECKSUM_NAME}"
-    SKILLS_STAGING_DIR="${TMPDIR}/skills-staging"
+    SKILLS_STAGING_DIR="${DOWNLOAD_DIR}/skills-staging"
 
     info "Downloading ${SKILLS_ARCHIVE_NAME}..."
     if ! curl -fsSL "$SKILLS_URL" -o "$SKILLS_ARCHIVE_PATH"; then
@@ -404,10 +409,8 @@ case "$TARGET" in
     *) error "Unsupported target: ${TARGET}. Available releases: linux-x86_64, linux-arm64, windows-x86_64, macos-arm64" ;;
 esac
 
-if [ -n "${ANDA_INSTALL_DIR:-}" ]; then
-    INSTALL_DIR="$ANDA_INSTALL_DIR"
-elif [ -n "${INSTALL_DIR:-}" ]; then
-    INSTALL_DIR="$INSTALL_DIR"
+if [ -n "${ANDA_INSTALL_DIR:-${INSTALL_DIR:-}}" ]; then
+    INSTALL_DIR="${ANDA_INSTALL_DIR:-$INSTALL_DIR}"
 elif [ "$OS" = "windows" ]; then
     WINDOWS_HOME=$(windows_home_dir) || error "Could not detect USERPROFILE. Set ANDA_INSTALL_DIR and rerun."
     INSTALL_DIR="${WINDOWS_HOME}/bin"
@@ -444,15 +447,15 @@ CHECKSUM_URL="https://github.com/${REPO}/releases/download/${VERSION}/${CHECKSUM
 
 # Download
 info "Downloading ${ASSET_NAME}..."
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+DOWNLOAD_DIR=$(mktemp -d)
+trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
 
-if ! curl -fsSL "$URL" -o "${TMPDIR}/${ASSET_NAME}"; then
-    error "Download failed. Binary may not exist for ${TARGET}.\nCheck: https://github.com/${REPO}/releases/tag/${VERSION}"
+if ! curl -fsSL "$URL" -o "${DOWNLOAD_DIR}/${ASSET_NAME}"; then
+    error "Download failed for ${TARGET}. See https://github.com/${REPO}/releases/tag/${VERSION}"
 fi
 
-if curl -fsSL "$CHECKSUM_URL" -o "${TMPDIR}/${CHECKSUM_NAME}"; then
-    verify_checksum "${TMPDIR}/${ASSET_NAME}" "${TMPDIR}/${CHECKSUM_NAME}"
+if curl -fsSL "$CHECKSUM_URL" -o "${DOWNLOAD_DIR}/${CHECKSUM_NAME}"; then
+    verify_checksum "${DOWNLOAD_DIR}/${ASSET_NAME}" "${DOWNLOAD_DIR}/${CHECKSUM_NAME}"
 else
     error "Checksum file not found: ${CHECKSUM_URL}"
 fi
@@ -468,27 +471,20 @@ else
     ensure_unix_path
 fi
 
-# Verify
-if [ -x "${INSTALL_DIR}/${INSTALL_NAME}" ]; then
-    INSTALLED_VERSION=$("${INSTALL_DIR}/${INSTALL_NAME}" --version 2>/dev/null || echo "unknown")
-    success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
-    retire_launcher
-    register_autostart
-    restart_daemon
+success "✓ ${INSTALL_NAME} installed successfully! (${INSTALLED_VERSION})"
+retire_launcher
+register_autostart
+restart_daemon
+echo ""
+echo "  Manage Anda:"
+echo "    ${BINARY_NAME} status"
+echo "    ${BINARY_NAME} start"
+echo "    ${BINARY_NAME} restart"
+echo "    ${BINARY_NAME} stop"
+echo "    ${BINARY_NAME} autostart status"
+echo "    ${BINARY_NAME} --help"
+if [ "$OS" = "macos" ] || [ "$OS" = "windows" ]; then
     echo ""
-    echo "  Manage Anda:"
-    echo "    ${BINARY_NAME} status"
-    echo "    ${BINARY_NAME} start"
-    echo "    ${BINARY_NAME} restart"
-    echo "    ${BINARY_NAME} stop"
-    echo "    ${BINARY_NAME} autostart status"
-    echo "    ${BINARY_NAME} --help"
-    if [ "$OS" = "macos" ] || [ "$OS" = "windows" ]; then
-        echo ""
-        echo "  For the tray, chat window and settings, install Anda Desktop:"
-        echo "    https://anda.bot"
-    fi
-else
-    success "✓ Installed to ${INSTALL_DIR}/${INSTALL_NAME}"
-    echo "  Make sure ${INSTALL_DIR} is in your PATH."
+    echo "  For the tray, chat window and settings, install Anda Desktop:"
+    echo "    https://anda.bot"
 fi

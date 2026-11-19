@@ -1292,14 +1292,21 @@ try {
         window.setFullScreen(true)
         await entered
       }
-      // macOS also emits hide while animating between Spaces. Wait for the
-      // fullscreen exit before checking the final visibility of the window.
-      const closed = waitFor(fullScreen ? 'leave-full-screen' : 'hide')
+      // macOS can hide the window without emitting 'hide'. A fullscreen exit
+      // is asynchronous and has its own completion event.
+      const leftFullScreen = fullScreen ? waitFor('leave-full-screen') : undefined
       window.close()
       // A second click during the native transition must not hide it early.
       if (fullScreen) window.close()
       if (mode === 'reopen-during-exit') app.emit('activate')
-      await closed
+      if (leftFullScreen) await leftFullScreen
+      if (mode !== 'reopen-during-exit') {
+        const deadline = Date.now() + 10_000
+        while (window.isVisible()) {
+          if (Date.now() > deadline) throw new Error(`Window stayed visible after close (${mode})`)
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
       const result = {
         hidden: !window.isVisible(),
         fullScreen: window.isFullScreen(),

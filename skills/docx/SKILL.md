@@ -45,7 +45,7 @@ pdftoppm -jpeg -r 150 document.pdf page
 
 ### Accepting Tracked Changes
 
-To produce a clean document with all tracked changes accepted (requires LibreOffice):
+To accept all tracked changes, use a LibreOffice installation with Basic macro support. The script publishes the output after Writer verifies that all revisions have been accepted.
 
 ```bash
 python scripts/accept_changes.py input.docx output.docx

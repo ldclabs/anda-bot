@@ -308,7 +308,7 @@ cargo run --locked -p anda_bot --bin anda --
 
 The shared Brain/DB/KIP/Core/Engine dependencies resolve through Cargo; no sibling `anda-brain` checkout is required. Exact versions are recorded in `Cargo.lock`. Optional `learning` and `mib` features are independent: the former enables the configured learning integration, while the latter adds an isolated [MIB evaluation host](docs/mib-integration.md). Neither is required for ordinary memory, and compiling them does not enable automatic learning.
 
-JavaScript projects use the root pnpm workspace. Use Node.js 22.12+ (CI uses Node.js 24) and pnpm:
+JavaScript projects use the root pnpm workspace. CI uses Node.js 24 and pnpm 11.7.0.
 
 ```bash
 pnpm install --frozen-lockfile

@@ -1,42 +1,21 @@
-# sv
+# Anda Bot website
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+This SvelteKit site serves the Anda Bot landing page, support page, privacy policy and terms at [anda.bot](https://anda.bot). The documentation site lives in [docsite](../docsite/README.md).
 
-## Creating a project
-
-If you're seeing this, you've probably already done this step. Congrats!
+Run these commands from the repository root.
 
 ```sh
-# create a new project
-npx sv create my-app
+pnpm install --frozen-lockfile
+pnpm --dir website dev
 ```
 
-To recreate this project with the same configuration:
+## Checks and production build
 
 ```sh
-# recreate this project
-pnpm dlx sv@0.15.2 create --template minimal --types ts --add prettier vitest="usages:unit,component" tailwindcss="plugins:none" --install pnpm website
+pnpm --dir website check
+pnpm --dir website test
+pnpm --dir website lint
+pnpm --dir website build
 ```
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+The Cloudflare adapter writes the production site to `.svelte-kit/cloudflare` inside `website/`. Use `pnpm --dir website preview` to build and serve it locally with Wrangler.

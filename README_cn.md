@@ -308,7 +308,7 @@ cargo run --locked -p anda_bot --bin anda --
 
 共享的 Brain/DB/KIP/Core/Engine 依赖由 Cargo 解析，无需在同级目录克隆 `anda-brain`。精确版本记录在 `Cargo.lock` 中。可选的 `learning` 和 `mib` 特性互相独立：前者提供需要配置的学习集成，后者增加隔离的 [MIB 评测宿主](docs/mib-integration_cn.md)。日常记忆不需要它们，编译这些特性也不会自动开启学习。
 
-JavaScript 子项目由根目录的 pnpm workspace 管理。使用 Node.js 22.12+（CI 使用 Node.js 24）和 pnpm：
+JavaScript 子项目由根目录的 pnpm workspace 管理。CI 使用 Node.js 24 和 pnpm 11.7.0。
 
 ```bash
 pnpm install --frozen-lockfile

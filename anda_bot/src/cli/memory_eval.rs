@@ -26,6 +26,13 @@ pub enum EvaluationCommand {
         operation_seconds: u64,
         #[arg(long, default_value_t = 1800)]
         evaluation_seconds: u64,
+        /// Case ids to run, comma separated; every frozen case when omitted.
+        #[arg(long, value_delimiter = ',')]
+        cases: Vec<String>,
+        /// Cumulative planner-input budget of one Recall, 1..=131072. A budget
+        /// below one planning request makes Recall answer from its fixed reads.
+        #[arg(long, default_value_t = 32768, value_parser = clap::value_parser!(u32).range(1..=131_072))]
+        recall_context_tokens: u32,
         #[arg(long)]
         output: PathBuf,
     },

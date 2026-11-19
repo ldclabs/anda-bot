@@ -476,8 +476,8 @@ impl Field {
                         !user.is_empty() && domain.contains('.') && !text.contains(' ')
                     }),
                     Some("uri") => reqwest::Url::parse(text).is_ok(),
-                    Some("date") => chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d").is_ok(),
-                    Some("date-time") => chrono::DateTime::parse_from_rfc3339(text).is_ok(),
+                    Some("date") => jiff::civil::Date::strptime("%F", text).is_ok(),
+                    Some("date-time") => crate::util::time::parse_rfc3339(text).is_ok(),
                     _ => true,
                 };
                 if !valid {

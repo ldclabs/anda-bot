@@ -304,13 +304,10 @@ fn timestamp(time: Option<&str>) -> Result<u64, BoxError> {
     let Some(time) = time else {
         return Ok(0);
     };
-    let ms = chrono::DateTime::parse_from_rfc3339(time)?.timestamp_millis();
-    u64::try_from(ms).map_err(Into::into)
+    crate::util::time::rfc3339_to_unix_ms(time)
 }
 fn time_string(ms: u64) -> Result<String, BoxError> {
-    Ok(chrono::DateTime::from_timestamp_millis(i64::try_from(ms)?)
-        .ok_or("invalid business time")?
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    anda_engine::rfc3339_datetime(ms).ok_or_else(|| "invalid business time".into())
 }
 fn required<'a>(body: &'a Value, key: &str) -> Result<&'a str, BoxError> {
     body.get(key)

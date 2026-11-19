@@ -8,6 +8,7 @@ pub mod locale;
 pub mod number_or_string;
 pub mod request_meta;
 pub mod text;
+pub mod time;
 pub mod tool_response;
 pub mod windows_process;
 #[cfg(windows)]

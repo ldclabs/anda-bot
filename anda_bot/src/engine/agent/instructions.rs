@@ -4,7 +4,7 @@
 
 use anda_core::{AgentContext, BoxError, Principal, StateFeatures};
 use anda_engine::context::AgentCtx;
-use chrono::{DateTime, Local, Utc};
+use jiff::{Timestamp, tz::TimeZone};
 
 use crate::engine::ActionsTool;
 
@@ -198,10 +198,14 @@ impl AndaBot {
 }
 
 fn format_local_date(now_ms: u64) -> String {
-    let local_datetime: Option<DateTime<Local>> =
-        DateTime::<Utc>::from_timestamp_millis(now_ms as i64).map(|d| d.with_timezone(&Local));
-    local_datetime
-        .map(|dt| dt.format("%Y-%m-%d %I%p %:z").to_string())
+    i64::try_from(now_ms)
+        .ok()
+        .and_then(|ms| Timestamp::from_millisecond(ms).ok())
+        .map(|dt| {
+            dt.to_zoned(TimeZone::system())
+                .strftime("%Y-%m-%d %I%p %:z")
+                .to_string()
+        })
         .unwrap_or_else(|| "invalid timestamp".to_string())
 }
 
@@ -281,10 +285,8 @@ mod tests {
 
     #[test]
     fn format_local_date_returns_datetime_with_timezone() {
-        let now_ms = unix_ms();
-        let result = format_local_date(now_ms);
-        println!("Formatted local date: {}", result);
-        // 2026-05-12 01PM +08:00
+        let result = format_local_date(unix_ms());
+        assert!(jiff::Zoned::strptime("%Y-%m-%d %I%p %:z", result).is_ok());
     }
 
     #[test]
@@ -298,8 +300,8 @@ mod tests {
 
     #[test]
     fn format_local_date_handles_invalid_timestamp() {
-        // i64::MAX milliseconds is far outside the representable DateTime range.
         assert_eq!(format_local_date(i64::MAX as u64), "invalid timestamp");
+        assert_eq!(format_local_date(u64::MAX), "invalid timestamp");
     }
 
     #[tokio::test]

@@ -919,9 +919,7 @@ mod tests {
                     job_kind: JobKind::Agent,
                     job: "work".into(),
                     schedule_kind: ScheduleKind::At,
-                    schedule: chrono::DateTime::from_timestamp_millis(at as i64)
-                        .unwrap()
-                        .to_rfc3339(),
+                    schedule: anda_engine::rfc3339_datetime(at).unwrap(),
                     name: None,
                     tz: None,
                 },

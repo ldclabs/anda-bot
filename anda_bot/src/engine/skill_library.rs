@@ -14,7 +14,7 @@ use anda_engine::{
     unix_ms,
 };
 use async_trait::async_trait;
-use chrono::{SecondsFormat, Utc};
+use jiff::Timestamp;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -619,7 +619,7 @@ impl SkillLibrary {
             "anda".to_string(),
             json!({
                 "origin": id,
-                "cloned_at": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+                "cloned_at": format!("{:.0}", Timestamp::now())
             }),
         );
         parsed.base_dir = target_dir.clone();
@@ -1732,7 +1732,7 @@ fn modified_at_ms(meta: &std::fs::Metadata) -> Option<u64> {
 }
 
 fn timestamp_for_path() -> String {
-    Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
+    Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string()
 }
 
 fn unique_path(path: PathBuf) -> PathBuf {

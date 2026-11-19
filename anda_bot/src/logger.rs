@@ -1,4 +1,4 @@
-use chrono::{Local, NaiveDate};
+use jiff::{ToSpan, Zoned, civil::Date};
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -11,7 +11,7 @@ use structured_logger::{Builder, Writer};
 pub const CLI_LOG_FILE_PREFIX: &str = "anda-cli";
 pub const DAEMON_LOG_FILE_PREFIX: &str = "anda-daemon";
 // Daily log files older than this are removed at logger startup.
-const LOG_RETENTION_DAYS: u64 = 30;
+const LOG_RETENTION_DAYS: i64 = 30;
 
 pub fn init_daily_json_logger(
     level: &str,
@@ -22,16 +22,16 @@ pub fn init_daily_json_logger(
     Builder::with_level(level)
         .with_target_writer("*", Box::new(writer))
         .init();
-    prune_old_daily_logs(&logs_dir, LOG_RETENTION_DAYS);
+    prune_old_daily_logs(&logs_dir);
     Ok(())
 }
 
-/// Best-effort removal of daily `.log` files older than `keep_days`, based on
+/// Best-effort removal of daily `.log` files older than the retention period, based on
 /// the `-YYYYMMDD` date embedded in the file name. Files whose names do not
 /// parse are left alone.
-fn prune_old_daily_logs(logs_dir: &Path, keep_days: u64) {
-    let today = Local::now().date_naive();
-    let Some(cutoff) = today.checked_sub_days(chrono::Days::new(keep_days)) else {
+fn prune_old_daily_logs(logs_dir: &Path) {
+    let today = Zoned::now().date();
+    let Ok(cutoff) = today.checked_sub(LOG_RETENTION_DAYS.days()) else {
         return;
     };
     let Ok(entries) = std::fs::read_dir(logs_dir) else {
@@ -54,14 +54,14 @@ fn prune_old_daily_logs(logs_dir: &Path, keep_days: u64) {
     }
 }
 
-fn daily_log_file_date(file_name: &str) -> Option<NaiveDate> {
+fn daily_log_file_date(file_name: &str) -> Option<Date> {
     let stem = file_name.strip_suffix(".log")?;
     let (_, date) = stem.rsplit_once('-')?;
-    NaiveDate::parse_from_str(date, "%Y%m%d").ok()
+    Date::strptime("%Y%m%d", date).ok()
 }
 
 pub fn current_daily_log_file_path(logs_dir: &Path, file_prefix: &str) -> PathBuf {
-    logs_dir.join(daily_log_file_name(file_prefix, Local::now().date_naive()))
+    logs_dir.join(daily_log_file_name(file_prefix, Zoned::now().date()))
 }
 
 struct DailyJsonWriter {
@@ -71,7 +71,7 @@ struct DailyJsonWriter {
 }
 
 struct DailyLogFile {
-    date: NaiveDate,
+    date: Date,
     file: File,
 }
 
@@ -79,7 +79,7 @@ impl DailyJsonWriter {
     fn new(logs_dir: PathBuf, file_prefix: &'static str) -> io::Result<Self> {
         std::fs::create_dir_all(&logs_dir)?;
 
-        let date = Local::now().date_naive();
+        let date = Zoned::now().date();
         let file = open_daily_log_file(&logs_dir, file_prefix, date)?;
 
         Ok(Self {
@@ -96,7 +96,7 @@ impl Writer for DailyJsonWriter {
         serde_json::to_writer(&mut buf, value).map_err(io::Error::from)?;
         buf.write_all(b"\n")?;
 
-        let date = Local::now().date_naive();
+        let date = Zoned::now().date();
         let mut current = self.current.lock();
         if current.date != date {
             current.file = open_daily_log_file(&self.logs_dir, self.file_prefix, date)?;
@@ -107,15 +107,15 @@ impl Writer for DailyJsonWriter {
     }
 }
 
-fn open_daily_log_file(logs_dir: &Path, file_prefix: &str, date: NaiveDate) -> io::Result<File> {
+fn open_daily_log_file(logs_dir: &Path, file_prefix: &str, date: Date) -> io::Result<File> {
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(logs_dir.join(daily_log_file_name(file_prefix, date)))
 }
 
-fn daily_log_file_name(file_prefix: &str, date: NaiveDate) -> String {
-    format!("{}-{}.log", file_prefix, date.format("%Y%m%d"))
+fn daily_log_file_name(file_prefix: &str, date: Date) -> String {
+    format!("{}-{}.log", file_prefix, date.strftime("%Y%m%d"))
 }
 
 #[cfg(test)]
@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn daily_log_file_name_formats_date_as_yyyymmdd() {
-        let date = NaiveDate::from_ymd_opt(2026, 6, 1).unwrap();
+        let date = jiff::civil::date(2026, 6, 1);
 
         assert_eq!(
             daily_log_file_name("anda-cli", date),
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn daily_json_writer_creates_log_directory_and_file() {
         let dir = tempfile::tempdir().unwrap();
-        let date = Local::now().date_naive();
+        let date = Zoned::now().date();
         let expected = dir.path().join(daily_log_file_name("anda-test", date));
 
         let _writer = DailyJsonWriter::new(dir.path().join("nested"), "anda-test").unwrap();
@@ -170,7 +170,7 @@ mod tests {
         entry.insert(key, value);
         writer.write_log(&entry).unwrap();
 
-        let date = Local::now().date_naive();
+        let date = Zoned::now().date();
         let log_path = dir.path().join(daily_log_file_name("anda-test", date));
         let content = std::fs::read_to_string(log_path).unwrap();
         assert_eq!(content, "{\"msg\":\"daemon started\"}\n");
@@ -180,7 +180,7 @@ mod tests {
     fn daily_log_file_date_parses_only_dated_log_names() {
         assert_eq!(
             daily_log_file_date("anda-daemon-20260601.log"),
-            NaiveDate::from_ymd_opt(2026, 6, 1)
+            Some(jiff::civil::date(2026, 6, 1))
         );
         assert_eq!(daily_log_file_date("anda-daemon.log"), None);
         assert_eq!(daily_log_file_date("random.txt"), None);
@@ -192,13 +192,13 @@ mod tests {
         let old = dir.path().join("anda-test-20200101.log");
         let recent = dir
             .path()
-            .join(daily_log_file_name("anda-test", Local::now().date_naive()));
+            .join(daily_log_file_name("anda-test", Zoned::now().date()));
         let unrelated = dir.path().join("notes.txt");
         std::fs::write(&old, "old").unwrap();
         std::fs::write(&recent, "recent").unwrap();
         std::fs::write(&unrelated, "keep").unwrap();
 
-        prune_old_daily_logs(dir.path(), 30);
+        prune_old_daily_logs(dir.path());
 
         assert!(!old.exists());
         assert!(recent.exists());
@@ -215,7 +215,7 @@ mod tests {
         log::info!(target: "logger-test", "hello from test");
         log::logger().flush();
 
-        let date = Local::now().date_naive();
+        let date = Zoned::now().date();
         let log_path = dir.path().join(daily_log_file_name("anda-test", date));
         assert!(log_path.is_file());
     }

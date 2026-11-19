@@ -1166,9 +1166,7 @@ fn retry_delay(failures: u32) -> u64 {
 }
 
 fn parse_time_ms(time: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(time)
-        .ok()
-        .and_then(|time| u64::try_from(time.timestamp_millis()).ok())
+    crate::util::time::rfc3339_to_unix_ms(time).ok()
 }
 
 /// Request metadata of one run, or of a notice (no run id): the trigger's
@@ -1829,10 +1827,7 @@ pub(crate) mod tests {
             "name": "comment.created", "delivery": ["webhook"],
             "inputSchema": {"type": "object"}
         })];
-        let refresh_before =
-            chrono::DateTime::from_timestamp_millis((unix_ms() + 3_600_000) as i64)
-                .unwrap()
-                .to_rfc3339();
+        let refresh_before = anda_engine::rfc3339_datetime(unix_ms() + 3_600_000).unwrap();
         *upstream.subscription.write() = json!({
             "id": "sub_1", "refreshBefore": refresh_before, "cursor": "u0", "truncated": false
         });
