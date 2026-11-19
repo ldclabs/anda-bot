@@ -114,6 +114,8 @@ fn code_mode_worker_limits_output_and_imports() {
     assert_eq!(result["value"]["value"], json!([1, 2]), "{result}");
     assert_eq!(result["value"]["stdout"].as_str().unwrap().len(), 4096);
     assert_eq!(result["value"]["stdout_truncated"], true);
+    let multiline = execute(json!({"op":"exec","source":"return \"\"\"first\nsecond\"\"\""}));
+    assert_eq!(multiline["value"]["value"], "first\nsecond", "{multiline}");
     assert_eq!(
         execute(json!({"op":"exec","source":"return 'x' * 50000"}))["code"],
         "resource_limit"

@@ -865,14 +865,30 @@ impl SessionRunner {
         // authorize another check of the same unfinished plan.
         if new_request {
             self.plan_nudge_sent = false;
-            #[cfg(feature = "code-mode")]
-            if let Some(hold) = self
-                .ctx
-                .base
-                .get_state::<crate::engine::code_mode::RecoveryHold>()
-            {
-                hold.user_replied();
-            }
+        }
+        #[cfg(feature = "code-mode")]
+        if let Some(hold) = self
+            .ctx
+            .base
+            .get_state::<crate::engine::code_mode::RecoveryHold>()
+            && inputs.iter().any(|input| {
+                use crate::util::request_meta::keys;
+                input.new_request
+                    && !matches!(
+                        input.command,
+                        PromptCommand::Ping | PromptCommand::Invalid { .. }
+                    )
+                    && input.cron_receipt.is_none()
+                    && !input.extra.contains_key(keys::CRON_JOB_ID)
+                    && !input.extra.contains_key(keys::MCP_TRIGGER_ID)
+                    && input
+                        .extra
+                        .get(keys::EXTERNAL_USER)
+                        .and_then(serde_json::Value::as_bool)
+                        != Some(true)
+            })
+        {
+            hold.user_replied();
         }
 
         // A request from the caller to an idle session starts a new turn, so
@@ -1356,7 +1372,13 @@ impl SessionRunner {
                     .base
                     .get_state::<crate::engine::code_mode::FinishedRuns>()
                 {
-                    done.acknowledge(&self.conversation.messages).await;
+                    let user_replied = self
+                        .ctx
+                        .base
+                        .get_state::<crate::engine::code_mode::RecoveryHold>()
+                        .is_some_and(|hold| !hold.waiting());
+                    done.acknowledge(&self.conversation.messages, user_replied)
+                        .await;
                 }
                 if cron_finished {
                     self.cron_receipts.finish();

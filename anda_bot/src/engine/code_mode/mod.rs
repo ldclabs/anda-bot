@@ -17,7 +17,7 @@ use anda_core::{
     ToolGroupInfo, ToolInput, ToolOutput, ToolProvider,
 };
 use anda_engine::context::{AgentCtx, BaseCtx, RequestCatalog, RequestToolCatalog};
-use library::{Declaration, Library, Script};
+use library::{Declaration, Library};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
@@ -111,19 +111,43 @@ impl CodeMode {
         }
     }
 
-    pub(crate) async fn attach(&self, ctx: &AgentCtx, meta: &RequestMeta) -> Result<(), BoxError> {
+    pub(crate) async fn attach(&self, ctx: &AgentCtx, meta: &RequestMeta) {
         ctx.base
             .set_state(RequestToolCatalog(Arc::new(self.clone())));
-        if *ctx.caller() != self.owner
-            || request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
+        let binding = if *ctx.caller() == self.owner
+            && !request_meta_extra_as::<bool>(meta, keys::EXTERNAL_USER).unwrap_or(false)
         {
-            return Ok(());
-        }
-        let base = ctx.base.with_caller(*ctx.caller());
-        base.set_state(super::SessionRequestMeta::new(meta.clone()));
+            match self.open_library(&ctx.base, meta).await {
+                Ok(library) => Some(Binding {
+                    library,
+                    route: route(meta),
+                }),
+                Err(err) => {
+                    log::warn!("Code Mode script library unavailable: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        ctx.base.set_state(binding);
+    }
+
+    async fn open_library(
+        &self,
+        ctx: &BaseCtx,
+        meta: &RequestMeta,
+    ) -> Result<Arc<Library>, BoxError> {
+        let base = ctx.with_caller(*ctx.caller());
+        let request_meta = super::SessionRequestMeta::new(meta.clone());
+        request_meta.set_cron_workspace(ctx.get_state::<crate::cron::CronWorkspaceGrant>());
+        base.set_state(request_meta);
         let workspace = match call_workspace(Some(&self.grants), &base).await? {
             Some(path) => path,
-            None => tokio::fs::canonicalize(&self.workspace).await?,
+            None => {
+                let workspace = request_meta_extra_as::<PathBuf>(meta, keys::WORKSPACE);
+                tokio::fs::canonicalize(workspace.as_ref().unwrap_or(&self.workspace)).await?
+            }
         };
         let path = workspace
             .to_str()
@@ -141,15 +165,11 @@ impl CodeMode {
             libraries.insert(key, library.clone());
             library
         };
-        ctx.base.set_state(Binding {
-            library,
-            route: route(meta),
-        });
-        Ok(())
+        Ok(library)
     }
 
     fn library(&self, ctx: &BaseCtx) -> Result<Arc<Library>, Failure> {
-        let binding = ctx.get_state::<Binding>().filter(|b| {
+        let binding = ctx.get_state::<Option<Binding>>().flatten().filter(|b| {
             *ctx.caller() == self.owner
                 && !request_meta_extra_as::<bool>(ctx.meta(), keys::EXTERNAL_USER).unwrap_or(false)
                 && b.route == route(&live_request_meta(ctx))
@@ -493,15 +513,24 @@ impl ToolProvider<BaseCtx> for Scripts {
         input: ToolInput<Value>,
     ) -> BoxFut<'_, Result<ToolOutput<Value>, BoxError>> {
         Box::pin(async move {
-            let result=async {
-                let library=self.mode.library(&ctx)?;
-                if !Arc::ptr_eq(&library,&self.library){return Err(Failure::new("scope_denied","workspace changed"))}
-                let s:Arc<Script>=library.get(&input.name.to_ascii_lowercase()).ok_or_else(||Failure::new("not_found","script is no longer registered"))?;
-                let args=s.arguments(input.args,ctx.get_state::<CallSite>().is_some())?;
-                let mut output=self.mode.run(&ctx,json!({"op":"invoke","source":s.source,"name":s.declaration.name,"args":args,"revision":s.revision})).await?;
-                if output.is_error!=Some(true){output.output=json!({"result":output.output["result"]["value"]})}
+            let result = async {
+                let library = self.mode.library(&ctx)?;
+                if !Arc::ptr_eq(&library, &self.library) {
+                    return Err(Failure::new("scope_denied", "workspace changed"));
+                }
+                let script = library
+                    .get(&input.name.to_ascii_lowercase())
+                    .ok_or_else(|| Failure::new("not_found", "script is no longer registered"))?;
+                let python = ctx.get_state::<CallSite>().is_some_and(|site| site.is_direct(&ctx));
+                let args = script.arguments(input.args, python)?;
+                let request = json!({"op":"invoke","source":script.source,"name":script.declaration.name,"args":args,"revision":script.revision});
+                let mut output = self.mode.run(&ctx, request).await?;
+                if output.is_error != Some(true) {
+                    output.output = json!({"result":output.output["result"]["value"]});
+                }
                 Ok(output)
-            }.await;
+            }
+            .await;
             Ok(result.unwrap_or_else(Failure::output))
         })
     }

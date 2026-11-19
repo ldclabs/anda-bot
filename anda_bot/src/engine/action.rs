@@ -329,7 +329,9 @@ impl ActionSession {
     fn new_payload(&self, ctx: &BaseCtx, kind: &PendingActionKind, title: String) -> ActionPayload {
         let now_ms = unix_ms();
         #[cfg(feature = "code-mode")]
-        let site = ctx.get_state::<super::code_mode::CallSite>();
+        let site = ctx
+            .get_state::<super::code_mode::CallSite>()
+            .filter(|site| site.is_direct(ctx));
         ActionPayload {
             #[cfg(feature = "code-mode")]
             parent_run_id: site.as_ref().map(|s| s.root_id().to_owned()),
@@ -583,7 +585,9 @@ impl ActionSession {
         #[cfg(feature = "code-mode")]
         let site = ctx.get_state::<super::code_mode::CallSite>();
         #[cfg(feature = "code-mode")]
-        if let Some(site) = &site {
+        let direct_site = site.as_ref().filter(|site| site.is_direct(ctx));
+        #[cfg(feature = "code-mode")]
+        if let Some(site) = direct_site {
             if matches!(kind, PendingActionKind::Approval { .. }) {
                 site.mark("prepared").await?;
             }
@@ -640,7 +644,7 @@ impl ActionSession {
             },
         };
         #[cfg(feature = "code-mode")]
-        if let Some(site) = &site
+        if let Some(site) = direct_site
             && result.as_ref().is_ok_and(|r| {
                 matches!(r.status, ActionStatus::Approved | ActionStatus::Selected)
                     || r.payload[APPROVAL_MODE_CHANGED] == true

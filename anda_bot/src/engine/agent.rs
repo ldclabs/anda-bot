@@ -1186,6 +1186,8 @@ impl Agent<AgentCtx> for AndaBot {
         // same source cannot create duplicate sessions.
         let mut instructions: Option<String> = None;
         let mut available_tools = Vec::new();
+        #[cfg(feature = "code-mode")]
+        let mut code_recovery = None;
         let session_creation_guard = loop {
             let guard = self.inner.session_creation_lock.lock().await;
             if let Some(session) = self.find_joinable_session(&sess_id, &source_key, &caller_id) {
@@ -1233,7 +1235,13 @@ impl Agent<AgentCtx> for AndaBot {
                 drop(guard);
                 #[cfg(feature = "code-mode")]
                 if let Some(mode) = &self.inner.code_mode {
-                    mode.attach(&ctx, ctx.meta()).await?;
+                    mode.attach(&ctx, ctx.meta()).await;
+                    if !is_new
+                        && let Some(conv) = current_conversation.as_ref()
+                        && should_continue_conversation(&conv.status)
+                    {
+                        code_recovery = mode.prepare_recovery(&ctx.base, ctx.meta(), conv).await;
+                    }
                 }
                 available_tools = available_tool_names(&ctx).await;
                 instructions = Some(
@@ -1269,6 +1277,10 @@ impl Agent<AgentCtx> for AndaBot {
         let mut initial_goal = None;
         let mut session_tools = Vec::new();
         let mut content: Vec<ContentPart> = Vec::new();
+        #[cfg(feature = "code-mode")]
+        if let Some(summary) = code_recovery {
+            content.push(system_runtime_prompt("Code Mode recovery", summary).into());
+        }
         let mut force_standalone_conversation = false;
         let prompt = match command {
             PromptCommand::Plain { prompt } | PromptCommand::Steer { prompt } => prompt,

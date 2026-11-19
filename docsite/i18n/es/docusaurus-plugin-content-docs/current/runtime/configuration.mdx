@@ -21,6 +21,8 @@ code_mode:
 
 El worker ofrece el módulo `json`. Usa las herramientas autorizadas de la sesión para archivos, red y mensajería.
 
+Si Anda detecta una ejecución interrumpida de Code Mode al reanudar una conversación, informa de los resultados conocidos y espera tu respuesta antes de volver a llamar a herramientas.
+
 En el modo `request_approval`, los cambios en las funciones guardadas y los envíos proactivos de mensajes necesitan confirmación. En `on_risk` también se pide confirmar un envío a otra conversación o con archivos adjuntos. Con `parallel` puedes aprobar o rechazar cada destino mostrado por separado. Este ejemplo de `code_exec` cuenta las ejecuciones fallidas de la tarea 42.
 
 ```python

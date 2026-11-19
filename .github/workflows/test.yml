@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-anda
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2
@@ -46,6 +47,7 @@ jobs:
             musl_target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-anda
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2

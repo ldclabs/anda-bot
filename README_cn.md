@@ -306,6 +306,8 @@ Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **R
 在支持 Code Mode 的 Engine 发布前，构建本次提交需要把包含这次 Engine 改动的 `anda` 仓库放在 `anda-bot` 的同级目录。Cargo 从 `../anda` 同时读取 `anda_engine` 和它依赖的 `anda_core`。
 
 ```bash
+git clone https://github.com/ldclabs/anda.git
+git -C anda checkout 9d98f77766854f953044b0aab9ca4feed5006839
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo build --locked -p anda_bot --bin anda

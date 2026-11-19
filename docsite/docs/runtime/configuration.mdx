@@ -21,6 +21,8 @@ code_mode:
 
 `json` is available in the worker. Use host tools for files, network access and messaging.
 
+When Anda detects an interrupted Code Mode run while resuming a conversation, it reports the outcomes it knows and waits for your reply before making new tool calls.
+
 With `request_approval`, changes to saved functions and proactive IM sends require confirmation. In `on_risk`, sending to a different conversation or attaching a file also prompts. With `parallel`, each displayed target can be approved or denied independently. This `code_exec` example counts failed runs for job 42.
 
 ```python

@@ -272,7 +272,7 @@ impl ToolProvider<BaseCtx> for McpGate {
             #[cfg(feature = "code-mode")]
             if ctx
                 .get_state::<crate::engine::code_mode::CallSite>()
-                .is_some()
+                .is_some_and(|site| site.is_direct(&ctx))
             {
                 return result.map(|output| python_output(ctx.caller(), &route.name, output));
             }
@@ -287,7 +287,11 @@ fn python_output(
     tool: &str,
     mut output: ToolOutput<Json>,
 ) -> ToolOutput<Json> {
-    let view = output.model_output.take().unwrap_or_default();
+    let Some(view) = output.model_output.take() else {
+        // Provider-generated errors (such as authorization_required) already
+        // use the public error envelope.
+        return output;
+    };
     let mut resources: Vec<_> = output.output["content"]
         .as_array()
         .into_iter()
@@ -511,6 +515,13 @@ mod tests {
         assert!(projected.output["resources"][1]["hash"].is_string());
         assert_eq!(projected.artifacts.len(), 1);
         assert!(!projected.output.to_string().contains("private"));
+
+        let mut auth = ToolOutput::new(
+            json!({"error":{"code":"authorization_required","server_id":"fixture"}}),
+        );
+        auth.is_error = Some(true);
+        let auth = super::python_output(&Principal::anonymous(), "mcp_fixture_read", auth);
+        assert_eq!(auth.output["error"]["code"], "authorization_required");
     }
     use super::*;
     use crate::{

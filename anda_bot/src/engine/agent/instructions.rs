@@ -46,15 +46,23 @@ fn format_available_tools(available_tools: &[String]) -> String {
         .iter()
         .any(|s| s == crate::engine::code_mode::EXEC)
     {
+        use crate::engine::code_mode::{LIST, REGISTER};
         let names: Vec<_> = available_tools
             .iter()
             .filter(|s| !s.starts_with("script__"))
             .map(String::as_str)
             .collect();
-        return format!(
-            "{}\nUse code_exec for pagination, joins and aggregation. Python tools use your current permissions. Select code_list to find saved functions, code_register to save one, and tools_select to load a saved function for direct calls.",
+        let mut directory = format!(
+            "{}\nUse code_exec for pagination, joins and aggregation. Python tools use your current permissions.",
             names.join(", ")
         );
+        if names.contains(&LIST) {
+            directory.push_str(" Select code_list to find saved functions, and use tools_select to load one for direct calls.");
+        }
+        if names.contains(&REGISTER) {
+            directory.push_str(" Select code_register to save a new function.");
+        }
+        return directory;
     }
     if available_tools.is_empty() {
         "none".to_string()

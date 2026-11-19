@@ -164,28 +164,8 @@ impl AndaBot {
         #[cfg(feature = "code-mode")]
         let recovery = if let Some(mode) = &self.inner.code_mode {
             ctx.base.set_state(SessionRequestMeta::new(meta.clone()));
-            ctx.base
-                .set_state(crate::engine::code_mode::FinishedRuns::default());
-            mode.attach(&ctx, &meta).await?;
-            // The model's replay history has already dropped unanswered calls.
-            // Reconciliation needs the original call IDs to recognize them.
-            let recorded: Vec<_> = conversation
-                .messages
-                .iter()
-                .filter_map(|m| serde_json::from_value(m.clone()).ok())
-                .collect();
-            match mode
-                .recovery(&ctx.base, &meta, conversation._id, &recorded)
-                .await
-            {
-                Ok(summary) => summary,
-                Err(err) => {
-                    log::warn!(conversation=conversation._id;"Code Mode receipts could not be read: {err}");
-                    ctx.base
-                        .set_state(crate::engine::code_mode::RecoveryHold::default());
-                    Some("Code Mode receipts could not be read. Ask the user to check the outcome before starting new operations.".into())
-                }
-            }
+            mode.attach(&ctx, &meta).await;
+            mode.prepare_recovery(&ctx.base, &meta, &conversation).await
         } else {
             None
         };

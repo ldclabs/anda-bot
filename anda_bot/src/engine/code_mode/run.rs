@@ -9,8 +9,14 @@ use crate::{
     },
     util::request_meta::{keys, request_meta_extra_as},
 };
-use anda_core::{BoxError, Principal, Resource, StateFeatures, ToolOutput, Usage};
-use anda_engine::context::{BaseCtx, CallableDispatch};
+use anda_core::{
+    BoxError, ContentPart, Message, Principal, RequestMeta, Resource, StateFeatures, ToolOutput,
+    Usage,
+};
+use anda_engine::{
+    context::{BaseCtx, CallableDispatch},
+    memory::Conversation,
+};
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -149,9 +155,13 @@ struct Accounting {
 struct Pipes {
     input: ChildStdin,
     output: ChildStdout,
+    aborted: Option<Failure>,
 }
 impl Pipes {
     async fn send(&mut self, value: &Value) -> Result<(), Failure> {
+        if let Some(err) = &self.aborted {
+            return Err(err.clone());
+        }
         let bytes = serde_json::to_vec(value)?;
         if bytes.len() > FRAME_LIMIT {
             return Err(Failure::new("resource_limit", "worker frame exceeds 1 MiB"));
@@ -206,6 +216,10 @@ pub(crate) struct CallSite {
     stack: Vec<String>,
 }
 impl CallSite {
+    pub(crate) fn is_direct(&self, ctx: &BaseCtx) -> bool {
+        self.run.agent == ctx.agent
+    }
+
     pub(crate) fn root_id(&self) -> &str {
         &self.run.id
     }
@@ -287,7 +301,7 @@ impl CodeMode {
         }
         let name = request["name"].as_str().map(str::to_owned);
         if let Some(site) = &site
-            && site.run.agent == ctx.agent
+            && site.is_direct(ctx)
             && site.run.owner == *ctx.caller()
             && request["op"] != "exec"
         {
@@ -393,28 +407,55 @@ impl CodeMode {
             && let Some(path) = &run.journal.path
             && let Some(done) = ctx.get_state::<FinishedRuns>()
         {
-            done.track(path.clone(), dispatch.call_id.clone());
+            done.track(
+                path.clone(),
+                RunCompletion::ToolResult(dispatch.call_id.clone()),
+            );
         }
         Ok(output)
     }
 
-    pub(crate) async fn recovery(
+    pub(crate) async fn prepare_recovery(
         &self,
         ctx: &BaseCtx,
-        meta: &anda_core::RequestMeta,
+        meta: &RequestMeta,
+        conversation: &Conversation,
+    ) -> Option<String> {
+        ctx.set_state(FinishedRuns::default());
+        // The replay history drops unanswered calls. Read the saved messages
+        // so recovery can still match the original call IDs.
+        let recorded: Vec<Message> = conversation
+            .messages
+            .iter()
+            .filter_map(|message| Message::deserialize(message).ok())
+            .collect();
+        match self.recovery(ctx, meta, conversation._id, &recorded).await {
+            Ok(summary) => summary,
+            Err(err) => {
+                log::warn!(conversation=conversation._id; "Code Mode receipts could not be read: {err}");
+                ctx.set_state(RecoveryHold::default());
+                Some("Code Mode receipts could not be read. Ask the user to check the outcome before starting new operations.".into())
+            }
+        }
+    }
+
+    pub(super) async fn recovery(
+        &self,
+        ctx: &BaseCtx,
+        meta: &RequestMeta,
         conv: u64,
-        history: &[anda_core::Message],
+        history: &[Message],
     ) -> Result<Option<String>, BoxError> {
         if !MemoryPolicy::current(ctx).may_write() {
             let mut pending = std::collections::BTreeSet::new();
             for part in history.iter().flat_map(|m| &m.content) {
                 match part {
-                    anda_core::ContentPart::ToolCall { name, call_id, .. }
+                    ContentPart::ToolCall { name, call_id, .. }
                         if name == super::EXEC || name.starts_with("script__") =>
                     {
                         pending.insert((name, call_id));
                     }
-                    anda_core::ContentPart::ToolOutput { name, call_id, .. } => {
+                    ContentPart::ToolOutput { name, call_id, .. } => {
                         pending.remove(&(name, call_id));
                     }
                     _ => {}
@@ -444,14 +485,18 @@ impl CodeMode {
             {
                 continue;
             }
-            if rec.outer_call_id.as_ref().is_some_and(|id|history.iter().flat_map(|m|&m.content).any(|p|matches!(p,anda_core::ContentPart::ToolOutput{call_id:Some(call),..} if call==id))) {
-                tokio::fs::remove_file(e.path()).await?;
-                continue
+            if rec.outer_call_id.as_ref().is_some_and(|id| {
+                history.iter().flat_map(|m| &m.content).any(|p| {
+                    matches!(p, ContentPart::ToolOutput { call_id: Some(call), .. } if call == id)
+                })
+            }) {
+                remove_receipt(e.path()).await;
+                continue;
             }
             rec.reconcile();
             summaries.push(rec.summary());
             if let Some(done) = ctx.get_state::<FinishedRuns>() {
-                done.track(e.path(), None);
+                done.track(e.path(), RunCompletion::UserReply);
             }
             if summaries.len() >= 16 {
                 break;
@@ -471,40 +516,49 @@ impl CodeMode {
 pub(crate) struct FinishedRuns(Arc<parking_lot::Mutex<Vec<FinishedRun>>>);
 struct FinishedRun {
     path: PathBuf,
-    call_id: Option<String>,
+    completion: RunCompletion,
+}
+enum RunCompletion {
+    ToolResult(Option<String>),
+    UserReply,
 }
 impl FinishedRuns {
-    fn track(&self, path: PathBuf, call_id: Option<String>) {
-        self.0.lock().push(FinishedRun { path, call_id });
+    fn track(&self, path: PathBuf, completion: RunCompletion) {
+        self.0.lock().push(FinishedRun { path, completion });
     }
-    pub(crate) async fn acknowledge(&self, messages: &[Value]) {
+    pub(crate) async fn acknowledge(&self, messages: &[Value], user_replied: bool) {
         let paths: Vec<_> = self
             .0
             .lock()
-            .extract_if(.., |run| {
-                run.call_id.as_ref().is_none_or(|id| {
-                    messages
-                        .iter()
-                        .filter_map(|m| m["content"].as_array())
-                        .flatten()
-                        .any(|p| p["type"] == "ToolOutput" && p["call_id"].as_str() == Some(id))
-                })
+            .extract_if(.., |run| match &run.completion {
+                RunCompletion::UserReply => user_replied,
+                RunCompletion::ToolResult(None) => true,
+                RunCompletion::ToolResult(Some(id)) => messages
+                    .iter()
+                    .filter_map(|m| m["content"].as_array())
+                    .flatten()
+                    .any(|p| p["type"] == "ToolOutput" && p["callId"].as_str() == Some(id)),
             })
             .map(|run| run.path)
             .collect();
         for p in paths {
-            if let Err(e) = tokio::fs::remove_file(p).await
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                log::warn!("retiring Code Mode run: {e}")
-            }
+            remove_receipt(p).await;
         }
     }
 }
+
+async fn remove_receipt(path: PathBuf) {
+    if let Err(err) = tokio::fs::remove_file(path).await
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("retiring Code Mode run: {err}");
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct RecoveryHold(Arc<std::sync::atomic::AtomicBool>);
 impl RecoveryHold {
-    pub(super) fn waiting(&self) -> bool {
+    pub(crate) fn waiting(&self) -> bool {
         !self.0.load(std::sync::atomic::Ordering::Acquire)
     }
     pub(crate) fn user_replied(&self) {
@@ -546,6 +600,7 @@ async fn spawn(permit: OwnedSemaphorePermit, cancel: CancellationToken) -> Resul
     let pipes = Pipes {
         input: child.stdin.take().unwrap(),
         output: child.stdout.take().unwrap(),
+        aborted: None,
     };
     tokio::spawn(async move {
         let _empty = empty;
@@ -564,39 +619,55 @@ impl WorkerRun {
         stack: Vec<String>,
     ) -> Result<Value, Failure> {
         let inspect = request["op"] == "inspect";
+        let reply = match self.exchange(ctx, dispatch, request, stack).await {
+            Ok(reply) => reply,
+            Err(err) => {
+                // A nested invocation shares the pipe with its parent. If
+                // the host stopped mid-exchange, the worker is still waiting
+                // for a reply to that invocation and cannot resume its parent.
+                self.pipes.lock().await.aborted = Some(err.clone());
+                return Err(err);
+            }
+        };
+        if reply["op"] == "failed" {
+            return Err(Failure {
+                code: reply["code"].as_str().unwrap_or("script_error").into(),
+                message: reply["message"].as_str().unwrap_or("worker failed").into(),
+                data: reply
+                    .get("output_shape")
+                    .map(|shape| json!({"output_shape":shape}))
+                    .unwrap_or_else(|| reply["data"].clone()),
+            });
+        }
+        let value = &reply["value"];
+        if !inspect {
+            let bytes = serde_json::to_vec(&value["value"])?.len();
+            if bytes > super::worker::OUTPUT_LIMIT
+                || value["stdout"].as_str().is_none_or(|s| s.len() > 4096)
+            {
+                return Err(Failure {
+                    code: "resource_limit".into(),
+                    message: "worker result exceeds its output budget".into(),
+                    data: json!({"output_shape":{"bytes":bytes}}),
+                });
+            }
+        }
+        Ok(value.clone())
+    }
+
+    async fn exchange(
+        &self,
+        ctx: &BaseCtx,
+        dispatch: &CallableDispatch,
+        request: Value,
+        stack: Vec<String>,
+    ) -> Result<Value, Failure> {
+        let inspect = request["op"] == "inspect";
         self.pipes.lock().await.send(&request).await?;
         loop {
             let message = self.pipes.lock().await.read().await?;
             match message["op"].as_str() {
-                Some("done") => {
-                    let value = &message["value"];
-                    if !inspect {
-                        let bytes = serde_json::to_vec(&value["value"])?.len();
-                        if bytes > super::worker::OUTPUT_LIMIT
-                            || value["stdout"].as_str().is_none_or(|s| s.len() > 4096)
-                        {
-                            return Err(Failure {
-                                code: "resource_limit".into(),
-                                message: "worker result exceeds its output budget".into(),
-                                data: json!({"output_shape":{"bytes":bytes}}),
-                            });
-                        }
-                    }
-                    return Ok(value.clone());
-                }
-                Some("failed") => {
-                    return Err(Failure {
-                        code: message["code"].as_str().unwrap_or("script_error").into(),
-                        message: message["message"]
-                            .as_str()
-                            .unwrap_or("worker failed")
-                            .into(),
-                        data: message
-                            .get("output_shape")
-                            .map(|shape| json!({"output_shape":shape}))
-                            .unwrap_or_else(|| message["data"].clone()),
-                    });
-                }
+                Some("done" | "failed") => return Ok(message),
                 Some("calls") if !inspect => {
                     let calls: Vec<(String, Value)> =
                         serde_json::from_value(message["calls"].clone())?;
@@ -699,20 +770,22 @@ impl WorkerRun {
         site.resume(&child)
             .await
             .map_err(|err| Failure::new("scope_denied", err.to_string()))?;
-        child.set_state(site);
-        let mut output = Box::pin(dispatch.call(&child, name.clone(), args))
-            .await
-            .map_err(|err| {
-                let message = err.to_string();
-                let code = if message.contains("action denied:") {
-                    "approval_denied"
-                } else if message.contains("approval_required") || message.contains("nobody can") {
-                    "approval_required"
-                } else {
-                    "tool_error"
-                };
-                Failure::new(code, message)
-            })?;
+        child.set_state(site.clone());
+        let result = Box::pin(dispatch.call(&child, name.clone(), args)).await;
+        // Background work may keep a context clone alive after the tool has
+        // returned. The execution lane belongs to this dispatch only.
+        site.release();
+        let mut output = result.map_err(|err| {
+            let message = err.to_string();
+            let code = if message.contains("action denied:") {
+                "approval_denied"
+            } else if message.contains("approval_required") || message.contains("nobody can") {
+                "approval_required"
+            } else {
+                "tool_error"
+            };
+            Failure::new(code, message)
+        })?;
         {
             let mut accounting = self.accounting.lock().await;
             accounting.usage.accumulate(&output.usage);

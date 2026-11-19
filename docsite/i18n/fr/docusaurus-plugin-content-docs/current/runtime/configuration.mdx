@@ -21,6 +21,8 @@ code_mode:
 
 Le module `json` est disponible dans le worker. Les fichiers, le réseau et les messages passent par les outils autorisés de la session.
 
+Si Anda détecte une exécution interrompue de Code Mode à la reprise d’une conversation, il indique les résultats connus et attend votre réponse avant d’appeler de nouveaux outils.
+
 En mode `request_approval`, les modifications de fonctions enregistrées et les envois de messages proactifs demandent une confirmation. En mode `on_risk`, envoyer dans une autre conversation ou joindre un fichier demande aussi confirmation. Avec `parallel`, chaque cible affichée peut être acceptée ou refusée séparément. Cet exemple `code_exec` compte les échecs de la tâche 42.
 
 ```python

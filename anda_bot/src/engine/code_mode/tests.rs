@@ -122,7 +122,7 @@ impl Fixture {
             builder = builder.register_tool(Arc::new(tool)).unwrap();
         }
         let ctx = builder.mock_ctx();
-        mode.attach(&ctx, ctx.meta()).await.unwrap();
+        mode.attach(&ctx, ctx.meta()).await;
         Self {
             mode,
             ctx,
@@ -229,6 +229,61 @@ async fn code_mode_register_restart_and_reuse_through_runner() {
     assert!(!bot.mode.visible(&bot.ctx.base, REGISTER));
     let denied=bot.call(EXEC,json!({"code":"return tools.code_register(action='remove', name='script__cron_failure_count', source=None, expected_revision='x')"}),None).await;
     assert_eq!(denied.output["error"]["code"], "scope_denied");
+}
+
+#[tokio::test]
+async fn code_mode_workspace_binding_uses_the_request_workspace_and_saved_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let workspace = dir.path().join("channel-workspace");
+    tokio::fs::create_dir(&workspace).await.unwrap();
+    let default = bot.mode.library(&bot.ctx.base).unwrap();
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::SOURCE.into(), json!("wechat:test"));
+    meta.extra.insert(keys::WORKSPACE.into(), json!(workspace));
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta.clone()));
+    bot.mode.attach(&bot.ctx, &meta).await;
+    let channel = bot.mode.library(&bot.ctx.base).unwrap();
+    assert!(!Arc::ptr_eq(&default, &channel));
+
+    meta.extra.insert(
+        keys::SOURCE.into(),
+        json!(format!("cli:{}", workspace.display())),
+    );
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta.clone()));
+    bot.ctx.base.set_state(crate::cron::CronWorkspaceGrant {
+        path: workspace.canonicalize().unwrap(),
+        caller: *bot.ctx.caller(),
+    });
+    bot.mode.attach(&bot.ctx, &meta).await;
+    assert!(Arc::ptr_eq(
+        &channel,
+        &bot.mode.library(&bot.ctx.base).unwrap()
+    ));
+}
+
+#[tokio::test]
+async fn code_mode_nested_protocol_failure_cannot_be_mistaken_for_the_parent_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let source = "def invalid_call():\n    \"\"\"Call a tool.\"\"\"\n    try:\n        tools['']()\n    except ToolError:\n        return 'caught'";
+    let created = bot.call(REGISTER, save(source, None), None).await;
+    assert_eq!(created.output["result"]["status"], "created", "{created:?}");
+    let output = bot
+        .call(
+            EXEC,
+            json!({"code":"return tools.script__invalid_call()"}),
+            None,
+        )
+        .await;
+    assert_eq!(
+        output.output["error"]["code"], "invalid_arguments",
+        "{output:?}"
+    );
 }
 
 #[tokio::test]
@@ -372,24 +427,28 @@ async fn code_mode_recovery_reconciles_before_dispatch_and_waits_for_user() {
     let receipt = |id, status| json!({"child_id":id,"tool":"send_im_message","status":status,"argument_digest":"fixture"});
     let record = json!({"run_id":"example","conversation_id":42,"caller":bot.ctx.caller().to_text(),"route":route(meta),"outer_call_id":"c","revision":null,
         "calls":[receipt(1,"prepared"),receipt(2,"dispatching"),receipt(3,"completed")]});
-    tokio::fs::write(
-        records.join("example.json"),
-        serde_json::to_vec(&record).unwrap(),
-    )
-    .await
-    .unwrap();
+    let receipt = records.join("example.json");
+    tokio::fs::write(&receipt, serde_json::to_vec(&record).unwrap())
+        .await
+        .unwrap();
+    let conversation = anda_engine::memory::Conversation {
+        _id: 42,
+        ..Default::default()
+    };
     for _ in 0..2 {
         let summary = bot
             .mode
-            .recovery(&bot.ctx.base, meta, 42, &[])
+            .prepare_recovery(&bot.ctx.base, meta, &conversation)
             .await
-            .unwrap()
             .unwrap();
         for state in ["cancelled", "outcome_unknown", "completed"] {
             assert!(summary.contains(state));
         }
         assert!(!bot.mode.executable(&bot.ctx.base, "send_im_message"));
     }
+    let done = bot.ctx.base.get_state::<FinishedRuns>().unwrap();
+    done.acknowledge(&[], false).await;
+    assert!(receipt.is_file());
     assert!(
         bot.mode
             .recovery(&bot.ctx.base, meta, 99, &[])
@@ -403,6 +462,8 @@ async fn code_mode_recovery_reconciles_before_dispatch_and_waits_for_user() {
         .unwrap()
         .user_replied();
     assert!(bot.mode.executable(&bot.ctx.base, "send_im_message"));
+    done.acknowledge(&[], true).await;
+    assert!(!receipt.exists());
 }
 
 #[tokio::test]
@@ -413,6 +474,13 @@ async fn code_mode_admission_and_oversized_results_preserve_receipts() {
     let busy = bot.call(EXEC, json!({"code":"return 1"}), None).await;
     assert_eq!(busy.output["error"]["data"]["reason"], "worker_busy");
     drop(occupied);
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
+    let done = FinishedRuns::default();
+    bot.ctx.base.set_state(done.clone());
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta));
     let output=bot.call(EXEC,json!({"code":"tools.list_cron_runs(job_id=42, limit=20, cursor=None)\nreturn 'x' * 50000"}),None).await;
     let error = &output.output["error"];
     assert_eq!(error["code"], "resource_limit", "{output:?}");
@@ -420,6 +488,23 @@ async fn code_mode_admission_and_oversized_results_preserve_receipts() {
     assert_eq!(error["data"]["receipts"][0]["tool"], "list_cron_runs");
     assert_eq!(error["data"]["output_shape"]["bytes_at_least"], 32769);
     assert_eq!(bot.calls.load(Ordering::SeqCst), 1);
+    let path = bot.mode.home.join("runs/42");
+    done.acknowledge(&[], false).await;
+    assert!(std::fs::read_dir(&path).unwrap().next().is_some());
+    let stored = serde_json::to_value(anda_core::Message {
+        role: "tool".into(),
+        content: vec![anda_core::ContentPart::ToolOutput {
+            name: EXEC.into(),
+            output: output.output,
+            is_error: output.is_error,
+            call_id: Some("fixture-call".into()),
+            remote_id: None,
+        }],
+        ..Default::default()
+    })
+    .unwrap();
+    done.acknowledge(&[stored], false).await;
+    assert!(std::fs::read_dir(&path).unwrap().next().is_none());
 }
 
 #[tokio::test]

@@ -1,0 +1,11 @@
+name: Set up Anda Engine sources
+description: Prepare the sibling checkout required by the workspace Cargo patches.
+runs:
+  using: composite
+  steps:
+    - name: Fetch the matching workspace revision
+      shell: bash
+      run: |
+        git init -q -b main ../anda
+        git -C ../anda fetch --depth=1 https://github.com/ldclabs/anda.git 9d98f77766854f953044b0aab9ca4feed5006839
+        git -C ../anda checkout --detach FETCH_HEAD

@@ -306,6 +306,8 @@ The Rust workspace contains the `anda_bot` package and the `anda` executable. Bu
 Until the Code Mode Engine is released, source builds of this revision require the matching `anda` checkout beside `anda-bot`. Cargo reads both `anda_engine` and its `anda_core` dependency from `../anda`.
 
 ```bash
+git clone https://github.com/ldclabs/anda.git
+git -C anda checkout 9d98f77766854f953044b0aab9ca4feed5006839
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo build --locked -p anda_bot --bin anda

@@ -1,5 +1,7 @@
 """Host-supplied bootstrap for one isolated RustPython worker."""
 
+PYCF_ONLY_AST = 1024
+
 # The host supplies only a private IPC function and bounded JSON conversion.
 # Native permissions and run accounting live outside the interpreter.
 class ToolError(Exception):
@@ -44,7 +46,7 @@ def literal(node, schema):
 
 
 def inspect_source(source):
-    module = compile(source, "<registered>", "exec", 1024)
+    module = compile(source, "<registered>", "exec", PYCF_ONLY_AST)
     if len(module.body) != 1 or type(module.body[0]).__name__ != "FunctionDef":
         extra = next((node for node in module.body if type(node).__name__ != "FunctionDef"),
                      module.body[-1] if module.body else None)
@@ -167,7 +169,10 @@ def _evaluate(request):
         exec(compile(source, "<saved>", "exec"), scope)
         value = scope[request["name"][8:]](**request["args"])
     else:
-        wrapped = "def _cell():\n" + "\n".join("    " + line for line in source.split("\n")) + "\n    pass"
+        body = compile(source, "<code_exec>", "exec", PYCF_ONLY_AST).body
+        wrapped = compile("def _cell(): pass", "<code_exec>", "exec", PYCF_ONLY_AST)
+        if body:
+            wrapped.body[0].body = body
         exec(compile(wrapped, "<code_exec>", "exec"), scope)
         value = scope["_cell"]()
     return {"value": value, "stdout": _stdout.decode("utf-8", "ignore"), "stdout_truncated": _truncated}
