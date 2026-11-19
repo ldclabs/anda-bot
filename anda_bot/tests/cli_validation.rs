@@ -27,7 +27,13 @@ fn config_validation_reads_stdin_without_initializing_a_home() {
             .write_all(content.as_bytes())
             .unwrap();
         let output = child.wait_with_output().unwrap();
-        assert_eq!(output.status.success(), valid);
+        assert_eq!(
+            output.status.success(),
+            valid,
+            "validate-config exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(!home.exists());
         if valid {
             assert_eq!(

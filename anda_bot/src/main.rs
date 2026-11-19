@@ -181,24 +181,29 @@ const NO_OWNER_IDENTITY: &str = "No existing owner identity is available. Run `a
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
     util::http_client::install_default_crypto_provider();
-    // `run` has many async command branches. Keep its future off the main
-    // thread's small Windows stack (which RUST_MIN_STACK does not enlarge).
-    let result = Box::pin(run()).await;
+    // Clap builds the entire command tree, even for --version. Its generated
+    // builders can exhaust the Windows main thread's stack in unoptimized builds.
+    let (cli, command_name) = tokio::task::spawn_blocking(|| {
+        let matches = Cli::command().get_matches();
+        let command_name = matches.subcommand_name().map(str::to_owned);
+        let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+        (cli, command_name)
+    })
+    .await?;
+    let result = Box::pin(run(cli, command_name.as_deref())).await;
     if let Err(err) = &result {
         log::error!("{err}");
     }
     result
 }
 
-async fn run() -> Result<(), BoxError> {
-    let matches = Cli::command().get_matches();
-    let command_name = matches.subcommand_name();
+async fn run(cli: Cli, command_name: Option<&str>) -> Result<(), BoxError> {
     let Cli {
         home,
         identity_secrets_stdin,
         full_access,
         command,
-    } = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+    } = cli;
 
     if identity_secrets_stdin && !matches!(command, Some(Commands::Daemon)) {
         return Err("--identity-secrets-stdin can only be used with `anda daemon`".into());
