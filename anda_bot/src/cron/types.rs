@@ -2,7 +2,7 @@ use anda_core::{AgentOutput, Principal, RequestMeta, ToolOutput};
 use anda_db::schema::{AndaDBSchema, BoxError};
 use jiff::{
     SignedDuration, Timestamp,
-    tz::{Offset, TimeZone},
+    tz::{AmbiguousOffset, Offset, TimeZone},
 };
 use jiff_cron::{Schedule as CronExprSchedule, TimeUnitSpec};
 use serde::{Deserialize, Serialize};
@@ -601,7 +601,9 @@ fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxE
         }
         None => TimeZone::system(),
     };
-    let mut start = from.to_zoned(timezone);
+    // Search civil time on a fixed clock. The cron iterator adjusts elapsed
+    // hours, which can skip valid wall times or shift a nonexistent one.
+    let mut start = timezone.to_datetime(from).to_zoned(TimeZone::UTC)?;
     let weekdays = cron.days_of_week();
     if !weekdays.is_all() {
         // The cron iterator checks weekdays after its clock fields. Skip entire
@@ -613,17 +615,19 @@ fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxE
             date = date.tomorrow()?;
         }
         if date != first_date {
-            start = date
-                .to_zoned(start.time_zone().clone())?
-                .start_of_day()?
-                .checked_sub(second)?;
+            start = date.to_zoned(TimeZone::UTC)?.checked_sub(second)?;
         }
     }
-    let next = cron
-        .after(start)
-        .next()
-        .ok_or_else(|| format!("no future occurrence for expression '{expr}'"))?;
-    Ok(u64::try_from(next.timestamp().as_millisecond())?)
+    for candidate in cron.after(start) {
+        let local = timezone.to_ambiguous_timestamp(candidate.datetime());
+        if matches!(local.offset(), AmbiguousOffset::Gap { .. }) {
+            continue;
+        }
+        let first = local.earlier()?;
+        let next = if first > from { first } else { local.later()? };
+        return Ok(u64::try_from(next.as_millisecond())?);
+    }
+    Err(format!("no future occurrence for expression '{expr}'").into())
 }
 
 #[cfg(test)]
@@ -1459,8 +1463,16 @@ mod tests {
                 "2026-03-08T12:59:59.400Z",
                 "2026-03-09T13:00:00Z",
             ),
-            // 02:30 does not occur on the spring-forward Sunday.
-            ("30 2 * * *", "2026-03-08T05:00:00Z", "2026-03-09T06:30:00Z"),
+            // A reschedule on Saturday skips Sunday's nonexistent 02:30.
+            ("30 2 * * *", "2026-03-07T20:00:00Z", "2026-03-09T06:30:00Z"),
+            // A later local hour on either transition Sunday still exists.
+            ("0 9 * * *", "2026-03-08T05:00:00Z", "2026-03-08T13:00:00Z"),
+            ("0 9 * * *", "2026-11-01T04:00:00Z", "2026-11-01T14:00:00Z"),
+            // A repeated wall time uses its first occurrence when still in
+            // the future. Rescheduling that run advances to the next day.
+            ("30 1 * * *", "2026-11-01T04:00:00Z", "2026-11-01T05:30:00Z"),
+            ("30 1 * * *", "2026-11-01T05:30:00Z", "2026-11-02T06:30:00Z"),
+            ("30 1 * * *", "2026-11-01T06:15:00Z", "2026-11-01T06:30:00Z"),
             // A Monday in the seven-field dialect uses 2. Noon is EST again.
             (
                 "0 0 12 * * 2 2026",
