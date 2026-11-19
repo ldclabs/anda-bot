@@ -4,10 +4,27 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.14.10] — 2026-11-19
+
+### Changed
+
+- Anda Desktop and the Chrome Dashboard give the selected item the full workspace width in compact windows. A list button opens the available items. The Dashboard also supports Back and Forward between workspaces.
+- The Chrome Dashboard’s **Connection settings** opens the gateway URL and token fields directly. **Test** checks the entered credentials and shows the result in the dialog. **Save** applies the connection to the browser profile.
+- Desktop automation schedules now show the expected input for each schedule type and restore the value when you switch back.
+- Deleting a bookmark folder in either client asks for confirmation and explains what happens to its subfolders and bookmarks.
+- `anda memory evaluate` now plans all 16 synthetic cases by default. Use `--cases` to select a subset and `--recall-context-tokens` to set the recall planner’s input budget.
+- The CLI, Anda Desktop and the Chrome extension share version 0.14.10. The runtime uses Anda Brain 0.13.7, Engine 0.18.0, KIP 0.15.0 and Cognitive Nexus 0.15.0.
+
 ### Fixed
 
+- Both clients keep unsaved configuration edits when you visit another page in the same window. A failed load offers a retry before showing the editor, and invalid YAML stays available for correction with saving disabled.
+- The approval menu fits within narrow chat panels and supports keyboard selection and Escape. Opening the Chrome channel list keeps the composer at its original width.
+- Desktop history searches drop stale results when the query changes. Skill and MCP filters hide actions for items outside the results.
 - Anda Desktop sends a voice transcript to the chat and workspace where it was submitted, even when you switch chats during transcription. A late folder registration can no longer overwrite the chat selection saved for the next launch.
 - The Chrome extension updates the original approval card when its response arrives after you switch chats.
+- Cron schedules follow the local clock across daylight-saving transitions, skipping nonexistent times and retaining valid runs on transition days.
+- Memory evaluation supports models with fixed sampling settings, checks the answering request before forming memory, and records failure details, recalled items and raw answers for diagnosis.
+- The installers check that a downloaded binary runs before replacing the installed copy. The Word and Excel helpers stage their output so a failed conversion preserves the original file.
 
 ## [0.14.9] — 2026-11-01
 

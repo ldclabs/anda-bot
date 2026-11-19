@@ -10,7 +10,7 @@
     itemTitleClass
   } from '$lib/anda/ui'
   import {
-    ChevronDown,
+    PanelLeftClose,
     CircleAlert,
     FolderOpen,
     History,
@@ -20,8 +20,6 @@
     Trash2,
     X
   } from '@lucide/svelte'
-  import { quadOut } from 'svelte/easing'
-  import { fly } from 'svelte/transition'
   import { statusLabel } from './chat/status'
   import type { Channel } from './client/channel.svelte'
   import Modal from './Modal.svelte'
@@ -44,7 +42,8 @@
     onDelete
   }: Props = $props()
   let viewportWidth = $state(0)
-  let collapsedOverride = $state<boolean | null>(null)
+  let folded = $state(false)
+  let toggleButton: HTMLButtonElement
   let flyoutOpen = $state(false)
   let deleteDialogOpen = $state(false)
   let pendingDeleteSource = $state<string | null>(null)
@@ -52,7 +51,11 @@
   let sidebarElement = $state<HTMLElement | null>(null)
 
   const autoCollapsed = $derived(viewportWidth > 0 && viewportWidth < 760)
-  const collapsed = $derived(collapsedOverride ?? autoCollapsed)
+  const collapsed = $derived(autoCollapsed || folded)
+  const expanded = $derived(!collapsed || flyoutOpen)
+  const toggleLabel = $derived(
+    getMessage((autoCollapsed ? flyoutOpen : !collapsed) ? 'collapseChannels' : 'expandChannels')
+  )
   const searchTerm = $derived(searchQuery.trim().toLowerCase())
   const filteredChannels = $derived.by(() => {
     if (!searchTerm) {
@@ -69,12 +72,15 @@
   const pendingDeleteDescription = $derived(getMessage('deleteChannelConfirm', pendingDeleteTitle))
 
   function toggleCollapsed() {
-    collapsedOverride = !collapsed
-    flyoutOpen = false
+    if (autoCollapsed) flyoutOpen = !flyoutOpen
+    else {
+      folded = !folded
+      flyoutOpen = false
+    }
   }
 
   function openFlyout() {
-    if (collapsed) {
+    if (collapsed && !autoCollapsed) {
       flyoutOpen = true
     }
   }
@@ -84,7 +90,7 @@
   }
 
   function closeFlyoutAfterPointerLeave() {
-    if (collapsed && focusedInsideSidebar()) {
+    if (autoCollapsed || focusedInsideSidebar()) {
       return
     }
     closeFlyout()
@@ -103,7 +109,8 @@
     if (source !== activeSource) {
       await onSelect?.(source)
     }
-    if (collapsed) {
+    if (collapsed && flyoutOpen) {
+      toggleButton.focus()
       closeFlyout()
     }
   }
@@ -142,7 +149,8 @@
       return
     }
     if (collapsed) {
-      flyoutOpen = false
+      toggleButton.focus()
+      closeFlyout()
     }
   }
 
@@ -248,13 +256,26 @@
   }
 </script>
 
-<svelte:window bind:innerWidth={viewportWidth} />
+<svelte:window
+  bind:innerWidth={viewportWidth}
+  onpointerdown={(event) => {
+    if (flyoutOpen && event.target instanceof Node && !sidebarElement?.contains(event.target))
+      closeFlyout()
+  }}
+  onkeydown={(event) => {
+    if (event.key === 'Escape' && flyoutOpen && !deleteDialogOpen && focusedInsideSidebar()) {
+      event.preventDefault()
+      toggleButton.focus()
+      closeFlyout()
+    }
+  }}
+/>
 
-{#snippet channelsHeader(expanded: boolean, floating: boolean)}
+{#snippet channelsHeader()}
   <div
     class={`flex h-12 shrink-0 items-center gap-2 border-b border-sidebar-border px-1.5 ${
       expanded ? '' : 'justify-center'
-    } ${floating ? 'rounded-tr-md bg-sidebar/95' : ''}`}
+    }`}
   >
     <button
       type="button"
@@ -263,12 +284,15 @@
         'icon-sm',
         'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
       )}
-      aria-label={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
-      aria-expanded={!collapsed || flyoutOpen}
-      title={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
+      bind:this={toggleButton}
+      aria-label={toggleLabel}
+      aria-expanded={expanded}
+      title={toggleLabel}
       onclick={toggleCollapsed}
     >
-      <History class="size-4" />
+      {#if expanded}<PanelLeftClose class="size-4 rtl:rotate-180" />{:else}<History
+          class="size-4"
+        />{/if}
     </button>
 
     {#if expanded}
@@ -294,20 +318,6 @@
       >
         <FolderOpen class="size-4" />
       </button>
-      <button
-        type="button"
-        class={buttonClass(
-          'ghost',
-          'icon-sm',
-          'grid place-items-center bg-sidebar-accent text-sidebar-accent-foreground hover:bg-muted'
-        )}
-        aria-label={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
-        aria-expanded={!collapsed || flyoutOpen}
-        title={getMessage(collapsed ? 'expandChannels' : 'collapseChannels')}
-        onclick={toggleCollapsed}
-      >
-        <ChevronDown class="size-4 shrink-0 rotate-90 text-muted-foreground" />
-      </button>
     {/if}
   </div>
 {/snippet}
@@ -316,11 +326,11 @@
   <div class="shrink-0 border-b border-sidebar-border px-1.5 py-1.5">
     <label class="relative block min-w-0">
       <Search
-        class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+        class="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
       />
       <input
         type="text"
-        class={inputClass('h-8 bg-sidebar-accent/35 pl-8 pr-8 text-xs shadow-none')}
+        class={inputClass('h-8 bg-sidebar-accent/35 ps-8 pe-8 text-xs shadow-none')}
         bind:value={searchQuery}
         placeholder={getMessage('searchChannelsPlaceholder')}
         aria-label={getMessage('searchChannels')}
@@ -332,7 +342,7 @@
           class={buttonClass(
             'ghost',
             'icon-xs',
-            'absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground'
+            'absolute end-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground'
           )}
           aria-label={getMessage('clearSearch')}
           title={getMessage('clearSearch')}
@@ -374,7 +384,7 @@
           class={itemClass(
             active ? 'outline' : 'default',
             'xs',
-            `group relative flex-nowrap p-0 text-left ${
+            `group relative flex-nowrap p-0 text-start ${
               active
                 ? 'border-sidebar-border bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
@@ -383,7 +393,7 @@
         >
           <button
             type="button"
-            class={`flex items-center text-left ${
+            class={`flex items-center text-start ${
               expanded ? 'min-w-0 flex-1 gap-2 px-2 py-2' : 'size-full justify-center'
             }`}
             aria-current={active ? 'page' : undefined}
@@ -453,7 +463,7 @@
               class={buttonClass(
                 'outline',
                 'icon-xs',
-                'pointer-events-none absolute bottom-1 right-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
+                'pointer-events-none absolute end-1 bottom-1 z-10 text-muted-foreground opacity-0 shadow-sm group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-amber-50 hover:text-amber-700 focus-visible:pointer-events-auto focus-visible:opacity-100 dark:hover:bg-amber-950/40 dark:hover:text-amber-300'
               )}
               aria-label={getMessage('deleteChannel')}
               title={getMessage('deleteChannel')}
@@ -471,7 +481,7 @@
 
 <aside
   bind:this={sidebarElement}
-  class={`group/sidebar relative z-20 h-full shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
+  class={`group/sidebar relative z-20 h-full shrink-0 border-e border-sidebar-border bg-sidebar text-sidebar-foreground backdrop-blur transition-[width] duration-200 ${
     collapsed ? 'w-12 overflow-visible' : 'w-64 overflow-hidden'
   }`}
   aria-label={getMessage('channelsLabel')}
@@ -480,26 +490,13 @@
   onfocusin={openFlyout}
   onfocusout={handleSidebarFocusOut}
 >
-  <div class="flex h-full min-h-0 flex-col">
-    {@render channelsHeader(!collapsed, false)}
-    {#if !collapsed}
-      {@render channelsSearch()}
-    {/if}
-    {@render channelsList(!collapsed)}
+  <div
+    class={`flex h-full min-h-0 flex-col ${collapsed && flyoutOpen ? 'absolute inset-y-0 start-0 z-50 w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-e-md border-e border-sidebar-border bg-sidebar shadow-xl' : ''}`}
+  >
+    {@render channelsHeader()}
+    {#if expanded}{@render channelsSearch()}{/if}
+    {@render channelsList(expanded)}
   </div>
-
-  {#if collapsed && flyoutOpen}
-    <div class="absolute inset-y-0 left-0 z-50 w-64" aria-label={getMessage('channelsLabel')}>
-      <div
-        class="flex h-full min-h-0 flex-col overflow-hidden rounded-r-md border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-[0_18px_40px_rgba(15,23,42,0.18)] ring-1 ring-sidebar-border/70 backdrop-blur-xl will-change-transform dark:shadow-[0_18px_40px_rgba(0,0,0,0.35)]"
-        transition:fly={{ x: -18, duration: 320, easing: quadOut, opacity: 0.92 }}
-      >
-        {@render channelsHeader(true, true)}
-        {@render channelsSearch()}
-        {@render channelsList(true)}
-      </div>
-    </div>
-  {/if}
 </aside>
 
 {#snippet deleteActions()}

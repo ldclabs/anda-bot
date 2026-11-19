@@ -278,6 +278,46 @@ it('applies an approval receipt to the chat that requested it after switching ch
   client.destroy()
 })
 
+describe('AndaSidePanelClient.testConnection', () => {
+  it.each(['onopen', 'onerror'] as const)(
+    'leaves the active connection untouched on %s',
+    async (event) => {
+      const chromeApi = createChromeApi()
+      vi.stubGlobal('chrome', chromeApi)
+      const close = vi.fn()
+      class Probe {
+        onopen?: () => void
+        onerror?: () => void
+        onmessage?: (event: { data: string }) => void
+        close = close
+        send(data: string) {
+          expect(JSON.parse(data)).toEqual({ id: 1, method: 'information', params: [] })
+          this.onmessage?.({ data: JSON.stringify({ id: 1, result: {} }) })
+        }
+        constructor(readonly url: string) {
+          expect(url).toBe('ws://localhost:9000/ws/engine/default?token=draft')
+          queueMicrotask(() => this[event]?.())
+        }
+      }
+      vi.stubGlobal('WebSocket', Probe)
+      const { AndaSidePanelClient } = await importSidePanelModule()
+      const client = new AndaSidePanelClient()
+      client.settings.token = 'saved'
+      const result = client.testConnection({
+        ...client.settings,
+        baseUrl: 'http://localhost:9000',
+        token: 'draft'
+      })
+      if (event === 'onopen') await expect(result).resolves.toBeUndefined()
+      else await expect(result).rejects.toThrow()
+      expect(close).toHaveBeenCalledOnce()
+      expect(client.settings.token).toBe('saved')
+      expect(chromeApi.storage.local.set).not.toHaveBeenCalled()
+      expect(chromeApi.runtime.sendMessage).not.toHaveBeenCalled()
+    }
+  )
+})
+
 describe('AndaSidePanelClient.saveAppearanceTheme', () => {
   it('persists the appearance theme without saving unrelated draft fields', async () => {
     const chromeApi = createChromeApi({

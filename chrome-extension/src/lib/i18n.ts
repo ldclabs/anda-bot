@@ -98,7 +98,7 @@ export async function applyUiLanguage(value: unknown): Promise<void> {
   if (!language || !api?.runtime?.getURL || language === browserUiLanguage()) {
     overrideLanguage = ''
     overrideMessages = null
-    applyDocumentDirection()
+    applyDocumentLanguage()
     return
   }
 
@@ -110,7 +110,7 @@ export async function applyUiLanguage(value: unknown): Promise<void> {
     overrideLanguage = ''
     overrideMessages = null
   }
-  applyDocumentDirection()
+  applyDocumentLanguage()
 }
 
 function browserUiLanguage(): UiLanguage | '' {
@@ -135,30 +135,19 @@ export function watchUiLanguage(listener: (language: UiLanguage | '') => void): 
   })
 }
 
-/** Keeps Arabic pages right-to-left when the override changes the language. */
-function applyDocumentDirection(): void {
+/** Keep the screen reader's language and the reading direction in sync. */
+function applyDocumentLanguage(): void {
   if (typeof document === 'undefined') {
     return
   }
-  let dir = ''
-  if (overrideLanguage) {
-    dir = overrideLanguage === 'ar' ? 'rtl' : 'ltr'
-  } else {
-    try {
-      dir = chromeApi()?.i18n?.getMessage?.('@@bidi_dir') || ''
-    } catch {
-      dir = ''
-    }
-  }
-  if (dir === 'rtl' || dir === 'ltr') {
-    document.documentElement.dir = dir
-  }
+  const language = overrideLanguage || browserUiLanguage() || 'en'
+  document.documentElement.lang = language.replace('_', '-')
+  document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
 }
 
 /** Installs bundled translations for a native host without emulating Chrome APIs. */
 export function setNativeMessages(language: UiLanguage, messages: LocaleMessages): void {
   overrideLanguage = language
   overrideMessages = messages
-  if (typeof document !== 'undefined') document.documentElement.lang = language.replace('_', '-')
-  applyDocumentDirection()
+  applyDocumentLanguage()
 }

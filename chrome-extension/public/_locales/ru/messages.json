@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "No connection"
   },
+  "connectDashboardHint": {
+    "message": "Подключитесь к службе Anda, чтобы открыть этот раздел."
+  },
+  "connectionTestFailed": {
+    "message": "Не удалось подключиться. Проверьте, что Anda запущена, а адрес шлюза и токен верны."
+  },
+  "invalidGatewayUrl": {
+    "message": "Введите HTTP- или HTTPS-адрес шлюза без учётных данных, параметров и фрагмента."
+  },
+  "showToken": {
+    "message": "Показать токен"
+  },
+  "hideToken": {
+    "message": "Скрыть токен"
+  },
+  "configLoadFailed": {
+    "message": "Не удалось загрузить конфигурацию"
+  },
+  "retryAction": {
+    "message": "Повторить"
+  },
+  "configInvalidYaml": {
+    "message": "Исправьте YAML, чтобы продолжить редактирование формы или сохранить изменения."
+  },
+  "configUnsaved": {
+    "message": "Есть несохранённые изменения"
+  },
+  "configDiscard": {
+    "message": "Отменить изменения"
+  },
+  "noFilterMatches": {
+    "message": "Совпадений нет"
+  },
+  "selectSkillHint": {
+    "message": "Выберите навык, чтобы посмотреть подробности."
+  },
+  "clearFilters": {
+    "message": "Сбросить фильтры"
+  },
+  "confirmFolderRemoval": {
+    "message": "Удалить папку «$1» и её вложенные папки? Закладки останутся в общем списке."
+  },
+  "modelsRefreshed": {
+    "message": "Список моделей обновлён."
+  },
+  "browseMemory": {
+    "message": "Разделы памяти"
+  },
+  "browseSkills": {
+    "message": "Список навыков"
+  },
+  "browseServers": {
+    "message": "Серверы и секреты"
+  },
   "dashboardConnectionSettings": {
     "message": "Connection settings"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "Expand navigation"
-  },
-  "dashboardGraphCrumb": {
-    "message": "Graph"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "Library"
-  },
-  "dashboardStudioCrumb": {
-    "message": "Studio"
   },
   "bookmarksDashboardDescription": {
     "message": "Папки и сохраненные сообщения ассистента."
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "Персональные рабочие процессы"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "Навыки"
   },
   "skills": {
     "message": "Навыки"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "Инструменты и подключения"
-  },
-  "dashboardMcpCrumb": {
-    "message": "Серверы"
   },
   "mcpTitle": {
     "message": "MCP"

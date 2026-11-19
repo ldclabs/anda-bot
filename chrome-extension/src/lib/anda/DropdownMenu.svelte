@@ -18,6 +18,7 @@
    * commands) and `tone: 'danger'` for a destructive command; `heading` puts
    * a caption above the items.
    */
+  import { getMessage } from '$lib/i18n'
   import { cn } from '$lib/utils'
   import { Check, ChevronDown } from '@lucide/svelte'
   import { DropdownMenu } from 'bits-ui'
@@ -234,6 +235,11 @@
               <Check class="size-4 shrink-0" aria-hidden="true" />
             {/if}
           </DropdownMenu.Item>
+        {:else}
+          {#if searchable && query.trim()}
+            <p role="status" class="px-2 py-3 text-xs text-muted-foreground">
+              {getMessage('noFilterMatches')}
+            </p>{/if}
         {/each}
       </div>
     </DropdownMenu.Content>

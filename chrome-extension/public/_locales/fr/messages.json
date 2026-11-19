@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "No connection"
   },
+  "connectDashboardHint": {
+    "message": "Connectez-vous au service Anda pour ouvrir cet espace."
+  },
+  "connectionTestFailed": {
+    "message": "Connexion impossible. Vérifiez que Anda fonctionne, puis vérifiez l’adresse et le jeton."
+  },
+  "invalidGatewayUrl": {
+    "message": "Saisissez une adresse HTTP ou HTTPS sans identifiants, paramètres ni fragment."
+  },
+  "showToken": {
+    "message": "Afficher le jeton"
+  },
+  "hideToken": {
+    "message": "Masquer le jeton"
+  },
+  "configLoadFailed": {
+    "message": "Impossible de charger la configuration"
+  },
+  "retryAction": {
+    "message": "Réessayer"
+  },
+  "configInvalidYaml": {
+    "message": "Corrigez le YAML avant de modifier le formulaire ou d’enregistrer."
+  },
+  "configUnsaved": {
+    "message": "Modifications non enregistrées"
+  },
+  "configDiscard": {
+    "message": "Annuler les modifications"
+  },
+  "noFilterMatches": {
+    "message": "Aucun résultat correspondant"
+  },
+  "selectSkillHint": {
+    "message": "Sélectionnez une compétence pour en voir les détails."
+  },
+  "clearFilters": {
+    "message": "Effacer les filtres"
+  },
+  "confirmFolderRemoval": {
+    "message": "Supprimer « $1 » et ses sous-dossiers ? Les favoris resteront accessibles dans Tous."
+  },
+  "modelsRefreshed": {
+    "message": "Liste des modèles actualisée."
+  },
+  "browseMemory": {
+    "message": "Parcourir la mémoire"
+  },
+  "browseSkills": {
+    "message": "Parcourir les compétences"
+  },
+  "browseServers": {
+    "message": "Serveurs et secrets"
+  },
   "dashboardConnectionSettings": {
     "message": "Connection settings"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "Expand navigation"
-  },
-  "dashboardGraphCrumb": {
-    "message": "Graph"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "Library"
-  },
-  "dashboardStudioCrumb": {
-    "message": "Studio"
   },
   "bookmarksDashboardDescription": {
     "message": "Dossiers et messages sauvegardés de l'assistant."
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "Flux de travail personnels"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "Compétences"
   },
   "skills": {
     "message": "Compétences"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "Outils et connexions"
-  },
-  "dashboardMcpCrumb": {
-    "message": "Serveurs"
   },
   "mcpTitle": {
     "message": "MCP"

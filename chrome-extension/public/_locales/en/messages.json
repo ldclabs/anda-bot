@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "No connection"
   },
+  "connectDashboardHint": {
+    "message": "Connect to your Anda daemon to open this workspace."
+  },
+  "connectionTestFailed": {
+    "message": "Could not connect. Check that Anda is running and verify the gateway URL and token."
+  },
+  "invalidGatewayUrl": {
+    "message": "Enter an HTTP or HTTPS gateway address without credentials, a query or a fragment."
+  },
+  "showToken": {
+    "message": "Show token"
+  },
+  "hideToken": {
+    "message": "Hide token"
+  },
+  "configLoadFailed": {
+    "message": "Could not load the configuration"
+  },
+  "retryAction": {
+    "message": "Try again"
+  },
+  "configInvalidYaml": {
+    "message": "Fix the YAML syntax before editing the form or saving."
+  },
+  "configUnsaved": {
+    "message": "Unsaved changes"
+  },
+  "configDiscard": {
+    "message": "Discard changes"
+  },
+  "noFilterMatches": {
+    "message": "No matching results"
+  },
+  "selectSkillHint": {
+    "message": "Select a skill to see its details."
+  },
+  "clearFilters": {
+    "message": "Clear filters"
+  },
+  "confirmFolderRemoval": {
+    "message": "Delete “$1” and its subfolders? You can still find their bookmarks in All."
+  },
+  "modelsRefreshed": {
+    "message": "Model list refreshed."
+  },
+  "browseMemory": {
+    "message": "Browse memory"
+  },
+  "browseSkills": {
+    "message": "Browse skills"
+  },
+  "browseServers": {
+    "message": "Servers and secrets"
+  },
   "dashboardConnectionSettings": {
     "message": "Connection settings"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "Expand navigation"
-  },
-  "dashboardGraphCrumb": {
-    "message": "Graph"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "Library"
-  },
-  "dashboardStudioCrumb": {
-    "message": "Studio"
   },
   "bookmarksDashboardDescription": {
     "message": "Folders and saved assistant messages."
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "Personal workflows"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "Skills"
   },
   "skills": {
     "message": "Skills"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "Tools and connections"
-  },
-  "dashboardMcpCrumb": {
-    "message": "Servers"
   },
   "mcpTitle": {
     "message": "MCP"

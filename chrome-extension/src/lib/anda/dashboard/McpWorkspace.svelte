@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Tabs } from 'bits-ui'
+  import WorkspaceLayout from '$lib/anda/WorkspaceLayout.svelte'
   /**
    * The owner's MCP servers: their state, their tools and when the agent asks
    * before calling them, the automations that run on their events, their
@@ -70,6 +72,7 @@
   } from '@lucide/svelte'
   import { onMount, untrack } from 'svelte'
 
+  let layout: WorkspaceLayout
   let {
     installLink = null,
     onInstallLinkHandled
@@ -218,7 +221,7 @@
           server.summary.toLowerCase().includes(query))
     )
   })
-  const selected = $derived(snapshot.servers.find((server) => server.id === selectedId) || null)
+  const selected = $derived(visibleServers.find((server) => server.id === selectedId) || null)
   const reviewCount = $derived(
     (detail?.tools.filter((tool) => tool.review && tool.review !== 'trusted').length ?? 0) +
       (detail?.instructions_changed ? 1 : 0)
@@ -302,6 +305,7 @@
   }
 
   function select(id: string) {
+    layout?.showDetail()
     if (id === selectedId) return
     selectedId = id
     detail = null
@@ -728,8 +732,8 @@
   }
 </script>
 
-<div class="grid h-full min-h-0 grid-cols-[17rem_minmax(0,1fr)] overflow-hidden">
-  <aside class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r bg-sidebar/70">
+{#snippet sidebar()}
+  <aside class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-e bg-sidebar/70">
     <div class="grid gap-2 border-b p-3">
       <div class="flex items-center gap-2">
         <div class="relative min-w-0 flex-1">
@@ -841,6 +845,7 @@
                   ? 'border-primary/30 bg-background shadow-xs'
                   : 'border-transparent hover:border-border hover:bg-background/80'
               )}
+              aria-current={selectedId === server.id ? 'true' : undefined}
               onclick={() => select(server.id)}
             >
               <div class="flex min-w-0 items-center gap-2">
@@ -905,6 +910,7 @@
             : 'border-transparent hover:border-border hover:bg-background/80'
         )}
         disabled={!snapshot.running}
+        aria-current={selectedId === SECRETS ? 'true' : undefined}
         onclick={() => select(SECRETS)}
       >
         <KeyRound class="size-3.5 shrink-0" />
@@ -915,7 +921,9 @@
       </button>
     </div>
   </aside>
+{/snippet}
 
+<WorkspaceLayout bind:this={layout} label={getMessage('browseServers')} {sidebar}>
   <section class="grid min-h-0 min-w-0 grid-rows-[auto_auto_minmax(0,1fr)]">
     <div
       class="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-3 border-b px-4 py-2"
@@ -1029,7 +1037,9 @@
         </div>
       {/if}
       {#each snapshot.diagnostics || [] as diagnostic}
-        <div class="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">{diagnostic}</div>
+        <div role="alert" class="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">
+          {diagnostic}
+        </div>
       {/each}
       {#if signIn}
         <div class="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm">
@@ -1056,6 +1066,7 @@
         </div>
       {:else if notice}
         <div
+          role="status"
           class="border-b bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
         >
           {notice}
@@ -1075,29 +1086,32 @@
           <LoaderCircle class="size-6 animate-spin" />
         </div>
       {:else if detail && selected}
-        <div class="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]">
-          <div class="flex gap-1 border-b px-4 pt-3" role="tablist">
+        <Tabs.Root
+          bind:value={activeTab}
+          class="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)]"
+        >
+          <Tabs.List
+            aria-label={selected.title || selected.id}
+            class="flex gap-1 overflow-x-auto border-b px-4 pt-3"
+          >
             {#each detailTabs as tab (tab.value)}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab.value}
+              <Tabs.Trigger
+                value={tab.value}
                 class={cn(
-                  'flex items-center gap-1.5 rounded-t-md px-3 py-2 text-xs font-semibold',
+                  'flex shrink-0 items-center gap-1.5 rounded-t-md px-3 py-2 text-xs font-semibold',
                   activeTab === tab.value
                     ? 'bg-muted text-foreground'
                     : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                 )}
-                onclick={() => (activeTab = tab.value)}
               >
                 {tab.label}
                 {#if tab.value === 'tools' && reviewCount}
                   <span class="size-1.5 rounded-full bg-amber-500" aria-hidden="true"></span>
                 {/if}
-              </button>
+              </Tabs.Trigger>
             {/each}
-          </div>
-          <div class="min-h-0 overflow-y-auto">
+          </Tabs.List>
+          <Tabs.Content value={activeTab} class="min-h-0 overflow-y-auto">
             {#if activeTab === 'overview'}
               {@render overview(selected, detail)}
             {:else if activeTab === 'tools'}
@@ -1109,16 +1123,29 @@
             {:else}
               {@render configPane(selected)}
             {/if}
-          </div>
-        </div>
+          </Tabs.Content>
+        </Tabs.Root>
       {:else if loaded}
         <div class="grid h-64 place-items-center p-6 text-center text-sm text-muted-foreground">
-          {snapshot.servers.length ? getMessage('mcpSelectServer') : getMessage('mcpEmptyDetail')}
+          <div class="grid max-w-sm justify-items-center gap-3">
+            {getMessage(
+              visibleServers.length
+                ? 'mcpSelectServer'
+                : snapshot.servers.length
+                  ? 'mcpNoMatch'
+                  : 'mcpEmptyDetail'
+            )}
+            {#if !snapshot.servers.length && snapshot.running}
+              <button type="button" class={buttonClass('default', 'sm')} onclick={openAdd}
+                ><Plus class="size-4" />{getMessage('mcpAddServer')}</button
+              >
+            {/if}
+          </div>
         </div>
       {/if}
     </div>
   </section>
-</div>
+</WorkspaceLayout>
 
 {#snippet overview(server: McpServerView, info: McpServerDetail)}
   <div class="grid gap-5 p-4">
@@ -1742,69 +1769,66 @@
         <p>{getMessage('mcpFromLink')}</p>
       </div>
     {/if}
-    <div class="flex gap-1 rounded-md bg-muted p-1" role="tablist">
-      {#each addModes as mode (mode.value)}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={addMode === mode.value}
-          class={cn(
-            'flex-1 rounded px-2 py-1 text-xs font-semibold transition',
-            addMode === mode.value
-              ? 'bg-background text-foreground shadow-xs'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-          onclick={() => {
-            addMode = mode.value
-            tests = {}
-          }}
-        >
-          {mode.label}
-        </button>
-      {/each}
-    </div>
-
-    {#if addMode === 'url'}
-      <label class="grid gap-1 text-xs font-medium">
-        {getMessage('mcpEndpoint')}
-        <input
-          class={inputClass('h-8 font-mono text-xs')}
-          placeholder="https://example.com/mcp"
-          bind:value={addUrl}
-        />
-      </label>
-      <label class="grid gap-1 text-xs font-medium">
-        {getMessage('mcpHeaders')}
-        <textarea
-          class={textareaClass('min-h-16 font-mono text-xs')}
-          placeholder="Authorization: Bearer …"
-          bind:value={addHeaders}></textarea>
-      </label>
-    {:else if addMode === 'command'}
-      <label class="grid gap-1 text-xs font-medium">
-        {getMessage('mcpCommand')}
-        <input
-          class={inputClass('h-8 font-mono text-xs')}
-          placeholder="npx -y @upstash/context7-mcp"
-          bind:value={addCommand}
-        />
-      </label>
-      <label class="grid gap-1 text-xs font-medium">
-        {getMessage('mcpEnvironment')}
-        <textarea
-          class={textareaClass('min-h-16 font-mono text-xs')}
-          placeholder="API_KEY=…"
-          bind:value={addEnv}></textarea>
-      </label>
-    {:else}
-      <label class="grid gap-1 text-xs font-medium">
-        {getMessage('mcpPasteJson')}
-        <textarea
-          class={textareaClass('min-h-36 font-mono text-xs')}
-          placeholder={'{ "mcpServers": { "docs": { "url": "https://docs.example.com/mcp" } } }'}
-          bind:value={addJson}></textarea>
-      </label>
-    {/if}
+    <Tabs.Root class="grid gap-3" bind:value={addMode} onValueChange={() => (tests = {})}>
+      <Tabs.List aria-label={getMessage('mcpAddServer')} class="flex gap-1 rounded-md bg-muted p-1">
+        {#each addModes as mode (mode.value)}
+          <Tabs.Trigger
+            value={mode.value}
+            class={cn(
+              'flex-1 rounded px-2 py-1 text-xs font-semibold transition',
+              addMode === mode.value
+                ? 'bg-background text-foreground shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {mode.label}
+          </Tabs.Trigger>
+        {/each}
+      </Tabs.List>
+      <Tabs.Content value={addMode} class="grid gap-3">
+        {#if addMode === 'url'}
+          <label class="grid gap-1 text-xs font-medium">
+            {getMessage('mcpEndpoint')}
+            <input
+              class={inputClass('h-8 font-mono text-xs')}
+              placeholder="https://example.com/mcp"
+              bind:value={addUrl}
+            />
+          </label>
+          <label class="grid gap-1 text-xs font-medium">
+            {getMessage('mcpHeaders')}
+            <textarea
+              class={textareaClass('min-h-16 font-mono text-xs')}
+              placeholder="Authorization: Bearer …"
+              bind:value={addHeaders}></textarea>
+          </label>
+        {:else if addMode === 'command'}
+          <label class="grid gap-1 text-xs font-medium">
+            {getMessage('mcpCommand')}
+            <input
+              class={inputClass('h-8 font-mono text-xs')}
+              placeholder="npx -y @upstash/context7-mcp"
+              bind:value={addCommand}
+            />
+          </label>
+          <label class="grid gap-1 text-xs font-medium">
+            {getMessage('mcpEnvironment')}
+            <textarea
+              class={textareaClass('min-h-16 font-mono text-xs')}
+              placeholder="API_KEY=…"
+              bind:value={addEnv}></textarea>
+          </label>
+        {:else}
+          <label class="grid gap-1 text-xs font-medium">
+            {getMessage('mcpPasteJson')}
+            <textarea
+              class={textareaClass('min-h-36 font-mono text-xs')}
+              placeholder={'{ "mcpServers": { "docs": { "url": "https://docs.example.com/mcp" } } }'}
+              bind:value={addJson}></textarea>
+          </label>
+        {/if}
+      </Tabs.Content>
+    </Tabs.Root>
 
     <label class="grid gap-1 text-xs font-medium">
       {addMode === 'json' ? getMessage('mcpIdForEntry') : getMessage('mcpServerId')}

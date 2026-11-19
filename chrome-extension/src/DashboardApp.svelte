@@ -3,12 +3,12 @@
     brain: () => import('$lib/anda/memory/MemoryWorkspace.svelte'),
     bookmarks: () => import('$lib/anda/dashboard/BookmarksWorkspace.svelte'),
     skills: () => import('$lib/anda/dashboard/SkillsWorkspace.svelte'),
-    mcp: () => import('$lib/anda/dashboard/McpWorkspace.svelte'),
-    config: () => import('./ConfigApp.svelte')
+    mcp: () => import('$lib/anda/dashboard/McpWorkspace.svelte')
   }
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   provideAndaClient(andaClient)
+  import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { appearanceThemeItems, applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass } from '$lib/anda/ui'
@@ -73,12 +73,23 @@
 
   let activeWorkspace = $state<WorkspaceId>(workspaceFromHash())
   let navCollapsed = $state(loadNavCollapsed())
+  let initialized = $state(false)
+  let settingsOpen = $state(false)
+  let setupGuideOpen = $state(false)
+  let configDirty = $state(false)
+  const connection = $derived(connectionKey(andaClient.settings))
+  $effect(() => {
+    // A different account starts with its own editor.
+    void connection
+    configDirty = false
+  })
+  const workspaceItems = workspaces.map(({ id, label }) => ({ value: id, label }))
 
   const active = $derived(
     workspaces.find((workspace) => workspace.id === activeWorkspace) || workspaces[0]
   )
   const connectionLabel = $derived(
-    andaClient.settings.baseUrl
+    andaClient.settings.token
       ? `${andaClient.settings.baseUrl.replace(/^https?:\/\//, '')}`
       : getMessage('dashboardNoConnection')
   )
@@ -89,10 +100,13 @@
       activeWorkspace = workspaceFromHash()
     }
     window.addEventListener('hashchange', syncHash)
-    andaClient.init({ conversations: false }).catch((error) => {
-      andaClient.status = 'extension unavailable'
-      console.error('Failed to initialize Anda dashboard client', error)
-    })
+    andaClient
+      .init({ conversations: false })
+      .catch((error) => {
+        andaClient.status = 'extension unavailable'
+        console.error('Failed to initialize Anda dashboard client', error)
+      })
+      .finally(() => (initialized = true))
 
     return () => {
       window.removeEventListener('hashchange', syncHash)
@@ -115,8 +129,12 @@
   }
 
   function selectWorkspace(workspace: WorkspaceId) {
-    activeWorkspace = workspace
-    window.history.replaceState(null, '', `#${workspace}`)
+    if (workspace !== activeWorkspace) window.location.hash = workspace
+  }
+
+  function openSettings() {
+    setupGuideOpen = !andaClient.settings.token
+    settingsOpen = true
   }
 
   function loadNavCollapsed(): boolean {
@@ -150,11 +168,11 @@
 
 <div
   class={cn(
-    'grid h-screen w-screen overflow-hidden bg-background text-foreground transition-[grid-template-columns] duration-150',
+    'grid h-screen w-screen overflow-hidden bg-background text-foreground transition-[grid-template-columns] duration-150 max-md:grid-cols-1',
     navCollapsed ? 'grid-cols-[4.25rem_minmax(0,1fr)]' : 'grid-cols-[13.75rem_minmax(0,1fr)]'
   )}
 >
-  <aside class="flex min-h-0 flex-col border-r bg-sidebar text-sidebar-foreground">
+  <aside class="hidden min-h-0 flex-col border-e bg-sidebar text-sidebar-foreground md:flex">
     <div
       class={cn(
         'flex h-16 shrink-0 items-center border-b',
@@ -196,10 +214,10 @@
     <nav class={cn('grid content-start gap-1 p-2', navCollapsed && 'place-items-center')}>
       {#each workspaces as workspace}
         {@const Icon = workspace.icon}
-        <button
-          type="button"
+        <a
+          href={`#${workspace.id}`}
           class={cn(
-            'grid min-w-0 items-center rounded-md text-left transition',
+            'grid min-w-0 items-center rounded-md text-start transition',
             navCollapsed
               ? 'size-10 place-items-center px-0 py-0'
               : 'grid-cols-[auto_minmax(0,1fr)] gap-2 px-2.5 py-2',
@@ -209,8 +227,7 @@
           )}
           title={navCollapsed ? workspace.label : undefined}
           aria-label={workspace.label}
-          aria-pressed={activeWorkspace === workspace.id}
-          onclick={() => selectWorkspace(workspace.id)}
+          aria-current={activeWorkspace === workspace.id ? 'page' : undefined}
         >
           <Icon class="size-4 shrink-0" />
           {#if !navCollapsed}
@@ -219,7 +236,7 @@
               <span class="truncate text-[10px]">{workspace.detail}</span>
             </span>
           {/if}
-        </button>
+        </a>
       {/each}
     </nav>
 
@@ -245,7 +262,7 @@
         )}
         title={getMessage('dashboardConnectionSettings')}
         aria-label={getMessage('dashboardConnectionSettings')}
-        onclick={() => selectWorkspace('config')}
+        onclick={openSettings}
       >
         <Settings class="size-3.5" />
         {#if !navCollapsed}
@@ -259,34 +276,33 @@
     <header
       class="flex h-16 min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-background px-4"
     >
-      <div class="flex min-w-0 items-center gap-3">
-        {#if active.icon}
-          {@const ActiveIcon = active.icon}
-          <div class="grid size-9 shrink-0 place-items-center rounded-md border bg-card">
-            <ActiveIcon class="size-4" />
-          </div>
-        {/if}
+      <div class="hidden min-w-0 items-center gap-3 md:flex">
+        <div class="grid size-9 shrink-0 place-items-center rounded-md border bg-card">
+          <active.icon class="size-4" />
+        </div>
         <div class="min-w-0">
-          <div class="flex min-w-0 items-center gap-2 text-sm font-bold">
-            <span class="truncate">{active.label}</span>
-            <span class="text-muted-foreground">/</span>
-            <span class="truncate text-muted-foreground">
-              {activeWorkspace === 'brain'
-                ? getMessage('dashboardGraphCrumb')
-                : activeWorkspace === 'bookmarks'
-                  ? getMessage('dashboardLibraryCrumb')
-                  : activeWorkspace === 'skills'
-                    ? getMessage('dashboardSkillsCrumb')
-                    : activeWorkspace === 'mcp'
-                      ? getMessage('dashboardMcpCrumb')
-                      : getMessage('dashboardStudioCrumb')}
-            </span>
-          </div>
+          <h2 class="truncate text-base font-semibold">{active.label}</h2>
           <p class="truncate text-xs text-muted-foreground">{active.detail}</p>
         </div>
       </div>
-
-      <div class="flex min-w-0 flex-1 items-center justify-end gap-2">
+      <div class="min-w-0 flex-1 md:hidden">
+        <DropdownMenu
+          items={workspaceItems}
+          value={activeWorkspace}
+          onSelect={selectWorkspace}
+          ariaLabel={getMessage('dashboardTitle')}
+        />
+      </div>
+      <div class="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          class={buttonClass('ghost', 'icon-sm', 'md:hidden')}
+          aria-label={getMessage('dashboardConnectionSettings')}
+          title={getMessage('dashboardConnectionSettings')}
+          onclick={openSettings}
+        >
+          <Settings class="size-4" />
+        </button>
         <button type="button" class={buttonClass('outline', 'sm')} onclick={reloadPage}>
           <RefreshCw class="size-3.5" />
           {getMessage('refresh')}
@@ -295,15 +311,49 @@
     </header>
 
     <main class="min-h-0 min-w-0 overflow-hidden bg-background">
-      {#key connectionKey(andaClient.settings)}
-        {#await workspaceLoaders[activeWorkspace]()}
-          <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
-        {:then module}
-          <module.default />
-        {:catch error}
-          <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
-        {/await}
+      {#key connection}
+        {#if !initialized}
+          <p role="status" class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
+        {:else if !andaClient.settings.token}
+          <div
+            class="grid h-full place-content-center justify-items-center gap-3 overflow-y-auto px-6 text-center"
+          >
+            <Plug class="size-6 text-muted-foreground" />
+            <h2 class="text-base font-semibold">{getMessage('dashboardNoConnection')}</h2>
+            <p class="max-w-sm text-sm text-muted-foreground">
+              {getMessage('connectDashboardHint')}
+            </p>
+            <button class={buttonClass('default', 'sm')} onclick={openSettings}
+              >{getMessage('dashboardConnectionSettings')}</button
+            >
+          </div>
+        {:else}
+          {#if activeWorkspace === 'config' || configDirty}
+            <div class="h-full" hidden={activeWorkspace !== 'config'}>
+              {#await import('./ConfigApp.svelte')}
+                <p role="status" class="p-4 text-sm text-muted-foreground">
+                  {getMessage('loading')}
+                </p>
+              {:then module}
+                <module.default bind:dirty={configDirty} />
+              {:catch error}
+                <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
+              {/await}
+            </div>
+          {/if}
+          {#if activeWorkspace !== 'config'}
+            {#await workspaceLoaders[activeWorkspace]()}
+              <p class="p-4 text-sm text-muted-foreground">{getMessage('loading')}</p>
+            {:then module}
+              <module.default />
+            {:catch error}
+              <p role="alert" class="p-4 text-sm text-destructive">{String(error)}</p>
+            {/await}
+          {/if}
+        {/if}
       {/key}
     </main>
   </section>
 </div>
+
+{#if settingsOpen}<ChatSettings dashboard bind:open={settingsOpen} bind:setupGuideOpen />{/if}

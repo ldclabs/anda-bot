@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { Tabs } from 'bits-ui'
+  import WorkspaceLayout from '$lib/anda/WorkspaceLayout.svelte'
   import { storeClientState } from '$lib/anda/client/platform'
   import { useAndaClient } from '$lib/anda/client/context'
   const andaClient = useAndaClient()
@@ -47,6 +49,7 @@
 
   const SKILL_MD = 'SKILL.md'
 
+  let layout: WorkspaceLayout
   let skills = $state<ManagedSkill[]>([])
   let sources = $state<SkillSourceInfo[]>([])
   let selectedId = $state('')
@@ -148,7 +151,7 @@
           skill.description.toLowerCase().includes(query))
     )
   })
-  const selectedSkill = $derived(skills.find((skill) => skill.id === selectedId) || null)
+  const selectedSkill = $derived(visibleSkills.find((skill) => skill.id === selectedId) || null)
   const selectedFile = $derived(
     detail?.files.find((file) => file.path === selectedFilePath) || null
   )
@@ -270,6 +273,7 @@
   }
 
   function selectSkill(id: string) {
+    layout?.showDetail()
     if (selectedId === id) {
       return
     }
@@ -511,8 +515,8 @@
   }
 </script>
 
-<div class="grid h-full min-h-0 grid-cols-[17rem_minmax(0,1fr)] overflow-hidden">
-  <aside class="grid min-h-0 border-r bg-sidebar/70">
+{#snippet sidebar()}
+  <aside class="grid min-h-0 border-e bg-sidebar/70">
     <div class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
       <div class="grid gap-2 border-b p-3">
         <div class="flex items-center gap-2">
@@ -523,6 +527,7 @@
             <input
               class={inputClass('h-8 pr-8 pl-8 text-xs')}
               bind:value={searchQuery}
+              aria-label={getMessage('skillsSearchPlaceholder')}
               placeholder={getMessage('skillsSearchPlaceholder')}
             />
             {#if searchQuery}
@@ -586,7 +591,18 @@
             class="grid w-full place-items-center gap-2 rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground"
           >
             <WandSparkles class="size-6" />
-            <span>{getMessage('skillsEmpty')}</span>
+            <span role="status"
+              >{getMessage(skills.length ? 'noFilterMatches' : 'skillsEmpty')}</span
+            >
+            {#if skills.length}<button
+                type="button"
+                class={buttonClass('outline', 'sm')}
+                onclick={() => {
+                  searchQuery = ''
+                  sourceFilter = 'all'
+                  statusFilter = 'all'
+                }}>{getMessage('clearFilters')}</button
+              >{/if}
           </div>
         {:else}
           <div class="grid gap-1.5">
@@ -600,6 +616,7 @@
                     ? 'border-primary/30 bg-background shadow-xs'
                     : 'border-transparent hover:border-border hover:bg-background/80'
                 )}
+                aria-current={selectedId === skill.id ? 'true' : undefined}
                 onclick={() => selectSkill(skill.id)}
               >
                 <div class="flex min-w-0 items-center gap-2">
@@ -635,16 +652,20 @@
       </div>
     </div>
   </aside>
+{/snippet}
 
+<WorkspaceLayout bind:this={layout} label={getMessage('browseSkills')} {sidebar}>
   <section class="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
-    <div class="flex min-h-14 min-w-0 items-center justify-between gap-3 border-b px-4">
+    <div
+      class="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2"
+    >
       <div class="min-w-0">
         <h1 class="truncate text-base font-bold">{selectedSkill?.name || getMessage('skills')}</h1>
         <p class="truncate text-xs text-muted-foreground">
-          {selectedSkill ? statusLine(selectedSkill) : getMessage('skillsEmpty')}
+          {selectedSkill ? statusLine(selectedSkill) : ''}
         </p>
       </div>
-      <div class="flex shrink-0 items-center gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-2">
         {#if selectedSkill}
           <button
             type="button"
@@ -696,9 +717,12 @@
     <div class="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
       <div>
         {#if error}
-          <div class="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">{error}</div>
+          <div role="alert" class="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">
+            {error}
+          </div>
         {:else if notice}
           <div
+            role="status"
             class="border-b bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
           >
             {notice}
@@ -712,286 +736,301 @@
             <LoaderCircle class="size-6 animate-spin" />
           </div>
         {:else if detail && selectedSkill}
-          <div class="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-0">
-            <div class="flex gap-1 border-b px-4 pt-3">
+          <Tabs.Root
+            bind:value={activeTab}
+            class="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-0"
+          >
+            <Tabs.List
+              aria-label={selectedSkill.name}
+              class="flex gap-1 overflow-x-auto border-b px-4 pt-3"
+            >
               {#each detailTabs as tab (tab.value)}
-                <button
-                  type="button"
+                <Tabs.Trigger
+                  value={tab.value}
                   class={cn(
-                    'rounded-t-md px-3 py-2 text-xs font-semibold',
+                    'shrink-0 rounded-t-md px-3 py-2 text-xs font-semibold',
                     activeTab === tab.value
                       ? 'bg-muted text-foreground'
                       : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                   )}
-                  onclick={() => (activeTab = tab.value)}
                 >
                   {tab.label}
-                </button>
+                </Tabs.Trigger>
               {/each}
-            </div>
-
-            {#if activeTab === 'overview'}
-              <div class="min-h-0 overflow-y-auto">
-                <div class="grid gap-5 p-4">
-                  <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div class="text-xs font-semibold text-muted-foreground">
-                        {getMessage('skillDirectory')}
+            </Tabs.List>
+            <Tabs.Content value={activeTab} class="min-h-0 min-w-0 [&>div]:h-full">
+              {#if activeTab === 'overview'}
+                <div class="min-h-0 overflow-y-auto">
+                  <div class="grid gap-5 p-4">
+                    <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div class="text-xs font-semibold text-muted-foreground">
+                          {getMessage('skillDirectory')}
+                        </div>
+                        <div class="font-mono text-xs break-all">{detail.directory}</div>
                       </div>
-                      <div class="font-mono text-xs break-all">{detail.directory}</div>
-                    </div>
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div class="text-xs font-semibold text-muted-foreground">
-                        {getMessage('skillAgentName')}
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div class="text-xs font-semibold text-muted-foreground">
+                          {getMessage('skillAgentName')}
+                        </div>
+                        <div class="font-mono text-xs">{detail.agent_name}</div>
                       </div>
-                      <div class="font-mono text-xs">{detail.agent_name}</div>
-                    </div>
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div class="text-xs font-semibold text-muted-foreground">
-                        {getMessage('skillUpdated')}
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div class="text-xs font-semibold text-muted-foreground">
+                          {getMessage('skillUpdated')}
+                        </div>
+                        <div class="text-xs">{timeLabel(detail.updated_at) || '-'}</div>
                       </div>
-                      <div class="text-xs">{timeLabel(detail.updated_at) || '-'}</div>
-                    </div>
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div class="text-xs font-semibold text-muted-foreground">
-                        {getMessage('skillFiles')}
-                      </div>
-                      <div class="text-xs">
-                        {getMessage('skillFileCount', formatNumber(fileCount))}
-                      </div>
-                      <div class="text-[11px] text-muted-foreground">
-                        SKILL.md {formatSize(detail.size) || '-'}
-                      </div>
-                    </div>
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div
-                        class="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"
-                      >
-                        <Activity class="size-3.5" />
-                        <span>{getMessage('skillUsage')}</span>
-                      </div>
-                      <div class="text-xs">{usageCallsText(detail)}</div>
-                    </div>
-                    <div class="grid gap-1 rounded-md border p-3">
-                      <div class="text-xs font-semibold text-muted-foreground">
-                        {getMessage('skillUsageTokensTitle')}
-                      </div>
-                      <div class="text-xs">{usageTokensText(detail)}</div>
-                      {#if detail.usage}
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div class="text-xs font-semibold text-muted-foreground">
+                          {getMessage('skillFiles')}
+                        </div>
+                        <div class="text-xs">
+                          {getMessage('skillFileCount', formatNumber(fileCount))}
+                        </div>
                         <div class="text-[11px] text-muted-foreground">
-                          {usageTokenBreakdownText(detail)}
+                          SKILL.md {formatSize(detail.size) || '-'}
+                        </div>
+                      </div>
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div
+                          class="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground"
+                        >
+                          <Activity class="size-3.5" />
+                          <span>{getMessage('skillUsage')}</span>
+                        </div>
+                        <div class="text-xs">{usageCallsText(detail)}</div>
+                      </div>
+                      <div class="grid gap-1 rounded-md border p-3">
+                        <div class="text-xs font-semibold text-muted-foreground">
+                          {getMessage('skillUsageTokensTitle')}
+                        </div>
+                        <div class="text-xs">{usageTokensText(detail)}</div>
+                        {#if detail.usage}
+                          <div class="text-[11px] text-muted-foreground">
+                            {usageTokenBreakdownText(detail)}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+
+                    <div class="grid gap-2">
+                      <div class="text-xs font-semibold text-muted-foreground">
+                        {getMessage('skillExecution')}
+                      </div>
+                      <div>
+                        <span class={badgeClass('outline')}>{detail.execution}</span>
+                      </div>
+                    </div>
+
+                    <div class="grid gap-2">
+                      <div class="text-xs font-semibold text-muted-foreground">
+                        {getMessage('skillAllowedTools')}
+                      </div>
+                      <div class="flex flex-wrap gap-1.5">
+                        {#if detail.execution !== 'subagent'}
+                          <!-- An inline skill gets no tool grant of its own: the
+                             agent that reads it keeps using its own tools. -->
+                          <span class="text-xs text-muted-foreground"
+                            >{getMessage('skillInlineTools')}</span
+                          >
+                        {:else if detail.allowed_tools.length}
+                          {#each detail.allowed_tools as tool}
+                            <span class={badgeClass('secondary')}>{tool}</span>
+                          {/each}
+                        {:else}
+                          <span class="text-xs text-muted-foreground"
+                            >{getMessage('skillDefaultTools')}</span
+                          >
+                        {/if}
+                      </div>
+                    </div>
+
+                    <div class="grid gap-2">
+                      <div class="text-xs font-semibold text-muted-foreground">
+                        {getMessage('skillDiagnostics')}
+                      </div>
+                      {#if detail.diagnostics.length}
+                        <div class="grid gap-2">
+                          {#each detail.diagnostics as diagnostic}
+                            <div
+                              class={cn(
+                                'rounded-md border px-3 py-2 text-sm',
+                                diagnostic.severity === 'error'
+                                  ? 'border-destructive/30 bg-destructive/5 text-destructive'
+                                  : 'bg-muted/35'
+                              )}
+                            >
+                              <span class="font-semibold">{diagnostic.code}</span>
+                              <span> - {diagnostic.message}</span>
+                            </div>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="text-sm text-muted-foreground">
+                          {getMessage('skillDiagnosticsClear')}
                         </div>
                       {/if}
                     </div>
                   </div>
-
-                  <div class="grid gap-2">
-                    <div class="text-xs font-semibold text-muted-foreground">
-                      {getMessage('skillExecution')}
-                    </div>
-                    <div>
-                      <span class={badgeClass('outline')}>{detail.execution}</span>
-                    </div>
-                  </div>
-
-                  <div class="grid gap-2">
-                    <div class="text-xs font-semibold text-muted-foreground">
-                      {getMessage('skillAllowedTools')}
-                    </div>
-                    <div class="flex flex-wrap gap-1.5">
-                      {#if detail.execution !== 'subagent'}
-                        <!-- An inline skill gets no tool grant of its own: the
-                             agent that reads it keeps using its own tools. -->
-                        <span class="text-xs text-muted-foreground"
-                          >{getMessage('skillInlineTools')}</span
-                        >
-                      {:else if detail.allowed_tools.length}
-                        {#each detail.allowed_tools as tool}
-                          <span class={badgeClass('secondary')}>{tool}</span>
-                        {/each}
-                      {:else}
-                        <span class="text-xs text-muted-foreground"
-                          >{getMessage('skillDefaultTools')}</span
-                        >
-                      {/if}
-                    </div>
-                  </div>
-
-                  <div class="grid gap-2">
-                    <div class="text-xs font-semibold text-muted-foreground">
-                      {getMessage('skillDiagnostics')}
-                    </div>
-                    {#if detail.diagnostics.length}
-                      <div class="grid gap-2">
-                        {#each detail.diagnostics as diagnostic}
-                          <div
+                </div>
+              {:else if activeTab === 'files'}
+                <div class="grid h-full min-h-0 p-4">
+                  <div
+                    class="grid h-full min-h-0 grid-rows-[minmax(0,0.45fr)_minmax(0,1fr)] gap-3 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-none"
+                  >
+                    <div class="min-h-0 overflow-auto rounded-md border bg-muted/20 p-2">
+                      <div class="grid gap-1">
+                        {#each detail.files as file (file.path)}
+                          <button
+                            type="button"
                             class={cn(
-                              'rounded-md border px-3 py-2 text-sm',
-                              diagnostic.severity === 'error'
-                                ? 'border-destructive/30 bg-destructive/5 text-destructive'
-                                : 'bg-muted/35'
+                              'flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition',
+                              selectedFilePath === file.path
+                                ? 'bg-background text-foreground shadow-xs'
+                                : file.kind === 'file'
+                                  ? 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                                  : 'cursor-default text-muted-foreground'
                             )}
+                            disabled={file.kind !== 'file'}
+                            onclick={() => selectSkillFile(file)}
                           >
-                            <span class="font-semibold">{diagnostic.code}</span>
-                            <span> - {diagnostic.message}</span>
-                          </div>
+                            {#if file.kind === 'directory'}
+                              <Folder class="size-3.5 shrink-0" />
+                            {:else if file.path.endsWith('.md')}
+                              <FileText class="size-3.5 shrink-0" />
+                            {:else}
+                              <FileCode2 class="size-3.5 shrink-0" />
+                            {/if}
+                            <span class="truncate font-mono">{file.path}</span>
+                            {#if file.kind === 'file'}
+                              <span class="ml-auto shrink-0 tabular-nums"
+                                >{formatSize(file.size) || '-'}</span
+                              >
+                            {/if}
+                          </button>
                         {/each}
                       </div>
+                    </div>
+                    <div
+                      class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-md border"
+                    >
+                      <div
+                        class="flex min-h-10 items-center justify-between gap-2 border-b bg-muted/25 px-3"
+                      >
+                        <div class="min-w-0">
+                          <div class="truncate font-mono text-xs font-semibold">
+                            {selectedFilePath}
+                          </div>
+                          {#if selectedFile}
+                            <div class="text-[11px] text-muted-foreground">
+                              {selectedFile.kind === 'file'
+                                ? formatSize(selectedFile.size) || '-'
+                                : getMessage('skillFolder')}
+                            </div>
+                          {/if}
+                        </div>
+                        {#if viewedFileTruncated}
+                          <span class={badgeClass('outline', 'shrink-0 text-[10px]')}
+                            >{getMessage('skillFileTruncated')}</span
+                          >
+                        {/if}
+                      </div>
+                      <div class="min-h-0 overflow-hidden">
+                        {#if fileLoading}
+                          <div
+                            class="grid h-full min-h-64 place-items-center text-muted-foreground"
+                          >
+                            <LoaderCircle class="size-5 animate-spin" />
+                          </div>
+                        {:else if fileError}
+                          <div class="p-3 text-sm text-destructive">{fileError}</div>
+                        {:else}
+                          <pre
+                            class="skill-file-code h-full overflow-auto p-3 font-mono text-xs whitespace-pre-wrap"><code
+                              class={selectedFileLanguage
+                                ? `language-${selectedFileLanguage}`
+                                : 'language-text'}>{@html highlightedFileContent}</code
+                            ></pre>
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {:else}
+                <div class="min-h-0 overflow-y-auto">
+                  <div class="grid gap-4 p-4">
+                    {#if !canOptimize}
+                      <div
+                        class="grid max-w-3xl gap-3 rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground"
+                      >
+                        <div>{getMessage('skillOptimizePersonalOnly')}</div>
+                        <div class="font-mono text-xs break-all">{detail.directory}</div>
+                        <div>
+                          <button
+                            type="button"
+                            class={buttonClass('default', 'sm')}
+                            disabled={Boolean(busyAction)}
+                            onclick={() => cloneSelected('optimize')}
+                          >
+                            {#if busyAction === 'clone'}
+                              <LoaderCircle class="size-3.5 animate-spin" />
+                            {:else}
+                              <Copy class="size-3.5" />
+                            {/if}
+                            {getMessage('copySkillToPersonal')}
+                          </button>
+                        </div>
+                      </div>
                     {:else}
-                      <div class="text-sm text-muted-foreground">
-                        {getMessage('skillDiagnosticsClear')}
+                      <label class="grid max-w-3xl gap-1 text-xs font-medium">
+                        {getMessage('skillOptimizeGoal')}
+                        <textarea
+                          class={textareaClass('min-h-36 text-sm')}
+                          bind:value={optimizeGoal}></textarea>
+                      </label>
+                      <div
+                        class="grid max-w-3xl gap-1 rounded-md border bg-muted/25 px-3 py-2 text-sm text-muted-foreground"
+                      >
+                        <div class="font-mono text-xs break-all">{detail.directory}</div>
+                        <div class="text-xs">{getMessage('skillOptimizeAndaHint')}</div>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class={buttonClass('default', 'sm')}
+                          disabled={optimizationBusy}
+                          onclick={sendOptimizationRequest}
+                        >
+                          {#if optimizationBusy}
+                            <LoaderCircle class="size-3.5 animate-spin" />
+                          {:else}
+                            <Send class="size-3.5" />
+                          {/if}
+                          {getMessage('optimizeSkillWithAnda')}
+                        </button>
                       </div>
                     {/if}
                   </div>
                 </div>
-              </div>
-            {:else if activeTab === 'files'}
-              <div class="grid h-full min-h-0 p-4">
-                <div
-                  class="grid h-full min-h-0 grid-rows-[minmax(0,0.45fr)_minmax(0,1fr)] gap-3 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-none"
-                >
-                  <div class="min-h-0 overflow-auto rounded-md border bg-muted/20 p-2">
-                    <div class="grid gap-1">
-                      {#each detail.files as file (file.path)}
-                        <button
-                          type="button"
-                          class={cn(
-                            'flex min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition',
-                            selectedFilePath === file.path
-                              ? 'bg-background text-foreground shadow-xs'
-                              : file.kind === 'file'
-                                ? 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
-                                : 'cursor-default text-muted-foreground'
-                          )}
-                          disabled={file.kind !== 'file'}
-                          onclick={() => selectSkillFile(file)}
-                        >
-                          {#if file.kind === 'directory'}
-                            <Folder class="size-3.5 shrink-0" />
-                          {:else if file.path.endsWith('.md')}
-                            <FileText class="size-3.5 shrink-0" />
-                          {:else}
-                            <FileCode2 class="size-3.5 shrink-0" />
-                          {/if}
-                          <span class="truncate font-mono">{file.path}</span>
-                          {#if file.kind === 'file'}
-                            <span class="ml-auto shrink-0 tabular-nums"
-                              >{formatSize(file.size) || '-'}</span
-                            >
-                          {/if}
-                        </button>
-                      {/each}
-                    </div>
-                  </div>
-                  <div
-                    class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-md border"
-                  >
-                    <div
-                      class="flex min-h-10 items-center justify-between gap-2 border-b bg-muted/25 px-3"
-                    >
-                      <div class="min-w-0">
-                        <div class="truncate font-mono text-xs font-semibold">
-                          {selectedFilePath}
-                        </div>
-                        {#if selectedFile}
-                          <div class="text-[11px] text-muted-foreground">
-                            {selectedFile.kind === 'file'
-                              ? formatSize(selectedFile.size) || '-'
-                              : getMessage('skillFolder')}
-                          </div>
-                        {/if}
-                      </div>
-                      {#if viewedFileTruncated}
-                        <span class={badgeClass('outline', 'shrink-0 text-[10px]')}
-                          >{getMessage('skillFileTruncated')}</span
-                        >
-                      {/if}
-                    </div>
-                    <div class="min-h-0 overflow-hidden">
-                      {#if fileLoading}
-                        <div class="grid h-full min-h-64 place-items-center text-muted-foreground">
-                          <LoaderCircle class="size-5 animate-spin" />
-                        </div>
-                      {:else if fileError}
-                        <div class="p-3 text-sm text-destructive">{fileError}</div>
-                      {:else}
-                        <pre
-                          class="skill-file-code h-full overflow-auto p-3 font-mono text-xs whitespace-pre-wrap"><code
-                            class={selectedFileLanguage
-                              ? `language-${selectedFileLanguage}`
-                              : 'language-text'}>{@html highlightedFileContent}</code
-                          ></pre>
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            {:else}
-              <div class="min-h-0 overflow-y-auto">
-                <div class="grid gap-4 p-4">
-                  {#if !canOptimize}
-                    <div
-                      class="grid max-w-3xl gap-3 rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground"
-                    >
-                      <div>{getMessage('skillOptimizePersonalOnly')}</div>
-                      <div class="font-mono text-xs break-all">{detail.directory}</div>
-                      <div>
-                        <button
-                          type="button"
-                          class={buttonClass('default', 'sm')}
-                          disabled={Boolean(busyAction)}
-                          onclick={() => cloneSelected('optimize')}
-                        >
-                          {#if busyAction === 'clone'}
-                            <LoaderCircle class="size-3.5 animate-spin" />
-                          {:else}
-                            <Copy class="size-3.5" />
-                          {/if}
-                          {getMessage('copySkillToPersonal')}
-                        </button>
-                      </div>
-                    </div>
-                  {:else}
-                    <label class="grid max-w-3xl gap-1 text-xs font-medium">
-                      {getMessage('skillOptimizeGoal')}
-                      <textarea class={textareaClass('min-h-36 text-sm')} bind:value={optimizeGoal}
-                      ></textarea>
-                    </label>
-                    <div
-                      class="grid max-w-3xl gap-1 rounded-md border bg-muted/25 px-3 py-2 text-sm text-muted-foreground"
-                    >
-                      <div class="font-mono text-xs break-all">{detail.directory}</div>
-                      <div class="text-xs">{getMessage('skillOptimizeAndaHint')}</div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <button
-                        type="button"
-                        class={buttonClass('default', 'sm')}
-                        disabled={optimizationBusy}
-                        onclick={sendOptimizationRequest}
-                      >
-                        {#if optimizationBusy}
-                          <LoaderCircle class="size-3.5 animate-spin" />
-                        {:else}
-                          <Send class="size-3.5" />
-                        {/if}
-                        {getMessage('optimizeSkillWithAnda')}
-                      </button>
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            {/if}
-          </div>
+              {/if}
+            </Tabs.Content>
+          </Tabs.Root>
         {:else}
           <div class="grid h-64 place-items-center text-sm text-muted-foreground">
-            {getMessage('skillsEmpty')}
+            {getMessage(
+              visibleSkills.length
+                ? 'selectSkillHint'
+                : skills.length
+                  ? 'noFilterMatches'
+                  : 'skillsEmpty'
+            )}
           </div>
         {/if}
       </div>
     </div>
   </section>
-</div>
+</WorkspaceLayout>
 
 {#snippet deleteActions()}
   <button

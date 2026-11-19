@@ -509,6 +509,14 @@ try {
   assert.equal(await profileInput.inputValue(), 'draft-profile')
 
   await page.locator('.settings-nav').getByRole('button', { name: 'General', exact: true }).click()
+  await page.locator('.sidebar-navigation').getByRole('button', { name: 'Skills' }).click()
+  await page.locator('.sidebar-bottom').getByRole('button', { name: 'Settings' }).click()
+  await page.locator('.settings-nav').getByRole('button', { name: 'Agent configuration' }).click()
+  assert.equal(await profileInput.inputValue(), 'draft-profile')
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click()
+  await page.waitForFunction(() => !document.querySelector('#config-panel [inert]'))
+  assert.ok(!(await yamlSource.inputValue()).includes('draft-profile'))
+  await page.locator('.settings-nav').getByRole('button', { name: 'General', exact: true }).click()
 
   // Capture the actual tray menu on its next refresh, without a production test hook.
   await app.evaluate(({ Tray }) => {

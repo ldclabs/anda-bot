@@ -107,6 +107,12 @@ Goal evaluations, context compaction summaries and handoffs use the same compact
 
 The chat title opens a menu to rename, pin, archive, copy the conversation as Markdown or show its folder; the chip beside it names the folder and its Git branch. A new chat's folder is chosen from the menu under the composer, keeping the draft; choosing a folder from a chat that has already started opens a new chat there. Message actions appear on hover, and consecutive tool calls fold into one expandable row. A pending approval or choice docks above the composer, as in the Chrome extension: a click, its number key or Enter answers a row, the last row replies in chat instead, and ⌘⇧↩ approves and ⌘⇧⌫ denies an approval (Ctrl+Shift on Windows); the transcript keeps the answer. Long chats show a mark per prompt along the transcript's edge.
 
+## Settings and management / 设置与管理
+
+Agent configuration keeps edits in memory while you visit other pages in the same window. Save and Discard changes are available below every section. In a compact window, open the list above a management page to choose a different item.
+
+在同一窗口切换页面时，「Agent 配置」会保留草稿。每个配置分区底部都可以保存或放弃更改。在窄窗口中，打开管理页面上方的列表即可选择其他项目。
+
 ## Workbench
 
 Open panels from the chat header's **Resources**, **Changes**, **Terminal** and **Browser** buttons, or with ⌘⇧A, ⌘⇧G, ⌘⇧T and ⌘⇧B (Ctrl+Shift on Windows and Linux; the View menu lists every shortcut); a second press closes one. Panels share a canvas with the chat and stay open together. The first opens beside the chat and the next ones stack in its column. Panels float on the canvas as cards. Drag one by the grab bar along its top, or by its title, onto another panel or the chat: near an edge it splits that pane on that side, in the middle the two swap places, and dropped outside the window it opens in a window of its own. Drag the line between two panes to resize them; a double-click shares the room evenly. The layout button in a panel's header moves it along an edge of the canvas (left, right, top or bottom), fills the canvas with it, or opens it in its own window. A panel's own window follows the chat open in the main window, and its layout menu puts it back on the canvas. The arrangement is kept across restarts, and so is which panels open in their own windows. At 900px wide and below, panels open one at a time as a drawer over the chat. Changes and Terminal open only the chat's own folder: a project, the folder a new chat was started in, or the folder a chat started from the `anda` terminal ran in.

@@ -798,7 +798,12 @@ export function parseConfigDraft(source: string): JsonObject | null {
   if (doc.errors.length > 0 || !isMap(doc.contents)) {
     return null
   }
-  return normalizeConfigDraft(doc.toJS() as Json)
+  try {
+    return normalizeConfigDraft(doc.toJS() as Json)
+  } catch {
+    // An alias can be syntactically valid while its anchor is still being typed.
+    return null
+  }
 }
 
 function syncMapNode(doc: Document, map: YAMLMap, json: JsonObject, keepUnknown = true): void {

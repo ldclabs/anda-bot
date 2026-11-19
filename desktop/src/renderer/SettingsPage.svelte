@@ -10,7 +10,6 @@
    */
   import { AudioLines, Palette, Server, Settings2, SlidersHorizontal } from '@lucide/svelte'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
-  import ConfigApp from '$extension/ConfigApp.svelte'
   import type { DesktopClient } from './client.svelte'
   import type { Preferences } from '../shared/contract'
   import type { Label } from './labels'
@@ -22,10 +21,14 @@
     client,
     t,
     category = $bindable('general'),
+    configDirty = $bindable(false),
+    visible,
     runtime
   }: {
     client: DesktopClient
     t: (key: Label) => string
+    visible: boolean
+    configDirty?: boolean
     category?: SettingsCategory
     runtime: RuntimeActions
   } = $props()
@@ -71,7 +74,7 @@
   >
 {/snippet}
 
-<div class="settings-layout">
+<div class="settings-layout" hidden={!visible}>
   <nav class="settings-nav" aria-label={t('settings')}>
     {#each categories as item (item.id)}<button
         class:active={category === item.id}
@@ -79,15 +82,23 @@
         onclick={() => (category = item.id)}><item.icon size={15} />{t(item.label)}</button
       >{/each}
   </nav>
-  {#if category === 'config'}<div class="management-page">
-      <ConfigApp
-        onModelsChanged={async () => {
-          await window.anda.connect()
-          if (client.authorized) await client.refreshModelState()
-        }}
-      />
-    </div>
-  {:else if category === 'audio'}<AudioPanel {client} />
+  {#if category === 'config' || configDirty}<div
+      class="management-page"
+      hidden={category !== 'config'}
+    >
+      {#await import('$extension/ConfigApp.svelte')}
+        <p role="status" class="p-4 text-sm">{t('loading')}</p>
+      {:then module}
+        <module.default
+          bind:dirty={configDirty}
+          onModelsChanged={async () => {
+            await window.anda.connect()
+            if (client.authorized) await client.refreshModelState()
+          }}
+        />
+      {:catch error}<p role="alert" class="workbench-error">{String(error)}</p>{/await}
+    </div>{/if}
+  {#if visible && category === 'audio'}<AudioPanel {client} />
   {:else if category === 'appearance'}<div class="settings-page">
       <h1>{t('theme')}</h1>
       <div class="setting-row">
@@ -137,7 +148,7 @@
           >{/if}
       </div>
     </div>
-  {:else}<div class="settings-page">
+  {:else if category === 'general'}<div class="settings-page">
       <h1>{t('general')}</h1>
       <div class="setting-row">
         <span class="setting-label"

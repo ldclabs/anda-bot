@@ -1,4 +1,5 @@
 <script lang="ts">
+  import WorkspaceLayout from '$lib/anda/WorkspaceLayout.svelte'
   import { storeClientState } from '$lib/anda/client/platform'
   import { createBookmarkJumpRequest, bookmarkJumpRequestStorageKey } from '../bookmark-jump'
   import { openAndaSidePanel } from '../dashboard/side-panel'
@@ -42,6 +43,7 @@
   } from '@lucide/svelte'
   import { onMount } from 'svelte'
 
+  let layout: WorkspaceLayout
   let mode = $state<'home' | 'inbox' | 'entity'>('home')
   /** Entity pages opened from the home page, oldest first; null is the caller. */
   let trail = $state<Array<{ id: string | null; name: string }>>([])
@@ -253,6 +255,7 @@
     }
   }
   function select(next: typeof mode) {
+    layout?.showDetail()
     stop()
     busy = false
     mode = next
@@ -263,6 +266,7 @@
   }
   /** Starts a new path, from the navigation or a search. */
   function openRoot(id: string | null, name: string) {
+    layout?.showDetail()
     trail = [{ id, name }]
     if (mode !== 'entity') select('entity')
   }
@@ -356,9 +360,9 @@
   </button>
 {/snippet}
 
-<div class="grid h-full min-h-0 grid-cols-[15rem_minmax(0,1fr)] overflow-hidden">
+{#snippet sidebar()}
   <aside
-    class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-r bg-sidebar/70"
+    class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] border-e bg-sidebar/70"
     aria-label={getMessage('memoryTitle')}
   >
     <div class="border-b px-3 py-3">
@@ -444,7 +448,9 @@
       {/if}
     </div>
   </aside>
+{/snippet}
 
+<WorkspaceLayout bind:this={layout} label={getMessage('browseMemory')} width="15rem" {sidebar}>
   <section class="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
     {#if mode === 'inbox'}
       <div class="row-span-2 min-h-0">
@@ -689,7 +695,7 @@
       </div>
     {/if}
   </section>
-</div>
+</WorkspaceLayout>
 
 {#if change && settings && changeStorageKey}
   {#key changeStorageKey}

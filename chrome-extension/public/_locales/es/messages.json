@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "No connection"
   },
+  "connectDashboardHint": {
+    "message": "Conecta con tu servicio de Anda para abrir este espacio."
+  },
+  "connectionTestFailed": {
+    "message": "No se pudo conectar. Comprueba que Anda está en ejecución y revisa la URL y el token."
+  },
+  "invalidGatewayUrl": {
+    "message": "Introduce una dirección HTTP o HTTPS sin credenciales, parámetros ni fragmento."
+  },
+  "showToken": {
+    "message": "Mostrar token"
+  },
+  "hideToken": {
+    "message": "Ocultar token"
+  },
+  "configLoadFailed": {
+    "message": "No se pudo cargar la configuración"
+  },
+  "retryAction": {
+    "message": "Reintentar"
+  },
+  "configInvalidYaml": {
+    "message": "Corrige el YAML antes de editar el formulario o guardar."
+  },
+  "configUnsaved": {
+    "message": "Cambios sin guardar"
+  },
+  "configDiscard": {
+    "message": "Descartar cambios"
+  },
+  "noFilterMatches": {
+    "message": "No hay coincidencias"
+  },
+  "selectSkillHint": {
+    "message": "Selecciona una habilidad para ver sus detalles."
+  },
+  "clearFilters": {
+    "message": "Borrar filtros"
+  },
+  "confirmFolderRemoval": {
+    "message": "¿Eliminar «$1» y sus subcarpetas? Sus marcadores seguirán disponibles en Todos."
+  },
+  "modelsRefreshed": {
+    "message": "Lista de modelos actualizada."
+  },
+  "browseMemory": {
+    "message": "Explorar la memoria"
+  },
+  "browseSkills": {
+    "message": "Explorar habilidades"
+  },
+  "browseServers": {
+    "message": "Servidores y secretos"
+  },
   "dashboardConnectionSettings": {
     "message": "Connection settings"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "Expand navigation"
-  },
-  "dashboardGraphCrumb": {
-    "message": "Graph"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "Library"
-  },
-  "dashboardStudioCrumb": {
-    "message": "Studio"
   },
   "bookmarksDashboardDescription": {
     "message": "Carpetas y mensajes guardados del asistente."
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "Flujos de trabajo personales"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "Habilidades"
   },
   "skills": {
     "message": "Habilidades"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "Herramientas y conexiones"
-  },
-  "dashboardMcpCrumb": {
-    "message": "Servidores"
   },
   "mcpTitle": {
     "message": "MCP"

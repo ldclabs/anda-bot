@@ -157,6 +157,9 @@
   let searchOpen = $state(false)
   let query = $state('')
   let searchBusy = $state(false)
+  let searched = $state(false)
+  let searchError = $state('')
+  let searchRequest = 0
   let searchResults = $state<Conversation[]>([])
   let showArchived = $state(false)
   let sidebarFilter = $state('')
@@ -164,6 +167,7 @@
   let renameTitle = $state('')
   let renameWhere = $state<'sidebar' | 'header'>('sidebar')
   let settingsCategory = $state<SettingsCategory>('general')
+  let configDirty = $state(false)
   let reloadingModels = $state(false)
   let confirmStopOpen = $state(false)
   let dark = $state(document.documentElement.classList.contains('dark'))
@@ -672,7 +676,7 @@
   }
   function openSearch(text: string) {
     query = text.trim()
-    searchResults = []
+    resetHistorySearch()
     searchOpen = true
     if (query) void searchHistory()
   }
@@ -709,22 +713,34 @@
     client.view = 'settings'
     settingsCategory = 'config'
   }
+  function resetHistorySearch() {
+    searchRequest++
+    searchResults = []
+    searchError = ''
+    searched = false
+    searchBusy = false
+  }
+
   async function searchHistory() {
-    if (!query.trim() || !client.authorized) return
+    if (searchBusy || !query.trim() || !client.authorized) return
+    const request = ++searchRequest
     searchBusy = true
+    searchError = ''
     try {
-      searchResults =
-        (
-          await client.toolCall<RpcOutput<Conversation[]>>('conversations_api', {
-            type: 'SearchConversations',
-            query,
-            limit: 30
-          })
-        ).output.result || []
+      const { output } = await client.toolCall<RpcOutput<Conversation[]>>('conversations_api', {
+        type: 'SearchConversations',
+        query: query.trim(),
+        limit: 30
+      })
+      if (request === searchRequest) {
+        searchResults = output.result || []
+        searched = true
+      }
     } catch (error) {
-      client.fail(error)
+      if (request === searchRequest)
+        searchError = error instanceof Error ? error.message : String(error)
     } finally {
-      searchBusy = false
+      if (request === searchRequest) searchBusy = false
     }
   }
   async function openHistory(conversation: Conversation) {
@@ -1539,7 +1555,10 @@
     {:else if client.view === 'automations'}<div class="management-page">
         <Automations {client} />
       </div>
-    {:else if client.view === 'settings'}<SettingsPage
+    {/if}
+    {#if client.ready && (client.view === 'settings' || configDirty)}<SettingsPage
+        visible={client.view === 'settings'}
+        bind:configDirty
         {client}
         {t}
         bind:category={settingsCategory}
@@ -1630,7 +1649,9 @@
       <div class="search-input">
         <Search size={19} /><input
           placeholder={t('searchHint')}
+          aria-label={t('search')}
           bind:value={query}
+          oninput={resetHistorySearch}
           onkeydown={(event) => {
             if (event.key === 'Enter' && !event.isComposing) void searchHistory()
           }}
@@ -1648,9 +1669,17 @@
             onclick={() => void openHistory(result)}
             ><Search size={13} /><span>{result.label || `Conversation ${result._id}`}</span
             ><ArrowUpRight size={14} /></button
-          >{/each}{#if !searchChats.length && !searchResults.length}<p>
-            {searchBusy ? '…' : t('emptySearch')}
-          </p>{/if}
+          >{/each}
+        {#if searchError}<p role="alert">{searchError}</p>
+        {:else if searchBusy}<p role="status">{t('loading')}</p>
+        {:else if !searchChats.length && !searchResults.length && (!query.trim() || searched || !client.authorized)}
+          <p role="status">{t('emptySearch')}</p>
+        {/if}
+        {#if query.trim() && client.authorized && !searchBusy && !searched}
+          <button onclick={() => void searchHistory()}
+            ><Search size={14} /><span>{t('searchHistory')}</span><kbd>↵</kbd></button
+          >
+        {/if}
       </div>
     </div>
   </div>{/if}

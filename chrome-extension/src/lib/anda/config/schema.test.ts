@@ -218,6 +218,7 @@ describe('parseConfigDraft', () => {
 
   it('returns null for invalid or non-mapping YAML', () => {
     expect(parseConfigDraft('addr: [unclosed')).toBeNull()
+    expect(parseConfigDraft('model: *unfinished')).toBeNull()
     expect(parseConfigDraft('- just\n- a\n- list\n')).toBeNull()
     expect(parseConfigDraft('')).toBeNull()
   })

@@ -18,7 +18,7 @@ pnpm --dir chrome-extension build
 
 3. Open `chrome://extensions`, enable Developer mode, choose Load unpacked, and select `chrome-extension/dist`.
 
-4. Open the Anda Bot side panel, paste the printed Gateway URL and Bearer token, then save.
+4. Open Settings in the side panel or Connection settings in the Dashboard. Paste the printed Gateway URL and Bearer token. **Test** checks those values and shows the result in the dialog. **Save** applies them to this browser profile.
 
 Chrome 116 or newer is required because the extension keeps its Manifest V3 service worker alive with a WebSocket keepalive.
 
@@ -95,6 +95,10 @@ the daemon configuration preserves the selected approval policy.
 The Dashboard loads workspaces on demand and does not restore chat histories in
 the background. Chat renders Markdown and math with bundled styles; raw HTML is
 shown as text. Image previews load when their messages become visible.
+Back and Forward retrace visits to Dashboard workspaces. In a narrow window,
+the workspace picker and list button give the selected item the full width.
+Unsaved configuration edits stay in the same window as you visit other pages.
+Use **Save** to apply them or **Discard changes** to reload the daemon's copy.
 Goal evaluations, context compaction summaries and handoffs appear as compact,
 collapsed tool-level rows; expand a row to read its full content.
 

@@ -8,7 +8,8 @@ import {
   errorToError,
   errorToMessage,
   normalizeApprovalMode,
-  normalizeSettings
+  normalizeSettings,
+  websocketUrl
 } from '$lib/service-worker/settings'
 import { SvelteMap } from 'svelte/reactivity'
 import { BookmarksApi } from './bookmarks.svelte'
@@ -402,24 +403,20 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     }
   }
 
-  async saveSettings(settings: SettingsState, options: { quiet?: boolean } = {}): Promise<void> {
-    this.applySettings(settings)
-    await this.chrome.storage.local.set(this.settings)
-    if (!options.quiet) {
-      this.systemMessage = { kind: 'info', text: getMessage('settingsSaved') }
-    }
+  async saveSettings(settings: SettingsState): Promise<void> {
+    const next = normalizeSettings(settings)
+    await this.chrome.storage.local.set(next)
+    this.applySettings(next)
+    this.systemMessage = { kind: 'info', text: getMessage('settingsSaved') }
     await this.syncServiceWorker().catch(() => undefined)
     await this.refreshConnectionData()
     this.syncUiLanguage().catch(() => undefined)
   }
 
   async saveAppearanceTheme(appearanceTheme: AppearanceTheme): Promise<void> {
-    const previousTheme = this.settings.appearanceTheme
-    this.settings = normalizeSettings({ ...this.settings, appearanceTheme })
-    if (this.settings.appearanceTheme === previousTheme) {
-      return
-    }
-    await this.chrome.storage.local.set({ appearanceTheme: this.settings.appearanceTheme })
+    if (appearanceTheme === this.settings.appearanceTheme) return
+    await this.chrome.storage.local.set({ appearanceTheme })
+    this.settings = { ...this.settings, appearanceTheme }
     this.syncServiceWorker().catch(() => undefined)
   }
 
@@ -437,17 +434,36 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
   }
 
   async testConnection(settings: SettingsState): Promise<void> {
-    try {
-      // Saving refreshes the model list along with the rest of the connection data.
-      await this.saveSettings(settings, { quiet: true })
+    const draft = normalizeSettings(settings)
+    if (!draft.token) throw new Error(getMessage('tokenMissing'))
+    if (connectionKey(draft) === connectionKey(this.settings)) {
       await this.rpc('information', [])
-      this.updateStatus('connected', {
-        kind: 'info',
-        text: getMessage('connectionTestPassed')
-      })
-    } catch (error) {
-      this.updateStatus('connection failed', { kind: 'error', text: errorToMessage(error) })
+      return
     }
+    // Check the draft with the same read-only RPC, keeping the profile socket
+    // and its registered browser session on the saved connection.
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(websocketUrl(draft))
+      const finish = (connected: boolean) => {
+        clearTimeout(timer)
+        socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null
+        socket.close()
+        if (connected) resolve()
+        else reject(new Error(getMessage('connectionTestFailed')))
+      }
+      const timer = setTimeout(() => finish(false), 10_000)
+      socket.onopen = () =>
+        socket.send(JSON.stringify({ id: 1, method: 'information', params: [] }))
+      socket.onmessage = (event) => {
+        try {
+          const reply = JSON.parse(event.data)
+          if (reply.id === 1) finish(!reply.error && !!reply.result)
+        } catch {
+          finish(false)
+        }
+      }
+      socket.onerror = socket.onclose = () => finish(false)
+    })
   }
 
   async sendPrompt(text: string, attachments: ChatAttachment[] = []): Promise<void> {

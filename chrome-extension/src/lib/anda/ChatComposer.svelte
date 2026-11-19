@@ -93,7 +93,7 @@
     VolumeX,
     X
   } from '@lucide/svelte'
-  import { Tooltip } from 'bits-ui'
+  import { DropdownMenu as Menu, Tooltip } from 'bits-ui'
   import { onDestroy, onMount, tick, untrack, type Snippet } from 'svelte'
   import { fade } from 'svelte/transition'
 
@@ -219,11 +219,9 @@
   let promptSkillsLoading = $state(false)
   let promptSkillsLoadedAt = $state(0)
   let promptSkillsError = $state('')
-  let approvalMenuOpen = $state(false)
   let approvalModePending = $state(false)
   let approvalModeError = $state('')
   let clearQuickPromptsOpen = $state(false)
-  let approvalMenuElement: HTMLDivElement | null = $state(null)
   let lastIncomingAttachmentId = ''
   let lastIncomingDraftId = ''
   let shellElement: HTMLDivElement | null = $state(null)
@@ -458,26 +456,13 @@
 
   onMount(() => {
     browserSpeechAvailable = speechRecognitionSupported()
-    document.addEventListener('pointerdown', handleDocumentPointerDown)
   })
 
   onDestroy(() => {
     clearTimeout(workingTimeout)
     for (const timer of launchTimers) clearTimeout(timer)
-    document.removeEventListener('pointerdown', handleDocumentPointerDown)
     void recorder.cancel()
   })
-
-  function handleDocumentPointerDown(event: PointerEvent) {
-    if (!approvalMenuOpen) {
-      return
-    }
-    const target = event.target
-    if (target instanceof Node && approvalMenuElement?.contains(target)) {
-      return
-    }
-    approvalMenuOpen = false
-  }
 
   function isSubmitEvent(event: KeyboardEvent): boolean {
     if (
@@ -584,7 +569,6 @@
   }
 
   async function selectApprovalMode(mode: ApprovalMode) {
-    approvalMenuOpen = false
     approvalModeError = ''
     approvalModePending = true
     try {
@@ -781,10 +765,6 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && approvalMenuOpen) {
-      approvalMenuOpen = false
-      return
-    }
     if (handlePromptCommandKeydown(event)) {
       return
     }
@@ -1169,63 +1149,62 @@
           </button>
         {/if}
 
-        <div bind:this={approvalMenuElement} class="approval-mode-wrap">
-          <button
-            type="button"
+        <Menu.Root dir={document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'}>
+          <Menu.Trigger
             class={buttonClass(
-              approvalMenuOpen ? 'secondary' : 'ghost',
+              'ghost',
               'sm',
-              'approval-mode-button composer-icon-button h-8 min-w-0 gap-1.5 rounded-full px-2.5 font-normal'
+              'approval-mode-button composer-icon-button h-8 max-w-48 min-w-0 gap-1.5 rounded-full px-2.5 font-normal'
             )}
             disabled={(approvalModeDisabled ?? disabled) || approvalModePending}
-            aria-haspopup="menu"
-            aria-expanded={approvalMenuOpen}
+            aria-label={`${getMessage('approvalModeMenuAria')}, ${approvalModeLabel(currentApprovalMode)}`}
             aria-busy={approvalModePending}
             title={approvalModeDescription(currentApprovalMode)}
-            onclick={() => (approvalMenuOpen = !approvalMenuOpen)}
           >
-            {#if approvalModePending}
-              <LoaderCircle class="size-4 animate-spin" />
-            {:else}
-              <CurrentApprovalIcon class="size-4" />
-            {/if}
+            {#if approvalModePending}<LoaderCircle
+                class="size-4 animate-spin"
+              />{:else}<CurrentApprovalIcon class="size-4" />{/if}
             <span class="truncate">{approvalModeLabel(currentApprovalMode)}</span>
-          </button>
-
-          {#if approvalMenuOpen}
-            <div
-              class="approval-mode-menu"
-              role="menu"
+          </Menu.Trigger>
+          <Menu.Portal>
+            <Menu.Content
+              side="top"
+              align="start"
+              sideOffset={8}
+              collisionPadding={8}
+              data-slot="dropdown-menu-content"
               aria-label={getMessage('approvalModeMenuAria')}
+              class="z-50 max-h-[var(--bits-dropdown-menu-content-available-height)] w-80 max-w-[var(--bits-dropdown-menu-content-available-width)] overflow-y-auto rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-md"
             >
-              <div class="approval-mode-menu-eyebrow">{getMessage('approvalModeMenuPrompt')}</div>
-              {#each approvalModeOptions as option (option.value)}
-                {@const OptionIcon = approvalModeIcon(option)}
-                <button
-                  type="button"
-                  class="approval-mode-item"
-                  class:approval-mode-item-active={option.value === approvalMode}
-                  role="menuitemradio"
-                  aria-checked={option.value === approvalMode}
-                  onclick={() => selectApprovalMode(option.value)}
+              <Menu.Group>
+                <Menu.GroupHeading class="px-2 py-1 text-xs font-semibold text-muted-foreground"
+                  >{getMessage('approvalModeMenuPrompt')}</Menu.GroupHeading
                 >
-                  <OptionIcon class="approval-mode-item-icon size-4" />
-                  <span class="min-w-0 flex-1">
-                    <span class="block truncate text-sm font-semibold">
-                      {approvalModeLabel(option)}
-                    </span>
-                    <span class="approval-mode-item-description block truncate text-xs">
-                      {approvalModeDescription(option)}
-                    </span>
-                  </span>
-                  {#if option.value === approvalMode}
-                    <Check class="size-4" />
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
+                <Menu.RadioGroup value={approvalMode}>
+                  {#each approvalModeOptions as option (option.value)}
+                    {@const Icon = approvalModeIcon(option)}
+                    <Menu.RadioItem
+                      value={option.value}
+                      onSelect={() => void selectApprovalMode(option.value)}
+                      class="flex min-w-0 items-start gap-2 rounded-md px-2 py-2 text-start text-sm outline-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                    >
+                      <Icon class="mt-0.5 size-4 shrink-0" />
+                      <span class="min-w-0 flex-1"
+                        ><span class="block font-semibold">{approvalModeLabel(option)}</span>
+                        <span class="block text-xs text-muted-foreground"
+                          >{approvalModeDescription(option)}</span
+                        ></span
+                      >
+                      {#if approvalMode === option.value}<Check
+                          class="mt-0.5 size-4 shrink-0"
+                        />{/if}
+                    </Menu.RadioItem>
+                  {/each}
+                </Menu.RadioGroup>
+              </Menu.Group>
+            </Menu.Content>
+          </Menu.Portal>
+        </Menu.Root>
       </div>
 
       <div class="composer-toolbar-group">
@@ -1761,75 +1740,6 @@
     flex: 0 0 auto;
   }
 
-  /* In a narrow toolbar the label truncates. No ancestor may hide overflow:
-     the menu opens above the button. */
-  .approval-mode-wrap {
-    position: relative;
-    display: flex;
-    min-width: 0;
-  }
-
-  .approval-mode-button {
-    flex-shrink: 1;
-    max-width: 12rem;
-  }
-
-  .approval-mode-menu {
-    position: absolute;
-    bottom: calc(100% + 0.5rem);
-    left: 0;
-    z-index: 20;
-    display: grid;
-    width: min(20rem, calc(100vw - 2rem));
-    gap: 0.125rem;
-    border: 1px solid var(--message-border, #e6e6e6);
-    border-radius: 0.75rem;
-    background: color-mix(in srgb, var(--message-bg, #ffffff) 94%, var(--message-surface, #f7f7f7));
-    padding: 0.45rem;
-    color: var(--message-text, #171717);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.16);
-    transform-origin: 1rem 100%;
-    animation: composer-menu-in 200ms var(--anda-ease-out, ease-out) both;
-  }
-
-  .approval-mode-menu-eyebrow {
-    padding: 0.35rem 0.55rem 0.25rem;
-    color: var(--message-muted, #737373);
-    font-size: 0.75rem;
-    font-weight: 600;
-    line-height: 1rem;
-  }
-
-  .approval-mode-item {
-    display: flex;
-    min-width: 0;
-    width: 100%;
-    align-items: center;
-    gap: 0.65rem;
-    border: 0;
-    border-radius: 0.5rem;
-    background: transparent;
-    padding: 0.55rem;
-    color: inherit;
-    text-align: left;
-    outline: none;
-  }
-
-  .approval-mode-item:hover,
-  .approval-mode-item:focus-visible,
-  .approval-mode-item-active {
-    background: var(--message-surface-hover, #eeeeee);
-  }
-
-  .approval-mode-item-icon {
-    flex: 0 0 auto;
-    color: #0f766e;
-  }
-
-  .approval-mode-item-description {
-    color: var(--message-muted, #737373);
-  }
-
   :global(.composer-textarea) {
     color: var(--message-text, #171717);
     caret-color: var(--chat-accent, #10b981);
@@ -1893,13 +1803,6 @@
     }
   }
 
-  @keyframes composer-menu-in {
-    from {
-      opacity: 0;
-      transform: translateY(6px) scale(0.96);
-    }
-  }
-
   @keyframes composer-send-ready {
     from {
       transform: scale(0.6);
@@ -1917,7 +1820,6 @@
     .composer-shell.composer-working::after,
     .composer-drop-outline rect,
     .composer-drop-label,
-    .approval-mode-menu,
     .composer-toolbar :global(.composer-send:not(:disabled)),
     .composer-toolbar :global(.composer-stop)::before {
       animation: none;

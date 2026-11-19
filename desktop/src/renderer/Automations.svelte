@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { focusDialog } from './dialog'
+  import Modal from '$lib/anda/Modal.svelte'
+  import WorkspaceLayout from '$lib/anda/WorkspaceLayout.svelte'
+  import { buttonClass } from '$lib/anda/ui'
   import { onMount } from 'svelte'
   import {
     Plus,
@@ -10,7 +12,7 @@
     Plug,
     Trash2,
     RefreshCw,
-    X,
+    LoaderCircle,
     Zap
   } from '@lucide/svelte'
   import type { DesktopClient } from './client.svelte'
@@ -23,6 +25,7 @@
   import { getMessage } from '$lib/i18n'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { label, type Label } from './labels'
+  let layout: WorkspaceLayout
   let { client }: { client: DesktopClient } = $props()
   const t = (key: Label) => label(client.preferences.language, key)
   interface Job {
@@ -78,12 +81,32 @@
     { value: 'agent', label: 'Agent' },
     { value: 'shell', label: 'Shell' }
   ]
-  const scheduleKindItems = [
-    { value: 'every', label: 'Every' },
-    { value: 'once', label: 'Once' },
-    { value: 'cron', label: 'Cron' },
-    { value: 'at', label: 'At (RFC3339)' }
-  ]
+  const scheduleKindItems = $derived([
+    { value: 'every', label: t('scheduleEvery') },
+    { value: 'once', label: t('scheduleOnce') },
+    { value: 'cron', label: t('scheduleCron') },
+    { value: 'at', label: t('scheduleAt') }
+  ])
+  const scheduleField = $derived(
+    t(
+      scheduleKind === 'at'
+        ? 'runAtTime'
+        : scheduleKind === 'cron'
+          ? 'scheduleCron'
+          : scheduleKind === 'once'
+            ? 'delay'
+            : 'interval'
+    )
+  )
+  let scheduleDrafts: Record<string, string> = {}
+  function scheduleFormat(value: string) {
+    return value === 'every' || value === 'once' ? 'duration' : value
+  }
+  function changeScheduleKind(next: string) {
+    scheduleDrafts[scheduleFormat(scheduleKind)] = schedule
+    scheduleKind = next
+    schedule = scheduleDrafts[scheduleFormat(next)] ?? ''
+  }
   let schedule = $state('1d')
   let timezone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone)
   const selectedJob = $derived(
@@ -153,6 +176,7 @@
   })
   /** Shows an automation; `reload` refetches the one already shown. */
   async function select(next: Selection | null, reload = false) {
+    if (!reload) layout?.showDetail()
     const same = next && selection?.kind === next.kind && selection.id === next.id
     if (same && !reload) return
     selection = next
@@ -197,6 +221,7 @@
     kind = job?.job_kind || 'agent'
     scheduleKind = job?.schedule_kind || 'every'
     schedule = job?.schedule || '1d'
+    scheduleDrafts = {}
     timezone = job?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone
     error = ''
     editing = true
@@ -276,7 +301,7 @@
   </div>
 {/snippet}
 
-<div class="automation-page">
+{#snippet sidebar()}
   <aside class="automation-list" aria-label={t('automations')}>
     <div class="automation-list-head">
       <h1>{t('automations')}</h1>
@@ -329,7 +354,9 @@
       <button onclick={() => (client.view = 'mcp')}><Plug size={14} />{t('openMcp')}</button>
     </div>
   </aside>
+{/snippet}
 
+<WorkspaceLayout bind:this={layout} width="16.5rem" label={t('automations')} {sidebar}>
   <section class="automation-detail">
     {#if selectedJob}
       {@const job = fullJob || selectedJob}
@@ -356,12 +383,15 @@
           >
         </div>
       </header>
-      {#if error}<div class="status-banner error">{error}</div>{/if}
+      {#if error}<div class="status-banner error" role="alert">{error}</div>{/if}
       <div class="automation-detail-body">
         <div class="automation-columns">
           <div>
             <dl class="automation-facts">
-              {@render fact(t('schedule'), `${job.schedule_kind} · ${job.schedule}`)}
+              {@render fact(
+                t('schedule'),
+                `${scheduleKindItems.find((item) => item.value === job.schedule_kind)?.label || job.schedule_kind} · ${job.schedule}`
+              )}
               {#if job.tz}{@render fact(t('timezone'), job.tz)}{/if}
               {@render fact(
                 t('nextRun'),
@@ -410,7 +440,7 @@
           >
         </div>
       </header>
-      {#if error}<div class="status-banner error">{error}</div>{/if}
+      {#if error}<div class="status-banner error" role="alert">{error}</div>{/if}
       <div class="automation-detail-body">
         <div class="automation-columns">
           <div>
@@ -465,57 +495,74 @@
         </div>
       </div>
     {:else}
-      {#if error}<div class="status-banner error">{error}</div>{/if}
-      {#if !busy}<div class="empty-automations">
+      {#if error}<div class="status-banner error" role="alert">{error}</div>{/if}
+      {#if busy}<p role="status" class="p-4 text-sm">{t('loading')}</p>{:else if !error}<div
+          class="empty-automations"
+        >
           <Clock3 size={34} />
           <h2>{t('noJobs')}</h2>
           <button class="primary" onclick={() => edit()}><Plus size={15} />{t('newJob')}</button>
         </div>{/if}
     {/if}
   </section>
-</div>
-{#if editing}<div class="modal-backdrop">
-    <div
-      use:focusDialog={() => (editing = false)}
-      class="automation-editor"
-      role="dialog"
-      aria-modal="true"
-      aria-label={editId ? t('edit') : t('newJob')}
-      tabindex="-1"
+</WorkspaceLayout>
+
+{#snippet editorActions()}
+  <button class={buttonClass('outline', 'sm')} onclick={() => (editing = false)}
+    >{t('cancel')}</button
+  >
+  <button
+    class={buttonClass('default', 'sm')}
+    type="submit"
+    form="automation-form"
+    disabled={busy || !prompt.trim() || !schedule.trim()}
+  >
+    {#if busy}<LoaderCircle class="size-4 animate-spin" />{/if}{editId ? t('save') : t('create')}
+  </button>
+{/snippet}
+
+<Modal bind:open={editing} title={editId ? t('edit') : t('newJob')} footer={editorActions}>
+  <form
+    id="automation-form"
+    class="automation-editor"
+    onsubmit={(event) => {
+      event.preventDefault()
+      if (!busy && prompt.trim() && schedule.trim()) void save()
+    }}
+  >
+    <label>{t('name')}<input bind:value={name} /></label>
+    <label
+      >{t('jobType')}<DropdownMenu
+        items={kindItems}
+        bind:value={kind}
+        ariaLabel={t('jobType')}
+      /></label
     >
-      <div class="page-heading">
-        <h2>{editId ? t('edit') : t('newJob')}</h2>
-        <button class="icon-button" onclick={() => (editing = false)}><X size={17} /></button>
-      </div>
-      <label>{t('name')}<input bind:value={name} /></label><label
-        >{t('task')}<DropdownMenu
-          items={kindItems}
-          bind:value={kind}
-          ariaLabel={t('task')}
-        /><textarea rows="6" bind:value={prompt}></textarea></label
+    <label
+      >{kind === 'shell' ? t('shellCommand') : t('task')}<textarea rows="5" bind:value={prompt}
+      ></textarea></label
+    >
+    <div class="schedule-fields">
+      <label
+        >{t('schedule')}<DropdownMenu
+          items={scheduleKindItems}
+          value={scheduleKind}
+          onSelect={changeScheduleKind}
+          ariaLabel={t('schedule')}
+        /></label
       >
-      <div class="schedule-fields">
-        <label
-          >{t('schedule')}<DropdownMenu
-            items={scheduleKindItems}
-            bind:value={scheduleKind}
-            ariaLabel={t('schedule')}
-          /></label
-        ><label
-          >{t('interval')}<input
-            bind:value={schedule}
-            placeholder={scheduleKind === 'cron' ? '0 9 * * 1-5' : '1d'}
-          /></label
-        >
-      </div>
-      {#if scheduleKind === 'cron'}<label>{t('timezone')}<input bind:value={timezone} /></label
-        >{/if}{#if error}<p class="job-error">{error}</p>{/if}
-      <div class="dialog-actions">
-        <button onclick={() => (editing = false)}>{t('cancel')}</button><button
-          class="primary"
-          disabled={busy || !prompt.trim() || !schedule.trim()}
-          onclick={() => void save()}>{editId ? t('save') : t('create')}</button
-        >
-      </div>
+      <label
+        >{scheduleField}<input
+          bind:value={schedule}
+          placeholder={scheduleKind === 'at'
+            ? '2030-05-01T09:00:00+08:00'
+            : scheduleKind === 'cron'
+              ? '0 9 * * 1-5'
+              : '30m'}
+        /></label
+      >
     </div>
-  </div>{/if}
+    {#if scheduleKind === 'cron'}<label>{t('timezone')}<input bind:value={timezone} /></label>{/if}
+    {#if error}<p role="alert" class="job-error">{error}</p>{/if}
+  </form>
+</Modal>

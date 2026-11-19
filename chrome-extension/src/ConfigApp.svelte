@@ -1,20 +1,12 @@
 <script lang="ts">
   import ChatGptSettings from '$lib/anda/chatgpt/ChatGptSettings.svelte'
+  import { getClientPlatform } from '$lib/anda/client/platform'
   import { getMessage } from '$lib/i18n'
-  import { applyAppearanceTheme } from '$lib/anda/theme'
   import { buttonClass, fieldClass, fieldLabelClass, inputClass, textareaClass } from '$lib/anda/ui'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
   import { defaultSettings, errorToMessage } from '$lib/service-worker/settings'
   import type { SettingsState } from '$lib/service-worker/types'
-  import {
-    AlertCircle,
-    Check,
-    LoaderCircle,
-    Plus,
-    Save,
-    SlidersHorizontal,
-    Trash2
-  } from '@lucide/svelte'
+  import { AlertCircle, LoaderCircle, Plus, Save, SlidersHorizontal, Trash2 } from '@lucide/svelte'
   import { onMount, tick } from 'svelte'
   import { DaemonConfigApi, loadConfigSettings } from './lib/anda/config/api'
   import type { FieldSchema, JsonObject } from './lib/anda/config/schema'
@@ -52,7 +44,10 @@
 
   type SectionId = 'runtime' | 'models' | 'tts' | 'transcription' | 'channels' | 'users'
 
-  let { onModelsChanged }: { onModelsChanged?: () => void | Promise<void> } = $props()
+  let {
+    onModelsChanged,
+    dirty = $bindable(false)
+  }: { onModelsChanged?: () => void | Promise<void>; dirty?: boolean } = $props()
 
   const sections: { id: SectionId; label: string; detail: string }[] = [
     {
@@ -90,7 +85,8 @@
   let activeSection = $state<SectionId>('runtime')
   let loading = $state(true)
   let saving = $state(false)
-  let dirty = $state(false)
+  let savedSource = $state<string | null>(null)
+  let invalidYaml = $state(false)
   let editVersion = 0
   let statusMessage = $state('')
   let errorMessage = $state('')
@@ -101,28 +97,35 @@
   const transcription = $derived(getObject(draft, 'transcription'))
   const channels = $derived(getObject(draft, 'channels'))
 
-  $effect(() => {
-    return applyAppearanceTheme(settings.appearanceTheme)
+  onMount(() => {
+    void loadConfig()
   })
 
-  onMount(() => {
-    loadConfig().catch((error) => {
-      errorMessage = errorToMessage(error)
-      loading = false
-    })
+  $effect(() => {
+    // Chrome provides a native confirmation. Electron hides the window on close.
+    if (!dirty || getClientPlatform()) return
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
   })
 
   async function loadConfig() {
     loading = true
     errorMessage = ''
     statusMessage = ''
-    settings = await loadConfigSettings()
-    const response = await new DaemonConfigApi(settings).load()
-    draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
-    source = response.content
-    configRevision = response.revision
-    dirty = false
-    loading = false
+    try {
+      settings = await loadConfigSettings()
+      const response = await new DaemonConfigApi(settings).load()
+      draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
+      savedSource = source = response.content
+      configRevision = response.revision
+      invalidYaml = false
+      dirty = false
+    } catch (error) {
+      errorMessage = errorToMessage(error)
+    } finally {
+      loading = false
+    }
   }
 
   async function selectSection(section: SectionId) {
@@ -138,7 +141,7 @@
     // while the request was running and their original conflict-check revision.
     if (!dirty && version === editVersion) {
       draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
-      source = response.content
+      savedSource = source = response.content
       configRevision = response.revision
     }
     await onModelsChanged?.()
@@ -147,7 +150,7 @@
   function markFormDirty() {
     editVersion++
     source = renderConfigYaml(draft, source)
-    dirty = true
+    dirty = source !== savedSource
     statusMessage = ''
     errorMessage = ''
   }
@@ -158,10 +161,11 @@
     // Keep the form in sync with hand-edited YAML so a later form edit does
     // not overwrite manual changes with stale draft values.
     const parsed = parseConfigDraft(source)
+    invalidYaml = !parsed
     if (parsed) {
       draft = parsed
     }
-    dirty = true
+    dirty = source !== savedSource
     statusMessage = ''
     errorMessage = ''
   }
@@ -227,7 +231,7 @@
   function formatFromForm() {
     editVersion++
     source = renderConfigYaml(draft, source)
-    dirty = true
+    dirty = source !== savedSource
     statusMessage = getMessage('configFormatted')
   }
 
@@ -244,7 +248,7 @@
   }
 
   async function saveConfig() {
-    if (saving) return
+    if (saving || loading || savedSource === null || invalidYaml || !dirty) return
     const version = editVersion
     const content = source
     saving = true
@@ -253,12 +257,15 @@
     try {
       const response = await new DaemonConfigApi(settings).save(content, configRevision)
       configRevision = response.revision
+      savedSource = response.content
       if (version === editVersion) {
         draft = parseConfigDraft(response.content) || normalizeConfigDraft(response.config)
         source = response.content
         dirty = false
+        statusMessage = getMessage('configSaved')
+      } else {
+        dirty = source !== savedSource
       }
-      statusMessage = getMessage('configSaved')
       if (response.models_error) errorMessage = response.models_error
     } catch (error) {
       errorMessage = errorToMessage(error)
@@ -348,11 +355,11 @@
 {/snippet}
 
 {#snippet objectEditor(target: JsonObject, fields: FieldSchema[])}
-  <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+  <div class="grid gap-3 @min-[36rem]/config:grid-cols-2 @min-[70rem]/config:grid-cols-3">
     {#each fields as field}
       <div
         class={field.kind === 'string-list' || field.kind === 'object'
-          ? 'sm:col-span-2 xl:col-span-3'
+          ? '@min-[36rem]/config:col-span-2 @min-[70rem]/config:col-span-3'
           : ''}
       >
         {@render fieldControl(target, field)}
@@ -378,46 +385,62 @@
   </div>
 {/snippet}
 
-<div class="flex h-full min-h-0 flex-col bg-background text-foreground">
-  <main
-    class="grid min-h-0 flex-1 content-start items-start gap-4 overflow-y-auto p-3 lg:grid-cols-[12rem_minmax(0,1fr)] xl:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] xl:content-stretch xl:items-stretch xl:overflow-hidden"
-  >
-    <aside class="min-w-0 lg:sticky lg:top-4 lg:self-start">
-      <nav
-        class="grid grid-cols-2 gap-1 rounded-lg border bg-background p-1 shadow-xs sm:grid-cols-3 lg:grid-cols-1"
-      >
-        {#each sections as section}
-          <button
-            type="button"
-            class={`grid min-w-0 gap-0.5 rounded-md px-3 py-2 text-left transition ${
-              activeSection === section.id
-                ? 'bg-muted text-foreground shadow-xs'
-                : 'text-muted-foreground hover:bg-muted/55 hover:text-foreground'
-            }`}
-            aria-current={activeSection === section.id ? 'page' : undefined}
-            aria-controls="config-panel"
-            onclick={() => void selectSection(section.id)}
-          >
-            <span class="truncate text-sm font-bold">{section.label}</span>
-            <span class="truncate text-[10px] font-medium">{section.detail}</span>
-          </button>
-        {/each}
-      </nav>
-    </aside>
-
-    <section
-      id="config-panel"
-      aria-label={sections.find((section) => section.id === activeSection)?.label}
-      class="flex min-w-0 flex-col rounded-lg border bg-background shadow-xs xl:h-full xl:min-h-0 xl:overflow-hidden"
+<div class="@container/config flex h-full min-h-0 flex-col bg-background text-foreground">
+  {#if savedSource === null}
+    <div
+      class="grid flex-1 place-content-center justify-items-center gap-3 overflow-y-auto px-6 py-4 text-center"
     >
       {#if loading}
-        <div class="grid min-h-80 place-items-center gap-2 p-8 text-muted-foreground">
-          <LoaderCircle class="size-5 animate-spin" />
-          <span class="text-sm font-medium">{getMessage('configLoading')}</span>
-        </div>
+        <LoaderCircle class="size-5 animate-spin text-muted-foreground" />
+        <p role="status" class="text-sm">{getMessage('configLoading')}</p>
       {:else}
+        <AlertCircle class="size-5 text-destructive" />
+        <h2 class="text-base font-semibold">{getMessage('configLoadFailed')}</h2>
+        <p role="alert" class="max-w-md text-sm break-words text-muted-foreground">
+          {errorMessage}
+        </p>
+        <button type="button" class={buttonClass('outline', 'sm')} onclick={loadConfig}
+          >{getMessage('retryAction')}</button
+        >
+      {/if}
+    </div>
+  {:else}
+    <main
+      class="grid min-h-0 flex-1 content-start items-start gap-4 overflow-y-auto p-3 @min-[56rem]/config:grid-cols-[12rem_minmax(0,1fr)] @min-[70rem]/config:grid-cols-[12rem_minmax(0,1fr)_minmax(20rem,0.8fr)] @min-[70rem]/config:content-stretch @min-[70rem]/config:items-stretch @min-[70rem]/config:overflow-hidden"
+    >
+      <aside
+        class="min-w-0 @min-[56rem]/config:sticky @min-[56rem]/config:top-4 @min-[56rem]/config:self-start"
+      >
+        <nav
+          class="grid grid-cols-2 gap-1 rounded-lg border bg-background p-1 shadow-xs @min-[36rem]/config:grid-cols-3 @min-[56rem]/config:grid-cols-1"
+        >
+          {#each sections as section}
+            <button
+              type="button"
+              class={`grid min-w-0 gap-0.5 rounded-md px-3 py-2 text-left transition ${
+                activeSection === section.id
+                  ? 'bg-muted text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:bg-muted/55 hover:text-foreground'
+              }`}
+              aria-current={activeSection === section.id ? 'page' : undefined}
+              aria-controls="config-panel"
+              onclick={() => void selectSection(section.id)}
+            >
+              <span class="truncate text-sm font-bold">{section.label}</span>
+              <span class="truncate text-[10px] font-medium">{section.detail}</span>
+            </button>
+          {/each}
+        </nav>
+      </aside>
+
+      <section
+        id="config-panel"
+        aria-label={sections.find((section) => section.id === activeSection)?.label}
+        class="flex min-w-0 flex-col rounded-lg border bg-background shadow-xs @min-[70rem]/config:h-full @min-[70rem]/config:min-h-0 @min-[70rem]/config:overflow-hidden"
+      >
         <div
-          class="scrollbar-slim grid auto-rows-max content-start gap-6 p-4 sm:p-5 xl:min-h-0 xl:flex-1 xl:overflow-y-auto"
+          class="scrollbar-slim grid auto-rows-max content-start gap-6 p-4 @min-[36rem]/config:p-5 @min-[70rem]/config:min-h-0 @min-[70rem]/config:flex-1 @min-[70rem]/config:overflow-y-auto"
+          inert={invalidYaml || loading}
           bind:this={formPanel}
         >
           {#if activeSection === 'runtime'}
@@ -432,7 +455,7 @@
                 getMessage('configSectionModels'),
                 getMessage('configModelsDescription')
               )}
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-3 @min-[36rem]/config:grid-cols-2">
                 {@render fieldControl(model, {
                   key: 'active',
                   label: getMessage('activeModel'),
@@ -636,64 +659,77 @@
             </div>
           {/if}
         </div>
-      {/if}
-    </section>
+      </section>
 
-    <aside class="min-w-0 lg:col-start-2 xl:sticky xl:top-4 xl:col-start-auto xl:self-start">
-      <div class="grid overflow-hidden rounded-lg border bg-background shadow-xs">
-        <div class="flex items-center justify-between gap-3 border-b bg-muted/25 px-3 py-2">
-          <div class="flex min-w-0 items-center gap-2">
-            <SlidersHorizontal class="size-4 shrink-0 text-emerald-800" />
-            <span class="truncate text-sm font-bold">{getMessage('configYamlSource')}</span>
+      <aside
+        class="min-h-0 min-w-0 @min-[56rem]/config:col-start-2 @min-[70rem]/config:col-start-auto"
+      >
+        <div
+          class="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-background shadow-xs @min-[70rem]/config:h-full"
+        >
+          <div
+            class="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-muted/25 px-3 py-2"
+          >
+            <div class="flex min-w-0 items-center gap-2">
+              <SlidersHorizontal class="size-4 shrink-0 text-emerald-800" />
+              <span class="truncate text-sm font-bold">{getMessage('configYamlSource')}</span>
+            </div>
+            <div class="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                class={buttonClass('ghost', 'xs')}
+                onclick={formatFromForm}
+                disabled={loading || invalidYaml}
+              >
+                {getMessage('configFormatForm')}
+              </button>
+            </div>
           </div>
-          <div class="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              class={buttonClass('ghost', 'xs')}
-              onclick={formatFromForm}
-              disabled={loading}
-            >
-              {getMessage('configFormatForm')}
-            </button>
-            <button
-              type="button"
-              class={buttonClass('default', 'xs')}
-              onclick={saveConfig}
-              disabled={saving || loading || !dirty}
-            >
-              {#if saving}
-                <LoaderCircle class="size-3 animate-spin" />
-              {:else}
-                <Save class="size-3" />
-              {/if}
-              {getMessage('save')}
-            </button>
-          </div>
+          <textarea
+            class="min-h-52 w-full resize-y bg-transparent p-3 font-mono text-xs leading-relaxed focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring @min-[70rem]/config:flex-1 @min-[70rem]/config:resize-none"
+            aria-invalid={invalidYaml}
+            aria-describedby={invalidYaml ? 'yaml-problem' : undefined}
+            disabled={loading}
+            spellcheck={false}
+            aria-label={getMessage('configYamlSource')}
+            value={source}
+            oninput={markSourceDirty}></textarea>
         </div>
-        <textarea
-          class="min-h-[34rem] w-full resize-y bg-transparent p-3 font-mono text-xs leading-relaxed outline-none"
-          spellcheck={false}
-          aria-label={getMessage('configYamlSource')}
-          value={source}
-          oninput={markSourceDirty}></textarea>
+      </aside>
+    </main>
+    <footer
+      class="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t bg-background px-3 py-2"
+    >
+      <div class="me-auto min-w-0 text-xs">
+        {#if invalidYaml}<p id="yaml-problem" role="alert" class="text-destructive">
+            {getMessage('configInvalidYaml')}
+          </p>
+        {:else if errorMessage}<p
+            role="alert"
+            class="max-h-16 overflow-y-auto break-words text-destructive"
+          >
+            {errorMessage}
+          </p>
+        {:else}<p role="status" class="text-muted-foreground">
+            {statusMessage || (dirty ? getMessage('configUnsaved') : '')}
+          </p>{/if}
       </div>
-
-      {#if statusMessage}
-        <div
-          class="mt-3 grid grid-cols-[auto_1fr] gap-2 rounded-lg border border-emerald-900/10 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 dark:bg-emerald-950/35 dark:text-emerald-100"
-        >
-          <Check class="mt-0.5 size-3.5" />
-          <span>{statusMessage}</span>
-        </div>
-      {/if}
-      {#if errorMessage}
-        <div
-          class="mt-3 grid grid-cols-[auto_1fr] gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-        >
-          <AlertCircle class="mt-0.5 size-3.5" />
-          <span>{errorMessage}</span>
-        </div>
-      {/if}
-    </aside>
-  </main>
+      {#if dirty}<button
+          type="button"
+          class={buttonClass('ghost', 'sm')}
+          disabled={loading || saving}
+          onclick={loadConfig}>{getMessage('configDiscard')}</button
+        >{/if}
+      <button
+        type="button"
+        class={buttonClass('default', 'sm')}
+        disabled={!dirty || loading || saving || invalidYaml}
+        onclick={saveConfig}
+      >
+        {#if saving}<LoaderCircle class="size-3.5 animate-spin" />{:else}<Save
+            class="size-3.5"
+          />{/if}{getMessage('save')}
+      </button>
+    </footer>
+  {/if}
 </div>

@@ -210,7 +210,13 @@
         onblur={onCommitRename}
       />
     {:else}
-      <button class="chat-title" onclick={() => void client.switchChannel(chat.source)}>
+      <button
+        class="chat-title"
+        aria-current={client.view === 'chat' && client.activeSource === chat.source
+          ? 'page'
+          : undefined}
+        onclick={() => void client.switchChannel(chat.source)}
+      >
         <span class="chat-state" data-state={rowState}>
           {#if rowState === 'running'}<LoaderCircle
               size={13}
@@ -280,6 +286,7 @@
 </div>
 <nav class="sidebar-navigation">
   {#each navigation as item (item.id)}<button
+      aria-current={client.view === item.id ? 'page' : undefined}
       class:active={client.view === item.id}
       class="nav-row"
       onclick={() => (client.view = item.id)}
@@ -355,6 +362,7 @@
     {/snippet}
   </DropdownMenu>
   <button
+    aria-current={client.view === 'settings' ? 'page' : undefined}
     class:pressed={client.view === 'settings'}
     class="icon-button"
     aria-label={t('settings')}

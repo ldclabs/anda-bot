@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "No connection"
   },
+  "connectDashboardHint": {
+    "message": "اتصل بخدمة Anda لفتح مساحة العمل هذه."
+  },
+  "connectionTestFailed": {
+    "message": "تعذّر الاتصال. تأكد من تشغيل Anda وتحقق من عنوان البوابة والرمز."
+  },
+  "invalidGatewayUrl": {
+    "message": "أدخل عنوان بوابة HTTP أو HTTPS من دون بيانات اعتماد أو معاملات استعلام أو جزء مرجعي."
+  },
+  "showToken": {
+    "message": "إظهار الرمز"
+  },
+  "hideToken": {
+    "message": "إخفاء الرمز"
+  },
+  "configLoadFailed": {
+    "message": "تعذّر تحميل الإعدادات"
+  },
+  "retryAction": {
+    "message": "إعادة المحاولة"
+  },
+  "configInvalidYaml": {
+    "message": "صحّح صيغة YAML قبل تعديل النموذج أو حفظه."
+  },
+  "configUnsaved": {
+    "message": "تغييرات غير محفوظة"
+  },
+  "configDiscard": {
+    "message": "تجاهل التغييرات"
+  },
+  "noFilterMatches": {
+    "message": "لا توجد نتائج مطابقة"
+  },
+  "selectSkillHint": {
+    "message": "اختر مهارة لعرض تفاصيلها."
+  },
+  "clearFilters": {
+    "message": "مسح عوامل التصفية"
+  },
+  "confirmFolderRemoval": {
+    "message": "هل تريد حذف المجلد «$1» ومجلداته الفرعية؟ ستظل الإشارات المرجعية متاحة ضمن الكل."
+  },
+  "modelsRefreshed": {
+    "message": "تم تحديث قائمة النماذج."
+  },
+  "browseMemory": {
+    "message": "تصفّح الذاكرة"
+  },
+  "browseSkills": {
+    "message": "تصفّح المهارات"
+  },
+  "browseServers": {
+    "message": "الخوادم والأسرار"
+  },
   "dashboardConnectionSettings": {
     "message": "Connection settings"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "Expand navigation"
-  },
-  "dashboardGraphCrumb": {
-    "message": "Graph"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "Library"
-  },
-  "dashboardStudioCrumb": {
-    "message": "Studio"
   },
   "bookmarksDashboardDescription": {
     "message": "المجلدات ورسائل المساعد المحفوظة."
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "سير العمل الشخصي"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "المهارات"
   },
   "skills": {
     "message": "المهارات"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "الأدوات والاتصالات"
-  },
-  "dashboardMcpCrumb": {
-    "message": "الخوادم"
   },
   "mcpTitle": {
     "message": "MCP"

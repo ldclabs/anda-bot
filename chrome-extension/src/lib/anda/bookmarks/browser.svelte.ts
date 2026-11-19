@@ -165,9 +165,9 @@ export class BookmarkBrowser {
    * Deletes a folder with its subfolders, falling back to 'all' when the
    * active folder went with them.
    */
-  async deleteFolder(folderId: number): Promise<void> {
+  async deleteFolder(folderId: number): Promise<boolean> {
     if (this.#deletingFolderIds.has(folderId)) {
-      return
+      return false
     }
     this.#deletingFolderIds = new Set([...this.#deletingFolderIds, folderId])
     this.error = ''
@@ -177,8 +177,10 @@ export class BookmarkBrowser {
         this.activeFolder = 'all'
       }
       await this.load()
+      return true
     } catch (error) {
       this.error = errorToMessage(error)
+      return false
     } finally {
       this.#deletingFolderIds = withoutValue(this.#deletingFolderIds, folderId)
     }

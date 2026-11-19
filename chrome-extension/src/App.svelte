@@ -478,6 +478,7 @@
   }
 
   function statusIconClass() {
+    if (!andaClient.settings.token) return 'text-muted-foreground'
     if (['connected', 'ready', 'idle', 'completed'].includes(status)) {
       return 'text-emerald-700'
     }
@@ -526,10 +527,17 @@
           {:else}
             <Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
           {/if}
-          <span class="truncate">{statusLabel(status)}</span>
+          <span class="truncate"
+            >{andaClient.settings.token || status === 'starting'
+              ? statusLabel(status)
+              : getMessage('dashboardNoConnection')}</span
+          >
         </span>
-        {#if andaClient.systemMessage || activeSource}
-          <p class="message-active-source truncate text-xs font-bold">
+        {#if andaClient.systemMessage || (andaClient.settings.token && activeSource)}
+          <p
+            class="message-active-source truncate text-xs font-bold"
+            title={andaClient.systemMessage?.text || activeSource}
+          >
             {andaClient.systemMessage?.text || activeSource}
           </p>
         {/if}
@@ -572,7 +580,13 @@
             <AndaMark track working={syncing} class="message-empty-panda" />
           </div>
           <div class="message-empty-title text-xs font-semibold">
-            {syncing ? getMessage('syncing') : getMessage('ready')}
+            {#if !andaClient.settings.token && status !== 'starting'}
+              <button class={buttonClass('outline', 'sm')} onclick={toggleSettingsPanel}>
+                <Settings class="size-4" />{getMessage('dashboardConnectionSettings')}
+              </button>
+            {:else}
+              {status === 'starting' || syncing ? getMessage('syncing') : statusLabel(status)}
+            {/if}
           </div>
         </div>
       {:else}

@@ -788,6 +788,60 @@
   "dashboardNoConnection": {
     "message": "未连接"
   },
+  "connectDashboardHint": {
+    "message": "连接到你的 Anda 本地服务后，即可打开此工作区。"
+  },
+  "connectionTestFailed": {
+    "message": "连接失败。请确认 Anda 正在运行，并检查网关地址和令牌。"
+  },
+  "invalidGatewayUrl": {
+    "message": "请输入 HTTP 或 HTTPS 网关地址，去掉其中的凭据、查询参数和片段。"
+  },
+  "showToken": {
+    "message": "显示令牌"
+  },
+  "hideToken": {
+    "message": "隐藏令牌"
+  },
+  "configLoadFailed": {
+    "message": "无法加载配置"
+  },
+  "retryAction": {
+    "message": "重试"
+  },
+  "configInvalidYaml": {
+    "message": "请先修正 YAML 语法，再编辑表单或保存。"
+  },
+  "configUnsaved": {
+    "message": "有未保存的更改"
+  },
+  "configDiscard": {
+    "message": "放弃更改"
+  },
+  "noFilterMatches": {
+    "message": "没有匹配的结果"
+  },
+  "selectSkillHint": {
+    "message": "选择一个技能以查看详情。"
+  },
+  "clearFilters": {
+    "message": "清除筛选"
+  },
+  "confirmFolderRemoval": {
+    "message": "删除“$1”及其子文件夹？其中的书签仍可在“全部”中找到。"
+  },
+  "modelsRefreshed": {
+    "message": "模型列表已刷新。"
+  },
+  "browseMemory": {
+    "message": "浏览记忆"
+  },
+  "browseSkills": {
+    "message": "浏览技能"
+  },
+  "browseServers": {
+    "message": "服务器与密钥"
+  },
   "dashboardConnectionSettings": {
     "message": "连接设置"
   },
@@ -796,15 +850,6 @@
   },
   "dashboardExpandNavigation": {
     "message": "展开导航"
-  },
-  "dashboardGraphCrumb": {
-    "message": "图谱"
-  },
-  "dashboardLibraryCrumb": {
-    "message": "资料库"
-  },
-  "dashboardStudioCrumb": {
-    "message": "配置台"
   },
   "bookmarksDashboardDescription": {
     "message": "文件夹和已保存的智能体消息。"
@@ -847,9 +892,6 @@
   },
   "dashboardSkillsDetail": {
     "message": "个人工作流"
-  },
-  "dashboardSkillsCrumb": {
-    "message": "Skills"
   },
   "skills": {
     "message": "Skills"
@@ -1849,9 +1891,6 @@
   },
   "dashboardMcpDetail": {
     "message": "工具与连接"
-  },
-  "dashboardMcpCrumb": {
-    "message": "服务"
   },
   "mcpTitle": {
     "message": "MCP"

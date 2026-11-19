@@ -1152,6 +1152,9 @@ kbd {
   grid-template-columns: 200px minmax(0, 1fr);
   border-top: 1px solid var(--desk-border);
 }
+.settings-layout[hidden] {
+  display: none;
+}
 .settings-nav {
   display: grid;
   align-content: start;
@@ -1432,8 +1435,7 @@ button.danger {
   text-align: center;
   padding: 20px;
 }
-.rename-dialog,
-.automation-editor {
+.rename-dialog {
   background: var(--desk-bg);
   width: 450px;
   border: 1px solid var(--desk-border);
@@ -1478,12 +1480,6 @@ button.primary {
 }
 
 /* Automations: the list beside the selected automation, as on the MCP page. */
-.automation-page {
-  display: grid;
-  grid-template-columns: minmax(210px, 264px) minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-}
 .automation-list {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1795,9 +1791,8 @@ button.primary {
   gap: 15px;
 }
 .automation-editor {
-  width: 520px;
-  max-height: 78vh;
-  overflow-y: auto;
+  display: grid;
+  gap: 14px;
 }
 .automation-editor .job-error {
   margin: 0;
@@ -1806,11 +1801,11 @@ button.primary {
   display: grid;
   gap: 7px;
   font-size: 12px;
-  margin: 15px 0;
+  min-width: 0;
 }
 .schedule-fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   gap: 15px;
 }
 
@@ -2477,6 +2472,7 @@ button.primary {
   }
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
   .settings-nav {
     display: flex;
