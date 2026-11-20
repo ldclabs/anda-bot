@@ -13,6 +13,7 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- macOS 0.15.0 bridges the move from LDC Labs Limited to Yiwen AI Limited. Install this LDC-signed version before the first Yiwen-signed desktop update. The bridge uses a separate macOS update manifest so older users can still receive the LDC package. The shared `anda` runtime retains its identifier and microphone entitlement.
 - Anda Desktop and the Chrome side panel group consecutive reasoning, tool calls and background updates into one collapsed row. The row shows the number of tool calls and failures. Expand it to read the reasoning or inspect a call’s input and output.
 - Plans collapse when all steps finish or an approval or choice needs a response. Select the plan header to review the steps. The pending request keeps its controls above the composer and a short record in the transcript.
 - The CLI, Anda Desktop and the Chrome extension share version 0.15.0. Source builds use the published Anda Engine 0.18.1 and require Rust 1.96 or newer. Build with `--no-default-features` to omit the Python worker.

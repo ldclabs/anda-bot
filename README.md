@@ -30,6 +30,8 @@ Download an installer from [GitHub Releases](https://github.com/ldclabs/anda-bot
 | macOS, Apple Silicon | `Anda-mac-arm64.dmg` |
 | Windows, x64 | `Anda-win-x64.exe` |
 
+For the macOS signing-team change, update to **0.15.0** before installing the first Yiwen-signed update. If you miss the bridge and automatic update fails, install the official 0.15.0 DMG over the existing app, then check for updates again. [macOS bridge release](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+
 On macOS, you can also use Homebrew:
 
 ```bash

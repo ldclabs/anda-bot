@@ -188,28 +188,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Check macOS signing configuration
-        id: signing
-        shell: bash
-        env:
-          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-        run: |
-          if [ -n "$MAC_CSC_LINK" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "macOS signing is not configured; keeping the ad-hoc signed binaries."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download binaries
-        if: ${{ steps.signing.outputs.configured == 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: release-${{ matrix.target }}
           path: release
 
       - name: Sign and notarize
-        if: ${{ steps.signing.outputs.configured == 'true' }}
         shell: bash
         env:
           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
@@ -219,15 +204,15 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           binaries=(release/anda-${{ matrix.target }} release/anda_launcher-${{ matrix.target }})
-          scripts/sign-macos-binaries.sh "${binaries[@]}"
+          # Actions downloads create regular files without the executable bit.
           chmod +x "${binaries[@]}"
+          scripts/sign-macos-binaries.sh "${binaries[@]}"
           "${binaries[0]}" --version
           for file in "${binaries[@]}"; do
             echo "$(shasum -a 256 "$file" | awk '{print $1}')  $(basename "$file")" > "${file}.sha256"
           done
 
       - name: Upload signed binaries
-        if: ${{ steps.signing.outputs.configured == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
@@ -271,9 +256,13 @@ jobs:
           - os: macos-latest
             target: macos-arm64
             exe_ext: ""
+            certificate: MAC_CSC_LINK
+            password: MAC_CSC_KEY_PASSWORD
           - os: windows-latest
             target: windows-x86_64
             exe_ext: ".exe"
+            certificate: WIN_CSC_LINK
+            password: WIN_CSC_KEY_PASSWORD
     runs-on: ${{ matrix.os }}
     # Signing and notarization secrets live in this protected environment.
     environment: desktop-release
@@ -311,54 +300,40 @@ jobs:
           pnpm --dir desktop build
           node desktop/scripts/prepare-runtime.mjs
 
-      # A macOS update feed needs the Developer ID signature; Windows packages
-      # publish one with or without a certificate.
-      - name: Choose desktop package configuration
-        id: channel
-        shell: bash
-        env:
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          elif [ "$RUNNER_OS" = Windows ]; then
-            echo "Windows signing is not configured; building an unsigned package with an update feed."
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "macOS signing is not configured; building an unsigned package without an update feed."
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Package desktop
         shell: bash
         working-directory: desktop
         env:
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || runner.os == 'Windows' && secrets.WIN_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || runner.os == 'Windows' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets[matrix.certificate] }}
+          CSC_KEY_PASSWORD: ${{ secrets[matrix.password] }}
+          APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
           ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
         run: |
-          config=electron-builder.yml
-          if [ "${{ steps.channel.outputs.release }}" = "true" ]; then
-            config=electron-builder.release.cjs
-          fi
-          args=(--config "$config" --publish never)
+          args=(--config electron-builder.release.cjs --publish never)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             # Desktop and CLI share the release version, which the update feed compares.
             args+=("-c.extraMetadata.version=${GITHUB_REF_NAME#v}")
           fi
           pnpm exec electron-builder "${args[@]}"
 
+      - name: Prepare both macOS update feeds and verify the notarized bridge
+        if: runner.os == 'macOS'
+        run: |
+          test -s desktop/release/stable-mac.yml
+          cp desktop/release/stable-mac.yml desktop/release/latest-mac.yml
+          ditto -x -k desktop/release/Anda-mac-arm64.zip "$RUNNER_TEMP/anda-update"
+          node scripts/macos-bridge.cjs verify-package "$RUNNER_TEMP/anda-update/Anda.app" "$ANDA_DESKTOP_RUNTIME"
+          xcrun stapler validate "$RUNNER_TEMP/anda-update/Anda.app"
+
       - name: Collect desktop artifacts
         shell: bash
         run: |
           mkdir -p desktop-release
           cp desktop/release/Anda-* desktop-release/
-          # Only Apple Silicon is published, so there is one macOS update feed.
-          if [ -f desktop/release/latest-mac.yml ]; then
-            cp desktop/release/latest-mac.yml desktop-release/latest-mac.yml
+          if [ "$RUNNER_OS" = macOS ]; then
+            cp desktop/release/{latest,stable}-mac.yml desktop-release/
           fi
           if [ -f desktop/release/latest.yml ]; then
             cp desktop/release/latest.yml desktop-release/latest.yml

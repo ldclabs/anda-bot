@@ -28,6 +28,10 @@ error() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 : "${MAC_CSC_LINK:?}" "${MAC_CSC_KEY_PASSWORD:?}"
 : "${APPLE_ID:?}" "${APPLE_APP_SPECIFIC_PASSWORD:?}" "${APPLE_TEAM_ID:?}"
 
+BRIDGE="$ROOT/scripts/macos-bridge.cjs"
+node "$BRIDGE" check-build "$APPLE_TEAM_ID"
+RUNTIME_REQUIREMENT=$(node "$BRIDGE" runtime-requirement)
+
 WORK=$(mktemp -d)
 KEYCHAIN="${WORK}/signing.keychain-db"
 KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
@@ -53,8 +57,8 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN
 # shellcheck disable=SC2086
 security list-keychains -d user -s "$KEYCHAIN" $USER_KEYCHAINS
 
-IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/"Developer ID Application:/ { print $2; exit }')
-[ -n "$IDENTITY" ] || error "MAC_CSC_LINK has no valid Developer ID Application identity"
+IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v team="$APPLE_TEAM_ID" '/"Developer ID Application:/ && index($0, "(" team ")\"") { print $2; exit }')
+[ -n "$IDENTITY" ] || error "MAC_CSC_LINK has no Developer ID Application identity for $APPLE_TEAM_ID"
 
 sign() {
     codesign --force --sign "$IDENTITY" --keychain "$KEYCHAIN" --options runtime --timestamp "$@"
@@ -63,11 +67,14 @@ sign() {
 mkdir "${WORK}/notarize"
 for file in "$@"; do
     case "$(basename "$file")" in
-        anda_launcher-*) sign --identifier ai.anda.anda-bot.launcher "$file" ;;
-        anda-*) sign --identifier ai.anda.anda-bot --entitlements "$ENTITLEMENTS" "$file" ;;
+        anda_launcher-*)
+            sign --identifier ai.anda.anda-bot.launcher "$file"
+            node "$BRIDGE" verify-launcher "$file" ;;
+        anda-*)
+            sign --identifier ai.anda.anda-bot -r "$RUNTIME_REQUIREMENT" --entitlements "$ENTITLEMENTS" "$file"
+            node "$BRIDGE" verify-runtime "$file" ;;
         *) error "Not an anda release binary: $file" ;;
     esac
-    codesign --verify --strict --verbose=2 "$file"
     cp "$file" "${WORK}/notarize/"
 done
 

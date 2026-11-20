@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { parse } = require('yaml')
+const { assertBridgeBuild, sourceTeam } = require('../scripts/macos-bridge.cjs')
 
 const config = parse(fs.readFileSync(path.join(__dirname, 'electron-builder.yml'), 'utf8'))
 const signed = Boolean(process.env.CSC_LINK)
@@ -9,13 +10,20 @@ const signed = Boolean(process.env.CSC_LINK)
 // unsigned until a release certificate is configured.
 if (process.platform === 'darwin' && !signed)
   throw new Error('A macOS release signing certificate must be configured with CSC_LINK')
+if (process.platform === 'darwin') {
+  assertBridgeBuild(process.env.APPLE_TEAM_ID)
+  config.mac.sign = require('./scripts/sign-macos.cjs')
+}
 config.forceCodeSigning = signed
 // Desktop packages ship in the same GitHub release as the anda CLI, so the
 // update feed is that release's latest*.yml metadata.
 config.publish = [
   { provider: 'github', owner: 'ldclabs', repo: 'anda-bot', releaseType: 'release' }
 ]
-delete config.mac.identity
+// Pre-bridge Macs keep reading latest-mac.yml. The bridge and its successors
+// read stable-mac.yml from the same GitHub release.
+config.mac.publish = [{ ...config.publish[0], channel: 'stable' }]
+config.mac.identity = `(${sourceTeam})`
 config.mac.entitlements = 'resources/entitlements.mac.plist'
 config.mac.entitlementsInherit = 'resources/entitlements.mac.plist'
 config.mac.notarize = true
