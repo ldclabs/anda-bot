@@ -206,6 +206,11 @@ mod windows;
 #[cfg(windows)]
 use windows::enter as platform;
 
+#[cfg(windows)]
+pub(super) fn network_denied() -> bool {
+    windows::network_denied()
+}
+
 #[cfg(not(any(
     windows,
     target_os = "macos",

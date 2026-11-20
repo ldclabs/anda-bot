@@ -233,6 +233,9 @@ pub(crate) fn main() -> Result<(), BoxError> {
             .as_str()
             .ok_or("missing isolation sentinel")?;
         let file_denied = std::fs::File::open(path).is_err();
+        #[cfg(windows)]
+        let network_denied = sandbox::network_denied();
+        #[cfg(not(windows))]
         let network_denied = std::net::TcpListener::bind(("127.0.0.1", 0)).is_err();
         let process_denied = std::process::Command::new(executable)
             .arg("--version")

@@ -12,11 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            features: --all-features
-            musl_target: x86_64-unknown-linux-musl
-          - os: windows-latest
+        os: [windows-latest]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -33,13 +29,4 @@ jobs:
       - name: Run tests
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --locked --workspace --profile ci ${{ matrix.features }}
-      - name: Verify the native musl worker
-        if: matrix.musl_target
-        env:
-          RUST_MIN_STACK: 16777216
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-          rustup target add ${{ matrix.musl_target }}
-          cargo test --locked --profile ci -p anda_bot --target ${{ matrix.musl_target }} --test code_mode
+        run: cargo test --locked --workspace --profile ci

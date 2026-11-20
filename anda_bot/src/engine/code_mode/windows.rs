@@ -11,6 +11,10 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0},
+    Networking::WinSock::{
+        AF_INET, IN_ADDR, IN_ADDR_0, INVALID_SOCKET, IPPROTO_TCP, SOCK_STREAM, SOCKADDR_IN,
+        SOCKET_ERROR, WSACleanup, WSADATA, WSAStartup, bind, closesocket, socket,
+    },
     Security::{
         FreeSid, GetTokenInformation, Isolation::DeriveAppContainerSidFromAppContainerName, PSID,
         SECURITY_CAPABILITIES, TOKEN_QUERY, TokenIsAppContainer,
@@ -25,6 +29,40 @@ fn checked(ok: i32) -> io::Result<()> {
         Ok(())
     }
 }
+
+pub(super) fn network_denied() -> bool {
+    // WSAStartup can fail in an AppContainer. Handle its result before
+    // attempting a loopback bind, just as the Unix probe does.
+    unsafe {
+        if WSAStartup(0x0202, &mut WSADATA::default()) != 0 {
+            return true;
+        }
+        let handle = socket(AF_INET.into(), SOCK_STREAM, IPPROTO_TCP);
+        let denied = if handle == INVALID_SOCKET {
+            true
+        } else {
+            let address = SOCKADDR_IN {
+                sin_family: AF_INET,
+                sin_addr: IN_ADDR {
+                    S_un: IN_ADDR_0 {
+                        S_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+                    },
+                },
+                ..Default::default()
+            };
+            let result = bind(
+                handle,
+                std::ptr::from_ref(&address).cast(),
+                size_of_val(&address) as i32,
+            );
+            closesocket(handle);
+            result == SOCKET_ERROR
+        };
+        WSACleanup();
+        denied
+    }
+}
+
 struct Sid(PSID);
 impl Drop for Sid {
     fn drop(&mut self) {
