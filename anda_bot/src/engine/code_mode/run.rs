@@ -569,11 +569,15 @@ impl RecoveryHold {
 async fn spawn(permit: OwnedSemaphorePermit, cancel: CancellationToken) -> Result<Pipes, Failure> {
     let empty = tempfile::tempdir()?;
     let executable = std::env::current_exe()?;
-    // Cargo builds the application alongside its integration tests. Unit
-    // tests run from the test harness in deps/, which has a different main.
+    // Cargo builds anda alongside the integration tests. Unit test harnesses
+    // live in deps/ or, since Cargo 1.100, in build/<package>/<hash>/out/.
     #[cfg(test)]
     let executable = {
-        let profile = executable.parent().unwrap().parent().unwrap();
+        let profile = executable
+            .ancestors()
+            .find(|dir| dir.ends_with("deps") || dir.ends_with("build"))
+            .and_then(|dir| dir.parent())
+            .ok_or_else(|| Failure::io("could not locate the Cargo profile directory"))?;
         let name = format!("anda{}", std::env::consts::EXE_SUFFIX);
         let adjacent = profile.join(&name);
         if adjacent.is_file() {

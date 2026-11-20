@@ -88,6 +88,7 @@ rustpython-vm = { version = "=0.6.0", default-features = false, features = [
   "gc",
   "serde",
 ] }
+rustpython-host_env = { version = "=0.6.0", default-features = false, features = ["ctypes"] }
 # Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs`
 # is the sole crypto backend in the tree (reqwest's rustls and cose2's
 # `crypto-aws-lc-rs` both use it), so this adds the API without introducing a

@@ -110,7 +110,13 @@ fn code_mode_worker_validates_declarations_and_defaults_without_running_the_func
 
 #[test]
 fn code_mode_worker_limits_output_and_imports() {
-    for source in ["import os", "import socket", "open('data.txt')"] {
+    for source in [
+        "import os",
+        "import socket",
+        "import ctypes",
+        "import _ctypes",
+        "open('data.txt')",
+    ] {
         assert_eq!(
             execute(json!({"op":"exec","source":source}))["code"],
             "script_error"

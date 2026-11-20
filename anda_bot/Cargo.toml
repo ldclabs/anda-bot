@@ -25,7 +25,7 @@ path = "src/bin/anda_launcher.rs"
 
 [features]
 default = ["code-mode"]
-code-mode = ["dep:rustpython-vm"]
+code-mode = ["dep:rustpython-vm", "dep:rustpython-host_env"]
 mib = ["anda_brain/experiments"]
 learning = ["anda_brain/learning"]
 
@@ -103,6 +103,9 @@ libc = { workspace = true }
 cpal = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
+# RustPython 0.6.0's Windows WMI module uses host_env's ctypes helpers.
+# Select the dependency feature directly to keep the VM's restricted module set.
+rustpython-host_env = { workspace = true, optional = true }
 windows-sys = { workspace = true, features = [
   "Win32_Globalization",
   "Win32_Graphics_Gdi",
