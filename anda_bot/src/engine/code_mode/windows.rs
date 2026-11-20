@@ -126,7 +126,19 @@ pub(super) fn enter() -> Result<(), BoxError> {
             "Anda.CodeMode.{}",
             ic_auth_types::Xid::new()
         )));
-        let hr = DeriveAppContainerSidFromAppContainerName(moniker.as_ptr(), &mut sid);
+        let profile = std::env::var_os("ANDA_CI_PROFILE_PROBE").is_some();
+        let hr = if profile {
+            windows_sys::Win32::Security::Isolation::CreateAppContainerProfile(
+                moniker.as_ptr(),
+                moniker.as_ptr(),
+                moniker.as_ptr(),
+                null(),
+                0,
+                &mut sid,
+            )
+        } else {
+            DeriveAppContainerSidFromAppContainerName(moniker.as_ptr(), &mut sid)
+        };
         if hr < 0 {
             return Err(format!("AppContainer SID creation failed ({hr:#x})").into());
         }
@@ -170,7 +182,7 @@ pub(super) fn enter() -> Result<(), BoxError> {
         let mut command = wide(OsStr::new(&format!("anda {}", super::super::worker::ARG)));
         let env = [0u16; 2];
         let mut info = PROCESS_INFORMATION::default();
-        checked(CreateProcessW(
+        if CreateProcessW(
             application.as_ptr(),
             command.as_mut_ptr(),
             null(),
@@ -181,7 +193,11 @@ pub(super) fn enter() -> Result<(), BoxError> {
             null(),
             &startup.StartupInfo,
             &mut info,
-        ))?;
+        ) == 0
+        {
+            let err = io::Error::last_os_error();
+            return Err(format!("CreateProcessW: {err}").into());
+        }
         let child = OwnedHandle::from_raw_handle(info.hProcess);
         drop(OwnedHandle::from_raw_handle(info.hThread));
         if WaitForSingleObject(child.as_raw_handle(), INFINITE) != WAIT_OBJECT_0 {

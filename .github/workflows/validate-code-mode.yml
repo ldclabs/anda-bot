@@ -1,0 +1,41 @@
+name: Validate Code Mode worker
+on:
+  push:
+    branches: [codex/code-mode-worker-validation]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            features: --all-features
+          - os: windows-latest
+            features: ''
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: protoc@3.23.4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+      - name: Build the CI worker
+        shell: bash
+        run: cargo build --locked --profile ci -p anda_bot --bin anda ${{ matrix.features }}
+      - name: Install syscall tracing on the Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          if ! command -v strace >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y strace
+          fi
+      - name: Exercise worker startup
+        run: python scripts/ci-code-mode-probe.py
