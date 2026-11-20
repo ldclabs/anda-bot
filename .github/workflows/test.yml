@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-anda
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2
@@ -47,7 +46,6 @@ jobs:
             musl_target: aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-anda
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2
@@ -64,7 +62,7 @@ jobs:
       - name: Run tests
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --locked --workspace --profile ci --features code-mode ${{ matrix.features }}
+        run: cargo test --locked --workspace --profile ci ${{ matrix.features }}
 
       - name: Verify the native musl worker
         if: matrix.musl_target
@@ -74,4 +72,4 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
           rustup target add ${{ matrix.musl_target }}
-          cargo test --locked --profile ci -p anda_bot --features code-mode --target ${{ matrix.musl_target }} --test code_mode
+          cargo test --locked --profile ci -p anda_bot --target ${{ matrix.musl_target }} --test code_mode

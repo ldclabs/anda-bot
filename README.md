@@ -152,7 +152,7 @@ Interactive sessions request approval for risky shell operations and MCP actions
 
 ### Python Code Mode
 
-Use a build with the `code-mode` Cargo feature, add `code_mode: { enabled: true }` to `~/.anda/config.yaml`, and restart the daemon. Use `code_exec` to compose tools in Python, `code_register` to save a typed function and `code_list` to find it again in the same workspace. Each tool call uses the caller’s current permissions. [Configuration and examples](docsite/docs/runtime/configuration.mdx#python-code-mode)
+Code Mode is enabled by default. To turn it off, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Use `code_exec` to compose tools in Python, `code_register` to save a typed function and `code_list` to find it again in the same workspace. Each tool call uses the caller’s current permissions. [Configuration and examples](docsite/docs/runtime/configuration.mdx#python-code-mode)
 
 ## Long-term memory
 
@@ -301,20 +301,16 @@ Use `anda --home /absolute/path/to/anda-home` for separate state. If multiple da
 
 ## Development
 
-The Rust workspace contains the `anda_bot` package and the `anda` executable. Build with **Rust 1.95 or newer**, a native C/C++ build toolchain, and `protoc` on `PATH`. CI installs these prerequisites; see the [test workflow](.github/workflows/test.yml) and [release workflow](.github/workflows/release.yml) for platform setup.
-
-Until the Code Mode Engine is released, source builds of this revision require the matching `anda` checkout beside `anda-bot`. Cargo reads both `anda_engine` and its `anda_core` dependency from `../anda`.
+The Rust workspace contains the `anda_bot` package and the `anda` executable. Build with **Rust 1.96 or newer**, a native C/C++ build toolchain, and `protoc` on `PATH`. CI installs these prerequisites; see the [test workflow](.github/workflows/test.yml) and [release workflow](.github/workflows/release.yml) for platform setup.
 
 ```bash
-git clone https://github.com/ldclabs/anda.git
-git -C anda checkout 24091e028c55c512891c9f40494cf2c7c7d3940a
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo build --locked -p anda_bot --bin anda
 cargo run --locked -p anda_bot --bin anda --
 ```
 
-The shared Brain/DB/KIP/Core/Engine dependencies resolve through Cargo; no sibling `anda-brain` checkout is required. Exact versions are recorded in `Cargo.lock`. Optional `learning` and `mib` features are independent: the former enables the configured learning integration, while the latter adds an isolated [MIB evaluation host](docs/mib-integration.md). Neither is required for ordinary memory, and compiling them does not enable automatic learning.
+Cargo resolves Brain, DB, KIP, Core and Engine from crates.io using the versions in `Cargo.lock`. To build without the Python worker, pass `--no-default-features`. Optional `learning` and `mib` features are independent: the former enables the configured learning integration, while the latter adds an isolated [MIB evaluation host](docs/mib-integration.md). Neither is required for ordinary memory, and compiling them does not enable automatic learning.
 
 JavaScript projects use the root pnpm workspace. CI uses Node.js 24 and pnpm 11.7.0.
 

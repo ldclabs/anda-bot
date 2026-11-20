@@ -152,7 +152,7 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 ### Python Code Mode
 
-使用带 `code-mode` Cargo feature 的构建，在 `~/.anda/config.yaml` 中添加 `code_mode: { enabled: true }` 并重启服务。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
+Code Mode 默认开启。如需关闭，在 `~/.anda/config.yaml` 中设置 `code_mode: { enabled: false }`，然后运行 `anda restart`。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
 
 ## 长期记忆
 
@@ -301,20 +301,16 @@ anda voice --record-secs 8 --no-playback
 
 ## 开发
 
-Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **Rust 1.95 或更新版本**、本地 C/C++ 构建工具链，以及 `PATH` 中的 `protoc`。CI 会安装这些前置依赖，各平台配置见[测试工作流](.github/workflows/test.yml)和[发布工作流](.github/workflows/release.yml)。
-
-在支持 Code Mode 的 Engine 发布前，构建本次提交需要把包含这次 Engine 改动的 `anda` 仓库放在 `anda-bot` 的同级目录。Cargo 从 `../anda` 同时读取 `anda_engine` 和它依赖的 `anda_core`。
+Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **Rust 1.96 或更新版本**、本地 C/C++ 构建工具链，以及 `PATH` 中的 `protoc`。CI 会安装这些前置依赖，各平台配置见[测试工作流](.github/workflows/test.yml)和[发布工作流](.github/workflows/release.yml)。
 
 ```bash
-git clone https://github.com/ldclabs/anda.git
-git -C anda checkout 24091e028c55c512891c9f40494cf2c7c7d3940a
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
 cargo build --locked -p anda_bot --bin anda
 cargo run --locked -p anda_bot --bin anda --
 ```
 
-共享的 Brain/DB/KIP/Core/Engine 依赖由 Cargo 解析，无需在同级目录克隆 `anda-brain`。精确版本记录在 `Cargo.lock` 中。可选的 `learning` 和 `mib` 特性互相独立：前者提供需要配置的学习集成，后者增加隔离的 [MIB 评测宿主](docs/mib-integration_cn.md)。日常记忆不需要它们，编译这些特性也不会自动开启学习。
+Cargo 根据 `Cargo.lock` 从 crates.io 获取 Brain、DB、KIP、Core 和 Engine。源码构建时可传入 `--no-default-features` 以排除 Python 工作进程。可选的 `learning` 和 `mib` 特性互相独立：前者提供需要配置的学习集成，后者增加隔离的 [MIB 评测宿主](docs/mib-integration_cn.md)。日常记忆不需要它们，编译这些特性也不会自动开启学习。
 
 JavaScript 子项目由根目录的 pnpm workspace 管理。CI 使用 Node.js 24 和 pnpm 11.7.0。
 

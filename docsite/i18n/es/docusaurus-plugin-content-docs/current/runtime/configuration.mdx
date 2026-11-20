@@ -10,11 +10,11 @@ De manera predeterminada, Anda almacena el estado del runtime en `~/.anda`. El a
 
 ## Code Mode con Python
 
-Compila con `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode` (Rust 1.96 o posterior). Activa `code_mode.enabled` en `config.yaml` y ejecuta `anda restart`. El valor predeterminado es `false`.
+Code Mode está activado de forma predeterminada. Para desactivarlo, añade lo siguiente a `~/.anda/config.yaml` y ejecuta `anda restart`.
 
 ```yaml
 code_mode:
-  enabled: true
+  enabled: false
 ```
 
 `code_exec` ejecuta el cuerpo de una función Python. Usa argumentos con nombre y `parallel` para llamadas independientes. Guarda una función anotada con docstring mediante `code_register`. Encuéntrala con `code_list` y carga su definición con `tools_select`. La biblioteca es privada por propietario y espacio de trabajo. Para actualizar o eliminar se requiere la revisión actual. Desactivar la función conserva los scripts.

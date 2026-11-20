@@ -73,10 +73,18 @@ pub struct BrainSettings {
     pub runtime_config: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CodeModeSettings {
     pub enabled: bool,
+}
+
+impl Default for CodeModeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: cfg!(feature = "code-mode"),
+        }
+    }
 }
 
 impl BrainSettings {
@@ -459,6 +467,21 @@ pub fn normalize_identity(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::util::http_client::new_reqwest_client;
+
+    #[test]
+    fn code_mode_defaults_to_build_support_and_honors_explicit_settings() {
+        for yaml in ["", "{}", "code_mode: {}", Config::default_template()] {
+            let config = Config::from_contents(yaml).unwrap();
+            assert_eq!(config.code_mode.enabled, cfg!(feature = "code-mode"));
+        }
+        for enabled in [true, false] {
+            let yaml = format!("code_mode: {{ enabled: {enabled} }}");
+            assert_eq!(
+                Config::from_contents(&yaml).unwrap().code_mode.enabled,
+                enabled
+            );
+        }
+    }
 
     #[test]
     fn brain_runtime_paths_use_config_directory_and_explicit_override() {

@@ -17,9 +17,9 @@ addr: 127.0.0.1:8042
 # error, warn, info, debug
 log_level: warn
 
-# Compose tools in isolated Python workers. Requires a code-mode build.
-code_mode:
-  enabled: false
+# Code Mode is enabled in standard builds. Uncomment to disable it, then run anda restart.
+# code_mode:
+#   enabled: false
 
 # Optional: for example http://127.0.0.1:7890
 # https_proxy: http://127.0.0.1:7890

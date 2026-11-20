@@ -40,7 +40,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-anda
 
       - name: Install Protoc
         uses: taiki-e/install-action@v2
@@ -63,17 +62,17 @@ jobs:
       - name: Build Rust binary (native)
         shell: bash
         run: |
-          cargo build --profile code-mode-release --locked --features code-mode --target ${{ matrix.rust_target }} --bin anda
+          cargo build --profile code-mode-release --locked --target ${{ matrix.rust_target }} --bin anda
           # anda_launcher is now the transitional binary that retires the old
           # tray; older launchers and `anda update` still download it.
           if [[ "$RUNNER_OS" == Windows || "$RUNNER_OS" == macOS ]]; then
-            cargo build --profile code-mode-release --locked --features code-mode --target ${{ matrix.rust_target }} --bin anda_launcher
+            cargo build --profile code-mode-release --locked --target ${{ matrix.rust_target }} --bin anda_launcher
           fi
 
       - name: Verify Code Mode in the release binary
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --profile code-mode-release --locked -p anda_bot --features code-mode --target ${{ matrix.rust_target }} --test code_mode
+        run: cargo test --profile code-mode-release --locked -p anda_bot --target ${{ matrix.rust_target }} --test code_mode
 
       - name: Collect artifacts
         shell: bash

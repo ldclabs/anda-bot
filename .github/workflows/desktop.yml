@@ -14,7 +14,6 @@ on:
         "skills/**",
         "Cargo.*",
         "pnpm-*",
-        ".github/actions/setup-anda/**",
         ".github/workflows/desktop.yml",
       ]
   pull_request:
@@ -26,7 +25,6 @@ on:
         "skills/**",
         "Cargo.*",
         "pnpm-*",
-        ".github/actions/setup-anda/**",
         ".github/workflows/desktop.yml",
       ]
   workflow_dispatch:
@@ -50,7 +48,6 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-anda
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -84,8 +81,7 @@ jobs:
           shared-key: test
           cache-on-failure: true
       # The packaging checks only run `anda --version`, so an unoptimized build
-      # is enough; the release profile's fat LTO alone took over half an hour.
-      # release.yml bundles the real release binary.
+      # is enough; release.yml builds the optimized binary.
       - name: Build the bundled runtime
         run: cargo build --locked -p anda_bot --bin anda --profile ci
       - name: Build local installer

@@ -4,6 +4,22 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-11-20
+
+### Added
+
+- Python Code Mode is enabled by default. Use `code_exec` to compose tool calls and `code_register` and `code_list` to save and reuse typed functions in a workspace. Each call uses the current caller’s permissions and approval settings.
+- To disable Code Mode, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Existing explicit settings are respected, and saved functions remain available when the mode is re-enabled.
+
+### Changed
+
+- The CLI, Anda Desktop and the Chrome extension share version 0.15.0. Source builds use the published Anda Engine 0.18.1 and require Rust 1.96 or newer. Build with `--no-default-features` to omit the Python worker.
+- Anda Desktop now uses Electron 45 and electron-vite 6. Both clients use Vite 8, Vitest 5 and markdown-it 15.
+
+### Fixed
+
+- The desktop and extension type checks use the declarations shipped with markdown-it 15. The website stays on SvelteKit 2, which its Cloudflare adapter requires.
+
 ## [0.14.10] — 2026-11-19
 
 ### Changed

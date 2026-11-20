@@ -10,11 +10,11 @@ Anda stores runtime state in `~/.anda` by default. The main configuration file i
 
 ## Python Code Mode
 
-Build with `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode` (Rust 1.96 or later). Set `code_mode.enabled` in `config.yaml` and run `anda restart`. The default is `false`.
+Code Mode is enabled by default. To turn it off, add the following to `~/.anda/config.yaml` and run `anda restart`.
 
 ```yaml
 code_mode:
-  enabled: true
+  enabled: false
 ```
 
 `code_exec` runs a Python function body. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_select` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.

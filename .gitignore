@@ -28,6 +28,7 @@ media
 .claude/
 .vscode/
 node_modules/
+.svelte-check/
 .pnpm-store/
 dist/
 misc/

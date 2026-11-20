@@ -1,7 +1,7 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.14.10"
+version = "0.15.0"
 default-run = "anda"
 description.workspace = true
 license.workspace = true
@@ -24,7 +24,7 @@ name = "anda_launcher"
 path = "src/bin/anda_launcher.rs"
 
 [features]
-default = []
+default = ["code-mode"]
 code-mode = ["dep:rustpython-vm"]
 mib = ["anda_brain/experiments"]
 learning = ["anda_brain/learning"]

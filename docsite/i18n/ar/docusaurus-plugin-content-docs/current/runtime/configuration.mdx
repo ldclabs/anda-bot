@@ -10,11 +10,11 @@ description: قم بتكوين مزودي النماذج، والأدلة الم
 
 ## Code Mode بلغة Python
 
-ابنِ البرنامج بالأمر `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode` باستخدام Rust 1.96 أو أحدث. فعّل `code_mode.enabled` في `config.yaml` ثم شغّل `anda restart`. القيمة الافتراضية هي `false`.
+يُفعّل Code Mode افتراضيًا. لتعطيله، أضف الإعداد التالي إلى `~/.anda/config.yaml` ثم شغّل `anda restart`.
 
 ```yaml
 code_mode:
-  enabled: true
+  enabled: false
 ```
 
 تنفّذ `code_exec` جسم دالة Python. استخدم معاملات مسماة و`parallel` للاستدعاءات المستقلة. تحفظ `code_register` دالة ذات أنواع معلنة ونص توثيق. اعثر على الاسم والمراجعة باستخدام `code_list` ثم حمّل التعريف باستخدام `tools_select`. مكتبة الدوال خاصة بالمالك ومساحة العمل. يتطلب التحديث أو الحذف المراجعة الحالية. تبقى البرامج المحفوظة عند تعطيل الميزة.

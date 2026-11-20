@@ -86,9 +86,9 @@
 					<h3><Icon class="size-4" />{item.title}</h3>
 					{#if item.status}<span class="status">{item.status}</span>{/if}
 					<p>{item.detail}</p>
-					<a class="link" href={links[index]} target="_blank" rel="noreferrer"
-						>{item.linkLabel}<ArrowRight class="direction-arrow size-3.5" /></a
-					>
+					<a class="link" href={links[index]} target="_blank" rel="noreferrer">
+						{item.linkLabel}<ArrowRight class="direction-arrow size-3.5" />
+					</a>
 				</div>
 			</article>
 		</div>

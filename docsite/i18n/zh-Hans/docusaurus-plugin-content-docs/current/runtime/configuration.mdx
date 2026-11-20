@@ -10,11 +10,11 @@ Anda 的运行状态默认保存在 `~/.anda`。主配置文件是 `~/.anda/conf
 
 ## Python Code Mode
 
-源码构建使用 `cargo build --profile code-mode-release --locked -p anda_bot --features code-mode`，需要 Rust 1.96 或更新版本。在 `config.yaml` 中启用 `code_mode.enabled` 后执行 `anda restart`。默认值为 `false`。
+Code Mode 默认开启。如需关闭，在 `~/.anda/config.yaml` 中设置以下选项，然后运行 `anda restart`。
 
 ```yaml
 code_mode:
-  enabled: true
+  enabled: false
 ```
 
 `code_exec` 运行 Python 函数体。用具名参数调用工具，用 `parallel` 提交独立调用。`code_register` 保存带参数类型标注和文档字符串的函数。用 `code_list` 查名称和修订号，再用 `tools_select` 加载该函数即可直接调用。脚本库按所有者和工作区隔离，更新和删除需要当前修订号。关闭功能后，已保存的脚本仍在磁盘上。

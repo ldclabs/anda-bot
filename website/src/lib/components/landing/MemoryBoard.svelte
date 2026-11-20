@@ -41,9 +41,9 @@
 						<span class="source"><MessageSquareQuote class="size-3" />{copy.source}</span>
 					{/if}
 					{#if index === 3}
-						<span class="updated" data-station="mem-revise"
-							><RefreshCw class="size-3" />{copy.updated}</span
-						>
+						<span class="updated" data-station="mem-revise">
+							<RefreshCw class="size-3" />{copy.updated}
+						</span>
 					{/if}
 				</header>
 				{#if index === 3}

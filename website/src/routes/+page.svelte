@@ -169,9 +169,9 @@
 		</a>
 		<nav aria-label={info.common.navigationLabel}>
 			{#each navItems as item}
-				<a href={`#${item.id}`} aria-current={activeSection === item.id ? 'location' : undefined}
-					>{item.label}</a
-				>
+				<a href={`#${item.id}`} aria-current={activeSection === item.id ? 'location' : undefined}>
+					{item.label}
+				</a>
 			{/each}
 			<a href="https://docs.anda.bot" target="_blank" rel="noreferrer">{copy.nav.docs}</a>
 		</nav>
@@ -204,9 +204,9 @@
 				<p class="lede">{copy.hero.body}</p>
 				<div class="ctas">
 					<Button href="#install" size="lg"><Download class="size-4" />{copy.hero.primary}</Button>
-					<Button href="#overview" variant="secondary" size="lg"
-						>{copy.hero.secondary}<ArrowRight class="direction-arrow size-4" /></Button
-					>
+					<Button href="#overview" variant="secondary" size="lg">
+						{copy.hero.secondary}<ArrowRight class="direction-arrow size-4" />
+					</Button>
 				</div>
 				<ul class="facts">
 					{#each copy.hero.facts as fact}
@@ -243,12 +243,12 @@
 		<div class="interlude-stick">
 			<p class="marquee hollow"><span>{marquee(copy.hero.title, '  ')}</span></p>
 			<p class="marquee filled reverse">
-				<span
-					>{marquee(
+				<span>
+					{marquee(
 						copy.pillars.map((pillar) => pillar.title),
 						'  ·  '
-					)}</span
-				>
+					)}
+				</span>
 			</p>
 		</div>
 	</div>
@@ -278,8 +278,10 @@
 					class="text-link"
 					href="https://docs.anda.bot/docs/memory/brain"
 					target="_blank"
-					rel="noreferrer">{copy.memoryLink}<ArrowRight class="direction-arrow size-4" /></a
+					rel="noreferrer"
 				>
+					{copy.memoryLink}<ArrowRight class="direction-arrow size-4" />
+				</a>
 			</div>
 			<MemoryBoard copy={copy.demo.memory} />
 		</div>
@@ -318,15 +320,17 @@
 					<ShieldCheck class="size-5 shrink-0" />{copy.dataNote}
 				</p>
 				<div class="links">
-					<a class="text-link" href="/privacy"
-						>{copy.privacyLink}<ArrowRight class="direction-arrow size-4" /></a
-					>
+					<a class="text-link" href="/privacy">
+						{copy.privacyLink}<ArrowRight class="direction-arrow size-4" />
+					</a>
 					<a
 						class="text-link"
 						href="https://github.com/ldclabs/anda-bot"
 						target="_blank"
-						rel="noreferrer">{copy.sourceLink}<Github class="size-4" /></a
+						rel="noreferrer"
 					>
+						{copy.sourceLink}<Github class="size-4" />
+					</a>
 				</div>
 			</div>
 			<MachineDiagram copy={copy.demo.control} />
@@ -341,12 +345,12 @@
 				<h2>{copy.surfaces.title}</h2>
 				<p class="lede">{copy.surfaces.body}</p>
 				<div class="links">
-					<a class="text-link" href={chromeExtensionStoreUrl} target="_blank" rel="noreferrer"
-						>Chrome<ExternalLink class="size-3.5" /></a
-					>
-					<a class="text-link" href={edgeExtensionStoreUrl} target="_blank" rel="noreferrer"
-						>Edge<ExternalLink class="size-3.5" /></a
-					>
+					<a class="text-link" href={chromeExtensionStoreUrl} target="_blank" rel="noreferrer">
+						Chrome<ExternalLink class="size-3.5" />
+					</a>
+					<a class="text-link" href={edgeExtensionStoreUrl} target="_blank" rel="noreferrer">
+						Edge<ExternalLink class="size-3.5" />
+					</a>
 				</div>
 			</div>
 			<SurfaceFrames items={copy.surfaces.items} links={surfaceLinks} />
@@ -360,12 +364,12 @@
 		<div class="interlude-stick">
 			<p class="marquee hollow"><span>{marquee(copy.hero.facts, '  ✦  ')}</span></p>
 			<p class="marquee filled reverse">
-				<span
-					>{marquee(
+				<span>
+					{marquee(
 						copy.surfaces.items.map((item) => item.title),
 						'  ·  '
-					)}</span
-				>
+					)}
+				</span>
 			</p>
 		</div>
 	</div>
@@ -412,8 +416,10 @@
 						target="_blank"
 						rel="noreferrer"
 						variant="secondary"
-						size="lg"><BookOpen class="size-4" />{copy.final.docs}</Button
+						size="lg"
 					>
+						<BookOpen class="size-4" />{copy.final.docs}
+					</Button>
 				</div>
 			</div>
 			<PandaMark />

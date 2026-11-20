@@ -4,7 +4,7 @@ import {
 } from '$lib/utils/base64'
 import { splitLegacyThoughtText } from './conversations'
 import { getMessage } from '$lib/i18n'
-import MarkdownIt from 'markdown-it'
+import MarkdownIt, { type Token } from 'markdown-it'
 import type { Resource, VoiceRecordingInput } from './types'
 
 export const voiceTtsChunkChars = 320
@@ -333,7 +333,6 @@ function audioMimeFromName(name: string): string | null {
 // renderer's KaTeX or Prism plugins (which also kept them out of every bundle
 // that imports the client).
 const speechMarkdown = new MarkdownIt({ html: false, linkify: false, typographer: false })
-type Token = ReturnType<MarkdownIt['parse']>[number]
 
 /** The readable text of one markdown line: no markers, links, or images. */
 function markdownLineText(line: string): string {

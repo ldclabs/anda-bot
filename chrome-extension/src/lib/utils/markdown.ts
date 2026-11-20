@@ -1,5 +1,5 @@
 import katex from 'katex'
-import MarkdownIt from 'markdown-it'
+import MarkdownIt, { type MarkdownIt as MarkdownParser } from 'markdown-it'
 import { PeleError, render as renderDiagram } from 'pele'
 // Languages load with the renderer: a message rendered before a lazy chunk
 // arrived would keep its unhighlighted code until its text changed.
@@ -29,13 +29,13 @@ const defaultLinkCloseRenderer =
   }
 
 // 检查是否为绝对路径
-function isAbsoluteUrl(href: string): boolean {
-  return /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href)
+function isAbsoluteUrl(href: string | number | null): boolean {
+  return typeof href === 'string' && /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href)
 }
 
 md.renderer.rules['link_open'] = function (tokens, idx, options, env, renderer) {
   const token = tokens[idx]!
-  const href = token.attrGet('href') || ''
+  const href = token.attrGet('href')
 
   // 如果是相对路径，不渲染为链接，只返回空字符串
   if (!isAbsoluteUrl(href)) {
@@ -61,7 +61,7 @@ md.renderer.rules['link_close'] = function (tokens, idx, options, env, renderer)
   i++ // 回到 link_open 的位置
 
   if (i >= 0 && tokens[i]!.type === 'link_open') {
-    const href = tokens[i]!.attrGet('href') || ''
+    const href = tokens[i]!.attrGet('href')
     // 如果是相对路径，不渲染闭合标签
     if (!isAbsoluteUrl(href)) {
       return ''
@@ -74,7 +74,7 @@ md.renderer.rules['link_close'] = function (tokens, idx, options, env, renderer)
 // 修复类似 **“财多身弱”** 这种“标点紧邻分隔符”导致的加粗失效
 // CommonMark 的强调规则在“前一个字符不是空白/标点、下一个字符是标点”时会拒绝把 ** 当作开启分隔符
 // 这在中文排版里很常见（例如：这叫**“……”**）。这里做一个有界的补丁，处理中文引号/书名号/括号等场景。
-function strongCjkQuotePlugin(md: MarkdownIt) {
+function strongCjkQuotePlugin(md: MarkdownParser) {
   const openQuotes = new Set(['“', '‘', '「', '『', '《', '（', '【', '〖', '［', '｛'])
 
   md.inline.ruler.before('emphasis', 'strong_cjk_quote', function (state, silent) {
@@ -155,7 +155,7 @@ function strongCjkQuotePlugin(md: MarkdownIt) {
 }
 
 // KaTeX 插件 - 处理数学公式
-function katexPlugin(md: MarkdownIt) {
+function katexPlugin(md: MarkdownParser) {
   const isWhitespace = (ch: string | undefined): boolean => {
     if (!ch) return true
     return /\s/.test(ch)
@@ -370,7 +370,7 @@ function katexPlugin(md: MarkdownIt) {
 }
 
 // 代码高亮插件
-function prismPlugin(md: MarkdownIt) {
+function prismPlugin(md: MarkdownParser) {
   const langAliases: Record<string, string> = {
     js: 'javascript',
     mjs: 'javascript',
@@ -413,7 +413,7 @@ function prismPlugin(md: MarkdownIt) {
 }
 
 // Mermaid 图表插件 - pele 把 ```mermaid 代码块同步渲染为 SVG
-function mermaidPlugin(md: MarkdownIt) {
+function mermaidPlugin(md: MarkdownParser) {
   const closingFence = /^[\s>]*(`{3,}|~{3,})\s*$/
 
   // 流式输出时最后一个代码块还没闭合，半截图表会在代码与 SVG 之间来回闪烁，
