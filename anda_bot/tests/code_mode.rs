@@ -1,11 +1,21 @@
 #![cfg(feature = "code-mode")]
 
+#[cfg(windows)]
+#[path = "../src/engine/code_mode/windows_profile.rs"]
+mod windows_profile;
+
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+
+struct Worker {
+    child: Child,
+    #[cfg(windows)]
+    _profile: windows_profile::Profile,
+}
 
 fn send(child: &mut Child, message: Value) {
     let bytes = serde_json::to_vec(&message).unwrap();
@@ -28,43 +38,55 @@ fn read(child: &mut Child) -> Value {
     stream.read_exact(&mut data).unwrap();
     serde_json::from_slice(&data).unwrap()
 }
-fn start(request: Value) -> Child {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_anda"))
+fn start(request: Value) -> Worker {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_anda"));
+    command
         .arg("--internal-code-mode-worker")
         .env_clear()
         .env("MIMALLOC_DISALLOW_ARENA_ALLOC", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .unwrap();
-    send(&mut child, request);
-    child
+        .stderr(Stdio::inherit());
+    #[cfg(windows)]
+    let profile = {
+        let profile = windows_profile::Profile::create().unwrap();
+        profile.configure(&mut command);
+        profile
+    };
+    let mut worker = Worker {
+        child: command.spawn().unwrap(),
+        #[cfg(windows)]
+        _profile: profile,
+    };
+    send(&mut worker.child, request);
+    worker
 }
 fn execute(request: Value) -> Value {
-    let mut child = start(request);
-    let result = read(&mut child);
+    let mut worker = start(request);
+    let child = &mut worker.child;
+    let result = read(child);
     assert!(child.wait().unwrap().success());
     result
 }
 
 #[test]
 fn code_mode_worker_composes_paginated_calls_and_preserves_u64() {
-    let mut child = start(json!({"op":"exec","source":
+    let mut worker = start(json!({"op":"exec","source":
         "cursor = None\ntotal = 0\nwhile True:\n    page = tools.page(cursor=cursor)\n    total += sum(page['result'])\n    cursor = page.get('next_cursor')\n    if cursor is None:\n        break\nprint(total)\nreturn total"}));
+    let child = &mut worker.child;
     for (cursor, next, number) in [
         (Value::Null, json!("2"), 9_007_199_254_740_993u64),
         (json!("2"), json!("3"), 2),
         (json!("3"), Value::Null, 3),
     ] {
-        let call = read(&mut child);
+        let call = read(child);
         assert_eq!(call["calls"], json!([["page",{"cursor":cursor}]]));
         send(
-            &mut child,
+            child,
             json!({"op":"results","items":[{"value":{"result":[number],"next_cursor":next}}]}),
         );
     }
-    let result = read(&mut child);
+    let result = read(child);
     assert_eq!(result["value"]["value"], 9_007_199_254_740_998u64);
     assert_eq!(result["value"]["stdout"], "9007199254740998\n");
     assert!(child.wait().unwrap().success());
@@ -145,7 +167,8 @@ fn code_mode_worker_limits_output_and_imports() {
 
 #[test]
 fn code_mode_worker_cpu_budget_terminates_a_busy_script() {
-    let mut child = start(json!({"op":"exec","source":"while True:\n    pass"}));
+    let mut worker = start(json!({"op":"exec","source":"while True:\n    pass"}));
+    let child = &mut worker.child;
     let deadline = Instant::now() + Duration::from_secs(40);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -173,10 +196,10 @@ fn code_mode_platform_denies_native_host_io() {
 
 #[test]
 fn code_mode_worker_refuses_allocations_above_budget() {
-    let child = start(
+    let worker = start(
         json!({"op":"exec","source":"buffer = bytearray(320 * 1024 * 1024)\nreturn len(buffer)"}),
     );
-    let output = child.wait_with_output().unwrap();
+    let output = worker.child.wait_with_output().unwrap();
     if output.status.success() {
         assert!(output.stdout.len() >= 5);
         let response: Value = serde_json::from_slice(&output.stdout[5..]).unwrap();

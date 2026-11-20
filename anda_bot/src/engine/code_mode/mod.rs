@@ -4,6 +4,8 @@ mod run;
 mod sandbox;
 #[cfg(test)]
 mod tests;
+#[cfg(windows)]
+mod windows_profile;
 pub(crate) mod worker;
 
 use super::{

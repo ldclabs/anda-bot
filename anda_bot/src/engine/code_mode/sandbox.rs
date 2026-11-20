@@ -14,6 +14,28 @@ fn limit(resource: libc::c_int, value: libc::rlim_t) -> std::io::Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn limit_address_space() -> Result<(), BoxError> {
+    // RLIMIT_AS includes the executable and shared libraries. Account for
+    // the startup mappings and fit new mappings in the remaining budget.
+    let statm = std::fs::read_to_string("/proc/self/statm")?;
+    let page_size = libc::rlim_t::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })?;
+    let mut pages = statm
+        .split_ascii_whitespace()
+        .map(str::parse::<libc::rlim_t>);
+    let virtual_size = pages.next().ok_or("missing worker virtual size")?? * page_size;
+    let resident = pages.next().ok_or("missing worker resident size")?? * page_size;
+    let memory_budget: libc::rlim_t = 256 * 1024 * 1024;
+    let remaining = memory_budget
+        .checked_sub(resident)
+        .ok_or("worker exceeds its memory limit at startup")?;
+    let address_limit = virtual_size
+        .checked_add(remaining)
+        .ok_or("worker address space limit overflowed")?;
+    limit(libc::RLIMIT_AS as _, address_limit)?;
+    Ok(())
+}
+
 pub(super) fn enter() -> Result<(), BoxError> {
     #[cfg(unix)]
     {
@@ -34,7 +56,7 @@ pub(super) fn enter() -> Result<(), BoxError> {
         limit(libc::RLIMIT_CPU as _, 5)?;
         limit(libc::RLIMIT_CORE as _, 0)?;
         #[cfg(target_os = "linux")]
-        limit(libc::RLIMIT_AS as _, 256 * 1024 * 1024)?;
+        limit_address_space()?;
         #[cfg(target_os = "macos")]
         {
             // dyld's shared cache occupies hundreds of GiB of virtual address
@@ -183,6 +205,11 @@ fn platform() -> Result<(), BoxError> {
 mod windows;
 #[cfg(windows)]
 use windows::enter as platform;
+
+#[cfg(windows)]
+pub(super) fn network_denied() -> bool {
+    windows::network_denied()
+}
 
 #[cfg(not(any(
     windows,

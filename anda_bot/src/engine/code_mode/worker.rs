@@ -233,6 +233,9 @@ pub(crate) fn main() -> Result<(), BoxError> {
             .as_str()
             .ok_or("missing isolation sentinel")?;
         let file_denied = std::fs::File::open(path).is_err();
+        #[cfg(windows)]
+        let network_denied = sandbox::network_denied();
+        #[cfg(not(windows))]
         let network_denied = std::net::TcpListener::bind(("127.0.0.1", 0)).is_err();
         let process_denied = std::process::Command::new(executable)
             .arg("--version")
@@ -244,7 +247,20 @@ pub(crate) fn main() -> Result<(), BoxError> {
             &json!({"op":if file_denied && network_denied && process_denied {"isolated"}else{"isolation_failed"}}),
         );
     }
-    let vm = Interpreter::without_stdlib(Default::default());
-    let result = vm.enter(|vm| evaluate(vm, request));
-    write_frame(&result)
+    let execute = move || {
+        let vm = Interpreter::without_stdlib(Default::default());
+        let result = vm.enter(|vm| evaluate(vm, request));
+        write_frame(&result)
+    };
+    #[cfg(windows)]
+    {
+        // RustPython's import initialization needs more than the PE main thread's stack.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(execute)?
+            .join()
+            .map_err(|_| "Code Mode interpreter thread panicked")?
+    }
+    #[cfg(not(windows))]
+    execute()
 }
