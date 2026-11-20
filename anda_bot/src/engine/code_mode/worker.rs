@@ -244,7 +244,20 @@ pub(crate) fn main() -> Result<(), BoxError> {
             &json!({"op":if file_denied && network_denied && process_denied {"isolated"}else{"isolation_failed"}}),
         );
     }
-    let vm = Interpreter::without_stdlib(Default::default());
-    let result = vm.enter(|vm| evaluate(vm, request));
-    write_frame(&result)
+    let execute = move || {
+        let vm = Interpreter::without_stdlib(Default::default());
+        let result = vm.enter(|vm| evaluate(vm, request));
+        write_frame(&result)
+    };
+    #[cfg(windows)]
+    {
+        // RustPython's import initialization needs more than the PE main thread's stack.
+        std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(execute)?
+            .join()
+            .map_err(|_| "Code Mode interpreter thread panicked")?
+    }
+    #[cfg(not(windows))]
+    execute()
 }

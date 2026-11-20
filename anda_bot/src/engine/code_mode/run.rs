@@ -600,6 +600,12 @@ async fn spawn(permit: OwnedSemaphorePermit, cancel: CancellationToken) -> Resul
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    let profile = {
+        let profile = super::windows_profile::Profile::create().map_err(Failure::io)?;
+        profile.configure(cmd.as_std_mut());
+        profile
+    };
     let mut child = cmd.spawn()?;
     let pipes = Pipes {
         input: child.stdin.take().unwrap(),
@@ -609,6 +615,8 @@ async fn spawn(permit: OwnedSemaphorePermit, cancel: CancellationToken) -> Resul
     tokio::spawn(async move {
         let _empty = empty;
         let _permit = permit;
+        #[cfg(windows)]
+        let _profile = profile;
         tokio::select! {_=child.wait()=>{},_=cancel.cancelled()=>{let _=child.kill().await;let _=child.wait().await;}}
     });
     Ok(pipes)

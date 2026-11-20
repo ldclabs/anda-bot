@@ -1,14 +1,12 @@
 //! The bootstrap process owns a kill-on-close job. Only its AppContainer
 //! child reads the script. Both use the same inherited protocol pipes.
+use super::super::windows_profile::{PROFILE_ENV, wide};
 use anda_core::BoxError;
 use std::{
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     io,
     mem::{size_of, size_of_val},
-    os::windows::{
-        ffi::OsStrExt,
-        io::{AsRawHandle, FromRawHandle, OwnedHandle},
-    },
+    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
@@ -26,9 +24,6 @@ fn checked(ok: i32) -> io::Result<()> {
     } else {
         Ok(())
     }
-}
-fn wide(s: &OsStr) -> Vec<u16> {
-    s.encode_wide().chain(Some(0)).collect()
 }
 struct Sid(PSID);
 impl Drop for Sid {
@@ -121,24 +116,11 @@ pub(super) fn enter() -> Result<(), BoxError> {
             size_of_val(&limits) as u32,
         ))?;
 
+        let profile =
+            std::env::var_os(PROFILE_ENV).ok_or("missing Code Mode AppContainer profile")?;
+        let moniker = wide(&profile);
         let mut sid = null_mut();
-        let moniker = wide(OsStr::new(&format!(
-            "Anda.CodeMode.{}",
-            ic_auth_types::Xid::new()
-        )));
-        let profile = std::env::var_os("ANDA_CI_PROFILE_PROBE").is_some();
-        let hr = if profile {
-            windows_sys::Win32::Security::Isolation::CreateAppContainerProfile(
-                moniker.as_ptr(),
-                moniker.as_ptr(),
-                moniker.as_ptr(),
-                null(),
-                0,
-                &mut sid,
-            )
-        } else {
-            DeriveAppContainerSidFromAppContainerName(moniker.as_ptr(), &mut sid)
-        };
+        let hr = DeriveAppContainerSidFromAppContainerName(moniker.as_ptr(), &mut sid);
         if hr < 0 {
             return Err(format!("AppContainer SID creation failed ({hr:#x})").into());
         }
@@ -180,27 +162,15 @@ pub(super) fn enter() -> Result<(), BoxError> {
         startup.lpAttributeList = attributes.0.as_mut_ptr().cast();
         let application = wide(std::env::current_exe()?.as_os_str());
         let mut command = wide(OsStr::new(&format!("anda {}", super::super::worker::ARG)));
-
-        let mut env = Vec::new();
-        if let Ok(names) = std::env::var("ANDA_CI_ENV_PROBE") {
-            for name in names.split(',') {
-                if let Some(value) = std::env::var_os(name) {
-                    let mut entry = std::ffi::OsString::from(name);
-                    entry.push("=");
-                    entry.push(value);
-                    env.extend(wide(&entry));
-                }
-            }
-        }
-        if env.is_empty() {
-            env.push(0);
-        }
+        // CreateProcessW resolves the AppContainer's storage from LOCALAPPDATA.
+        let local_app_data =
+            std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is required for AppContainer")?;
+        let mut entry = OsString::from("LOCALAPPDATA=");
+        entry.push(local_app_data);
+        let mut env = wide(&entry);
         env.push(0);
-        let cwd = std::env::var_os("ANDA_CI_SYSTEM_CWD")
-            .and_then(|_| std::env::var_os("SystemRoot"))
-            .map(|path| wide(&path));
         let mut info = PROCESS_INFORMATION::default();
-        if CreateProcessW(
+        checked(CreateProcessW(
             application.as_ptr(),
             command.as_mut_ptr(),
             null(),
@@ -208,14 +178,11 @@ pub(super) fn enter() -> Result<(), BoxError> {
             1,
             EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
             env.as_ptr().cast(),
-            cwd.as_ref().map_or(null(), |path| path.as_ptr()),
+            null(),
             &startup.StartupInfo,
             &mut info,
-        ) == 0
-        {
-            let err = io::Error::last_os_error();
-            return Err(format!("CreateProcessW: {err}").into());
-        }
+        ))
+        .map_err(|err| format!("CreateProcessW for the Code Mode AppContainer: {err}"))?;
         let child = OwnedHandle::from_raw_handle(info.hProcess);
         drop(OwnedHandle::from_raw_handle(info.hThread));
         if WaitForSingleObject(child.as_raw_handle(), INFINITE) != WAIT_OBJECT_0 {

@@ -6,31 +6,40 @@ permissions:
   contents: read
 jobs:
   test:
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            features: --all-features
+            musl_target: x86_64-unknown-linux-musl
+          - os: windows-latest
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@v2
+      - name: Install Protoc
+        uses: taiki-e/install-action@v2
         with:
           tool: protoc@3.23.4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
-      - name: Run Linux tests
-        if: runner.os == 'Linux'
+      - name: Run tests
         env:
           RUST_MIN_STACK: 16777216
-        run: cargo test --locked --workspace --profile ci --all-features
-      - name: Build the Windows CI worker
-        if: runner.os == 'Windows'
-        run: cargo build --locked --profile ci -p anda_bot --bin anda
-      - name: Identify the required AppContainer environment
-        if: runner.os == 'Windows'
-        run: python scripts/ci-code-mode-probe.py
+        run: cargo test --locked --workspace --profile ci ${{ matrix.features }}
+      - name: Verify the native musl worker
+        if: matrix.musl_target
+        env:
+          RUST_MIN_STACK: 16777216
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup target add ${{ matrix.musl_target }}
+          cargo test --locked --profile ci -p anda_bot --target ${{ matrix.musl_target }} --test code_mode
