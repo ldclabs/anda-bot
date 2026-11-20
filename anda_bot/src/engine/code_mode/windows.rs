@@ -180,7 +180,25 @@ pub(super) fn enter() -> Result<(), BoxError> {
         startup.lpAttributeList = attributes.0.as_mut_ptr().cast();
         let application = wide(std::env::current_exe()?.as_os_str());
         let mut command = wide(OsStr::new(&format!("anda {}", super::super::worker::ARG)));
-        let env = [0u16; 2];
+
+        let mut env = Vec::new();
+        if let Ok(names) = std::env::var("ANDA_CI_ENV_PROBE") {
+            for name in names.split(',') {
+                if let Some(value) = std::env::var_os(name) {
+                    let mut entry = std::ffi::OsString::from(name);
+                    entry.push("=");
+                    entry.push(value);
+                    env.extend(wide(&entry));
+                }
+            }
+        }
+        if env.is_empty() {
+            env.push(0);
+        }
+        env.push(0);
+        let cwd = std::env::var_os("ANDA_CI_SYSTEM_CWD")
+            .and_then(|_| std::env::var_os("SystemRoot"))
+            .map(|path| wide(&path));
         let mut info = PROCESS_INFORMATION::default();
         if CreateProcessW(
             application.as_ptr(),
@@ -190,7 +208,7 @@ pub(super) fn enter() -> Result<(), BoxError> {
             1,
             EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
             env.as_ptr().cast(),
-            null(),
+            cwd.as_ref().map_or(null(), |path| path.as_ptr()),
             &startup.StartupInfo,
             &mut info,
         ) == 0

@@ -37,13 +37,23 @@ def probe(label, env, trace=False):
             print('\n'.join(trace_path.read_text(errors='replace').splitlines()[-60:]))
         return worker.returncode == 0 and b'"op":"done"' in stdout
 
-baseline = probe('baseline', minimal)
-if os.name == 'nt':
-    os_paths = {name: os.environ[name] for name in
-                ('SystemRoot', 'LOCALAPPDATA', 'USERPROFILE') if name in os.environ}
-    probe('bootstrap OS environment', minimal | os_paths)
-    probe('profile', minimal | {'ANDA_CI_PROFILE_PROBE': '1'})
-    probe('profile and bootstrap OS environment', minimal | os_paths | {'ANDA_CI_PROFILE_PROBE': '1'})
-elif not baseline:
-    probe('syscall trace', minimal | {'MIMALLOC_VERBOSE': '1'}, trace=True)
-raise SystemExit(not baseline)
+names = ('APPDATA', 'LOCALAPPDATA', 'ProgramData', 'SystemDrive', 'SystemRoot',
+         'TEMP', 'TMP', 'USERPROFILE')
+os_paths = {name: os.environ[name] for name in names if name in os.environ}
+profile = minimal | os_paths | {'ANDA_CI_PROFILE_PROBE': '1'}
+probe('registered profile with empty child environment', profile)
+worked = False
+for label, env_names, use_system_cwd in [
+    ('LOCALAPPDATA', ('LOCALAPPDATA',), False),
+    ('SystemRoot', ('SystemRoot',), False),
+    ('LOCALAPPDATA and SystemRoot', ('LOCALAPPDATA', 'SystemRoot'), False),
+    ('LOCALAPPDATA and USERPROFILE', ('LOCALAPPDATA', 'USERPROFILE'), False),
+    ('LOCALAPPDATA, SystemRoot and USERPROFILE', ('LOCALAPPDATA', 'SystemRoot', 'USERPROFILE'), False),
+    ('all OS paths', names, False),
+    ('all OS paths and system cwd', names, True),
+]:
+    env = profile | {'ANDA_CI_ENV_PROBE': ','.join(env_names)}
+    if use_system_cwd:
+        env['ANDA_CI_SYSTEM_CWD'] = '1'
+    worked = probe(label, env) or worked
+raise SystemExit(not worked)

@@ -7,15 +7,11 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            features: --all-features
-          - os: windows-latest
-            features: ''
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -27,15 +23,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: false
-      - name: Build the CI worker
-        shell: bash
-        run: cargo build --locked --profile ci -p anda_bot --bin anda ${{ matrix.features }}
-      - name: Install syscall tracing on the Linux runner
+      - name: Run Linux tests
         if: runner.os == 'Linux'
-        run: |
-          if ! command -v strace >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y strace
-          fi
-      - name: Exercise worker startup
+        env:
+          RUST_MIN_STACK: 16777216
+        run: cargo test --locked --workspace --profile ci --all-features
+      - name: Build the Windows CI worker
+        if: runner.os == 'Windows'
+        run: cargo build --locked --profile ci -p anda_bot --bin anda
+      - name: Identify the required AppContainer environment
+        if: runner.os == 'Windows'
         run: python scripts/ci-code-mode-probe.py
