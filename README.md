@@ -154,7 +154,7 @@ Interactive sessions request approval for risky shell operations and MCP actions
 
 ### Python Code Mode
 
-Code Mode is enabled by default. To turn it off, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Use `code_exec` to compose tools in Python, `code_register` to save a typed function and `code_list` to find it again in the same workspace. Each tool call uses the caller’s current permissions. [Configuration and examples](docsite/docs/runtime/configuration.mdx#python-code-mode)
+Code Mode is enabled by default when worker isolation is available. To turn it off, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Use `code_exec` to compose tools in Python, `code_register` to save a typed function and `code_list` to find it again in the same workspace. Each tool call uses the caller’s current permissions. [Configuration and examples](docsite/docs/runtime/configuration.mdx#python-code-mode)
 
 ## Long-term memory
 

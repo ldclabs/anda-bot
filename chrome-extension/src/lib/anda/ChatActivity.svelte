@@ -79,33 +79,31 @@
   >
     {#each row.details as detail (detail.id)}
       {#if detail.kind === 'thought'}
-        <div dir="auto" class="md-content activity-thought py-1 text-xs leading-relaxed wrap-break-word">
+        <div
+          dir="auto"
+          class="md-content activity-thought py-1 text-xs leading-relaxed wrap-break-word"
+        >
           {@html renderMarkdown(detail.text)}
         </div>
       {:else if detail.kind === 'tool'}
-        {#if only}
-          <span dir="auto" class="font-mono text-xs font-medium">{detail.tool.name}</span>
+        <ChatDetailRow
+          rowKey={detail.id + ':detail'}
+          icon={icons[toolKind(detail.tool.name)]}
+          name={detail.tool.name}
+          summary={toolCallSummary(detail.tool)}
+          status={toolCallStatus(detail.tool)}
+          inline={Boolean(only)}
+          mono
+        >
           {@render toolBody(detail)}
-        {:else}
-          <ChatDetailRow
-            rowKey={detail.id + ':detail'}
-            icon={icons[toolKind(detail.tool.name)]}
-            name={detail.tool.name}
-            summary={toolCallSummary(detail.tool)}
-            status={toolCallStatus(detail.tool)}
-            mono
-          >
-            {@render toolBody(detail)}
-          </ChatDetailRow>
-        {/if}
-      {:else if only}
-        <pre dir="auto" class="activity-data">{detail.text}</pre>
+        </ChatDetailRow>
       {:else}
         <ChatDetailRow
           rowKey={detail.id + ':detail'}
           icon={Bell}
           name={noticeName(detail)}
           summary={noticeSummary(detail)}
+          inline={Boolean(only)}
         >
           <pre dir="auto" class="activity-data">{detail.text}</pre>
         </ChatDetailRow>

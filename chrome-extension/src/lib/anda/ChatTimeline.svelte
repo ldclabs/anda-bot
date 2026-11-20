@@ -30,7 +30,7 @@
   let content = $state<HTMLDivElement | null>(null)
   let away = $state(false)
   let renderedSource: string | undefined
-  let lastId: string | undefined
+  let lastLocalPromptId: string | undefined
 
   function aboveLatest(el: HTMLElement) {
     return el.scrollHeight - el.clientHeight - el.scrollTop > 48
@@ -54,21 +54,22 @@
   $effect.pre(() => {
     const el = viewport
     if (!el) return
-    const latest = messages.at(-1)
     const currentSource = source
-    if (!latest) {
+    if (!messages.length) {
       // Wait for history to load before restoring its saved scroll offset.
       renderedSource = undefined
-      lastId = undefined
+      lastLocalPromptId = undefined
       return
     }
     const switched = renderedSource !== currentSource
-    const ownPrompt = latest.role === 'user' && latest.id !== lastId
-    const follow = !aboveLatest(el) || ownPrompt
+    const localPromptId = messages.findLast(
+      (message) => message.role === 'user' && message.pending
+    )?.id
+    const ownPrompt = localPromptId !== undefined && localPromptId !== lastLocalPromptId
     const position = switched ? readingPositions.get(source) : undefined
     renderedSource = source
-    lastId = latest.id
-    if (!switched && !follow) return
+    lastLocalPromptId = localPromptId
+    if (!switched && !ownPrompt && aboveLatest(el)) return
     void tick().then(() => {
       if (viewport !== el || source !== currentSource) return
       el.scrollTop = position ?? el.scrollHeight

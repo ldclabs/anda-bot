@@ -17,7 +17,8 @@ addr: 127.0.0.1:8042
 # error, warn, info, debug
 log_level: warn
 
-# Code Mode is enabled in standard builds. Uncomment to disable it, then run anda restart.
+# Standard builds enable Code Mode when worker isolation is available.
+# Uncomment to disable it, then run anda restart.
 # code_mode:
 #   enabled: false
 

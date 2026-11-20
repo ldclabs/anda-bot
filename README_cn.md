@@ -154,7 +154,7 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 ### Python Code Mode
 
-Code Mode 默认开启。如需关闭，在 `~/.anda/config.yaml` 中设置 `code_mode: { enabled: false }`，然后运行 `anda restart`。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
+工作进程可隔离运行时，Code Mode 默认开启。如需关闭，在 `~/.anda/config.yaml` 中设置 `code_mode: { enabled: false }`，然后运行 `anda restart`。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
 
 ## 长期记忆
 

@@ -732,6 +732,52 @@ try {
     if (!richText) await new Promise((resolve) => setTimeout(resolve, 100))
   }
   assert.match(richText, /<strong[^>]*>No external model was called\.<\/strong>/)
+  // A running activity can gain more rows while its first result is open.
+  const chat = conversations.values().next().value
+  async function appendChatMessages(...messages) {
+    chat.messages.push(...messages)
+    chat.updated_at = Date.now()
+    await sendEvent({ type: 'state' })
+  }
+  await appendChatMessages(
+    { role: 'assistant', content: [{ type: 'ToolCall', callId: 'inspect', name: 'read_file' }] },
+    {
+      role: 'tool',
+      content: [{ type: 'ToolOutput', callId: 'inspect', name: 'read_file', output: 'Open result' }]
+    }
+  )
+  const latestActivity = activity.nth(1)
+  await latestActivity.getByRole('button', { name: /Work details/ }).click()
+  await latestActivity.getByText('Open result', { exact: true }).waitFor()
+  await appendChatMessages({
+    role: 'user',
+    name: '$system',
+    content: [
+      { type: 'Text', text: '[$system: kind="background shell"]\nRuntime update.\n\n"New output"' }
+    ]
+  })
+  await latestActivity.getByRole('button', { name: 'Background command' }).waitFor()
+  assert.ok(await latestActivity.getByText('Open result', { exact: true }).isVisible())
+
+  // Synchronizing a prompt sent elsewhere preserves the current viewport.
+  const longReply = Array.from({ length: 40 }, (_, index) => `Transcript paragraph ${index}`).join(
+    '\n\n'
+  )
+  await appendChatMessages({ role: 'assistant', content: [{ type: 'Text', text: longReply }] })
+  await page.getByText('Transcript paragraph 39', { exact: true }).waitFor()
+  const timeline = page.locator('.conversation-scroll')
+  await timeline.evaluate((element) => (element.scrollTop = 0))
+  const jump = page.getByRole('button', { name: 'Jump to latest' })
+  await jump.waitFor()
+  await appendChatMessages({
+    role: 'user',
+    content: [{ type: 'Text', text: 'Prompt from another client' }]
+  })
+  await page.getByText('Prompt from another client', { exact: true }).waitFor()
+  assert.equal(await timeline.evaluate((element) => element.scrollTop), 0)
+  await jump.click()
+  await jump.waitFor({ state: 'hidden' })
+
   await editor.fill('An unsent draft')
   await page.waitForTimeout(450)
   await page.locator('.sidebar-primary').getByText('New chat', { exact: true }).click()
@@ -751,6 +797,13 @@ try {
   await page.getByText('Direct side reply', { exact: true }).waitFor()
   await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 0)
   assert.equal(await page.getByText('Direct side reply', { exact: true }).count(), 1)
+  // A local prompt still follows the end with side replies in the transcript.
+  await timeline.evaluate((element) => (element.scrollTop = 0))
+  await jump.waitFor()
+  await editor.fill('Follow this local prompt')
+  await editor.press('Enter')
+  await timeline.getByText('Follow this local prompt', { exact: true }).waitFor()
+  await jump.waitFor({ state: 'hidden' })
   await editor.fill('/side Reload check')
   await editor.press('Enter')
   await waitForPage(page, async () => (await window.anda.bootstrap()).pending.length === 1)

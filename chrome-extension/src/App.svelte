@@ -221,16 +221,18 @@
   })
 
   async function loadPreviousConversations() {
-    if (loadingPrevious || !hasPreviousConversations) {
+    const channel = andaClient.activeChannel
+    const viewport = messagesElement
+    if (!channel || !viewport || loadingPrevious || !hasPreviousConversations) {
       return
     }
-    const beforeHeight = messagesElement?.scrollHeight || 0
-    const beforeTop = messagesElement?.scrollTop || 0
+    const bottomOffset = viewport.scrollHeight - viewport.scrollTop
     try {
-      const loaded = await andaClient.activeChannel?.loadPreviousConversations()
-      await tick()
-      if (loaded && messagesElement) {
-        messagesElement.scrollTop = messagesElement.scrollHeight - beforeHeight + beforeTop
+      if (await channel.loadPreviousConversations()) {
+        await tick()
+        if (channel === andaClient.activeChannel && viewport === messagesElement) {
+          viewport.scrollTop = viewport.scrollHeight - bottomOffset
+        }
       }
     } catch (error) {
       console.error('Failed to load previous conversations', error)

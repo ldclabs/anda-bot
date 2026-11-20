@@ -317,7 +317,7 @@ impl Daemon {
         id_key: identity::Ed25519Key,
         user_pubkey: identity::Ed25519PubKey,
     ) -> Result<(), BoxError> {
-        if !cfg!(feature = "code-mode") && self.cfg.code_mode.enabled {
+        if !cfg!(feature = "code-mode") && self.cfg.code_mode.enabled == Some(true) {
             return Err(
                 "code_mode.enabled requires an anda binary built with --features code-mode".into(),
             );

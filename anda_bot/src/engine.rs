@@ -138,7 +138,7 @@ pub struct EngineConfig {
     pub brain_models: Arc<Models>,
     pub brain_base_url: String,
     #[cfg(feature = "code-mode")]
-    pub code_mode_enabled: bool,
+    pub code_mode_enabled: Option<bool>,
     pub home_dir: PathBuf,
     pub skills_dir: PathBuf,
     pub workspaces: Vec<PathBuf>,
@@ -683,19 +683,25 @@ impl Engines {
         .with_admission(cron_runtime.admission.clone())
         .with_memory_access(memory_access.clone());
         #[cfg(feature = "code-mode")]
-        let code_mode = cfg.code_mode_enabled.then(|| {
-            code_mode::CodeMode::new(
+        let code_mode = if cfg.code_mode_enabled == Some(false) {
+            None
+        } else {
+            let mode = code_mode::CodeMode::new(
                 cfg.home_dir.clone(),
                 default_workspace.clone(),
                 cfg.owner,
                 cli_workspaces.clone(),
                 root_secret,
-            )
-        });
-        #[cfg(feature = "code-mode")]
-        if let Some(mode) = &code_mode {
-            mode.verify_platform().await?
-        }
+            );
+            match mode.verify_platform().await {
+                Ok(()) => Some(mode),
+                Err(err) if cfg.code_mode_enabled == Some(true) => return Err(err),
+                Err(err) => {
+                    log::warn!("Code Mode unavailable: {err}");
+                    None
+                }
+            }
+        };
         #[cfg(feature = "code-mode")]
         let bot = bot.with_code_mode(code_mode.clone());
         let bot = Arc::new(bot);

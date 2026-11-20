@@ -8,7 +8,7 @@ All notable changes to Anda Bot.
 
 ### Added
 
-- Python Code Mode is enabled by default. Use `code_exec` to compose tool calls and `code_register` and `code_list` to save and reuse typed functions in a workspace. Each call uses the current caller’s permissions and approval settings.
+- Python Code Mode is enabled by default when worker isolation is available. Use `code_exec` to compose tool calls and `code_register` and `code_list` to save and reuse typed functions in a workspace. Each call uses the current caller’s permissions and approval settings.
 - To disable Code Mode, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Existing explicit settings are respected, and saved functions remain available when the mode is re-enabled.
 
 ### Changed

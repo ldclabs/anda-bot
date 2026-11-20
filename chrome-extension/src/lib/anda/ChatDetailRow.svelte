@@ -16,6 +16,7 @@
     summary = '',
     issue = '',
     mono = false,
+    inline = false,
     status,
     children
   }: {
@@ -25,11 +26,13 @@
     summary?: string
     issue?: string
     mono?: boolean
+    inline?: boolean
     status?: ToolCallStatus
     children: Snippet
   } = $props()
 
-  let expanded = $state(untrack(() => expandedRows.has(rowKey)))
+  // A single detail is shown directly by its parent. Keep it open if the group grows.
+  let expanded = $state(untrack(() => inline || expandedRows.has(rowKey)))
 
   function toggle() {
     expanded = !expanded
@@ -39,33 +42,41 @@
 </script>
 
 <div class="min-w-0 text-xs leading-5">
-  <button
-    type="button"
-    class="chat-detail-row flex min-h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-start"
-    aria-expanded={expanded}
-    title={summary || undefined}
-    onclick={toggle}
-  >
-    <ChevronRight
-      aria-hidden="true"
-      class="detail-chevron size-3 shrink-0 {expanded ? 'open' : ''}"
-    />
-    <Icon class="size-3.5 shrink-0" />
-    <span class="detail-label min-w-0 truncate font-medium">{name}</span>
-    {#if summary}
-      <span class="min-w-0 truncate {mono ? 'font-mono text-[11px]' : ''}">{summary}</span>
-    {/if}
-    {#if issue || status === 'error'}
-      <span class="detail-issue inline-flex shrink-0 items-center gap-1">
-        <CircleX class="size-3.5" aria-hidden="true" />
-        <span class:sr-only={!issue}>{issue || getMessage('toolFailed')}</span>
-      </span>
-    {:else if status === 'running'}
-      <CircleDashed class="size-3.5 shrink-0" role="img" aria-label={getMessage('toolNoResult')} />
-    {/if}
-  </button>
-  {#if expanded}
-    <div class="detail-body my-1 ms-3 min-w-0 border-s ps-3">{@render children()}</div>
+  {#if inline}
+    {#if mono}<span dir="auto" class="font-mono font-medium">{name}</span>{/if}
+  {:else}
+    <button
+      type="button"
+      class="chat-detail-row flex min-h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-start"
+      aria-expanded={expanded}
+      title={summary || undefined}
+      onclick={toggle}
+    >
+      <ChevronRight
+        aria-hidden="true"
+        class="detail-chevron size-3 shrink-0 {expanded ? 'open' : ''}"
+      />
+      <Icon class="size-3.5 shrink-0" />
+      <span class="detail-label min-w-0 truncate font-medium">{name}</span>
+      {#if summary}
+        <span class="min-w-0 truncate {mono ? 'font-mono text-[11px]' : ''}">{summary}</span>
+      {/if}
+      {#if issue || status === 'error'}
+        <span class="detail-issue inline-flex shrink-0 items-center gap-1">
+          <CircleX class="size-3.5" aria-hidden="true" />
+          <span class:sr-only={!issue}>{issue || getMessage('toolFailed')}</span>
+        </span>
+      {:else if status === 'running'}
+        <CircleDashed
+          class="size-3.5 shrink-0"
+          role="img"
+          aria-label={getMessage('toolNoResult')}
+        />
+      {/if}
+    </button>
+  {/if}
+  {#if inline || expanded}
+    <div class="min-w-0" class:detail-body={!inline}>{@render children()}</div>
   {/if}
 </div>
 
@@ -91,7 +102,10 @@
     transform: rotate(90deg);
   }
   .detail-body {
-    border-color: var(--message-border, #e6e6e6);
+    margin-block: 0.25rem;
+    margin-inline-start: 0.75rem;
+    border-inline-start: 1px solid var(--message-border, #e6e6e6);
+    padding-inline-start: 0.75rem;
   }
   .detail-issue {
     color: #b45309;
