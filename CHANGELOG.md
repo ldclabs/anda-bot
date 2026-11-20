@@ -13,11 +13,15 @@ All notable changes to Anda Bot.
 
 ### Changed
 
+- Anda Desktop and the Chrome side panel group consecutive reasoning, tool calls and background updates into one collapsed row. The row shows the number of tool calls and failures. Expand it to read the reasoning or inspect a call’s input and output.
+- Plans collapse when all steps finish or an approval or choice needs a response. Select the plan header to review the steps. The pending request keeps its controls above the composer and a short record in the transcript.
 - The CLI, Anda Desktop and the Chrome extension share version 0.15.0. Source builds use the published Anda Engine 0.18.1 and require Rust 1.96 or newer. Build with `--no-default-features` to omit the Python worker.
 - Anda Desktop now uses Electron 45 and electron-vite 6. Both clients use Vite 8, Vitest 5 and markdown-it 15.
 
 ### Fixed
 
+- Chat keeps your reading position when a new reply arrives while you are viewing earlier messages. **Jump to latest** returns to the end of the conversation and stays clear of the plan and approval controls.
+- Copying a reply shows confirmation or a clipboard error beside the message. In right-to-left interfaces, replies and commands use their own text direction.
 - The desktop and extension type checks use the declarations shipped with markdown-it 15. The website stays on SvelteKit 2, which its Cloudflare adapter requires.
 
 ## [0.14.10] — 2026-11-19

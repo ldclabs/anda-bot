@@ -717,7 +717,7 @@ kbd {
 .empty-chat {
   isolation: isolate;
 }
-.empty-chat .conversation-scroll {
+.empty-chat .timeline-content {
   display: flex;
   flex-direction: column;
 }
@@ -815,43 +815,44 @@ kbd {
 }
 .transcript-item {
   margin-bottom: 20px;
-}
-.transcript-item article {
   --message-user-bubble: var(--desk-side);
   --message-bg: var(--desk-bg);
   --message-surface: var(--desk-side);
   --message-surface-hover: var(--desk-hover);
   --message-text: var(--desk-text);
-  --message-muted: var(--desk-muted);
+  --message-muted: color-mix(in srgb, var(--desk-muted) 77%, var(--desk-text));
   --message-border: var(--desk-border);
 }
 /* Message actions and times appear with the pointer or keyboard focus, one after another. */
-.transcript-item .chat-message-meta {
-  opacity: 0;
-  transition: opacity 120ms ease-out;
-}
-.transcript-item .chat-message-meta > * {
-  translate: 0 3px;
-  transition: translate 260ms var(--anda-spring);
-}
-.transcript-item .chat-message-meta > :nth-child(2) {
-  transition-delay: 30ms;
-}
-.transcript-item .chat-message-meta > :nth-child(3) {
-  transition-delay: 60ms;
-}
-.transcript-item .chat-message-meta > :nth-child(n + 4) {
-  transition-delay: 90ms;
-}
-.transcript-item:hover .chat-message-meta,
-.transcript-item:focus-within .chat-message-meta,
-.transcript-item .chat-message-meta:has([data-state='open']) {
-  opacity: 1;
-}
-.transcript-item:hover .chat-message-meta > *,
-.transcript-item:focus-within .chat-message-meta > *,
-.transcript-item .chat-message-meta:has([data-state='open']) > * {
-  translate: 0 0;
+@media (hover: hover) and (pointer: fine) {
+  .transcript-item .chat-message-meta {
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+  }
+  .transcript-item .chat-message-meta > * {
+    translate: 0 3px;
+    transition: translate 260ms var(--anda-spring);
+  }
+  .transcript-item .chat-message-meta > :nth-child(2) {
+    transition-delay: 30ms;
+  }
+  .transcript-item .chat-message-meta > :nth-child(3) {
+    transition-delay: 60ms;
+  }
+  .transcript-item .chat-message-meta > :nth-child(n + 4) {
+    transition-delay: 90ms;
+  }
+  .transcript-item:hover .chat-message-meta,
+  .transcript-item:focus-within .chat-message-meta,
+  .transcript-item .chat-message-meta:has([data-state='open']),
+  .transcript-item .chat-message-meta:has(.chat-copy-feedback:not(:empty)) {
+    opacity: 1;
+  }
+  .transcript-item:hover .chat-message-meta > *,
+  .transcript-item:focus-within .chat-message-meta > *,
+  .transcript-item .chat-message-meta:has([data-state='open']) > * {
+    translate: 0 0;
+  }
 }
 .transcript .md-content code.file-link {
   cursor: pointer;
@@ -975,7 +976,7 @@ kbd {
   --message-surface-hover: var(--desk-hover);
   --message-border: var(--desk-border);
   --message-text: var(--desk-text);
-  --message-muted: var(--desk-muted);
+  --message-muted: color-mix(in srgb, var(--desk-muted) 77%, var(--desk-text));
   --message-muted-soft: var(--desk-muted);
 }
 .composer-container {
@@ -1084,48 +1085,6 @@ kbd {
 }
 .uncertain-banner button {
   text-decoration: underline;
-}
-.jump-bottom {
-  position: absolute;
-  bottom: 220px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 6px;
-  padding: 7px 11px;
-  border-radius: 20px;
-  background: var(--desk-input);
-  border: 1px solid var(--desk-border);
-  font-size: 11px;
-  box-shadow: 0 2px 8px #0000000a;
-  animation: jump-in 420ms var(--anda-spring) both;
-  transition:
-    box-shadow 200ms ease-out,
-    border-color 200ms ease-out;
-}
-.jump-bottom:hover {
-  border-color: var(--desk-border-strong);
-  box-shadow: 0 6px 18px #00000014;
-}
-.jump-bottom svg {
-  animation: jump-arrow 1.6s ease-in-out 600ms infinite;
-}
-@keyframes jump-in {
-  from {
-    opacity: 0;
-    translate: 0 12px;
-    scale: 0.9;
-  }
-}
-@keyframes jump-arrow {
-  0%,
-  60%,
-  100% {
-    translate: 0 0;
-  }
-  30% {
-    translate: 0 3px;
-  }
 }
 .management-page {
   min-height: 0;

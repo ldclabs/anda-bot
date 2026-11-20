@@ -1640,6 +1640,27 @@
   "configFieldReceiveMode": {
     "message": "وضع الاستقبال"
   },
+  "chatActivity": {
+    "message": "تفاصيل التنفيذ"
+  },
+  "toolFailuresCount": {
+    "message": "أخطاء الأدوات · $1"
+  },
+  "backgroundShellNotice": {
+    "message": "أمر في الخلفية"
+  },
+  "planCompleted": {
+    "message": "اكتملت الخطة"
+  },
+  "jumpToLatest": {
+    "message": "انتقل إلى أحدث رسالة"
+  },
+  "thisBrowserChat": {
+    "message": "هذا المتصفح"
+  },
+  "messageCopyFailed": {
+    "message": "تعذّر النسخ. حدّد النص لنسخه."
+  },
   "thinkingProcess": {
     "message": "التفكير"
   },
@@ -1659,7 +1680,7 @@
     "message": "لا توجد نتيجة بعد"
   },
   "toolCallsCount": {
-    "message": "$1 استدعاءات أدوات"
+    "message": "استدعاءات الأدوات · $1"
   },
   "moreMessageActions": {
     "message": "إجراءات أخرى"

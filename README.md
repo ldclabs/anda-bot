@@ -142,6 +142,8 @@ The command waits for completion and prints the result as JSON. Use `--prompt-fi
 
 The default file workspace is `~/.anda/workspace`; configure `workspaces` in `config.yaml` to add persistent roots. A project selected by an authenticated local client also becomes that chat's shell directory and, subject to its approval policy, is available to file reading and searching. File editing tools remain limited to configured roots; changes elsewhere go through shell approval. See [configuration](docsite/docs/runtime/configuration.mdx).
 
+Desktop and the Chrome side panel group consecutive reasoning, tool calls and background updates into one expandable row. Completed plans collapse automatically. Open the plan header to review its steps.
+
 ### Approvals and unattended work
 
 Changing the approval mode in the desktop or Chrome extension composer synchronizes it with the current session immediately, without sending another message. Pending approvals that follow the session policy are re-evaluated; operations already executing continue.

@@ -1640,6 +1640,27 @@
   "configFieldReceiveMode": {
     "message": "Receive mode"
   },
+  "chatActivity": {
+    "message": "Work details"
+  },
+  "toolFailuresCount": {
+    "message": "Tool errors · $1"
+  },
+  "backgroundShellNotice": {
+    "message": "Background command"
+  },
+  "planCompleted": {
+    "message": "Plan complete"
+  },
+  "jumpToLatest": {
+    "message": "Jump to latest"
+  },
+  "thisBrowserChat": {
+    "message": "This browser"
+  },
+  "messageCopyFailed": {
+    "message": "Copy failed. Select the text to copy it."
+  },
   "thinkingProcess": {
     "message": "Thinking"
   },
@@ -1659,7 +1680,7 @@
     "message": "No result yet"
   },
   "toolCallsCount": {
-    "message": "$1 tool calls"
+    "message": "Tool calls · $1"
   },
   "moreMessageActions": {
     "message": "More actions"

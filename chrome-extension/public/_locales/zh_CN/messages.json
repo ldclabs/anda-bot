@@ -1640,6 +1640,27 @@
   "configFieldReceiveMode": {
     "message": "接收模式"
   },
+  "chatActivity": {
+    "message": "执行过程"
+  },
+  "toolFailuresCount": {
+    "message": "$1 次调用失败"
+  },
+  "backgroundShellNotice": {
+    "message": "后台命令"
+  },
+  "planCompleted": {
+    "message": "计划已完成"
+  },
+  "jumpToLatest": {
+    "message": "回到最新消息"
+  },
+  "thisBrowserChat": {
+    "message": "当前浏览器"
+  },
+  "messageCopyFailed": {
+    "message": "复制失败，可选中文本后复制。"
+  },
   "thinkingProcess": {
     "message": "思考过程"
   },

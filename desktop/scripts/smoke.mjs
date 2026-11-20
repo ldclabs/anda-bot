@@ -263,6 +263,46 @@ wsServer.on('connection', (ws, request) => {
         content: [{ type: 'Text', text: prompt }],
         timestamp: Date.now()
       })
+      if (prompt === 'Test the native desktop connection') {
+        c.messages.push(
+          {
+            role: 'assistant',
+            content: [
+              { type: 'Reasoning', text: 'Check the local fixture.' },
+              {
+                type: 'ToolCall',
+                callId: 'fixture-read',
+                name: 'read_file',
+                args: { path: 'smoke.txt' }
+              }
+            ]
+          },
+          {
+            role: 'tool',
+            content: [
+              {
+                type: 'ToolOutput',
+                callId: 'fixture-read',
+                name: 'read_file',
+                output: 'Fixture found'
+              }
+            ]
+          },
+          {
+            role: 'user',
+            name: '$system',
+            content: [
+              {
+                type: 'Text',
+                text: '[$system: kind="background shell"]\nRuntime update.\n\n"Fixture ready"'
+              }
+            ]
+          }
+        )
+        c.plan = [{ content: 'Check the fixture', status: 'completed' }]
+      } else {
+        delete c.plan
+      }
       c.messages.push({
         role: 'assistant',
         content: [{ type: 'Text', text: assistantReply }],
@@ -641,6 +681,24 @@ try {
     .waitFor({ timeout: 15_000 })
   assert.equal(conversations.size, 1)
   await page.screenshot({ path: join(screenshotDir, '02-chat.png') })
+  // Process updates share one disclosure while the actual reply stays readable.
+  const activity = page.locator('.chat-activity')
+  assert.equal(await activity.count(), 1)
+  const details = activity.getByRole('button', { name: /Work details/ })
+  assert.equal(await details.getAttribute('aria-expanded'), 'false')
+  await details.focus()
+  await page.keyboard.press('Space')
+  await activity.getByText('Check the local fixture.', { exact: true }).waitFor()
+  await activity.getByRole('button', { name: /read_file/ }).click()
+  await activity.getByText('Fixture found', { exact: true }).waitFor()
+  await details.click()
+  const plan = page.getByRole('button', { name: /Plan complete/ })
+  assert.equal(await plan.getAttribute('aria-expanded'), 'false')
+  await plan.focus()
+  await page.keyboard.press('Enter')
+  await page.locator('.plan-dock li').getByText('Check the fixture').waitFor()
+  await page.keyboard.press('Enter')
+  assert.equal(await page.locator('.plan-dock li').count(), 0)
   // Message copy buttons write through navigator.clipboard, which Electron
   // grants only through the session's permission request handler. The user's
   // clipboard text is restored when the run ends.

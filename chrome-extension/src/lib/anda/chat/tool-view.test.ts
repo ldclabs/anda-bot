@@ -111,6 +111,12 @@ describe('tool-view', () => {
       { id: 'm-1-0', conversation: 1, role: 'assistant', text: '', tools }
     ]
     expect(runningToolLabel([])).toBe('')
+    expect(
+      runningToolLabel([
+        ...turn([{ name: 'old_call' }]),
+        { id: 'next', conversation: 1, role: 'user', text: 'Next request' }
+      ])
+    ).toBe('')
     expect(runningToolLabel(turn([{ name: 'shell', args: { command: 'ls' }, output: '{}' }]))).toBe(
       ''
     )

@@ -7,8 +7,7 @@
   import type { PlanStep } from '$lib/anda/client/types'
   import { getMessage } from '$lib/i18n'
   import {
-    ChevronDown,
-    ChevronUp,
+    ChevronRight,
     CircleCheck,
     CircleDashed,
     CircleDot,
@@ -18,31 +17,38 @@
 
   let {
     steps,
-    working = false
+    working = false,
+    awaitingResponse = false
   }: {
     steps: PlanStep[]
     /** The turn is running: the step in progress spins. */
     working?: boolean
+    awaitingResponse?: boolean
   } = $props()
 
-  let collapsed = $state(false)
   let list = $state<HTMLOListElement | null>(null)
 
   const done = $derived(steps.filter((step) => step.status === 'completed').length)
+  const complete = $derived(steps.length > 0 && done === steps.length)
+  // A click overrides the default for this phase. Completing the plan folds it;
+  // unrelated polls with the same completion state leave the choice alone.
+  let collapsed = $derived(complete || awaitingResponse)
   const currentIndex = $derived(steps.findIndex((step) => step.status === 'in_progress'))
-  // Collapsed, the header names the step in progress, else the next or last one.
+  // A folded active plan still names the current or next step.
   const headline = $derived(
-    steps[currentIndex]?.content ||
-      steps.find((step) => step.status === 'pending')?.content ||
-      steps.at(-1)?.content ||
-      ''
+    steps[currentIndex]?.content || steps.find((step) => step.status === 'pending')?.content || ''
   )
   const progress = $derived(getMessage('planDockProgress', [String(done), String(steps.length)]))
 
   // A long plan scrolls; keep the step in progress in view as it advances.
   $effect(() => {
     if (collapsed || currentIndex < 0) return
-    list?.children[currentIndex]?.scrollIntoView({ block: 'nearest' })
+    const step = list?.children[currentIndex]
+    if (!list || !step) return
+    const bounds = list.getBoundingClientRect()
+    const item = step.getBoundingClientRect()
+    if (item.top < bounds.top) list.scrollTop += item.top - bounds.top
+    else if (item.bottom > bounds.bottom) list.scrollTop += item.bottom - bounds.bottom
   })
 
   function statusLabel(step: PlanStep): string {
@@ -58,30 +64,32 @@
     class:plan-dock-collapsed={collapsed}
     aria-label={getMessage('planDockLabel')}
   >
-    <header class="plan-dock-header">
-      <span class="plan-dock-icon"><ListChecks class="size-4" /></span>
-      <h2 class="plan-dock-title" title={collapsed ? headline : undefined}>
-        {collapsed ? headline : getMessage('planDockLabel')}
-      </h2>
-      <span class="plan-dock-count" title={progress}>
-        <span aria-hidden="true">{done}/{steps.length}</span>
-        <span class="sr-only">{progress}</span>
-      </span>
+    <h2 class="plan-dock-heading">
       <button
         type="button"
-        class="plan-dock-toggle"
+        class="plan-dock-header"
         aria-expanded={!collapsed}
-        aria-label={getMessage(collapsed ? 'actionDockExpand' : 'actionDockCollapse')}
-        title={getMessage(collapsed ? 'actionDockExpand' : 'actionDockCollapse')}
         onclick={() => (collapsed = !collapsed)}
       >
-        {#if collapsed}
-          <ChevronUp class="size-4" />
-        {:else}
-          <ChevronDown class="size-4" />
+        {#if complete}<CircleCheck class="plan-dock-complete size-4 shrink-0" />
+        {:else}<ListChecks class="size-4 shrink-0" />{/if}
+        <span class="plan-dock-title">
+          {getMessage(complete ? 'planCompleted' : 'planDockLabel')}
+        </span>
+        {#if collapsed && !complete && headline}
+          <span dir="auto" class="plan-dock-headline" title={headline}>{headline}</span>
         {/if}
+        <span class="plan-dock-count" title={progress}>
+          <span aria-hidden="true">{done}/{steps.length}</span><span class="sr-only">
+            {progress}
+          </span>
+        </span>
+        <ChevronRight
+          aria-hidden="true"
+          class="plan-chevron size-3.5 shrink-0 {collapsed ? '' : 'open'}"
+        />
       </button>
-    </header>
+    </h2>
 
     {#if !collapsed}
       <ol bind:this={list} class="plan-dock-steps scrollbar-slim">
@@ -103,7 +111,7 @@
               {/if}
               <span class="sr-only">{statusLabel(step)}</span>
             </span>
-            <span class="plan-dock-text">{step.content}</span>
+            <span dir="auto" class="plan-dock-text">{step.content}</span>
           </li>
         {/each}
       </ol>
@@ -114,77 +122,71 @@
 <style>
   /* Reads the host's --message-* palette, like the action dock below it. */
   .plan-dock {
-    display: grid;
-    gap: 0.375rem;
-    margin-bottom: 0.5rem;
+    min-width: 0;
+    margin-bottom: 0.375rem;
     border: 1px solid var(--message-border, #e6e6e6);
-    border-radius: 1rem;
-    background: var(--message-bg, #ffffff);
-    padding: 0.5rem 0.625rem 0.625rem;
+    border-radius: 0.75rem;
+    background: var(--message-bg, #fff);
     color: var(--message-text, #171717);
     font-size: 0.8125rem;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
-    animation: plan-dock-in 160ms ease-out;
   }
 
   .plan-dock-collapsed {
-    padding-bottom: 0.5rem;
+    border-color: transparent;
+    background: transparent;
   }
 
-  @keyframes plan-dock-in {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
+  .plan-dock-heading {
+    margin: 0;
   }
 
   .plan-dock-header {
     display: flex;
+    width: 100%;
+    min-height: 2rem;
     align-items: center;
     gap: 0.5rem;
-    min-width: 0;
-    padding-inline-start: 0.25rem;
-  }
-
-  .plan-dock-icon {
-    display: grid;
-    flex-shrink: 0;
-    place-items: center;
+    padding: 0.25rem 0.625rem;
+    border-radius: inherit;
     color: var(--message-muted, #737373);
+    text-align: start;
   }
-
+  .plan-dock-header:hover {
+    background: var(--message-surface-hover, #eee);
+    border-radius: 0.625rem;
+  }
+  .plan-dock-header:focus-visible {
+    outline: 2px solid var(--chat-accent, #059669);
+    outline-offset: -2px;
+    border-radius: 0.625rem;
+  }
   .plan-dock-title {
-    flex: 1;
-    min-width: 0;
-    margin: 0;
-    overflow: hidden;
+    flex-shrink: 0;
+    color: var(--message-text, #171717);
     font-size: 0.8125rem;
     font-weight: 600;
-    line-height: 1.25rem;
+  }
+  .plan-dock-headline {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 0.75rem;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
   .plan-dock-count {
-    flex-shrink: 0;
-    color: var(--message-muted, #737373);
+    margin-inline-start: auto;
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
   }
-
-  .plan-dock-toggle {
-    display: grid;
-    flex-shrink: 0;
-    place-items: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 0.375rem;
-    color: var(--message-muted, #737373);
+  .plan-dock-header:dir(rtl) :global(.plan-chevron) {
+    transform: rotate(180deg);
   }
-
-  .plan-dock-toggle:hover {
-    background: var(--message-surface-hover, #eeeeee);
-    color: var(--message-text, #171717);
+  .plan-dock-header :global(.plan-chevron.open),
+  .plan-dock-header:dir(rtl) :global(.plan-chevron.open) {
+    transform: rotate(90deg);
+  }
+  .plan-dock-header :global(.plan-dock-complete) {
+    color: var(--chat-accent, #059669);
   }
 
   .plan-dock-steps {
@@ -194,7 +196,7 @@
     margin: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    padding: 0 0.25rem;
+    padding: 0 0.625rem 0.5rem;
     list-style: none;
   }
 
@@ -237,10 +239,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .plan-dock {
-      animation: none;
-    }
-
     :global(.plan-dock-spinner) {
       animation: none;
     }

@@ -217,6 +217,10 @@ export class AndaSidePanelClient extends EventTarget implements DaemonApi {
     })
   }
 
+  get localSource(): string {
+    return this.#localChannelSource
+  }
+
   get activeSource(): string | null {
     return this.activeChannel?.source || null
   }

@@ -93,10 +93,13 @@ export function toolCallLabel(tool: ChatToolCall): string {
 
 /** The latest call still waiting for its result among a turn's messages, or ''. */
 export function runningToolLabel(messages: ChatMessage[]): string {
-  const tool = messages
-    .flatMap((message) => message.tools || [])
-    .findLast((call) => toolCallStatus(call) === 'running')
-  return tool ? toolCallLabel(tool) : ''
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!
+    if (message.role === 'user' || message.role === 'external_user') break
+    const tool = message.tools?.findLast((call) => toolCallStatus(call) === 'running')
+    if (tool) return toolCallLabel(tool)
+  }
+  return ''
 }
 
 function summaryValue(value: Json | undefined, isPath: boolean): string {

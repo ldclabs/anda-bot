@@ -88,6 +88,8 @@ Chrome blocks extension scripts on some protected pages such as `chrome://` URLs
 
 ## Client behavior
 
+The chat keeps replies and requests for approval visible. Open **Work details** to inspect consecutive reasoning, tool calls and background updates. Completed plans fold to one line above the composer. When reading older messages, use **Jump to latest** to return to the end. Rich-text copy and print are in the reply’s **More actions** menu.
+
 Connection settings are shared by the Side Panel and Dashboard. Updating the
 Gateway URL or bearer token clears data from the previous connection; saving
 the daemon configuration preserves the selected approval policy.

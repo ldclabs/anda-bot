@@ -26,6 +26,7 @@
 
   type Props = {
     channels: Channel[]
+    localSource: string
     activeSource: string | null
     sending?: boolean
     onSelect?: (source: string) => void | Promise<void>
@@ -35,6 +36,7 @@
 
   let {
     channels = [],
+    localSource,
     activeSource = null,
     sending = false,
     onSelect,
@@ -166,6 +168,7 @@
   }
 
   function channelTitle(source: string): string {
+    if (source === localSource) return getMessage('thisBrowserChat')
     if (source.startsWith('browser:')) {
       const [, scope] = source.split(':')
       return titleCase(scope || 'browser')

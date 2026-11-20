@@ -142,6 +142,8 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 默认文件工作区是 `~/.anda/workspace`，可通过 `config.yaml` 的 `workspaces` 增加持久工作区。经过本地客户端认证并选择的项目目录也会成为该对话的 shell 工作目录，并按照审批策略开放文件读取和搜索。文件编辑工具仍限于配置的根目录，其他位置的修改通过 shell 审批处理。详见[运行时配置](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 
+在桌面端和 Chrome 侧栏中，连续的思考、工具调用和后台通知默认收成一行，点击即可查看详情。计划完成后自动收起，点击计划标题可以回看步骤。
+
 ### 审批与无人值守任务
 
 在桌面端或 Chrome 扩展输入框切换审批模式，会立即同步到当前会话，无需再发送消息。遵循会话策略的待处理审批会按新模式重新判断；已经开始执行的操作会继续运行。

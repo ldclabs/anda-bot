@@ -1,131 +1,154 @@
 import type { ChatMessage, ChatToolCall } from '../client/types'
+import { runtimeNotices } from './tool-view'
 
-/**
- * Folds an agent turn's raw steps into what the transcript shows, so a turn
- * reads as one flow instead of a card per LLM round:
- *
- * - a tool result is paired back onto the call that made it (by `callId`,
- *   else by tool name), so a call and its output are one row and messages
- *   that only carried results disappear;
- * - a step without prose (only tool calls or reasoning) joins the step before
- *   it, so a run of calls reads as one list under the narration that led to
- *   them.
- *
- * A fold keeps the id of its first message, which stays stable while the turn
- * grows. Source messages are never mutated; folded ones are copies. The result
- * is cached per source array, so callers must replace (not mutate) an array
- * whose messages changed, and must not mutate what they get back.
- */
-export function displayMessages(messages: ChatMessage[]): ChatMessage[] {
-  let folded = foldedMessages.get(messages)
-  if (!folded) {
-    folded = foldMessages(messages)
-    foldedMessages.set(messages, folded)
-  }
-  return folded
+export type ActivityDetail = { id: string; messageId: string } & (
+  | { kind: 'thought'; text: string }
+  | { kind: 'tool'; tool: ChatToolCall }
+  | { kind: 'notice'; name: string; text: string }
+)
+
+export type TranscriptRow = { id: string; lastMessageId?: string } & (
+  { kind: 'message'; message: ChatMessage } | { kind: 'activity'; details: ActivityDetail[] }
+)
+
+interface Transcript {
+  messages: ChatMessage[]
+  rows: TranscriptRow[]
+  lastPromptId?: string
 }
 
-// The transcript re-derives every loaded group on each poll that changes the
-// current one. Groups replace their message array when they change, so an
-// unchanged group hands back the same folded messages and its rows (with
-// their parsed tool calls) are not rendered again.
-const foldedMessages = new WeakMap<ChatMessage[], ChatMessage[]>()
+// A poll replaces the changed group's array. Older conversations retain their
+// paired calls, row keys and open disclosures without rebuilding their history.
+const cache = new WeakMap<ChatMessage[], Transcript>()
 
-function foldMessages(messages: ChatMessage[]): ChatMessage[] {
+export function chatTranscript(source: ChatMessage[]): Transcript {
+  const cached = cache.get(source)
+  if (cached) return cached
+  const messages = pairToolResults(source)
+  const lastPromptId = messages.findLast((m) => m.role === 'user' || m.role === 'external_user')?.id
+  const transcript = { messages, rows: transcriptRows(messages), lastPromptId }
+  cache.set(source, transcript)
+  return transcript
+}
+
+function pairToolResults(messages: ChatMessage[]): ChatMessage[] {
   const output: ChatMessage[] = []
-  const owned = new Set<number>()
-  const pendingCalls: Array<{ index: number; tool: number; callId?: string; name: string }> = []
-  let openStep = -1
-
-  const own = (index: number): ChatMessage => {
-    if (!owned.has(index)) {
-      const message = output[index]!
-      output[index] = { ...message, tools: [...(message.tools || [])] }
-      owned.add(index)
-    }
-    return output[index]!
-  }
-
-  const registerCalls = (index: number, tools: ChatToolCall[], offset: number) => {
-    tools.forEach((tool, position) => {
-      if (tool.output === undefined) {
-        pendingCalls.push({ index, tool: offset + position, callId: tool.callId, name: tool.name })
-      }
-    })
-  }
-
-  const attachResult = (result: ChatToolCall): boolean => {
-    const at = pendingCalls.findIndex((call) =>
-      call.callId && result.callId ? call.callId === result.callId : call.name === result.name
-    )
-    if (at < 0) {
-      return false
-    }
-    const [call] = pendingCalls.splice(at, 1)
-    const target = own(call!.index)
-    const tools = target.tools!
-    tools[call!.tool] = { ...tools[call!.tool]!, output: result.output ?? null }
-    return true
-  }
-
-  for (const source of messages) {
-    let message = source
-    if (message.role === 'tool' && message.tools?.length) {
-      const unpaired = message.tools.filter((result) => !attachResult(result))
-      if (unpaired.length !== message.tools.length) {
-        message = { ...message, tools: unpaired.length ? unpaired : undefined }
-        if (!message.tools && !hasProse(message) && !message.thinkingText?.trim()) {
-          continue
+  const pending: { message: number; index: number; call: ChatToolCall; turn: number }[] = []
+  let turn = 0
+  for (let message of messages) {
+    const tools = message.tools
+    if (output.at(-1)?.conversation !== message.conversation) pending.length = 0
+    if (message.role === 'user' || message.role === 'external_user') turn++
+    if (message.role === 'tool' && tools?.length) {
+      const unpaired = tools.filter((result) => {
+        // A steering prompt can arrive before an earlier tool result. Its call
+        // ID still matches; a name alone is only meaningful within one turn.
+        const exact = result.callId
+          ? pending.findIndex(({ call }) => call.callId === result.callId)
+          : -1
+        const at =
+          exact >= 0
+            ? exact
+            : pending.findIndex(
+                (item) =>
+                  item.turn === turn &&
+                  (!item.call.callId || !result.callId) &&
+                  item.call.name === result.name
+              )
+        if (at < 0) return true
+        const paired = pending.splice(at, 1)[0]!
+        output[paired.message]!.tools![paired.index] = {
+          ...paired.call,
+          output: result.output ?? null
         }
+        return false
+      })
+      if (unpaired.length !== tools.length) {
+        if (!unpaired.length && !hasBody(message) && !message.thinkingText?.trim()) continue
+        message = { ...message, tools: unpaired }
       }
+    } else if (tools?.some((tool) => tool.output === undefined)) {
+      message = { ...message, tools: [...tools] }
+      tools.forEach((call, index) => {
+        if (call.output === undefined) pending.push({ message: output.length, index, call, turn })
+      })
     }
-
-    if (openStep >= 0 && isBareStep(message)) {
-      const target = own(openStep)
-      const offset = target.tools!.length
-      target.tools!.push(...(message.tools || []))
-      target.thinkingText = [target.thinkingText?.trim(), message.thinkingText?.trim()]
-        .filter(Boolean)
-        .join('\n\n')
-      target.timestamp = message.timestamp ?? target.timestamp
-      registerCalls(openStep, message.tools || [], offset)
-      continue
-    }
-
     output.push(message)
-    const index = output.length - 1
-    registerCalls(index, message.tools || [], 0)
-    openStep = isBareStep(message) || (isAssistant(message) && message.tools?.length) ? index : -1
-  }
-
-  for (const index of owned) {
-    if (!output[index]!.tools!.length) {
-      output[index]!.tools = undefined
-    }
   }
   return output
 }
 
-/** An assistant step whose narration led to tool calls; the turn continues after it. */
-export function isProcessStep(message: ChatMessage): boolean {
-  return isAssistant(message) && Boolean(message.tools?.length)
-}
-
-function isAssistant(message: ChatMessage): boolean {
-  return !['user', 'external_user', 'system', 'tool'].includes(message.role)
-}
-
-function hasProse(message: ChatMessage): boolean {
+function hasBody(message: ChatMessage): boolean {
   return Boolean(message.text.trim() || message.attachments?.length || message.actions?.length)
 }
 
-/** Only tool calls/results or reasoning. Runtime notices (tool role, no calls) stand alone. */
-function isBareStep(message: ChatMessage): boolean {
-  if (message.noticeKind || hasProse(message)) {
-    return false
+export function isProcessStep(message: ChatMessage): boolean {
+  return message.role === 'assistant' && Boolean(message.tools?.length)
+}
+
+function transcriptRows(messages: ChatMessage[]): TranscriptRow[] {
+  const rows: TranscriptRow[] = []
+  let activity: Extract<TranscriptRow, { kind: 'activity' }> | undefined
+  function add(detail: ActivityDetail) {
+    if (!activity) {
+      activity = { kind: 'activity', id: detail.id, details: [] }
+      rows.push(activity)
+    }
+    activity.details.push(detail)
   }
-  if (message.role === 'tool') {
-    return Boolean(message.tools?.length)
+
+  let conversation: number | undefined
+  for (const message of messages) {
+    if (conversation !== message.conversation) activity = undefined
+    conversation = message.conversation
+    const { id, role, tools, noticeKind } = message
+    const thought = message.thinkingText?.trim()
+    if (role !== 'assistant' && role !== 'tool') activity = undefined
+    if (thought && role !== 'tool') {
+      add({ kind: 'thought', id: id + ':thinking', messageId: id, text: thought })
+    }
+    if (hasBody(message)) {
+      rows.push({ kind: 'message', id, message })
+      activity = undefined
+    }
+    tools?.forEach((tool, index) => {
+      add({ kind: 'tool', id: id + ':tool:' + index, messageId: id, tool })
+    })
+    if (thought && role === 'tool') {
+      const notices = noticeKind ? [{ kind: noticeKind, body: thought }] : runtimeNotices(thought)
+      notices.forEach((notice, index) => {
+        // Other notices can carry recovery instructions. Keep them individually
+        // discoverable even between a long series of background updates.
+        const background = notice.kind === 'background shell' || notice.kind === 'background task'
+        if (!background) activity = undefined
+        add({
+          kind: 'notice',
+          id: id + ':notice:' + index,
+          messageId: id,
+          name: notice.kind,
+          text: notice.body
+        })
+        if (!background) activity = undefined
+      })
+    }
+    // Edited-file summaries follow the last visible row of their turn.
+    const last = rows.at(-1)
+    if (last) last.lastMessageId = id
   }
-  return isAssistant(message) && Boolean(message.tools?.length || message.thinkingText?.trim())
+  return rows
+}
+
+/** Memory links can point to a tool-only message inside a closed disclosure. */
+export function transcriptAnchor(groups: Transcript[], messageId: string): string {
+  for (const { messages, rows } of groups) {
+    const message = messages.find((item) => item.id === messageId)
+    if (!message) continue
+    if (hasBody(message)) return messageId
+    const activity = rows.find(
+      (row) =>
+        row.kind === 'activity' && row.details.some((detail) => detail.messageId === messageId)
+    )
+    return activity?.id ?? messageId
+  }
+  return messageId
 }

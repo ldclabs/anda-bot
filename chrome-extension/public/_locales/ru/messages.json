@@ -1640,6 +1640,27 @@
   "configFieldReceiveMode": {
     "message": "Режим приёма"
   },
+  "chatActivity": {
+    "message": "Ход работы"
+  },
+  "toolFailuresCount": {
+    "message": "Ошибки инструментов · $1"
+  },
+  "backgroundShellNotice": {
+    "message": "Фоновая команда"
+  },
+  "planCompleted": {
+    "message": "План выполнен"
+  },
+  "jumpToLatest": {
+    "message": "К последнему сообщению"
+  },
+  "thisBrowserChat": {
+    "message": "Этот браузер"
+  },
+  "messageCopyFailed": {
+    "message": "Не удалось скопировать. Выделите текст и скопируйте его."
+  },
   "thinkingProcess": {
     "message": "Размышления"
   },
@@ -1659,7 +1680,7 @@
     "message": "Результата пока нет"
   },
   "toolCallsCount": {
-    "message": "Вызовов инструментов: $1"
+    "message": "Вызовы инструментов · $1"
   },
   "moreMessageActions": {
     "message": "Другие действия"

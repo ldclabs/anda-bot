@@ -7,20 +7,22 @@
     type ComposerSubmitPayload,
     type ComposerVoicePayload
   } from '$lib/anda/ChatComposer.svelte'
+  import ChatActivity from '$lib/anda/ChatActivity.svelte'
+  import ChatTimeline from '$lib/anda/ChatTimeline.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import AndaMark from '$lib/anda/AndaMark.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
   import PlanDock from '$lib/anda/PlanDock.svelte'
   import { actionPending } from '$lib/anda/chat/action-view'
-  import { displayMessages } from '$lib/anda/chat/message-display'
+  import { transcriptAnchor, chatTranscript } from '$lib/anda/chat/message-display'
   import { runningToolLabel } from '$lib/anda/chat/tool-view'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
   import { andaClient } from '$lib/anda/client/side-panel.svelte'
   import { provideAndaClient } from '$lib/anda/client/context'
   provideAndaClient(andaClient)
-  import { type ChatAttachment, type ChatMessage, type MessageGroup } from '$lib/anda/client/types'
+  import { type ChatAttachment, type MessageGroup } from '$lib/anda/client/types'
   import {
     isPageElementAttachmentRequest,
     pageElementAttachmentRequestStorageKey,
@@ -63,7 +65,7 @@
   let settingsOpen = $state(false)
   let setupGuideOpen = $state(false)
   let sideMessagesOpen = $state(false)
-  let messagesElement: HTMLElement | null = null
+  let messagesElement = $state<HTMLElement | null>(null)
   let sideMessagesElement: HTMLElement | null = $state(null)
   let observedSideMessageCount = 0
   let lastBookmarkJumpRequestId = ''
@@ -95,19 +97,24 @@
     andaClient.activeChannel?.hasPreviousConversations || false
   )
   const loadingPrevious = $derived(andaClient.activeChannel?.loadingPrevious || false)
-  const visibleMessageGroups = $derived.by<MessageGroup[]>(() =>
-    displayMessageGroups(andaClient.activeChannel?.messageGroups || [])
-  )
-  // The running turn's rows animate; the newest group can be an empty placeholder.
-  const liveGroup = $derived(
-    stoppable ? visibleMessageGroups.findLast((group) => group.messages.length)?._id : undefined
+  const visibleMessageGroups = $derived(
+    (andaClient.activeChannel?.messageGroups || [])
+      .filter((group) => group.messages.length)
+      .map((group) => ({ ...group, ...chatTranscript(group.messages) }))
   )
   const currentStep = $derived(
     stoppable ? runningToolLabel(visibleMessageGroups.at(-1)?.messages || []) : ''
   )
   const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
   const sideMessageCount = $derived(sideMessages.length)
-  const visibleSideMessages = $derived.by<ChatMessage[]>(() => displaySideMessages(sideMessages))
+  const sideTranscript = $derived(
+    chatTranscript(
+      sideMessages.map((message, index) => ({
+        ...message,
+        id: `side-${index}-${message.id}`
+      }))
+    )
+  )
   const pendingActions = $derived(
     [
       ...(andaClient.activeChannel?.messageGroups || []).flatMap((group) => group.messages),
@@ -204,38 +211,6 @@
       andaClient.destroy()
     }
   })
-
-  const lastMessage = $derived.by(() => {
-    const lastGroup = visibleMessageGroups[visibleMessageGroups.length - 1]
-    return lastGroup?.messages[lastGroup.messages.length - 1]
-  })
-  // A new last message is followed only when the reader has reached the end of
-  // the previous one, so reading further up is never yanked to the bottom. A
-  // prompt the user just sent, and a channel switch, are always followed.
-  let followed = { source: '', id: '' }
-  $effect(() => {
-    const id = lastMessage?.id || ''
-    const source = activeSource || ''
-    if (!id || (id === followed.id && source === followed.source)) {
-      return
-    }
-    const previous = followed
-    followed = { source, id }
-    if (source === previous.source && lastMessage?.role !== 'user' && !endInView(previous.id)) {
-      return
-    }
-    scrollIntoView(id, 'smooth', 'start')
-  })
-
-  function endInView(messageId: string): boolean {
-    const element = messageId ? document.getElementById(messageId) : null
-    if (!element || !messagesElement) {
-      return true
-    }
-    return (
-      element.getBoundingClientRect().bottom <= messagesElement.getBoundingClientRect().bottom + 48
-    )
-  }
 
   $effect(() => {
     if (sideMessageCount > observedSideMessageCount) {
@@ -411,7 +386,7 @@
   }
 
   function scrollToBookmarkMessage(messageId: string): boolean {
-    const element = document.getElementById(messageId)
+    const element = document.getElementById(transcriptAnchor(visibleMessageGroups, messageId))
     if (!element) {
       return false
     }
@@ -421,7 +396,7 @@
     window.setTimeout(() => {
       element.classList.remove('bookmark-jump-highlight')
     }, 1800)
-    scrollIntoView(messageId, 'smooth', 'center')
+    scrollIntoView(element.id, 'smooth', 'center')
     return true
   }
 
@@ -462,21 +437,6 @@
     await andaClient.sendVoiceTurn(payload)
   }
 
-  function displayMessageGroups(sourceGroups: MessageGroup[]): MessageGroup[] {
-    return sourceGroups
-      .map((group) => ({ ...group, messages: displayMessages(group.messages) }))
-      .filter((group) => group.messages.length)
-  }
-
-  function displaySideMessages(sourceMessages: ChatMessage[]): ChatMessage[] {
-    return displayMessages(
-      sourceMessages.map((message, index) => ({
-        ...message,
-        id: `side-${index}-${message.id}`
-      }))
-    )
-  }
-
   function statusIconClass() {
     if (!andaClient.settings.token) return 'text-muted-foreground'
     if (['connected', 'ready', 'idle', 'completed'].includes(status)) {
@@ -504,6 +464,7 @@
 <div class="flex h-screen min-w-80 overflow-hidden bg-background text-foreground">
   <ChatChannelsSidebar
     {channels}
+    localSource={andaClient.localSource}
     {activeSource}
     {sending}
     onSelect={(source) => andaClient.switchChannel(source)}
@@ -527,18 +488,21 @@
           {:else}
             <Radio class={`size-3 shrink-0 ${statusIconClass()}`} />
           {/if}
-          <span class="truncate"
-            >{andaClient.settings.token || status === 'starting'
+          <span class="truncate">
+            {andaClient.settings.token || status === 'starting'
               ? statusLabel(status)
-              : getMessage('dashboardNoConnection')}</span
-          >
+              : getMessage('dashboardNoConnection')}
+          </span>
         </span>
         {#if andaClient.systemMessage || (andaClient.settings.token && activeSource)}
           <p
             class="message-active-source truncate text-xs font-bold"
             title={andaClient.systemMessage?.text || activeSource}
           >
-            {andaClient.systemMessage?.text || activeSource}
+            {andaClient.systemMessage?.text ||
+              (activeSource === andaClient.localSource
+                ? getMessage('thisBrowserChat')
+                : activeSource)}
           </p>
         {/if}
       </div>
@@ -569,9 +533,12 @@
       <ChatSettings bind:open={settingsOpen} bind:setupGuideOpen />
     {/if}
 
-    <main
-      bind:this={messagesElement}
-      class="message-scroll scrollbar-slim flex min-h-0 w-full flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-3 py-4"
+    <ChatTimeline
+      source={activeSource || ''}
+      messages={visibleMessageGroups.at(-1)?.messages || []}
+      bind:viewport={messagesElement}
+      scrollClass="message-scroll scrollbar-slim"
+      contentClass="flex flex-col gap-3 px-3 py-4"
     >
       {#if !andaClient.activeChannel || andaClient.activeChannel.messageGroups.length === 0}
         <div class="message-empty m-auto grid max-w-64 place-items-center gap-2 text-center">
@@ -635,14 +602,18 @@
               </div>
             {/if}
 
-            {#each group.messages as message (message.id)}
-              <ChatMessageItem
-                {message}
-                memoryActivity={memoryActivity.messages[message.id]}
-                quickPromptActive={andaClient.quickPrompts.has(message.text)}
-                onToggleQuickPrompt={toggleQuickPrompt}
-                live={group._id === liveGroup}
-              />
+            {#each group.rows as row (row.id)}
+              {#if row.kind === 'activity'}
+                <ChatActivity {row} />
+              {:else}
+                <ChatMessageItem
+                  message={row.message}
+                  dockedActionId={pendingActions[0]?.id}
+                  memoryActivity={memoryActivity.messages[row.message.id]}
+                  quickPromptActive={andaClient.quickPrompts.has(row.message.text)}
+                  onToggleQuickPrompt={toggleQuickPrompt}
+                />
+              {/if}
             {/each}
           </section>
         {/each}
@@ -652,7 +623,7 @@
           </div>
         {/if}
       {/if}
-    </main>
+    </ChatTimeline>
 
     {#if sideMessageCount > 0}
       <section class="message-side-tasks max-h-3/4 border-t backdrop-blur">
@@ -697,12 +668,17 @@
             class="message-side-body scrollbar-slim overflow-y-auto border-t px-3 py-3"
           >
             <div class="grid gap-2">
-              {#each visibleSideMessages as message (message.id)}
-                <ChatMessageItem
-                  {message}
-                  quickPromptActive={andaClient.quickPrompts.has(message.text)}
-                  onToggleQuickPrompt={toggleQuickPrompt}
-                />
+              {#each sideTranscript.rows as row (row.id)}
+                {#if row.kind === 'activity'}
+                  <ChatActivity {row} />
+                {:else}
+                  <ChatMessageItem
+                    message={row.message}
+                    dockedActionId={pendingActions[0]?.id}
+                    quickPromptActive={andaClient.quickPrompts.has(row.message.text)}
+                    onToggleQuickPrompt={toggleQuickPrompt}
+                  />
+                {/if}
               {/each}
             </div>
           </div>
@@ -712,7 +688,13 @@
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatGptUsage model={andaClient.modelState.activeModel} />
-      <PlanDock steps={andaClient.activeChannel?.plan || []} working={stoppable} />
+      {#key activeSource + ':' + (visibleMessageGroups.at(-1)?.lastPromptId || '')}
+        <PlanDock
+          awaitingResponse={pendingActions.length > 0}
+          steps={andaClient.activeChannel?.plan || []}
+          working={stoppable}
+        />
+      {/key}
       <ActionDock
         pending={pendingActions}
         onReply={(text) => sendPrompt({ text, attachments: [] })}
@@ -782,7 +764,7 @@
     background: color-mix(in srgb, var(--message-bg) 94%, transparent);
   }
 
-  .message-scroll {
+  :global(.message-scroll) {
     background: var(--message-bg);
     /* Text fades out under the header and into the footer instead of being cut. */
     mask-image: linear-gradient(

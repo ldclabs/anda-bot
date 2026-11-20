@@ -93,9 +93,10 @@
   let now = $state(Date.now())
   let shownActionId = ''
   let shownBatchId = ''
-  let shownAt = 0
+  let readyActionId = $state('')
 
   const action = $derived(pending[0])
+  const actionId = $derived(action?.id || '')
   const approval = $derived(Boolean(action && isApprovalAction(action)))
   const batch = $derived(
     approval && action?.payload.batch_id && action.payload.parent_run_id
@@ -168,6 +169,16 @@
     return () => window.clearInterval(timer)
   })
 
+  // Keep answer rows focusable, but visibly unavailable during the existing
+  // guard against a second click landing on the next question.
+  $effect(() => {
+    const id = actionId
+    readyActionId = ''
+    if (!id) return
+    const timer = window.setTimeout(() => (readyActionId = id), 300)
+    return () => clearTimeout(timer)
+  })
+
   // A new choice takes keyboard focus when nothing else holds it, so its
   // number keys work at once. Approvals never do: a stray Enter must not run a command.
   $effect(() => {
@@ -180,7 +191,6 @@
     const id = action?.id || ''
     if (id === shownActionId) return
     shownActionId = id
-    shownAt = performance.now()
     if (!id || approval) return
     void tick().then(() => {
       const current = document.activeElement
@@ -213,7 +223,7 @@
    */
   function activate(index: number) {
     const row = rows[index]
-    if (!row || disabled || performance.now() - shownAt < 300) return
+    if (!row || disabled || readyActionId !== actionId) return
     if (rowHasInput(row)) rowTarget(index)?.focus()
     else void answer(row)
   }
@@ -337,7 +347,7 @@
           <ListChecks class="size-4" />
         {/if}
       </span>
-      <h2 class="action-dock-title" {title}>{title}</h2>
+      <h2 dir="auto" class="action-dock-title" {title}>{title}</h2>
       {#if pending.length > 1}
         <span class="action-dock-more">
           {getMessage('actionDockMore', String(pending.length - 1))}
@@ -381,10 +391,10 @@
       {#if message || action.summary || action.details?.length || action.command}
         <div class="action-dock-body scrollbar-slim">
           {#if message}
-            <p class="action-dock-message">{message}</p>
+            <p dir="auto" class="action-dock-message">{message}</p>
           {/if}
           {#if action.summary}
-            <p class="action-dock-message">{action.summary}</p>
+            <p dir="auto" class="action-dock-message">{action.summary}</p>
           {/if}
           {#if action.details?.length}
             {#each action.details as detail, detailIndex (`${detail.label}-${detailIndex}`)}
@@ -399,14 +409,14 @@
                     rel="noopener noreferrer">{link}</a
                   >
                 {:else if actionDetailIsBlock(detail)}
-                  <pre class="action-dock-code"><code>{actionDetailText(detail)}</code></pre>
+                  <pre dir="auto" class="action-dock-code"><code>{actionDetailText(detail)}</code></pre>
                 {:else}
                   <div class="action-dock-detail-text">{actionDetailText(detail)}</div>
                 {/if}
               </div>
             {/each}
           {:else if action.command}
-            <pre class="action-dock-code"><code>{action.command}</code></pre>
+            <pre dir="auto" class="action-dock-code"><code>{action.command}</code></pre>
             {#if action.workspace}
               <div class="action-dock-meta" title={action.workspace}>
                 {action.workspace}{#if action.background}
@@ -482,6 +492,7 @@
               class:action-dock-option-active={index === active}
               data-row={index}
               {disabled}
+              aria-disabled={disabled || readyActionId !== actionId}
               onfocus={() => rowFocused(index)}
               onclick={() => activate(index)}
             >
@@ -698,7 +709,8 @@
     outline-offset: 1px;
   }
 
-  .action-dock-option:disabled {
+  .action-dock-option:disabled,
+  .action-dock-option[aria-disabled='true'] {
     opacity: 0.6;
   }
 

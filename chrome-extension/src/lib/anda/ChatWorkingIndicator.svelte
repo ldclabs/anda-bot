@@ -24,7 +24,7 @@
   </span>
   <span class="chat-working-label anda-shimmer">{label}</span>
   {#if elapsed}
-    <span class="chat-working-elapsed">{elapsed}</span>
+    <span aria-hidden="true" class="chat-working-elapsed">{elapsed}</span>
   {/if}
   {#if step}
     <span class="chat-working-step">

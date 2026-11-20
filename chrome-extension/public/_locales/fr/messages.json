@@ -1640,6 +1640,27 @@
   "configFieldReceiveMode": {
     "message": "Mode de réception"
   },
+  "chatActivity": {
+    "message": "Détails de l’exécution"
+  },
+  "toolFailuresCount": {
+    "message": "Erreurs d’outils · $1"
+  },
+  "backgroundShellNotice": {
+    "message": "Commande en arrière-plan"
+  },
+  "planCompleted": {
+    "message": "Plan terminé"
+  },
+  "jumpToLatest": {
+    "message": "Aller au dernier message"
+  },
+  "thisBrowserChat": {
+    "message": "Ce navigateur"
+  },
+  "messageCopyFailed": {
+    "message": "Échec de la copie. Sélectionnez le texte pour le copier."
+  },
   "thinkingProcess": {
     "message": "Réflexion"
   },
@@ -1659,7 +1680,7 @@
     "message": "Pas encore de résultat"
   },
   "toolCallsCount": {
-    "message": "$1 appels d’outils"
+    "message": "Appels d’outils · $1"
   },
   "moreMessageActions": {
     "message": "Plus d’actions"

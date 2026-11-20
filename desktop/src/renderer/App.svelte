@@ -6,11 +6,17 @@
   import { applyAppearanceTheme } from '$lib/anda/theme'
   import AndaMark from '$lib/anda/AndaMark.svelte'
   import ChatComposer from '$lib/anda/ChatComposer.svelte'
+  import ChatActivity from '$lib/anda/ChatActivity.svelte'
+  import ChatTimeline from '$lib/anda/ChatTimeline.svelte'
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
   import PlanDock from '$lib/anda/PlanDock.svelte'
-  import { displayMessages } from '$lib/anda/chat/message-display'
+  import {
+    transcriptAnchor,
+    chatTranscript,
+    type TranscriptRow
+  } from '$lib/anda/chat/message-display'
   import { actionPending } from '$lib/anda/chat/action-view'
   import { firstLine, runningToolLabel } from '$lib/anda/chat/tool-view'
   import DropdownMenu from '$lib/anda/DropdownMenu.svelte'
@@ -23,7 +29,6 @@
   import McpWorkspace from '$lib/anda/dashboard/McpWorkspace.svelte'
   import BookmarksWorkspace from '$lib/anda/dashboard/BookmarksWorkspace.svelte'
   import {
-    ArrowDown,
     ArrowLeft,
     ArrowRight,
     ArrowUpRight,
@@ -223,9 +228,6 @@
   )
   const CHAT_AREA = '1 / 2 / 2 / 3'
   let scrollArea = $state<HTMLElement | null>(null)
-  let following = $state(true)
-  let scrollPositions = new Map<string, number>()
-  let renderedSource = ''
   let activePrompt = $state('')
   let now = $state(Date.now())
   const workingSince = new Map<string, number>()
@@ -238,9 +240,9 @@
   const resources = $derived(messages.flatMap((message) => message.attachments || []))
   // Each agent turn reads as one flow: tool results fold into their calls.
   const transcriptGroups = $derived(
-    groups.map((group) => ({ ...group, messages: displayMessages(group.messages) }))
+    groups.map((group) => ({ ...group, ...chatTranscript(group.messages) }))
   )
-  const transcriptSideMessages = $derived(displayMessages(channel?.sideMessages || []))
+  const sideTranscript = $derived(chatTranscript(channel?.sideMessages || []))
   const submitting = $derived(client.sending || Boolean(channel?.sending))
   const working = $derived(
     ['working', 'submitted', 'sending'].includes(channel?.status || '') || client.sending
@@ -300,7 +302,7 @@
         if (edited.length) files.set(turn.at(-1)!.id, edited)
       }
       for (const message of group.messages) {
-        if (message.role === 'user' && turn.length) {
+        if ((message.role === 'user' || message.role === 'external_user') && turn.length) {
           finish()
           turn = []
         }
@@ -317,10 +319,6 @@
   ])
   const currentStep = $derived(
     working ? runningToolLabel(transcriptGroups.at(-1)?.messages || []) : ''
-  )
-  // The running turn's rows animate; the newest group can be an empty placeholder.
-  const liveGroup = $derived(
-    working ? transcriptGroups.findLast((group) => group.messages.length)?._id : undefined
   )
   const elapsed = $derived.by(() => {
     const started = working ? workingSince.get(client.activeSource) : undefined
@@ -405,30 +403,6 @@
       client.modelSetupOpen = true
   })
   $effect(() => {
-    const source = client.activeSource
-    if (source !== renderedSource) {
-      if (renderedSource && scrollArea) scrollPositions.set(renderedSource, scrollArea.scrollTop)
-      renderedSource = source
-      following = true
-      void tick().then(() => {
-        if (!scrollArea) return
-        scrollArea.scrollTop = scrollPositions.get(source) ?? scrollArea.scrollHeight
-        // A chat shorter than the window has no content below it.
-        following = nearBottom(scrollArea)
-        updateActivePrompt()
-      })
-    }
-  })
-  $effect(() => {
-    const _length = messages.length
-    const _text = messages.at(-1)?.text
-    if (following)
-      void tick().then(() => {
-        if (scrollArea) scrollArea.scrollTop = scrollArea.scrollHeight
-        updateActivePrompt()
-      })
-  })
-  $effect(() => {
     const ids = groups.map((g) => g._id).filter((id) => id > 0)
     if (client.authorized && ids.length)
       void client.bookmarks.loadConversations(ids).catch(() => {})
@@ -436,11 +410,11 @@
   $effect(() => {
     const target = client.jumpMessage
     if (target)
-      void tick().then(() =>
+      void tick().then(() => {
         document
-          .querySelector(`[data-message-id="${CSS.escape(target)}"]`)
+          .getElementById(transcriptAnchor(transcriptGroups, target))
           ?.scrollIntoView({ block: 'center' })
-      )
+      })
   })
   // A chat on screen is read.
   $effect(() => {
@@ -707,7 +681,6 @@
       client.fail(error)
       throw error
     }
-    following = true
   }
   function openAgentConfig() {
     client.view = 'settings'
@@ -867,13 +840,24 @@
     return 'idle'
   }
   function jumpTo(id: string) {
-    following = false
     document
       .querySelector(`[data-message-id="${CSS.escape(id)}"]`)
       ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
-  function nearBottom(element: HTMLElement) {
-    return element.scrollHeight - element.scrollTop - element.clientHeight < 100
+  async function loadHistory() {
+    if (!channel || channel.loadingPrevious || !scrollArea) return
+    const scroller = scrollArea
+    const source = client.activeSource
+    const bottomOffset = scroller.scrollHeight - scroller.scrollTop
+    try {
+      if (await channel.loadPreviousConversations()) {
+        await tick()
+        if (source === client.activeSource)
+          scroller.scrollTop = scroller.scrollHeight - bottomOffset
+      }
+    } catch (error) {
+      client.fail(error)
+    }
   }
   let promptFrame = 0
   function updateActivePrompt() {
@@ -1331,13 +1315,12 @@
           {t}
           onJump={jumpTo}
         />{/if}
-      <div
-        class="conversation-scroll"
-        bind:this={scrollArea}
-        onscroll={(event) => {
-          following = nearBottom(event.currentTarget)
-          updateActivePrompt()
-        }}
+      <ChatTimeline
+        source={client.activeSource}
+        {messages}
+        bind:viewport={scrollArea}
+        scrollClass="conversation-scroll"
+        onScroll={updateActivePrompt}
       >
         {#if isEmpty}<div class="welcome">
             <div class="welcome-mark" bind:this={welcomeMark}>
@@ -1370,48 +1353,47 @@
           </div>
         {:else}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div class="transcript" onclick={transcriptClick} onpointerover={transcriptPointer}>
-            {#if channel?.hasPreviousConversations}<button
-                class="history-button"
-                onclick={() => void channel?.loadPreviousConversations()}>{t('history')}</button
-              >{/if}{#each transcriptGroups as group (group._id)}{#each group.messages as message (message.id)}<div
-                  data-message-id={message.id}
-                  class="transcript-item"
-                >
-                  <ChatMessageItem
-                    {message}
-                    quickPromptActive={client.quickPrompts.has(message.text)}
-                    onToggleQuickPrompt={(text) => client.quickPrompts.toggle(text)}
-                    compactActions
-                    groupTools
-                    live={group._id === liveGroup}
-                  />
-                </div>
-                {#if turnFiles.get(message.id)}<EditedFiles
-                    files={turnFiles.get(message.id)!}
-                    workspace={client.workspace}
-                    {t}
-                    onOpen={openEditedFile}
-                  />{/if}{/each}{/each}{#each transcriptSideMessages as message (message.id)}<div
-                class="transcript-item"
-              >
-                <ChatMessageItem {message} compactActions groupTools />
-              </div>{/each}{#if working}<ChatWorkingIndicator
+            {#if channel?.hasPreviousConversations}
+              <button class="history-button" disabled={channel.loadingPrevious} onclick={loadHistory}>{t('history')}</button>
+            {/if}
+            {#snippet transcriptItem(row: TranscriptRow)}
+              <div class="transcript-item" data-message-id={row.id}>
+                {#if row.kind === 'message'}
+                  <ChatMessageItem message={row.message} dockedActionId={pendingActions[0]?.id}
+                    quickPromptActive={client.quickPrompts.has(row.message.text)}
+                    onToggleQuickPrompt={(text) => client.quickPrompts.toggle(text)} />
+                {:else}
+                  <ChatActivity {row} />
+                {/if}
+              </div>
+            {/snippet}
+            {#each transcriptGroups as group (group._id)}
+              {#each group.rows as row (row.id)}
+                {@render transcriptItem(row)}
+                {#if row.lastMessageId && turnFiles.has(row.lastMessageId)}
+                  <EditedFiles files={turnFiles.get(row.lastMessageId)!} workspace={client.workspace} {t} onOpen={openEditedFile} />
+                {/if}
+              {/each}
+            {/each}
+            {#each sideTranscript.rows as row (row.id)}
+              {@render transcriptItem(row)}
+            {/each}
+            {#if working}<ChatWorkingIndicator
                 label={t('working')}
                 {elapsed}
                 step={currentStep}
               />{/if}
           </div>{/if}
-      </div>
-      {#if !following && messages.length}<button
-          class="jump-bottom"
-          onclick={() => {
-            following = true
-            scrollArea?.scrollTo({ top: scrollArea.scrollHeight, behavior: 'smooth' })
-          }}><ArrowDown size={14} />{t('newContent')}</button
-        >{/if}
+      </ChatTimeline>
       <footer class="composer-footer">
         <div class="composer-container">
-          <PlanDock steps={channel?.plan || []} {working} />
+          {#key client.activeSource + ':' + (transcriptGroups.at(-1)?.lastPromptId || '')}
+            <PlanDock
+              awaitingResponse={pendingActions.length > 0}
+              steps={channel?.plan || []}
+              {working}
+            />
+          {/key}
           <ActionDock
             bind:this={dock}
             pending={pendingActions}

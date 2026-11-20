@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { Activity } from './memory/api'
-  import ChatDetailRow from './ChatDetailRow.svelte'
   import DropdownMenu from './DropdownMenu.svelte'
   import { memoryActivityLabel } from './memory/labels'
   import { getClientPlatform } from '$lib/anda/client/platform'
@@ -39,71 +38,42 @@
   import { copyCodeFromClick, enhanceCodeBlocks } from '$lib/anda/chat/code-blocks'
   import { transcriptEntrances } from '$lib/anda/chat/entrance'
   import { isProcessStep } from '$lib/anda/chat/message-display'
-  import {
-    firstLine,
-    runtimeNotices,
-    toolCallLabel,
-    toolCallStatus,
-    toolCallSummary,
-    toolDetailSections,
-    toolKind,
-    type ToolDetailSection,
-    type ToolKind
-  } from '$lib/anda/chat/tool-view'
   import { base64ToBytes } from '$lib/utils/base64'
   import { escapeHtml, formatFileSize, formatTimestamp } from '$lib/utils/format'
   import { getMessage } from '$lib/i18n'
   import { buttonClass, cardClass, cardContentClass } from '$lib/anda/ui'
   import { renderMarkdown } from '$lib/utils/markdown'
   import {
-    Bell,
     Bookmark,
     BookmarkCheck,
-    Bot,
-    BrainCircuit,
     Check,
     CircleCheck,
-    Clipboard,
     Copy,
     CreditCard,
     Download,
     FileText,
-    Globe,
     Image,
-    Layers,
-    Lightbulb,
     ListChecks,
     LoaderCircle,
     MoreHorizontal,
     Plus,
-    Printer,
     ShieldCheck,
-    Terminal,
-    Wrench
+    Terminal
   } from '@lucide/svelte'
-  import { onDestroy, onMount, untrack, type Component } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
 
   let {
     message,
+    dockedActionId,
     memoryActivity,
     quickPromptActive = false,
-    onToggleQuickPrompt,
-    compactActions = false,
-    groupTools = false,
-    live = false
+    onToggleQuickPrompt
   }: {
     message: ChatMessage
+    dockedActionId?: string
     memoryActivity?: Activity
     quickPromptActive?: boolean
     onToggleQuickPrompt?: (text: string) => Promise<void> | void
-    /** Keeps copy and bookmark in the footer and moves rich-text copy and
-     * printing into a "More" menu (the desktop transcript, which also shows
-     * the footer only on hover). */
-    compactActions?: boolean
-    /** Folds two or more tool calls into one expandable summary row. */
-    groupTools?: boolean
-    /** Part of the turn that is still running: unfinished rows animate. */
-    live?: boolean
   } = $props()
 
   // A message that just arrived enters (once, see chat/entrance.ts); the class
@@ -119,11 +89,11 @@
   let bookmarkPopped = $state(false)
   let quickPromptPopped = $state(false)
 
-  let copied = $state(false)
+  let copyFeedback = $state<'' | 'copied' | 'failed'>('')
+  let feedbackTimer: number | undefined
   let articleElement: HTMLElement
   let visible = $state(false)
   let disposed = false
-  let richCopied = $state(false)
   let downloadingAttachmentIds = $state(new Set<string>())
   let resourceBlobs = $state(new Map<number, string>())
   let resourceObjectUrls = $state(new Map<string, string>())
@@ -140,7 +110,6 @@
   const isTool = $derived(message.role === 'tool')
   const isAssistant = $derived(!isUser && !isExternalUser && !isSystem && !isTool)
   const mainText = $derived(message.text.trim())
-  const thinkingText = $derived((message.thinkingText || '').trim())
   const hasMainText = $derived(Boolean(mainText))
   const hasAttachments = $derived(Boolean(message.attachments?.length))
   const hasImageAttachments = $derived(
@@ -149,35 +118,6 @@
     )
   )
   const hasActions = $derived(Boolean(message.actions?.length))
-  const hasThinkingText = $derived(Boolean(thinkingText))
-  const tools = $derived(message.tools || [])
-  // Runtime-injected notices arrive as tool messages that carry text, not calls.
-  const notices = $derived(
-    message.noticeKind && thinkingText
-      ? [{ kind: message.noticeKind, body: thinkingText }]
-      : isTool && !tools.length
-        ? runtimeNotices(thinkingText)
-        : []
-  )
-  const groupedTools = $derived(groupTools && tools.length > 1)
-  const toolStatuses = $derived(groupedTools ? tools.map(toolCallStatus) : [])
-  const toolGroupStatus = $derived(
-    toolStatuses.includes('error')
-      ? ('error' as const)
-      : toolStatuses.includes('running')
-        ? ('running' as const)
-        : ('ok' as const)
-  )
-  // While a call runs the summary names it; afterwards, the distinct tools used.
-  const toolGroupSummary = $derived.by(() => {
-    if (!groupedTools) return ''
-    const running = tools.findLastIndex((_, index) => toolStatuses[index] === 'running')
-    if (running >= 0) {
-      return toolCallLabel(tools[running]!)
-    }
-    const names = [...new Set(tools.map((tool) => tool.name))]
-    return names.length > 4 ? `${names.slice(0, 4).join(', ')}, …` : names.join(', ')
-  })
   const hasCard = $derived(hasMainText || hasAttachments || hasActions)
   // Narration that led to tool calls: the turn's final answer carries the footer.
   const processStep = $derived(isProcessStep(message))
@@ -196,12 +136,6 @@
     [message.externalUser?.channel, message.externalUser?.space].filter(Boolean).join(' / ')
   )
   const html = $derived(renderMarkdown(mainText))
-  // Reasoning still streaming in: nothing else has arrived for this step yet.
-  const thinkingLive = $derived(live && !hasMainText && !tools.length)
-  function rowDelay(index: number): number {
-    return entering ? (entranceDelay || 0) + 60 + Math.min(index, 8) * 45 : 0
-  }
-
   $effect(() => {
     void html
     const element = contentElement
@@ -216,7 +150,7 @@
   const messageActionButtonClass = buttonClass(
     'ghost',
     'icon-xs',
-    'chat-message-action relative size-5 rounded-sm'
+    'chat-message-action relative size-7 rounded-md'
   )
   type MoreAction = 'copy-rich' | 'print'
   const moreActions = $derived([
@@ -226,19 +160,31 @@
       : [])
   ] satisfies { value: MoreAction; label: string }[])
   function runMoreAction(action: MoreAction) {
-    if (action === 'copy-rich') void copyRichMessage()
+    if (action === 'copy-rich') void copyMessage(true)
     else printMessage()
   }
 
-  async function copyMessage() {
-    if (!navigator.clipboard || !mainText) {
-      return
+  async function copyMessage(rich = false) {
+    try {
+      if (rich && navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([mainText], { type: 'text/plain' }),
+            'text/html': new Blob([html], { type: 'text/html' })
+          })
+        ])
+      } else {
+        await navigator.clipboard.writeText(mainText)
+      }
+      copyFeedback = 'copied'
+    } catch {
+      copyFeedback = 'failed'
     }
-    await navigator.clipboard.writeText(mainText)
-    copied = true
-    window.setTimeout(() => {
-      copied = false
-    }, 1400)
+    clearTimeout(feedbackTimer)
+    feedbackTimer = window.setTimeout(
+      () => (copyFeedback = ''),
+      copyFeedback === 'failed' ? 6000 : 1600
+    )
   }
 
   function toggleBookmark() {
@@ -249,28 +195,6 @@
   function toggleQuickPrompt() {
     quickPromptPopped = !quickPromptActive
     void onToggleQuickPrompt?.(mainText)
-  }
-
-  async function copyRichMessage() {
-    if (!navigator.clipboard || !mainText) {
-      return
-    }
-
-    if (navigator.clipboard.write && typeof ClipboardItem !== 'undefined') {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'text/plain': new Blob([mainText], { type: 'text/plain' }),
-          'text/html': new Blob([html], { type: 'text/html' })
-        })
-      ])
-    } else {
-      await navigator.clipboard.writeText(mainText)
-    }
-
-    richCopied = true
-    window.setTimeout(() => {
-      richCopied = false
-    }, 1200)
   }
 
   function printableAttachmentHtml(): string {
@@ -356,25 +280,6 @@
       printWindow.focus()
       printWindow.print()
     })
-  }
-
-  const toolIcons: Record<ToolKind, Component<{ class?: string }>> = {
-    shell: Terminal,
-    file: FileText,
-    memory: BrainCircuit,
-    web: Globe,
-    agent: Bot,
-    tool: Wrench
-  }
-
-  function toolSectionLabel(section: ToolDetailSection): string {
-    const label =
-      section.kind === 'input'
-        ? getMessage('toolInput')
-        : section.kind === 'output'
-          ? getMessage('toolOutput')
-          : 'stderr'
-    return section.meta ? `${label} · ${section.meta}` : label
   }
 
   function attachmentSaveTitle(attachment: ChatAttachment): string {
@@ -542,6 +447,7 @@
   })
 
   onDestroy(() => {
+    clearTimeout(feedbackTimer)
     disposed = true
     for (const url of resourceObjectUrls.values()) {
       URL.revokeObjectURL(url)
@@ -557,26 +463,6 @@
   class:chat-enter={entering}
   style:--enter-delay={entering ? `${entranceDelay}ms` : undefined}
 >
-  {#if hasThinkingText && !isTool}
-    <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
-      <ChatDetailRow
-        rowKey={`${message.id}:thinking`}
-        icon={Lightbulb}
-        name={getMessage('thinkingProcess')}
-        summary={firstLine(thinkingText)}
-        live={thinkingLive}
-        animate={entering || live}
-        enterDelay={rowDelay(0)}
-      >
-        <div
-          class="chat-message-thinking md-content w-full min-w-0 text-xs leading-relaxed text-pretty wrap-break-word"
-        >
-          {@html renderMarkdown(thinkingText)}
-        </div>
-      </ChatDetailRow>
-    </div>
-  {/if}
-
   {#if hasCard}
     <div
       class={cardClass(
@@ -619,6 +505,7 @@
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div
             bind:this={contentElement}
+            dir="auto"
             class="md-content w-full min-w-0 text-pretty wrap-break-word"
             onclick={copyCodeFromClick}
           >
@@ -709,48 +596,60 @@
               {@const pending = actionPending(action)}
               {@const selectedChoice = actionSelectedChoice(action)}
               <!-- The record of an action; a pending one is answered in the dock above the composer. -->
-              <div
-                class="chat-action-card grid min-w-0 gap-2 rounded-lg border px-3 py-2 text-xs shadow-2xs"
-                class:chat-action-card-pending={pending}
-              >
-                <div class="flex min-w-0 items-center gap-2">
-                  <div
-                    class="chat-action-icon grid size-8 shrink-0 place-items-center rounded-md border"
-                  >
-                    {#if isShellApproval(action)}
-                      <Terminal class="size-4" />
-                    {:else if isPaymentApproval(action)}
-                      <CreditCard class="size-4" />
-                    {:else if isApprovalAction(action)}
-                      <ShieldCheck class="size-4" />
-                    {:else}
-                      <ListChecks class="size-4" />
-                    {/if}
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <div
-                      class="truncate text-sm font-semibold"
-                      title={actionTitle(action) || actionKindLabel(action)}
-                    >
-                      {actionTitle(action) || actionKindLabel(action)}
-                    </div>
-                    <div class="chat-action-meta truncate">
-                      {actionKindLabel(action)} · {pending
-                        ? getMessage('actionWaiting')
-                        : actionStatusLabel(action)}
-                    </div>
-                  </div>
+              {#if pending && action.id === dockedActionId}
+                <div class="chat-action-card-pending flex min-w-0 items-center gap-2 text-xs">
+                  {#if isApprovalAction(action)}<ShieldCheck
+                      class="size-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
+                  {:else}<ListChecks class="size-3.5 shrink-0" aria-hidden="true" />{/if}
+                  <span dir="auto" class="truncate" title={actionTitle(action) || actionKindLabel(action)}>
+                    {actionTitle(action) || actionKindLabel(action)}
+                  </span>
+                  <span class="shrink-0">{getMessage('actionWaiting')}</span>
                 </div>
-
-                {#if actionMessage(action)}
-                  <div
-                    class="chat-action-message leading-relaxed wrap-break-word whitespace-pre-wrap"
-                  >
-                    {actionMessage(action)}
+              {:else}
+                <div
+                  class="chat-action-card grid min-w-0 gap-2 rounded-lg border px-3 py-2 text-xs shadow-2xs"
+                >
+                  <div class="flex min-w-0 items-center gap-2">
+                    <div
+                      class="chat-action-icon grid size-8 shrink-0 place-items-center rounded-md border"
+                    >
+                      {#if isShellApproval(action)}
+                        <Terminal class="size-4" />
+                      {:else if isPaymentApproval(action)}
+                        <CreditCard class="size-4" />
+                      {:else if isApprovalAction(action)}
+                        <ShieldCheck class="size-4" />
+                      {:else}
+                        <ListChecks class="size-4" />
+                      {/if}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div
+                        dir="auto"
+                      class="truncate text-sm font-semibold"
+                        title={actionTitle(action) || actionKindLabel(action)}
+                      >
+                        {actionTitle(action) || actionKindLabel(action)}
+                      </div>
+                      <div class="chat-action-meta truncate">
+                        {actionKindLabel(action)} · {pending
+                          ? getMessage('actionWaiting')
+                          : actionStatusLabel(action)}
+                      </div>
+                    </div>
                   </div>
-                {/if}
 
-                {#if !pending}
+                  {#if actionMessage(action)}
+                    <div
+                      dir="auto" class="chat-action-message leading-relaxed wrap-break-word whitespace-pre-wrap"
+                    >
+                      {actionMessage(action)}
+                    </div>
+                  {/if}
+
                   {#if action.summary}
                     <div class="chat-action-summary rounded-md border px-2 py-1.5 wrap-break-word">
                       {action.summary}
@@ -770,8 +669,10 @@
                               class="wrap-break-word underline underline-offset-2"
                               href={link}
                               target="_blank"
-                              rel="noopener noreferrer">{link}</a
+                              rel="noopener noreferrer"
                             >
+                              {link}
+                            </a>
                           {:else if actionDetailIsBlock(detail)}
                             <pre class="min-w-0 overflow-x-auto whitespace-pre-wrap"><code
                                 >{actionDetailText(detail)}</code
@@ -784,7 +685,7 @@
                     </div>
                   {:else if action.command}
                     <pre
-                      class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code
+                      dir="auto" class="chat-action-command min-w-0 overflow-x-auto rounded-md border px-2 py-1.5"><code
                         >{action.command}</code
                       ></pre>
                     {#if action.workspace}
@@ -819,73 +720,12 @@
                       </span>
                     </div>
                   {/if}
-                {/if}
-              </div>
+                </div>
+              {/if}
             {/each}
           </div>
         {/if}
       </div>
-    </div>
-  {/if}
-
-  {#snippet toolRows()}
-    {#each tools as tool, index (index)}
-      <ChatDetailRow
-        rowKey={`${message.id}:tool:${index}`}
-        icon={toolIcons[toolKind(tool.name)]}
-        name={tool.name}
-        summary={toolCallSummary(tool)}
-        mono
-        status={toolCallStatus(tool)}
-        live={live && toolCallStatus(tool) === 'running'}
-        animate={entering || live}
-        enterDelay={rowDelay(index + 1)}
-      >
-        <div class="grid min-w-0 gap-1.5">
-          {#each toolDetailSections(tool) as section, sectionIndex (sectionIndex)}
-            <div class="grid min-w-0 gap-0.5">
-              <div class="chat-tool-section-label text-[10px] font-semibold">
-                {toolSectionLabel(section)}
-              </div>
-              <pre
-                class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{section.text}</pre>
-            </div>
-          {/each}
-        </div>
-      </ChatDetailRow>
-    {/each}
-  {/snippet}
-  {#if tools.length || notices.length}
-    <div class="chat-message-rows grid w-full max-w-[92%] min-w-0">
-      {#if groupedTools}
-        <ChatDetailRow
-          rowKey={`${message.id}:tools`}
-          icon={Layers}
-          name={getMessage('toolCallsCount', String(tools.length))}
-          summary={toolGroupSummary}
-          status={toolGroupStatus}
-          live={live && toolGroupStatus === 'running'}
-          animate={entering || live}
-          enterDelay={rowDelay(1)}
-        >
-          <div class="grid min-w-0">{@render toolRows()}</div>
-        </ChatDetailRow>
-      {:else}
-        {@render toolRows()}
-      {/if}
-      {#each notices as notice, index (index)}
-        <ChatDetailRow
-          rowKey={`${message.id}:notice:${index}`}
-          icon={Bell}
-          name={notice.kind || getMessage('runtimeNotice')}
-          summary={firstLine(notice.body)}
-          animate={entering}
-          enterDelay={rowDelay(index)}
-        >
-          <pre
-            class="chat-tool-section-text max-h-72 min-w-0 overflow-auto rounded-md border px-2 py-1.5 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap">{notice.body}</pre>
-        </ChatDetailRow>
-      {/each}
     </div>
   {/if}
 
@@ -901,9 +741,9 @@
           class={messageActionButtonClass}
           aria-label={getMessage('copyMessage')}
           title={getMessage('copyMessage')}
-          onclick={copyMessage}
+          onclick={() => void copyMessage()}
         >
-          {#if copied}
+          {#if copyFeedback === 'copied'}
             <Check class="chat-action-pop size-3.5" />
             <span class="chat-action-burst" aria-hidden="true"></span>
           {:else}
@@ -934,33 +774,6 @@
         </button>
       {/if}
       {#if !isUser}
-        {#if mainText && !compactActions}
-          <button
-            type="button"
-            class={messageActionButtonClass}
-            aria-label={getMessage('copyRichText')}
-            title={getMessage('copyRichText')}
-            onclick={copyRichMessage}
-          >
-            {#if richCopied}
-              <Check class="chat-action-pop size-3.5" />
-              <span class="chat-action-burst" aria-hidden="true"></span>
-            {:else}
-              <Clipboard class="size-3.5" />
-            {/if}
-          </button>
-        {/if}
-        {#if (hasMainText || hasAttachments) && !compactActions}
-          <button
-            type="button"
-            class={messageActionButtonClass}
-            aria-label={getMessage('printMessage')}
-            title={getMessage('printMessage')}
-            onclick={printMessage}
-          >
-            <Printer class="size-3.5" />
-          </button>
-        {/if}
         {#if canBookmark}
           <button
             type="button"
@@ -982,7 +795,7 @@
           </button>
         {/if}
       {/if}
-      {#if compactActions && !isUser && moreActions.length}
+      {#if !isUser && moreActions.length}
         <DropdownMenu
           class="{messageActionButtonClass} justify-center"
           items={moreActions}
@@ -993,6 +806,13 @@
           {#snippet trigger()}<MoreHorizontal class="size-3.5" />{/snippet}
         </DropdownMenu>
       {/if}
+      <span role="status" class="chat-copy-feedback">
+        {copyFeedback === 'copied'
+          ? getMessage('memoryCopied')
+          : copyFeedback === 'failed'
+            ? getMessage('messageCopyFailed')
+            : ''}
+      </span>
       {#if memoryActivity}
         <span
           class="px-1 text-[11px] text-muted-foreground"
@@ -1003,7 +823,7 @@
             : ''}
         </span>
       {/if}
-      {#if messageTimeLabel}
+      {#if messageTimeLabel && !copyFeedback}
         <span class="chat-message-time px-1">{messageTimeLabel}</span>
       {/if}
     </div>
@@ -1053,6 +873,10 @@
     color: rgba(15, 118, 110, 0.72);
   }
 
+  .chat-message-meta:has(.chat-copy-feedback:not(:empty)) {
+    flex-wrap: wrap;
+  }
+
   .chat-message-action {
     color: var(--message-muted, #737373);
   }
@@ -1088,7 +912,6 @@
   }
 
   .chat-message-attachment-meta,
-  .chat-message-thinking,
   .chat-message-meta,
   .chat-message-time {
     color: var(--message-muted, #737373);
@@ -1108,7 +931,7 @@
 
   /* Waiting on the dock above the composer. */
   .chat-action-card-pending {
-    border-style: dashed;
+    color: var(--message-muted, #737373);
   }
 
   .chat-action-detail,
@@ -1148,25 +971,6 @@
   /* Steps of one turn sit closer together than separate messages. */
   .chat-message-step {
     margin-bottom: -0.5rem;
-  }
-
-  /* Rows start flush with the prose: the row padding hangs into the gutter. */
-  .chat-message-rows {
-    margin-left: -0.375rem;
-  }
-
-  .chat-tool-section-label {
-    color: var(--message-muted, #737373);
-  }
-
-  .chat-tool-section-text {
-    border-color: var(--message-border, #e6e6e6);
-    background: var(--message-surface-strong, #f4f4f4);
-    color: color-mix(in srgb, var(--message-text, #171717) 86%, transparent);
-  }
-
-  :global(.dark) .chat-tool-section-text {
-    background: color-mix(in srgb, var(--message-bg, #2a2a2a) 72%, #171717);
   }
 
   :global(.dark) .chat-message-card-external {
