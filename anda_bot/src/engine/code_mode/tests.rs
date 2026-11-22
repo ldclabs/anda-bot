@@ -475,6 +475,55 @@ async fn code_mode_recovery_reconciles_before_dispatch_and_waits_for_user() {
 }
 
 #[tokio::test]
+async fn code_mode_recovery_keeps_receipts_answered_only_by_a_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let records = bot.mode.home.join("runs/42");
+    tokio::fs::create_dir_all(&records).await.unwrap();
+    let meta = bot.ctx.meta();
+    let record = json!({"run_id":"example","conversation_id":42,"caller":bot.ctx.caller().to_text(),"route":route(meta),"outer_call_id":"c","revision":null,
+        "calls":[{"child_id":1,"tool":"send_im_message","status":"dispatching","argument_digest":"fixture"}]});
+    let receipt = records.join("example.json");
+    tokio::fs::write(&receipt, serde_json::to_vec(&record).unwrap())
+        .await
+        .unwrap();
+    let answered = |output| {
+        vec![anda_core::Message {
+            role: "tool".into(),
+            content: vec![anda_core::ContentPart::ToolOutput {
+                name: EXEC.into(),
+                output,
+                is_error: Some(true),
+                call_id: Some("c".into()),
+                remote_id: None,
+            }],
+            ..Default::default()
+        }]
+    };
+    // The engine closes a stopped call with its own error.
+    let stopped = answered(json!({"error":"tool call stopped","reason":"stopped by user"}));
+    let summary = bot
+        .mode
+        .recovery(&bot.ctx.base, meta, 42, &stopped)
+        .await
+        .unwrap()
+        .expect("a stop leaves the children unreported");
+    assert!(summary.contains("outcome_unknown"), "{summary}");
+    assert!(receipt.is_file());
+    let own = answered(
+        json!({"error":{"code":"cancelled","message":"script cancelled","data":{"run_id":"example"}}}),
+    );
+    assert!(
+        bot.mode
+            .recovery(&bot.ctx.base, meta, 42, &own)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!receipt.exists());
+}
+
+#[tokio::test]
 async fn code_mode_admission_and_oversized_results_preserve_receipts() {
     let dir = tempfile::tempdir().unwrap();
     let bot = Fixture::open(dir.path()).await;

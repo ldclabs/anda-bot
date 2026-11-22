@@ -150,6 +150,10 @@ fn code_mode_worker_limits_output_and_imports() {
     assert_eq!(result["value"]["value"], json!([1, 2]), "{result}");
     assert_eq!(result["value"]["stdout"].as_str().unwrap().len(), 4096);
     assert_eq!(result["value"]["stdout_truncated"], true);
+    let standard = execute(json!({"op":"exec","source":
+        "import json\nprint('a', 'b', sep=None, end=None, flush=True)\ntry:\n    json.loads('{')\nexcept json.JSONDecodeError:\n    print('invalid')\ntext = json.dumps({'k': '中'}, indent=2, ensure_ascii=False, sort_keys=True)\nreturn json.loads(text.encode())"}));
+    assert_eq!(standard["value"]["value"], json!({"k":"中"}), "{standard}");
+    assert_eq!(standard["value"]["stdout"], "a b\ninvalid\n");
     let multiline = execute(json!({"op":"exec","source":"return \"\"\"first\nsecond\"\"\""}));
     assert_eq!(multiline["value"]["value"], "first\nsecond", "{multiline}");
     let escaped_stdout =

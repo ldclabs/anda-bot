@@ -83,6 +83,11 @@ impl Record {
             .collect();
         json!({"run_id":self.run_id,"counts":counts,"receipts":receipts,"omitted":omitted})
     }
+    /// The engine answers a stopped or cancelled call with its own error,
+    /// which says nothing about the children. Only this run's output does.
+    fn settled_by(&self, output: &Value) -> bool {
+        output.get("result").is_some() || output["error"]["data"]["run_id"] == self.run_id.as_str()
+    }
 }
 
 struct Journal {
@@ -487,7 +492,8 @@ impl CodeMode {
             }
             if rec.outer_call_id.as_ref().is_some_and(|id| {
                 history.iter().flat_map(|m| &m.content).any(|p| {
-                    matches!(p, ContentPart::ToolOutput { call_id: Some(call), .. } if call == id)
+                    matches!(p, ContentPart::ToolOutput { call_id: Some(call), output, .. }
+                        if call == id && rec.settled_by(output))
                 })
             }) {
                 remove_receipt(e.path()).await;

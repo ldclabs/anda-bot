@@ -146,8 +146,10 @@ _stdout = bytearray()
 _truncated = False
 
 
-def capture(*args, sep=" ", end="\n"):
+def capture(*args, sep=" ", end="\n", file=None, flush=False):
     global _truncated
+    sep = " " if sep is None else sep
+    end = "\n" if end is None else end
     data = (sep.join(str(arg) for arg in args) + end).encode()
     remaining = 4096 - len(_stdout)
     _stdout.extend(data[:remaining])
@@ -161,8 +163,16 @@ def import_data(name, globals=None, locals=None, fromlist=(), level=0):
 
 
 class JsonModule:
-    loads = staticmethod(_loads)
-    dumps = staticmethod(_dumps)
+    # The host reads and writes compact UTF-8 JSON. Formatting options do not change the data.
+    JSONDecodeError = ValueError
+
+    @staticmethod
+    def loads(s, **options):
+        return _loads(s.decode() if isinstance(s, (bytes, bytearray)) else s)
+
+    @staticmethod
+    def dumps(obj, **options):
+        return _dumps(obj)
 
 
 _json_module = JsonModule()

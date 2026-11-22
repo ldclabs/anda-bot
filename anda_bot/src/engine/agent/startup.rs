@@ -141,7 +141,6 @@ impl AndaBot {
         let now_ms = unix_ms();
         let mut meta = request_meta_from_conversation(&conversation, &candidate.source_key);
         meta = request_meta_for_conversation(&meta, conversation._id);
-        self.ensure_plan_owner(&conversation.user, &meta)?;
         let RequestState {
             workspace,
             source,
@@ -151,13 +150,6 @@ impl AndaBot {
         if !self.inner.active_im_channels.contains(&source) {
             return Ok(());
         }
-
-        log::warn!(
-            conversation = conversation._id,
-            status = conversation.status.to_string(),
-            source = source_key;
-            "startup self-check continuing conversation from source"
-        );
 
         let agent_label = ctx.label.clone();
         let ctx = ctx.child(Self::NAME, &agent_label)?;
@@ -174,6 +166,14 @@ impl AndaBot {
         if chat_history.is_empty() && recovery.is_none() {
             return Ok(());
         }
+        self.ensure_plan_owner(&conversation.user, &meta)?;
+
+        log::warn!(
+            conversation = conversation._id,
+            status = conversation.status.to_string(),
+            source = source_key;
+            "startup self-check continuing conversation from source"
+        );
         let prompt = recovery.map_or(prompt.clone(), |summary| format!("{prompt}\n{summary}"));
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let available_tools = available_tool_names(&ctx).await;

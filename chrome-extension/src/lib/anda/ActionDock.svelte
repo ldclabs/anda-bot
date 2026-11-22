@@ -258,24 +258,30 @@
       }
       delete drafts[actionChoiceInputKey(current, row.id)]
     } catch (err) {
-      failure = {
-        actionId: current.id,
-        text: err instanceof Error ? err.message : String(err || getMessage('actionFailed'))
-      }
+      failure = { actionId: current.id, text: errorText(err) }
     } finally {
       respondingRow = ''
     }
   }
 
+  function errorText(err: unknown): string {
+    return err instanceof Error ? err.message : String(err || getMessage('actionFailed'))
+  }
+
   async function answerBatch() {
-    if (disabled || batch.length < 2) return
+    if (disabled || batch.length < 2 || readyActionId !== actionId) return
     // Snapshot the exact visible IDs before the first reply changes the dock.
     const answers = batch.map((item) => ({ actionId: item.id, approve: selected.includes(item.id) }))
     respondingRow = 'batch'
+    failure = { actionId: '', text: '' }
     const results = await Promise.allSettled(answers.map((answer) => andaClient.respondAction(answer)))
-    const errors = results.filter((result) => result.status === 'rejected')
-    if (errors.length) {
-      failure = { actionId: action?.id || '', text: errors.map((result) => String(result.reason)).join('\n') }
+    const failed = answers.flatMap((answer, index) => {
+      const result = results[index]
+      return result.status === 'rejected' ? [{ id: answer.actionId, text: errorText(result.reason) }] : []
+    })
+    // Answered cards leave the dock, so the error stays with the first card still waiting.
+    if (failed.length) {
+      failure = { actionId: failed[0].id, text: failed.map((item) => item.text).join('\n') }
     }
     respondingRow = ''
     selected = []
@@ -383,7 +389,12 @@
               </span>
             </label>
           {/each}
-          <button type="button" class="action-dock-option" onclick={answerBatch}>
+          <button
+            type="button"
+            class="action-dock-option"
+            aria-disabled={readyActionId !== actionId}
+            onclick={answerBatch}
+          >
             {getMessage('codeBatchApply')}
           </button>
         </fieldset>
