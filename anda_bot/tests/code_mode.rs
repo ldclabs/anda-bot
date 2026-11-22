@@ -93,6 +93,26 @@ fn code_mode_worker_composes_paginated_calls_and_preserves_u64() {
 }
 
 #[test]
+fn code_mode_worker_returns_parallel_errors_as_data() {
+    let mut worker = start(json!({"op":"exec","source":
+        "parallel([('page', {'cursor': None}), ('page', {'cursor': '2'})])"}));
+    let child = &mut worker.child;
+    let call = read(child);
+    assert_eq!(call["batch"], true, "{call}");
+    send(
+        child,
+        json!({"op":"results","items":[{"value":{"result":[1]}},{"error":{"code":"denied","message":"no"}}]}),
+    );
+    let result = read(child);
+    assert_eq!(
+        result["value"]["value"],
+        json!([{"result":[1]},{"error":{"code":"denied","message":"no","data":null}}]),
+        "{result}"
+    );
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn code_mode_worker_validates_declarations_and_defaults_without_running_the_function() {
     let source = "def count(n: int = 20, label: str | None = None) -> int:\n    \"\"\"Count entries.\"\"\"\n    return tools.count(n=n)";
     let declaration = execute(json!({"op":"inspect","source":source}));
@@ -154,6 +174,27 @@ fn code_mode_worker_limits_output_and_imports() {
         "import json\nprint('a', 'b', sep=None, end=None, flush=True)\ntry:\n    json.loads('{')\nexcept json.JSONDecodeError:\n    print('invalid')\ntext = json.dumps({'k': '中'}, indent=2, ensure_ascii=False, sort_keys=True)\nreturn json.loads(text.encode())"}));
     assert_eq!(standard["value"]["value"], json!({"k":"中"}), "{standard}");
     assert_eq!(standard["value"]["stdout"], "a b\ninvalid\n");
+    // The pure modules built into the VM; a final expression is the result.
+    let modules = execute(json!({"op":"exec","source":
+        "from collections import Counter, defaultdict, deque, OrderedDict\nimport itertools, operator\nfrom functools import reduce, partial\ncounts = Counter(['b', 'a', 'b'])\ncounts.update({'c': 1}, a=2)\ngroups = defaultdict(list)\nfor key, items in itertools.groupby(sorted([3, 1, 2], key=operator.neg), key=lambda n: n % 2):\n    groups[key].extend(items)\n{'common': counts.most_common(2), 'groups': groups, 'sum': reduce(operator.add, deque([1, 2, 3])), 'ids': Counter([7, 7]), 'set': {1}, 'ordered': OrderedDict(a=1), 'add': partial(operator.add, 1)(2)}"}));
+    assert_eq!(
+        modules["value"]["value"],
+        json!({"common":[["a",3],["b",2]],"groups":{"1":[3,1],"0":[2]},"sum":6,"ids":{"7":2},"set":[1],"ordered":{"a":1},"add":3}),
+        "{modules}"
+    );
+    for (source, message) in [
+        ("import re", "can import only"),
+        ("from collections import namedtuple", "namedtuple"),
+        ("tools.page(1)", "keyword arguments only"),
+        ("parallel([tools.page])", "(tool_name, kwargs) pairs"),
+    ] {
+        let failed = execute(json!({"op":"exec","source":source}));
+        assert_eq!(failed["code"], "script_error", "{failed}");
+        assert!(
+            failed["message"].as_str().unwrap().contains(message),
+            "{failed}"
+        );
+    }
     let multiline = execute(json!({"op":"exec","source":"return \"\"\"first\nsecond\"\"\""}));
     assert_eq!(multiline["value"]["value"], "first\nsecond", "{multiline}");
     let escaped_stdout =

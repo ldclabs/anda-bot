@@ -17,11 +17,11 @@ code_mode:
   enabled: false
 ```
 
-`code_exec` runs a Python function body. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_select` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.
+`code_exec` runs a Python function body and returns the value of `return` or of a final expression. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_select` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.
 
-`json` is available in the worker. Use host tools for files, network access and messaging.
+Scripts can import `json`, `itertools`, `operator`, `functools` and `collections`; `re`, `math` and `datetime` are not available. Use host tools for files, network access and messaging.
 
-When Anda detects an interrupted Code Mode run while resuming a conversation, it reports the outcomes it knows and waits for your reply before making new tool calls.
+If you stop a task during a Code Mode run, or the run is interrupted, Anda reports its completed and uncertain tool calls when the conversation continues, and waits for your reply before making new tool calls.
 
 With `request_approval`, changes to saved functions and proactive IM sends require confirmation. In `on_risk`, sending to a different conversation or attaching a file also prompts. With `parallel`, each displayed target can be approved or denied independently. This `code_exec` example counts failed runs for job 42.
 

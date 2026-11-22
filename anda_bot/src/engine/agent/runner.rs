@@ -308,6 +308,22 @@ impl SessionRunner {
         }
     }
 
+    /// A stop drops any running script, and the engine's stop output says
+    /// nothing about the tool calls it already made. Report them, and hold
+    /// new tool calls until the user replies.
+    #[cfg(feature = "code-mode")]
+    async fn report_interrupted_code_mode_runs(&self) -> Option<String> {
+        let done = self
+            .ctx
+            .base
+            .get_state::<crate::engine::code_mode::FinishedRuns>()?;
+        let note = done.report_interrupted(self.runner.chat_history()).await?;
+        self.ctx
+            .base
+            .set_state(crate::engine::code_mode::RecoveryHold::default());
+        Some(note)
+    }
+
     async fn drain_action_events(&mut self) -> Result<(), BoxError> {
         let mut changed = false;
         while let Ok(event) = self.action_rx.try_recv() {
@@ -426,10 +442,18 @@ impl SessionRunner {
             .await;
 
         let content = task_stopped_message(&reason);
-        self.runner.append_chat_history(vec![system_user_message(
-            system_runtime_prompt("task stopped", &content),
-            now_ms,
-        )]);
+        #[cfg(feature = "code-mode")]
+        let code_mode = self.report_interrupted_code_mode_runs().await;
+        #[cfg(not(feature = "code-mode"))]
+        let code_mode: Option<String> = None;
+        let mut stopped =
+            system_user_message(system_runtime_prompt("task stopped", &content), now_ms);
+        stopped
+            .content
+            .extend(code_mode.map(|note| ContentPart::Text {
+                text: system_runtime_prompt("Code Mode recovery", note),
+            }));
+        self.runner.append_chat_history(vec![stopped]);
 
         let mut output = self.runner.stop_current_task(anda_core::AgentOutput {
             content,
@@ -443,7 +467,10 @@ impl SessionRunner {
         self.conversation.status = ConversationStatus::Idle;
         self.record_usage(output.usage);
         self.conversation.updated_at = now_ms;
-        self.persist_conversation_state().await
+        self.persist_conversation_state().await?;
+        #[cfg(feature = "code-mode")]
+        self.acknowledge_code_mode_runs().await;
+        Ok(())
     }
 
     /// Marks the current conversation `Failed` with a reason and persists it,
@@ -3591,6 +3618,45 @@ mod tests {
         .await
         .unwrap();
         assert!(r.session.goal.read().is_none(), "STOP left the goal active");
+    }
+
+    #[cfg(feature = "code-mode")]
+    #[tokio::test]
+    async fn stop_reports_the_calls_of_a_dropped_code_mode_run() {
+        use crate::engine::code_mode::{FinishedRuns, RecoveryHold};
+        let bot = build_runner_bot().await;
+        let (mut r, _rx) = build_session_runner(&bot).await;
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join("run.json");
+        let record = serde_json::json!({"run_id":"run","conversation_id":1,"caller":"owner","route":null,"outer_call_id":"c","revision":null,
+            "calls":[{"child_id":1,"tool":"send_im_message","status":"completed","argument_digest":"d"}]});
+        std::fs::write(&journal, serde_json::to_vec(&record).unwrap()).unwrap();
+        let done = FinishedRuns::new(&r.ctx.base.agent);
+        done.running(journal.clone());
+        r.ctx.base.set_state(done);
+        r.run(
+            vec![input(PromptCommand::Stop {
+                reason: String::new(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        let stopped = r.conversation.messages.last().unwrap();
+        assert_eq!(stopped["name"], SYSTEM_PERSON_NAME, "{stopped}");
+        let text = stopped["content"][1]["text"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("Code Mode recovery") && text.contains("send_im_message"),
+            "{stopped}"
+        );
+        assert!(
+            r.ctx
+                .base
+                .get_state::<RecoveryHold>()
+                .is_some_and(|hold| hold.waiting())
+        );
+        // The saved history carries the report, so the receipt retires.
+        assert!(!journal.exists());
     }
 
     #[tokio::test]

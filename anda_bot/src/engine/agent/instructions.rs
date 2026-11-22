@@ -53,7 +53,7 @@ fn format_available_tools(available_tools: &[String]) -> String {
             .map(String::as_str)
             .collect();
         let mut directory = format!(
-            "{}\nUse code_exec for pagination, joins and aggregation. Python tools use your current permissions.",
+            "{}\nWhen a request needs several tool calls whose intermediate results you do not need to read, such as pages, details for many items, joins, filtering, counting or one action for many targets, run one code_exec script instead of calling the tools one by one. Scripts call tools with your current permissions; use tools_select first for a tool whose parameters you do not know.",
             names.join(", ")
         );
         if names.contains(&LIST) {

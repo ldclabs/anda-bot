@@ -144,6 +144,12 @@ fn evaluate(vm: &VirtualMachine, request: Value) -> Value {
         scope
             .globals
             .set_item("_dumps", vm.new_function("_dumps", dumps).into(), vm)?;
+        // Pure computation modules built into the VM. Scripts reach them
+        // only through the guest's import allowlist.
+        for name in ["itertools", "_operator", "_functools", "_collections"] {
+            let module = rustpython_vm::import::import_builtin(vm, name)?;
+            scope.globals.set_item(name, module, vm)?;
+        }
         let code = vm
             .compile(
                 include_str!("guest.py"),

@@ -452,7 +452,7 @@ impl AndaBot {
                 .is_none()
         {
             ctx.base
-                .set_state(super::code_mode::FinishedRuns::default());
+                .set_state(super::code_mode::FinishedRuns::new(&ctx.base.agent));
         }
         ctx.base.set_state(super::resources::SessionArtifacts::new(
             self.inner.resource_store.clone(),

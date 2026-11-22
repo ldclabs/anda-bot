@@ -4,14 +4,21 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Added
+
+- Code Mode scripts can import `itertools`, `operator`, `functools` and `collections`, and a script that ends with an expression returns its value. `re`, `math` and `datetime` remain unavailable.
+
 ### Changed
 
 - Anda Desktop and the Chrome side panel show the plan in the conversation instead of above the composer. The transcript reads from top to bottom: finished messages, the plan, then the work in progress. Open the working line to follow the calls still running. They stay open when they settle into the transcript.
 - Grouped work rows say what the work did, such as “Ran 3 commands, read 2 files, and updated the plan”, instead of counting tool calls. A row with a single call also shows its command or path.
+- When you stop a task during a Code Mode run, Anda reports the tool calls the run completed or left uncertain, and waits for your reply before making new tool calls.
+- Anda uses one `code_exec` script for work that needs many tool calls whose intermediate results it does not need to read, such as paging, details for many items, filtering or counting.
 
 ### Fixed
 
 - Anda Desktop shows the running call on the working line when the newest conversation group is still empty.
+- Code Mode runs started by subagents no longer leave receipts that are later reported as interrupted. Interrupted runs with no completed or uncertain calls no longer wait for your reply, and a script waits up to 30 seconds for a busy worker instead of failing at once.
 
 ## [0.15.0] — 2026-11-20
 

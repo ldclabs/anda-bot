@@ -313,11 +313,19 @@ impl Tool<BaseCtx> for CodeTool {
     fn description(&self) -> String {
         let description = match self.name {
             EXEC => concat!(
-                "Run a Python function body in a fresh worker. Return bounded JSON. ",
-                "Call tools.name(**kwargs) or tools['name'](**kwargs). For independent calls use ",
-                "parallel([(name, kwargs), ...]); each entry is a value or ToolError. ",
-                "Use for pagination, joins and aggregation. Prefer direct tools for single calls ",
-                "and shell for local file workflows. Keep original text for semantic judgments."
+                "Run a Python function body in a fresh sandbox. `return` a value or end with an ",
+                "expression; it comes back as JSON. Use one script instead of several direct calls ",
+                "when you do not need to read the intermediate results: paging with cursors, details ",
+                "for many IDs, joins, filtering, counting, sorting, or one action for many targets. ",
+                "Return only what the answer needs. Call tools by keyword: tools.name(**kwargs) or ",
+                "tools['name-with-dash'](**kwargs). A call returns the tool's JSON; a failure raises ",
+                "ToolError (.code, .message, .data). For independent calls use ",
+                "parallel([(name, kwargs), ...]): items keep their order, each a value or a ToolError, ",
+                "and their approvals are asked together. Imports: json, itertools, operator, ",
+                "functools (reduce, partial, cmp_to_key) and collections (Counter, defaultdict, deque, ",
+                "OrderedDict); no files, network, re, math or datetime. Limits: 5 s CPU, 128 tool ",
+                "calls, 32 KiB result, 4 KiB print output. Call a single tool directly, use shell for ",
+                "local files and programs, and keep original text when the answer depends on reading it."
             ),
             REGISTER => concat!(
                 "Save or remove a Python tool for this owner and workspace. Save one annotated ",

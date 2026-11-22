@@ -524,16 +524,182 @@ async fn code_mode_recovery_keeps_receipts_answered_only_by_a_stop() {
 }
 
 #[tokio::test]
+async fn code_mode_recovery_retires_runs_with_nothing_to_reconcile() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let records = bot.mode.home.join("runs/42");
+    tokio::fs::create_dir_all(&records).await.unwrap();
+    let meta = bot.ctx.meta();
+    let receipt = |id, status| json!({"child_id":id,"tool":"send_im_message","status":status,"argument_digest":"fixture"});
+    // A call waiting for approval is prepared; refused and failed calls did nothing to check.
+    let record = json!({"run_id":"idle","conversation_id":42,"caller":bot.ctx.caller().to_text(),"route":route(meta),"outer_call_id":"c","revision":null,
+        "calls":[receipt(1,"prepared"),receipt(2,"denied"),receipt(3,"failed")]});
+    let path = records.join("idle.json");
+    tokio::fs::write(&path, serde_json::to_vec(&record).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        bot.mode
+            .recovery(&bot.ctx.base, meta, 42, &[])
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!path.exists());
+    assert!(bot.mode.executable(&bot.ctx.base, "send_im_message"));
+}
+
+#[tokio::test]
+async fn code_mode_subagent_runs_close_their_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta));
+    // Another agent owns the conversation, so this run's output never reaches its history.
+    let done = FinishedRuns::new("conversation-owner");
+    bot.ctx.base.set_state(done.clone());
+    let output = bot
+        .call(
+            EXEC,
+            json!({"code":"return tools.list_cron_runs(job_id=42, limit=20, cursor=None)['result'][0]"}),
+            None,
+        )
+        .await;
+    assert_eq!(
+        output.output["result"]["value"],
+        json!({"error":"a"}),
+        "{output:?}"
+    );
+    assert_eq!(bot.calls.load(Ordering::SeqCst), 1);
+    let runs = bot.mode.home.join("runs/42");
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_none());
+    done.acknowledge(&[], true).await;
+}
+
+#[tokio::test]
+async fn code_mode_stop_reports_the_calls_of_a_dropped_run() {
+    use crate::engine::{ActionEvent, ActionRuntime, ActionSession};
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let (tx, mut events) = tokio::sync::mpsc::channel(8);
+    bot.ctx.base.set_state(ActionSession::new(
+        Arc::new(ActionRuntime::new()),
+        tx,
+        bot.ctx.caller().to_text(),
+        "fixture".into(),
+        Arc::new(std::sync::atomic::AtomicU64::new(42)),
+        Arc::default(),
+        dir.path().into(),
+    ));
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta));
+    let done = FinishedRuns::new(&bot.ctx.base.agent);
+    bot.ctx.base.set_state(done.clone());
+    {
+        let call = bot.call(
+            EXEC,
+            json!({"code":"tools.list_cron_runs(job_id=42, limit=20, cursor=None)\nreturn tools.send_im_message(recipient='fixture')"}),
+            None,
+        );
+        tokio::pin!(call);
+        tokio::select! {
+            result=&mut call => panic!("expected approval, received {result:?}"),
+            event=tokio::time::timeout(std::time::Duration::from_secs(15),events.recv())=>{
+                assert!(matches!(event.unwrap(), Some(ActionEvent::Add(_))));
+            }
+        }
+    }
+    // A stop dropped the run while the send waited for approval.
+    let note = done
+        .report_interrupted(&[])
+        .await
+        .expect("the run already listed cron runs");
+    for part in ["completed", "cancelled", "list_cron_runs"] {
+        assert!(note.contains(part), "{note}");
+    }
+    assert!(done.report_interrupted(&[]).await.is_none());
+    let runs = bot.mode.home.join("runs/42");
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_some());
+    // The note is in the saved history once the stop persists.
+    done.acknowledge(&[], false).await;
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn code_mode_stop_reports_results_the_engine_discarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let bot = Fixture::open(dir.path()).await;
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
+    bot.ctx
+        .base
+        .set_state(super::super::SessionRequestMeta::new(meta));
+    let done = FinishedRuns::new(&bot.ctx.base.agent);
+    bot.ctx.base.set_state(done.clone());
+    let output = bot
+        .call(
+            EXEC,
+            json!({"code":"tools.list_cron_runs(job_id=42, limit=20, cursor=None)\nreturn 1"}),
+            None,
+        )
+        .await;
+    assert_eq!(output.output["result"]["value"], 1, "{output:?}");
+    let answered = |output| {
+        vec![anda_core::Message {
+            role: "tool".into(),
+            content: vec![anda_core::ContentPart::ToolOutput {
+                name: EXEC.into(),
+                output,
+                is_error: None,
+                call_id: Some("fixture-call".into()),
+                remote_id: None,
+            }],
+            ..Default::default()
+        }]
+    };
+    // A recorded result already tells the model what the run did.
+    assert!(
+        done.report_interrupted(&answered(output.output))
+            .await
+            .is_none()
+    );
+    // A stop that comes before the engine records it closes the call with
+    // its own error.
+    let stopped = answered(json!({"error":"tool call stopped"}));
+    let note = done
+        .report_interrupted(&stopped)
+        .await
+        .expect("the discarded result listed cron runs");
+    assert!(note.contains("completed"), "{note}");
+    let runs = bot.mode.home.join("runs/42");
+    done.acknowledge(&[], false).await;
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_none());
+}
+
+#[tokio::test]
 async fn code_mode_admission_and_oversized_results_preserve_receipts() {
     let dir = tempfile::tempdir().unwrap();
     let bot = Fixture::open(dir.path()).await;
     let occupied = bot.mode.slots.clone().acquire_many_owned(2).await.unwrap();
     let busy = bot.call(EXEC, json!({"code":"return 1"}), None).await;
     assert_eq!(busy.output["error"]["data"]["reason"], "worker_busy");
-    drop(occupied);
+    // A root run waits for a worker that frees up in time.
+    let freed = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        drop(occupied);
+    });
+    let waited = bot.call(EXEC, json!({"code":"return 1"}), None).await;
+    assert_eq!(waited.output["result"]["value"], 1, "{waited:?}");
+    freed.await.unwrap();
     let mut meta = bot.ctx.meta().clone();
     meta.extra.insert(keys::CONVERSATION.into(), json!(42));
-    let done = FinishedRuns::default();
+    let done = FinishedRuns::new(&bot.ctx.base.agent);
     bot.ctx.base.set_state(done.clone());
     bot.ctx
         .base

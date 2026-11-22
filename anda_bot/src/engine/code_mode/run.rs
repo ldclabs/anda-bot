@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     time::Duration,
@@ -83,12 +83,34 @@ impl Record {
             .collect();
         json!({"run_id":self.run_id,"counts":counts,"receipts":receipts,"omitted":omitted})
     }
-    /// The engine answers a stopped or cancelled call with its own error,
-    /// which says nothing about the children. Only this run's output does.
-    fn settled_by(&self, output: &Value) -> bool {
-        output.get("result").is_some() || output["error"]["data"]["run_id"] == self.run_id.as_str()
+    /// After [`Self::reconcile`], calls that never ran, were refused or
+    /// failed leave nothing for the user to check.
+    fn needs_reconciling(&self) -> bool {
+        self.calls
+            .iter()
+            .any(|c| matches!(c.status.as_str(), "completed" | "outcome_unknown"))
     }
 }
+
+/// The engine answers a stopped or cancelled call with its own error, which
+/// says nothing about the children. Only the run's own output settles them.
+fn settles(output: &Value, run_id: &str) -> bool {
+    output.get("result").is_some() || output["error"]["data"]["run_id"] == run_id
+}
+
+fn interrupted_note(summaries: &[Value]) -> String {
+    format!(
+        "Interrupted Code Mode operations. Report completed calls and reconcile unknown outcomes with the user before starting new actions. {}",
+        Value::from(summaries.to_vec())
+    )
+}
+
+/// A root run waits this long for a worker. A nested run fails at once,
+/// because its own ancestors may hold every worker.
+#[cfg(not(test))]
+const SLOT_WAIT: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const SLOT_WAIT: Duration = Duration::from_millis(300);
 
 struct Journal {
     path: Option<PathBuf>,
@@ -325,15 +347,19 @@ impl CodeMode {
             let result = Box::pin(site.run.evaluate(ctx, &dispatch, request, stack)).await?;
             return Ok(ToolOutput::new(json!({"result":result})));
         }
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Failure {
-                code: "resource_limit".into(),
-                message: "Code Mode workers are busy".into(),
-                data: json!({"reason":"worker_busy"}),
-            })?;
+        let slot = if site.is_none() {
+            tokio::time::timeout(SLOT_WAIT, self.slots.clone().acquire_owned())
+                .await
+                .ok()
+                .and_then(Result::ok)
+        } else {
+            self.slots.clone().try_acquire_owned().ok()
+        };
+        let permit = slot.ok_or_else(|| Failure {
+            code: "resource_limit".into(),
+            message: "Code Mode workers are busy".into(),
+            data: json!({"reason":"worker_busy"}),
+        })?;
         let run_ctx = ctx.cancellable_child();
         let cancel = run_ctx.cancellation_token();
         let _guard = cancel.clone().drop_guard();
@@ -380,6 +406,16 @@ impl CodeMode {
             journal,
             accounting: Default::default(),
         };
+        // The conversation's own run counts as running until it returns, so a
+        // stop that drops it can report its receipts.
+        let owned = ctx
+            .get_state::<FinishedRuns>()
+            .filter(|done| *done.agent == ctx.agent);
+        if site.is_none()
+            && let (Some(done), Some(path)) = (&owned, &run.journal.path)
+        {
+            done.track(path.clone(), RunCompletion::Running);
+        }
         let result = tokio::select! {
             _=cancel.cancelled()=>Err(Failure::new("cancelled","script cancelled")),
             res=tokio::time::timeout(Duration::from_secs(20*60),Box::pin(run.evaluate(&run_ctx,&dispatch,request,name.into_iter().collect())))=>res.unwrap_or_else(|_|Err(Failure::new("resource_limit","script wall time exceeded"))),
@@ -406,16 +442,17 @@ impl CodeMode {
         output.usage = accounting.usage;
         output.tools_usage = accounting.tools;
         output.artifacts = accounting.artifacts;
-        // This marker allows the conversation writer to retire the journal only
-        // after the outer result is durable.
         if site.is_none()
             && let Some(path) = &run.journal.path
-            && let Some(done) = ctx.get_state::<FinishedRuns>()
         {
-            done.track(
-                path.clone(),
-                RunCompletion::ToolResult(dispatch.call_id.clone()),
-            );
+            match &owned {
+                // The conversation writer retires the journal only after
+                // the outer result is durable.
+                Some(done) => done.returned(path, dispatch.call_id.clone()),
+                // A subagent's result reaches its own runner, never this
+                // conversation's history, so its receipts close with the run.
+                None => remove_receipt(path.clone()).await,
+            }
         }
         Ok(output)
     }
@@ -426,7 +463,7 @@ impl CodeMode {
         meta: &RequestMeta,
         conversation: &Conversation,
     ) -> Option<String> {
-        ctx.set_state(FinishedRuns::default());
+        ctx.set_state(FinishedRuns::new(&ctx.agent));
         // The replay history drops unanswered calls. Read the saved messages
         // so recovery can still match the original call IDs.
         let recorded: Vec<Message> = conversation
@@ -493,13 +530,17 @@ impl CodeMode {
             if rec.outer_call_id.as_ref().is_some_and(|id| {
                 history.iter().flat_map(|m| &m.content).any(|p| {
                     matches!(p, ContentPart::ToolOutput { call_id: Some(call), output, .. }
-                        if call == id && rec.settled_by(output))
+                        if call == id && settles(output, &rec.run_id))
                 })
             }) {
                 remove_receipt(e.path()).await;
                 continue;
             }
             rec.reconcile();
+            if !rec.needs_reconciling() {
+                remove_receipt(e.path()).await;
+                continue;
+            }
             summaries.push(rec.summary());
             if let Some(done) = ctx.get_state::<FinishedRuns>() {
                 done.track(e.path(), RunCompletion::UserReply);
@@ -512,38 +553,114 @@ impl CodeMode {
             return Ok(None);
         }
         ctx.set_state(RecoveryHold::default());
-        Ok(Some(format!(
-            "Interrupted Code Mode operations. Report completed calls and reconcile unknown outcomes with the user before starting new actions. {}",
-            serde_json::to_string(&summaries)?
-        )))
+        Ok(Some(interrupted_note(&summaries)))
     }
 }
-#[derive(Clone, Default)]
-pub(crate) struct FinishedRuns(Arc<parking_lot::Mutex<Vec<FinishedRun>>>);
+/// Runs the conversation writer retires once their result is durable. Only
+/// the agent that owns the conversation writes results to its history.
+#[derive(Clone)]
+pub(crate) struct FinishedRuns {
+    agent: Arc<str>,
+    runs: Arc<parking_lot::Mutex<Vec<FinishedRun>>>,
+}
 struct FinishedRun {
     path: PathBuf,
     completion: RunCompletion,
 }
 enum RunCompletion {
+    /// The run has not returned. A stop drops it.
+    Running,
+    /// The run returned its output for this call.
     ToolResult(Option<String>),
+    /// A stop reported the run in the conversation history.
+    Reported,
+    /// Recovery reported the run; the user's reply settles it.
     UserReply,
 }
 impl FinishedRuns {
+    pub(crate) fn new(agent: &str) -> Self {
+        Self {
+            agent: agent.into(),
+            runs: Default::default(),
+        }
+    }
     fn track(&self, path: PathBuf, completion: RunCompletion) {
-        self.0.lock().push(FinishedRun { path, completion });
+        self.runs.lock().push(FinishedRun { path, completion });
+    }
+    #[cfg(test)]
+    pub(crate) fn running(&self, path: PathBuf) {
+        self.track(path, RunCompletion::Running);
+    }
+    fn returned(&self, path: &Path, call_id: Option<String>) {
+        let mut runs = self.runs.lock();
+        let completion = RunCompletion::ToolResult(call_id);
+        match runs.iter_mut().find(|run| run.path == path) {
+            Some(run) => run.completion = completion,
+            None => runs.push(FinishedRun {
+                path: path.to_owned(),
+                completion,
+            }),
+        }
+    }
+    /// A stop drops running scripts, and the engine discards results it has
+    /// not recorded yet. It answers their calls without the children's
+    /// outcomes, so this returns a note on the runs that leave the user
+    /// something to check.
+    pub(crate) async fn report_interrupted(&self, history: &[Message]) -> Option<String> {
+        let recorded = |id: &str, path: &Path| {
+            history.iter().flat_map(|m| &m.content).any(|p| {
+                matches!(p, ContentPart::ToolOutput { call_id: Some(call), output, .. }
+                    if call == id && settles(output, run_id(path)))
+            })
+        };
+        let dropped: Vec<_> = self
+            .runs
+            .lock()
+            .extract_if(.., |run| match &run.completion {
+                RunCompletion::Running => true,
+                RunCompletion::ToolResult(Some(id)) => !recorded(id, &run.path),
+                _ => false,
+            })
+            .map(|run| run.path)
+            .collect();
+        let mut summaries = Vec::new();
+        for path in dropped {
+            // A run that made no tool calls never wrote its journal.
+            let Some(mut rec) = tokio::fs::read(&path)
+                .await
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Record>(&bytes).ok())
+            else {
+                continue;
+            };
+            rec.reconcile();
+            if rec.needs_reconciling() {
+                summaries.push(rec.summary());
+                self.track(path, RunCompletion::Reported);
+            } else {
+                remove_receipt(path).await;
+            }
+        }
+        (!summaries.is_empty()).then(|| interrupted_note(&summaries))
     }
     pub(crate) async fn acknowledge(&self, messages: &[Value], user_replied: bool) {
         let paths: Vec<_> = self
-            .0
+            .runs
             .lock()
             .extract_if(.., |run| match &run.completion {
+                RunCompletion::Running => false,
+                RunCompletion::Reported => true,
                 RunCompletion::UserReply => user_replied,
                 RunCompletion::ToolResult(None) => true,
                 RunCompletion::ToolResult(Some(id)) => messages
                     .iter()
                     .filter_map(|m| m["content"].as_array())
                     .flatten()
-                    .any(|p| p["type"] == "ToolOutput" && p["callId"].as_str() == Some(id)),
+                    .any(|p| {
+                        p["type"] == "ToolOutput"
+                            && p["callId"].as_str() == Some(id)
+                            && settles(&p["output"], run_id(&run.path))
+                    }),
             })
             .map(|run| run.path)
             .collect();
@@ -551,6 +668,13 @@ impl FinishedRuns {
             remove_receipt(p).await;
         }
     }
+}
+
+/// Root runs name their journal after the run.
+fn run_id(path: &Path) -> &str {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default()
 }
 
 async fn remove_receipt(path: PathBuf) {

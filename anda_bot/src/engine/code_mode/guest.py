@@ -119,7 +119,9 @@ class Tools:
         return self[name]
 
     def __getitem__(self, name):
-        def call(**args):
+        def call(*positional, **args):
+            if positional:
+                raise TypeError(f"tools.{name}() takes keyword arguments only, such as tools.{name}(key=value)")
             item = _call_batch([(name, args)], False)[0]
             if isinstance(item, ToolError):
                 raise item
@@ -139,7 +141,12 @@ def _call_batch(calls, batch):
 
 
 def parallel(calls):
-    return _call_batch(list(calls), True)
+    calls = list(calls)
+    for call in calls:
+        if not (isinstance(call, (tuple, list)) and len(call) == 2
+                and isinstance(call[0], str) and isinstance(call[1], dict)):
+            raise TypeError("parallel() takes (tool_name, kwargs) pairs, such as parallel([('name', {'key': value})])")
+    return _call_batch(calls, True)
 
 
 _stdout = bytearray()
@@ -157,9 +164,49 @@ def capture(*args, sep=" ", end="\n", file=None, flush=False):
 
 
 def import_data(name, globals=None, locals=None, fromlist=(), level=0):
-    if level == 0 and name == "json":
-        return _json_module
-    raise ImportError("Code Mode provides tools and the json data module")
+    module = _modules.get(name) if level == 0 else None
+    if module is None:
+        raise ImportError("Code Mode can import only " + ", ".join(sorted(_modules))
+                          + "; files, network, re, math and datetime are unavailable")
+    return module
+
+
+class Module:
+    """A namespace standing in for the parts of a standard module the worker has."""
+
+    def __init__(self, name, **members):
+        self.__name__ = name
+        self.__dict__.update(members)
+
+    def __getattr__(self, name):
+        raise AttributeError(f"{self.__name__}.{name} is not available in Code Mode")
+
+
+class Counter(dict):
+    """collections.Counter: missing keys count as zero."""
+
+    def __init__(self, iterable=None, **counts):
+        super().__init__()
+        self.update(iterable, **counts)
+
+    def __missing__(self, key):
+        return 0
+
+    def update(self, iterable=None, **counts):
+        if isinstance(iterable, dict):
+            for key, count in iterable.items():
+                self[key] = self[key] + count
+        elif iterable is not None:
+            _collections._count_elements(self, iterable)
+        for key, count in counts.items():
+            self[key] = self[key] + count
+
+    def most_common(self, n=None):
+        items = sorted(self.items(), key=lambda item: item[1], reverse=True)
+        return items if n is None else items[:n]
+
+    def total(self):
+        return sum(self.values())
 
 
 class JsonModule:
@@ -176,6 +223,27 @@ class JsonModule:
 
 
 _json_module = JsonModule()
+_modules = {
+    "json": _json_module,
+    "itertools": itertools,
+    "operator": _operator,
+    "functools": Module("functools", reduce=_functools.reduce, partial=_functools.partial,
+                        cmp_to_key=_functools.cmp_to_key),
+    "collections": Module("collections", Counter=Counter, defaultdict=_collections.defaultdict,
+                          deque=_collections.deque,
+                          OrderedDict=getattr(_collections, "OrderedDict", dict)),
+}
+
+
+def plain(value):
+    """Return parallel() errors and sets as JSON data; JSON keys are strings."""
+    if isinstance(value, ToolError):
+        return {"error": {"code": value.code, "message": value.message, "data": plain(value.data)}}
+    if isinstance(value, dict):
+        return {key if isinstance(key, str) else str(key): plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [plain(item) for item in value]
+    return value
 
 
 def evaluate(request):
@@ -201,9 +269,17 @@ def _evaluate(request):
         value = scope[request["name"][8:]](**request["args"])
     else:
         body = compile(source, "<code_exec>", "exec", PYCF_ONLY_AST).body
+        if body and type(body[-1]).__name__ == "Expr":
+            # A final expression is the result, as in a notebook cell.
+            result = compile("def _cell():\n    return 0", "<code_exec>", "exec", PYCF_ONLY_AST).body[0].body[0]
+            result.value = body[-1].value
+            for field in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
+                if hasattr(body[-1], field):
+                    setattr(result, field, getattr(body[-1], field))
+            body[-1] = result
         wrapped = compile("def _cell(): pass", "<code_exec>", "exec", PYCF_ONLY_AST)
         if body:
             wrapped.body[0].body = body
         exec(compile(wrapped, "<code_exec>", "exec"), scope)
         value = scope["_cell"]()
-    return {"value": value, "stdout": _stdout.decode("utf-8", "ignore"), "stdout_truncated": _truncated}
+    return {"value": plain(value), "stdout": _stdout.decode("utf-8", "ignore"), "stdout_truncated": _truncated}
