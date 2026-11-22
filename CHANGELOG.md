@@ -4,6 +4,15 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+### Changed
+
+- Anda Desktop and the Chrome side panel show the plan in the conversation instead of above the composer. The transcript reads from top to bottom: finished messages, the plan, then the work in progress. Open the working line to follow the calls still running. They stay open when they settle into the transcript.
+- Grouped work rows say what the work did, such as “Ran 3 commands, read 2 files, and updated the plan”, instead of counting tool calls. A row with a single call also shows its command or path.
+
+### Fixed
+
+- Anda Desktop shows the running call on the working line when the newest conversation group is still empty.
+
 ## [0.15.0] — 2026-11-20
 
 ### Added

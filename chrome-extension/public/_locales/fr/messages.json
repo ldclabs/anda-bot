@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 approuver · $2 refuser"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "Plan"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "$1 étape(s) sur $2 terminée(s)"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "Détails de l’exécution"
   },
+  "activityCommandOne": {
+    "message": "$1 commande exécutée"
+  },
+  "activityCommands": {
+    "message": "$1 commandes exécutées"
+  },
+  "activityFileReadOne": {
+    "message": "$1 fichier lu"
+  },
+  "activityFilesRead": {
+    "message": "$1 fichiers lus"
+  },
+  "activityFileEditedOne": {
+    "message": "$1 fichier modifié"
+  },
+  "activityFilesEdited": {
+    "message": "$1 fichiers modifiés"
+  },
+  "activityMemoryOne": {
+    "message": "$1 accès à la mémoire"
+  },
+  "activityMemory": {
+    "message": "$1 accès à la mémoire"
+  },
+  "activityWebOne": {
+    "message": "$1 action web"
+  },
+  "activityWeb": {
+    "message": "$1 actions web"
+  },
+  "activityToolOne": {
+    "message": "$1 outil utilisé"
+  },
+  "activityTools": {
+    "message": "$1 outils utilisés"
+  },
+  "activityPlanUpdated": {
+    "message": "plan mis à jour"
+  },
   "toolFailuresCount": {
     "message": "Erreurs d’outils · $1"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "Pas encore de résultat"
-  },
-  "toolCallsCount": {
-    "message": "Appels d’outils · $1"
   },
   "moreMessageActions": {
     "message": "Plus d’actions"

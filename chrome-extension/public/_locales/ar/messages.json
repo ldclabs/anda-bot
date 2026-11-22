@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 للموافقة · $2 للرفض"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "الخطة"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "اكتملت $1 من $2 خطوات"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "تفاصيل التنفيذ"
   },
+  "activityCommandOne": {
+    "message": "تم تشغيل أمر واحد"
+  },
+  "activityCommands": {
+    "message": "الأوامر المنفّذة: $1"
+  },
+  "activityFileReadOne": {
+    "message": "تمت قراءة ملف واحد"
+  },
+  "activityFilesRead": {
+    "message": "الملفات المقروءة: $1"
+  },
+  "activityFileEditedOne": {
+    "message": "تم تعديل ملف واحد"
+  },
+  "activityFilesEdited": {
+    "message": "الملفات المعدّلة: $1"
+  },
+  "activityMemoryOne": {
+    "message": "تم الرجوع إلى الذاكرة مرة واحدة"
+  },
+  "activityMemory": {
+    "message": "مرات الرجوع إلى الذاكرة: $1"
+  },
+  "activityWebOne": {
+    "message": "تم تنفيذ إجراء ويب واحد"
+  },
+  "activityWeb": {
+    "message": "إجراءات الويب: $1"
+  },
+  "activityToolOne": {
+    "message": "تم استخدام أداة واحدة"
+  },
+  "activityTools": {
+    "message": "الأدوات المستخدمة: $1"
+  },
+  "activityPlanUpdated": {
+    "message": "تم تحديث الخطة"
+  },
   "toolFailuresCount": {
     "message": "أخطاء الأدوات · $1"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "لا توجد نتيجة بعد"
-  },
-  "toolCallsCount": {
-    "message": "استدعاءات الأدوات · $1"
   },
   "moreMessageActions": {
     "message": "إجراءات أخرى"

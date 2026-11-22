@@ -11,10 +11,11 @@
   import ChatMessageItem from '$lib/anda/ChatMessageItem.svelte'
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
-  import PlanDock from '$lib/anda/PlanDock.svelte'
+  import ChatPlan from '$lib/anda/ChatPlan.svelte'
   import {
     transcriptAnchor,
     chatTranscript,
+    liveActivity,
     type TranscriptRow
   } from '$lib/anda/chat/message-display'
   import { actionPending } from '$lib/anda/chat/action-view'
@@ -317,9 +318,16 @@
       [...turnFiles.values()].flat().map((file) => workspaceRelative(file.path, client.workspace))
     )
   ])
+  // The newest group can be an empty placeholder; the running turn is the last one with messages.
   const currentStep = $derived(
-    working ? runningToolLabel(transcriptGroups.at(-1)?.messages || []) : ''
+    working
+      ? runningToolLabel(transcriptGroups.findLast((group) => group.messages.length)?.messages || [])
+      : ''
   )
+  // The transcript reads finished messages, then the plan, then the work in
+  // progress, which the working line holds until a reply follows it.
+  const liveRow = $derived(liveActivity(transcriptGroups, working))
+  const plan = $derived(channel?.plan || [])
   const elapsed = $derived.by(() => {
     const started = working ? workingSince.get(client.activeSource) : undefined
     return started ? formatElapsed(now - started) : ''
@@ -1318,6 +1326,7 @@
       <ChatTimeline
         source={client.activeSource}
         {messages}
+        follow={plan}
         bind:viewport={scrollArea}
         scrollClass="conversation-scroll"
         onScroll={updateActivePrompt}
@@ -1369,31 +1378,34 @@
             {/snippet}
             {#each transcriptGroups as group (group._id)}
               {#each group.rows as row (row.id)}
-                {@render transcriptItem(row)}
-                {#if row.lastMessageId && turnFiles.has(row.lastMessageId)}
-                  <EditedFiles files={turnFiles.get(row.lastMessageId)!} workspace={client.workspace} {t} onOpen={openEditedFile} />
+                {#if row !== liveRow}
+                  {@render transcriptItem(row)}
+                  {#if row.lastMessageId && turnFiles.has(row.lastMessageId)}
+                    <EditedFiles files={turnFiles.get(row.lastMessageId)!} workspace={client.workspace} {t} onOpen={openEditedFile} />
+                  {/if}
                 {/if}
               {/each}
             {/each}
             {#each sideTranscript.rows as row (row.id)}
               {@render transcriptItem(row)}
             {/each}
+            {#if plan.length}
+              <div class="transcript-item transcript-plan">
+                {#key client.activeSource + ':' + (transcriptGroups.at(-1)?.lastPromptId || '')}
+                  <ChatPlan steps={plan} {working} />
+                {/key}
+              </div>
+            {/if}
             {#if working}<ChatWorkingIndicator
                 label={t('working')}
                 {elapsed}
                 step={currentStep}
+                activity={liveRow}
               />{/if}
           </div>{/if}
       </ChatTimeline>
       <footer class="composer-footer">
         <div class="composer-container">
-          {#key client.activeSource + ':' + (transcriptGroups.at(-1)?.lastPromptId || '')}
-            <PlanDock
-              awaitingResponse={pendingActions.length > 0}
-              steps={channel?.plan || []}
-              {working}
-            />
-          {/key}
           <ActionDock
             bind:this={dock}
             pending={pendingActions}

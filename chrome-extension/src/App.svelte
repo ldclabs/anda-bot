@@ -13,9 +13,9 @@
   import ChatWorkingIndicator from '$lib/anda/ChatWorkingIndicator.svelte'
   import AndaMark from '$lib/anda/AndaMark.svelte'
   import ActionDock from '$lib/anda/ActionDock.svelte'
-  import PlanDock from '$lib/anda/PlanDock.svelte'
+  import ChatPlan from '$lib/anda/ChatPlan.svelte'
   import { actionPending } from '$lib/anda/chat/action-view'
-  import { transcriptAnchor, chatTranscript } from '$lib/anda/chat/message-display'
+  import { transcriptAnchor, chatTranscript, liveActivity } from '$lib/anda/chat/message-display'
   import { runningToolLabel } from '$lib/anda/chat/tool-view'
   import { ConversationMemoryActivity } from '$lib/anda/memory/activity-store.svelte'
   import ChatSettings from '$lib/anda/ChatSettings.svelte'
@@ -105,6 +105,10 @@
   const currentStep = $derived(
     stoppable ? runningToolLabel(visibleMessageGroups.at(-1)?.messages || []) : ''
   )
+  // The transcript reads finished messages, then the plan, then the work in
+  // progress, which the working line holds until a reply follows it.
+  const liveRow = $derived(liveActivity(visibleMessageGroups, stoppable))
+  const plan = $derived(andaClient.activeChannel?.plan || [])
   const sideMessages = $derived(andaClient.activeChannel?.sideMessages || [])
   const sideMessageCount = $derived(sideMessages.length)
   const sideTranscript = $derived(
@@ -538,6 +542,7 @@
     <ChatTimeline
       source={activeSource || ''}
       messages={visibleMessageGroups.at(-1)?.messages || []}
+      follow={plan}
       bind:viewport={messagesElement}
       scrollClass="message-scroll scrollbar-slim"
       contentClass="flex flex-col gap-3 px-3 py-4"
@@ -605,7 +610,9 @@
             {/if}
 
             {#each group.rows as row (row.id)}
-              {#if row.kind === 'activity'}
+              {#if row === liveRow}
+                <!-- Shown on the working line, below the plan. -->
+              {:else if row.kind === 'activity'}
                 <ChatActivity {row} />
               {:else}
                 <ChatMessageItem
@@ -619,9 +626,20 @@
             {/each}
           </section>
         {/each}
+        {#if plan.length}
+          <div class="mx-auto w-full max-w-3xl">
+            {#key activeSource + ':' + (visibleMessageGroups.at(-1)?.lastPromptId || '')}
+              <ChatPlan steps={plan} working={stoppable} />
+            {/key}
+          </div>
+        {/if}
         {#if stoppable}
           <div class="mx-auto w-full max-w-3xl">
-            <ChatWorkingIndicator label={getMessage('working')} step={currentStep} />
+            <ChatWorkingIndicator
+              label={getMessage('working')}
+              step={currentStep}
+              activity={liveRow}
+            />
           </div>
         {/if}
       {/if}
@@ -690,13 +708,6 @@
 
     <footer class="message-footer border-t p-2.5 backdrop-blur">
       <ChatGptUsage model={andaClient.modelState.activeModel} />
-      {#key activeSource + ':' + (visibleMessageGroups.at(-1)?.lastPromptId || '')}
-        <PlanDock
-          awaitingResponse={pendingActions.length > 0}
-          steps={andaClient.activeChannel?.plan || []}
-          working={stoppable}
-        />
-      {/key}
       <ActionDock
         pending={pendingActions}
         onReply={(text) => sendPrompt({ text, attachments: [] })}

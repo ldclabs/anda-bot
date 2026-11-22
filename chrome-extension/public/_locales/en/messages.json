@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 approve · $2 deny"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "Plan"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "$1 of $2 steps done"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "Work details"
   },
+  "activityCommandOne": {
+    "message": "ran $1 command"
+  },
+  "activityCommands": {
+    "message": "ran $1 commands"
+  },
+  "activityFileReadOne": {
+    "message": "read $1 file"
+  },
+  "activityFilesRead": {
+    "message": "read $1 files"
+  },
+  "activityFileEditedOne": {
+    "message": "edited $1 file"
+  },
+  "activityFilesEdited": {
+    "message": "edited $1 files"
+  },
+  "activityMemoryOne": {
+    "message": "checked memory once"
+  },
+  "activityMemory": {
+    "message": "checked memory $1 times"
+  },
+  "activityWebOne": {
+    "message": "took $1 web action"
+  },
+  "activityWeb": {
+    "message": "took $1 web actions"
+  },
+  "activityToolOne": {
+    "message": "used $1 tool"
+  },
+  "activityTools": {
+    "message": "used $1 tools"
+  },
+  "activityPlanUpdated": {
+    "message": "updated the plan"
+  },
   "toolFailuresCount": {
     "message": "Tool errors · $1"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "No result yet"
-  },
-  "toolCallsCount": {
-    "message": "Tool calls · $1"
   },
   "moreMessageActions": {
     "message": "More actions"

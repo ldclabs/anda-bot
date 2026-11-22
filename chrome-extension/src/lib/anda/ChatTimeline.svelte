@@ -1,6 +1,17 @@
 <script lang="ts" module>
+  import { getContext, setContext } from 'svelte'
+
   // Each window remembers its own reading positions, including across view changes.
   const readingPositions = new Map<string, number>()
+  const revealEndKey = Symbol('chat-timeline-reveal-end')
+
+  /**
+   * For content at the end of the timeline (the working line): shows the end
+   * once the next render settles, without moving focus. Call during init.
+   */
+  export function timelineRevealEnd(): (() => void) | undefined {
+    return getContext<(() => void) | undefined>(revealEndKey)
+  }
 </script>
 
 <script lang="ts">
@@ -12,6 +23,7 @@
   let {
     source,
     messages,
+    follow,
     viewport = $bindable(null),
     scrollClass = '',
     contentClass = '',
@@ -20,6 +32,8 @@
   }: {
     source: string
     messages: ChatMessage[]
+    /** Other content that grows the end of the timeline as a message would (the plan). */
+    follow?: unknown
     viewport?: HTMLElement | null
     scrollClass?: string
     contentClass?: string
@@ -49,11 +63,12 @@
     else readingPositions.delete(source)
   }
 
-  // Check the old layout before new messages change its height. Opening a
-  // disclosure or reading further up never asks the timeline to follow.
+  // Check the old layout before new messages or plan steps change its height.
+  // Opening a disclosure or reading further up never asks the timeline to follow.
   $effect.pre(() => {
     const el = viewport
     if (!el) return
+    void follow
     const currentSource = source
     if (!messages.length) {
       // Wait for history to load before restoring its saved scroll offset.
@@ -91,6 +106,15 @@
     viewport.focus({ preventScroll: true })
     remember()
   }
+
+  // At the end, the timeline keeps following what the running work adds.
+  setContext(revealEndKey, () => {
+    void tick().then(() => {
+      if (!viewport) return
+      viewport.scrollTop = viewport.scrollHeight
+      remember()
+    })
+  })
 </script>
 
 <div class="timeline-shell">

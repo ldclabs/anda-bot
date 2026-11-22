@@ -684,7 +684,8 @@ try {
   // Process updates share one disclosure while the actual reply stays readable.
   const activity = page.locator('.chat-activity')
   assert.equal(await activity.count(), 1)
-  const details = activity.getByRole('button', { name: /Work details/ })
+  // The row says what the work did instead of counting tool calls.
+  const details = activity.getByRole('button', { name: 'Read 1 file', exact: true })
   assert.equal(await details.getAttribute('aria-expanded'), 'false')
   await details.focus()
   await page.keyboard.press('Space')
@@ -696,9 +697,9 @@ try {
   assert.equal(await plan.getAttribute('aria-expanded'), 'false')
   await plan.focus()
   await page.keyboard.press('Enter')
-  await page.locator('.plan-dock li').getByText('Check the fixture').waitFor()
+  await page.locator('.chat-plan li').getByText('Check the fixture').waitFor()
   await page.keyboard.press('Enter')
-  assert.equal(await page.locator('.plan-dock li').count(), 0)
+  assert.equal(await page.locator('.chat-plan li').count(), 0)
   // Message copy buttons write through navigator.clipboard, which Electron
   // grants only through the session's permission request handler. The user's
   // clipboard text is restored when the run ends.
@@ -747,7 +748,7 @@ try {
     }
   )
   const latestActivity = activity.nth(1)
-  await latestActivity.getByRole('button', { name: /Work details/ }).click()
+  await latestActivity.getByRole('button', { name: /^Read 1 file/ }).click()
   await latestActivity.getByText('Open result', { exact: true }).waitFor()
   await appendChatMessages({
     role: 'user',

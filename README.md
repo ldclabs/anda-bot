@@ -144,7 +144,7 @@ The command waits for completion and prints the result as JSON. Use `--prompt-fi
 
 The default file workspace is `~/.anda/workspace`; configure `workspaces` in `config.yaml` to add persistent roots. A project selected by an authenticated local client also becomes that chat's shell directory and, subject to its approval policy, is available to file reading and searching. File editing tools remain limited to configured roots; changes elsewhere go through shell approval. See [configuration](docsite/docs/runtime/configuration.mdx).
 
-Desktop and the Chrome side panel group consecutive reasoning, tool calls and background updates into one expandable row. Completed plans collapse automatically. Open the plan header to review its steps.
+Desktop and the Chrome side panel group consecutive reasoning, tool calls and background updates into one expandable row that says what the work did, such as “Ran 3 commands and read 2 files”. The plan sits in the conversation under the latest message, followed by the work in progress; open that line to follow the running calls. Completed plans collapse automatically. Open the plan header to review its steps.
 
 ### Approvals and unattended work
 

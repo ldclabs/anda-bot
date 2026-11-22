@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 aprobar · $2 denegar"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "Plan"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "$1 de $2 pasos completados"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "Detalles de la ejecución"
   },
+  "activityCommandOne": {
+    "message": "ejecutó $1 comando"
+  },
+  "activityCommands": {
+    "message": "ejecutó $1 comandos"
+  },
+  "activityFileReadOne": {
+    "message": "leyó $1 archivo"
+  },
+  "activityFilesRead": {
+    "message": "leyó $1 archivos"
+  },
+  "activityFileEditedOne": {
+    "message": "editó $1 archivo"
+  },
+  "activityFilesEdited": {
+    "message": "editó $1 archivos"
+  },
+  "activityMemoryOne": {
+    "message": "consultó la memoria una vez"
+  },
+  "activityMemory": {
+    "message": "consultó la memoria $1 veces"
+  },
+  "activityWebOne": {
+    "message": "realizó $1 acción web"
+  },
+  "activityWeb": {
+    "message": "realizó $1 acciones web"
+  },
+  "activityToolOne": {
+    "message": "usó $1 herramienta"
+  },
+  "activityTools": {
+    "message": "usó $1 herramientas"
+  },
+  "activityPlanUpdated": {
+    "message": "actualizó el plan"
+  },
   "toolFailuresCount": {
     "message": "Fallos de herramientas · $1"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "Aún sin resultado"
-  },
-  "toolCallsCount": {
-    "message": "Llamadas a herramientas · $1"
   },
   "moreMessageActions": {
     "message": "Más acciones"

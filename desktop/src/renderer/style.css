@@ -808,13 +808,7 @@ kbd {
   max-width: 850px;
   margin: 0 auto;
   padding: 22px 32px 50px;
-}
-/* Room for the prompt marks along a long chat's edge. */
-.with-index .transcript {
-  padding-inline-start: 44px;
-}
-.transcript-item {
-  margin-bottom: 20px;
+  /* Messages, the plan and the working line's opened details share one palette. */
   --message-user-bubble: var(--desk-side);
   --message-bg: var(--desk-bg);
   --message-surface: var(--desk-side);
@@ -822,6 +816,17 @@ kbd {
   --message-text: var(--desk-text);
   --message-muted: color-mix(in srgb, var(--desk-muted) 77%, var(--desk-text));
   --message-border: var(--desk-border);
+}
+/* Room for the prompt marks along a long chat's edge. */
+.with-index .transcript {
+  padding-inline-start: 44px;
+}
+.transcript-item {
+  margin-bottom: 20px;
+}
+/* The plan sits right above the working line it explains. */
+.transcript-plan {
+  margin-bottom: 6px;
 }
 /* Message actions and times appear with the pointer or keyboard focus, one after another. */
 @media (hover: hover) and (pointer: fine) {
@@ -866,8 +871,6 @@ kbd {
   color: var(--desk-muted);
 }
 .transcript .chat-working {
-  --message-muted: var(--desk-muted);
-  --message-text: var(--desk-text);
   padding: 15px 0;
 }
 .edited-files {

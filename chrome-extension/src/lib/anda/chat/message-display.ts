@@ -11,6 +11,8 @@ export type TranscriptRow = { id: string; lastMessageId?: string } & (
   { kind: 'message'; message: ChatMessage } | { kind: 'activity'; details: ActivityDetail[] }
 )
 
+export type ActivityRow = Extract<TranscriptRow, { kind: 'activity' }>
+
 interface Transcript {
   messages: ChatMessage[]
   rows: TranscriptRow[]
@@ -86,9 +88,24 @@ export function isProcessStep(message: ChatMessage): boolean {
   return message.role === 'assistant' && Boolean(message.tools?.length)
 }
 
+/**
+ * The work still in progress: while a turn runs, the activity that ends the
+ * transcript. Hosts show it on the working line, below the plan, so finished
+ * messages, the plan and the running work read from top to bottom. The newest
+ * group can be an empty placeholder, so this looks at the last group with rows.
+ */
+export function liveActivity(
+  groups: { rows: TranscriptRow[] }[],
+  working: boolean
+): ActivityRow | undefined {
+  if (!working) return undefined
+  const last = groups.findLast((group) => group.rows.length)?.rows.at(-1)
+  return last?.kind === 'activity' ? last : undefined
+}
+
 function transcriptRows(messages: ChatMessage[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
-  let activity: Extract<TranscriptRow, { kind: 'activity' }> | undefined
+  let activity: ActivityRow | undefined
   function add(detail: ActivityDetail) {
     if (!activity) {
       activity = { kind: 'activity', id: detail.id, details: [] }

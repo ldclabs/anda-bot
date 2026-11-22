@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../client/types'
-import { transcriptAnchor, chatTranscript, isProcessStep } from './message-display'
+import { transcriptAnchor, chatTranscript, isProcessStep, liveActivity } from './message-display'
 
 function message(id: string, fields: Partial<ChatMessage>): ChatMessage {
   return { id, conversation: 1, role: 'assistant', text: '', ...fields }
@@ -116,5 +116,21 @@ describe('chatTranscript', () => {
     expect(messages[0]?.tools?.[0]?.output).toBe('ok')
     expect(messages[1]).toBe(prompt)
     expect(rows.map((row) => row.id)).toEqual(['old:tool:0', 'steer', 'late'])
+  })
+})
+
+describe('liveActivity', () => {
+  const prompt = message('prompt', { role: 'user', text: 'Check the build' })
+  const step = message('step', { tools: [{ name: 'shell', callId: 'a' }] })
+  const reply = message('reply', { text: 'Building now.' })
+
+  it('takes the activity that ends a running turn, skipping an empty placeholder group', () => {
+    const turn = chatTranscript([prompt, reply, step])
+    expect(liveActivity([turn, { rows: [] }], true)).toBe(turn.rows.at(-1))
+  })
+  it('leaves the transcript settled when the turn ended or a message comes last', () => {
+    expect(liveActivity([chatTranscript([prompt, reply, step])], false)).toBeUndefined()
+    expect(liveActivity([chatTranscript([prompt, step, reply])], true)).toBeUndefined()
+    expect(liveActivity([], true)).toBeUndefined()
   })
 })

@@ -88,7 +88,7 @@ Chrome blocks extension scripts on some protected pages such as `chrome://` URLs
 
 ## Client behavior
 
-The chat keeps replies and requests for approval visible. Open **Work details** to inspect consecutive reasoning, tool calls and background updates. Completed plans fold to one line above the composer. When reading older messages, use **Jump to latest** to return to the end. Rich-text copy and print are in the reply’s **More actions** menu.
+The chat keeps replies and requests for approval visible. Consecutive reasoning, tool calls and background updates share one row that says what the work did, such as “Ran 3 commands and read 2 files”; open it to inspect each call. The plan sits in the transcript under the latest message, above the working line, which opens into the calls still running. Completed plans fold to one line. When reading older messages, use **Jump to latest** to return to the end. Rich-text copy and print are in the reply’s **More actions** menu.
 
 Connection settings are shared by the Side Panel and Dashboard. Updating the
 Gateway URL or bearer token clears data from the previous connection; saving

@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 批准 · $2 拒绝"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "计划"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "已完成 $1/$2 步"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "执行过程"
   },
+  "activityCommandOne": {
+    "message": "运行了 $1 个命令"
+  },
+  "activityCommands": {
+    "message": "运行了 $1 个命令"
+  },
+  "activityFileReadOne": {
+    "message": "读取了 $1 个文件"
+  },
+  "activityFilesRead": {
+    "message": "读取了 $1 个文件"
+  },
+  "activityFileEditedOne": {
+    "message": "修改了 $1 个文件"
+  },
+  "activityFilesEdited": {
+    "message": "修改了 $1 个文件"
+  },
+  "activityMemoryOne": {
+    "message": "调取了 $1 次记忆"
+  },
+  "activityMemory": {
+    "message": "调取了 $1 次记忆"
+  },
+  "activityWebOne": {
+    "message": "进行了 $1 次网页操作"
+  },
+  "activityWeb": {
+    "message": "进行了 $1 次网页操作"
+  },
+  "activityToolOne": {
+    "message": "使用了 $1 个工具"
+  },
+  "activityTools": {
+    "message": "使用了 $1 个工具"
+  },
+  "activityPlanUpdated": {
+    "message": "更新了计划"
+  },
   "toolFailuresCount": {
     "message": "$1 次调用失败"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "尚无结果"
-  },
-  "toolCallsCount": {
-    "message": "$1 次工具调用"
   },
   "moreMessageActions": {
     "message": "更多操作"

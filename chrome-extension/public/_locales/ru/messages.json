@@ -404,10 +404,10 @@
   "actionDockShortcuts": {
     "message": "$1 — одобрить · $2 — отклонить"
   },
-  "planDockLabel": {
+  "planLabel": {
     "message": "План"
   },
-  "planDockProgress": {
+  "planProgress": {
     "message": "Выполнено шагов: $1 из $2"
   },
   "planStepCompleted": {
@@ -1643,6 +1643,45 @@
   "chatActivity": {
     "message": "Ход работы"
   },
+  "activityCommandOne": {
+    "message": "выполнена $1 команда"
+  },
+  "activityCommands": {
+    "message": "выполнено команд: $1"
+  },
+  "activityFileReadOne": {
+    "message": "прочитан $1 файл"
+  },
+  "activityFilesRead": {
+    "message": "прочитано файлов: $1"
+  },
+  "activityFileEditedOne": {
+    "message": "изменён $1 файл"
+  },
+  "activityFilesEdited": {
+    "message": "изменено файлов: $1"
+  },
+  "activityMemoryOne": {
+    "message": "$1 обращение к памяти"
+  },
+  "activityMemory": {
+    "message": "обращений к памяти: $1"
+  },
+  "activityWebOne": {
+    "message": "$1 действие в вебе"
+  },
+  "activityWeb": {
+    "message": "действий в вебе: $1"
+  },
+  "activityToolOne": {
+    "message": "использован $1 инструмент"
+  },
+  "activityTools": {
+    "message": "использовано инструментов: $1"
+  },
+  "activityPlanUpdated": {
+    "message": "обновлён план"
+  },
   "toolFailuresCount": {
     "message": "Ошибки инструментов · $1"
   },
@@ -1678,9 +1717,6 @@
   },
   "toolNoResult": {
     "message": "Результата пока нет"
-  },
-  "toolCallsCount": {
-    "message": "Вызовы инструментов · $1"
   },
   "moreMessageActions": {
     "message": "Другие действия"

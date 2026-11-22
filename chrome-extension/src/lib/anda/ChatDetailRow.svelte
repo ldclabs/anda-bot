@@ -1,6 +1,7 @@
 <script lang="ts" module>
-  // Preserve the reader's choice as polls replace records and chats are reopened.
-  const expandedRows = new Set<string>()
+  // Preserve the reader's choice as polls replace records and chats are reopened,
+  // and as the working line's activity settles into the transcript.
+  export const expandedRows = new Set<string>()
 </script>
 
 <script lang="ts">

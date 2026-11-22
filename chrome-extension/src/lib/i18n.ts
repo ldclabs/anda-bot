@@ -135,14 +135,19 @@ export function watchUiLanguage(listener: (language: UiLanguage | '') => void): 
   })
 }
 
+/** The BCP 47 tag of the language the UI is shown in, for `Intl` formatting. */
+export function uiLocale(): string {
+  return (overrideLanguage || browserUiLanguage() || 'en').replace('_', '-')
+}
+
 /** Keep the screen reader's language and the reading direction in sync. */
 function applyDocumentLanguage(): void {
   if (typeof document === 'undefined') {
     return
   }
-  const language = overrideLanguage || browserUiLanguage() || 'en'
-  document.documentElement.lang = language.replace('_', '-')
-  document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
+  const locale = uiLocale()
+  document.documentElement.lang = locale
+  document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'
 }
 
 /** Installs bundled translations for a native host without emulating Chrome APIs. */
