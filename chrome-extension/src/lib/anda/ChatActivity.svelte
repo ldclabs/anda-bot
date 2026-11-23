@@ -24,7 +24,7 @@
   const summary = $derived(
     only?.kind === 'notice'
       ? noticeSummary(only)
-      : only?.kind === 'tool'
+      : only?.kind === 'tool' && only.tool.name !== 'update_plan'
         ? toolCallSummary(only.tool)
         : ''
   )

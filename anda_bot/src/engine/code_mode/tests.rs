@@ -625,9 +625,10 @@ async fn code_mode_stop_reports_the_calls_of_a_dropped_run() {
     }
     assert!(done.report_interrupted(&[]).await.is_none());
     let runs = bot.mode.home.join("runs/42");
-    assert!(std::fs::read_dir(&runs).unwrap().next().is_some());
-    // The note is in the saved history once the stop persists.
+    // The receipt stays until the user replies after the report.
     done.acknowledge(&[], false).await;
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_some());
+    done.acknowledge(&[], true).await;
     assert!(std::fs::read_dir(&runs).unwrap().next().is_none());
 }
 
@@ -679,6 +680,8 @@ async fn code_mode_stop_reports_results_the_engine_discarded() {
     assert!(note.contains("completed"), "{note}");
     let runs = bot.mode.home.join("runs/42");
     done.acknowledge(&[], false).await;
+    assert!(std::fs::read_dir(&runs).unwrap().next().is_some());
+    done.acknowledge(&[], true).await;
     assert!(std::fs::read_dir(&runs).unwrap().next().is_none());
 }
 
@@ -779,9 +782,18 @@ async fn code_mode_dropping_a_run_expires_its_card_and_reaps_its_worker() {
 async fn code_mode_registration_honors_explicit_approval_and_preserves_the_revision() {
     let dir = tempfile::tempdir().unwrap();
     let bot = Fixture::open(dir.path()).await;
+    let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
+    bot.ctx
+        .base
+        .set_state(crate::engine::SessionRequestMeta::new(meta));
+    let done = FinishedRuns::new(&bot.ctx.base.agent);
+    bot.ctx.base.set_state(done.clone());
     let created = bot.call(REGISTER, save(SOURCE, None), None).await;
+    assert_eq!(done.tracked_len(), 0);
     let revision = &created.output["result"]["revision"];
     let mut meta = bot.ctx.meta().clone();
+    meta.extra.insert(keys::CONVERSATION.into(), json!(42));
     meta.extra
         .insert("approval_mode".into(), json!("request_approval"));
     bot.ctx

@@ -366,12 +366,14 @@ impl CodeMode {
         let meta = live_request_meta(ctx);
         let conv = request_meta_extra_as::<u64>(&meta, keys::CONVERSATION).unwrap_or_default();
         let id = ic_auth_types::Xid::new().to_string();
-        let path = (conv > 0 && MemoryPolicy::current(ctx).may_write()).then(|| {
-            self.home
-                .join("runs")
-                .join(conv.to_string())
-                .join(format!("{id}.json"))
-        });
+        let path =
+            (request["op"] != "inspect" && conv > 0 && MemoryPolicy::current(ctx).may_write())
+                .then(|| {
+                    self.home
+                        .join("runs")
+                        .join(conv.to_string())
+                        .join(format!("{id}.json"))
+                });
         let journal = site
             .as_ref()
             .map(|s| s.run.journal.clone())
@@ -572,9 +574,7 @@ enum RunCompletion {
     Running,
     /// The run returned its output for this call.
     ToolResult(Option<String>),
-    /// A stop reported the run in the conversation history.
-    Reported,
-    /// Recovery reported the run; the user's reply settles it.
+    /// Recovery or a stop reported the run; the user's reply settles it.
     UserReply,
 }
 impl FinishedRuns {
@@ -590,6 +590,10 @@ impl FinishedRuns {
     #[cfg(test)]
     pub(crate) fn running(&self, path: PathBuf) {
         self.track(path, RunCompletion::Running);
+    }
+    #[cfg(test)]
+    pub(super) fn tracked_len(&self) -> usize {
+        self.runs.lock().len()
     }
     fn returned(&self, path: &Path, call_id: Option<String>) {
         let mut runs = self.runs.lock();
@@ -636,7 +640,7 @@ impl FinishedRuns {
             rec.reconcile();
             if rec.needs_reconciling() {
                 summaries.push(rec.summary());
-                self.track(path, RunCompletion::Reported);
+                self.track(path, RunCompletion::UserReply);
             } else {
                 remove_receipt(path).await;
             }
@@ -649,7 +653,6 @@ impl FinishedRuns {
             .lock()
             .extract_if(.., |run| match &run.completion {
                 RunCompletion::Running => false,
-                RunCompletion::Reported => true,
                 RunCompletion::UserReply => user_replied,
                 RunCompletion::ToolResult(None) => true,
                 RunCompletion::ToolResult(Some(id)) => messages
@@ -685,14 +688,46 @@ async fn remove_receipt(path: PathBuf) {
     }
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct RecoveryHold(Arc<std::sync::atomic::AtomicBool>);
+const HOLD_PENDING_REPORT: u8 = 0;
+const HOLD_WAITING_FOR_REPLY: u8 = 1;
+const HOLD_RELEASED: u8 = 2;
+
+#[derive(Clone)]
+pub(crate) struct RecoveryHold(Arc<std::sync::atomic::AtomicU8>);
+impl Default for RecoveryHold {
+    fn default() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicU8::new(
+            HOLD_WAITING_FOR_REPLY,
+        )))
+    }
+}
 impl RecoveryHold {
+    /// A stop goes idle without running the model. Hold tools through the next
+    /// turn so the model reports the interrupted calls before a user reply can
+    /// release the hold.
+    pub(crate) fn after_stop() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicU8::new(
+            HOLD_PENDING_REPORT,
+        )))
+    }
     pub(crate) fn waiting(&self) -> bool {
-        !self.0.load(std::sync::atomic::Ordering::Acquire)
+        self.0.load(std::sync::atomic::Ordering::Acquire) != HOLD_RELEASED
+    }
+    pub(crate) fn report_delivered(&self) {
+        let _ = self.0.compare_exchange(
+            HOLD_PENDING_REPORT,
+            HOLD_WAITING_FOR_REPLY,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
     }
     pub(crate) fn user_replied(&self) {
-        self.0.store(true, std::sync::atomic::Ordering::Release);
+        let _ = self.0.compare_exchange(
+            HOLD_WAITING_FOR_REPLY,
+            HOLD_RELEASED,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
     }
 }
 

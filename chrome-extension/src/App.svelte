@@ -628,7 +628,7 @@
         {/each}
         {#if plan.length}
           <div class="mx-auto w-full max-w-3xl">
-            {#key activeSource + ':' + (visibleMessageGroups.at(-1)?.lastPromptId || '')}
+            {#key activeSource + ':' + (visibleMessageGroups.findLast((group) => group.lastPromptId)?.lastPromptId || '')}
               <ChatPlan steps={plan} working={stoppable} />
             {/key}
           </div>

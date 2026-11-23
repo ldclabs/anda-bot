@@ -1391,7 +1391,7 @@
             {/each}
             {#if plan.length}
               <div class="transcript-item transcript-plan">
-                {#key client.activeSource + ':' + (transcriptGroups.at(-1)?.lastPromptId || '')}
+                {#key client.activeSource + ':' + (transcriptGroups.findLast((group) => group.lastPromptId)?.lastPromptId || '')}
                   <ChatPlan steps={plan} {working} />
                 {/key}
               </div>

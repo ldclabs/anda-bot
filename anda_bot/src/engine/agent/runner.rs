@@ -310,7 +310,7 @@ impl SessionRunner {
 
     /// A stop drops any running script, and the engine's stop output says
     /// nothing about the tool calls it already made. Report them, and hold
-    /// new tool calls until the user replies.
+    /// new tool calls until the model reports them and the user replies.
     #[cfg(feature = "code-mode")]
     async fn report_interrupted_code_mode_runs(&self) -> Option<String> {
         let done = self
@@ -320,7 +320,7 @@ impl SessionRunner {
         let note = done.report_interrupted(self.runner.chat_history()).await?;
         self.ctx
             .base
-            .set_state(crate::engine::code_mode::RecoveryHold::default());
+            .set_state(crate::engine::code_mode::RecoveryHold::after_stop());
         Some(note)
     }
 
@@ -1392,6 +1392,16 @@ impl SessionRunner {
                     && !self.session.has_running_background_tasks()
                 {
                     plan::finish_turn(&self.ctx.base, &mut self.conversation);
+                }
+                #[cfg(feature = "code-mode")]
+                if res.failed_reason.is_none()
+                    && self.runner.is_idle()
+                    && let Some(hold) = self
+                        .ctx
+                        .base
+                        .get_state::<crate::engine::code_mode::RecoveryHold>()
+                {
+                    hold.report_delivered();
                 }
 
                 self.conversation.status = if res.failed_reason.is_some() {
@@ -3649,13 +3659,34 @@ mod tests {
             text.contains("Code Mode recovery") && text.contains("send_im_message"),
             "{stopped}"
         );
-        assert!(
-            r.ctx
-                .base
-                .get_state::<RecoveryHold>()
-                .is_some_and(|hold| hold.waiting())
-        );
-        // The saved history carries the report, so the receipt retires.
+        let hold = r.ctx.base.get_state::<RecoveryHold>().unwrap();
+        assert!(hold.waiting());
+        // Receipts stay on disk until the model reports them and the user replies.
+        assert!(journal.is_file());
+
+        // The first message after Stop runs the reporting turn: tools stay held
+        // and the receipt stays on disk.
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "continue".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(hold.waiting());
+        assert!(journal.is_file());
+
+        // Once the user replies after the report, tools unlock and the receipt retires.
+        r.run(
+            vec![input(PromptCommand::Plain {
+                prompt: "go ahead".into(),
+            })],
+            &mut HashMap::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!hold.waiting());
         assert!(!journal.exists());
     }
 
