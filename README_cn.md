@@ -307,6 +307,8 @@ anda voice --record-secs 8 --no-playback
 
 Rust 工作区包含 `anda_bot` 包和 `anda` 可执行程序。构建需要 **Rust 1.96 或更新版本**、本地 C/C++ 构建工具链，以及 `PATH` 中的 `protoc`。CI 会安装这些前置依赖，各平台配置见[测试工作流](.github/workflows/test.yml)和[发布工作流](.github/workflows/release.yml)。
 
+构建 Linux musl 目标时，使用 `x86_64-linux-musl-gcc` 或 `aarch64-linux-musl-gcc` 编译和链接原生代码。Ubuntu 的 `musl-tools` 软件包提供宿主架构对应的编译器。
+
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot

@@ -307,6 +307,8 @@ Use `anda --home /absolute/path/to/anda-home` for separate state. If multiple da
 
 The Rust workspace contains the `anda_bot` package and the `anda` executable. Build with **Rust 1.96 or newer**, a native C/C++ build toolchain, and `protoc` on `PATH`. CI installs these prerequisites; see the [test workflow](.github/workflows/test.yml) and [release workflow](.github/workflows/release.yml) for platform setup.
 
+Linux musl builds use `x86_64-linux-musl-gcc` or `aarch64-linux-musl-gcc` to compile and link native code. On Ubuntu, `musl-tools` provides the compiler for the host architecture.
+
 ```bash
 git clone https://github.com/ldclabs/anda-bot.git
 cd anda-bot
