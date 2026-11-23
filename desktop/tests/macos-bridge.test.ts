@@ -8,19 +8,36 @@ import { expect, test, vi } from 'vitest'
 const require = createRequire(import.meta.url)
 const { assertBridgeBuild, bridgeRequirement, verifySignature } = require('../../scripts/macos-bridge.cjs')
 const { optionsForBridge } = require('../scripts/sign-macos.cjs')
+const desktopVersion = require('../package.json').version
 const source = 'S9Z2WAMAV8'
 const recipient = '63G8VNQPXB'
 
-test('the bridge can be released only as v0.15.0 by LDC', () => {
+test.each(['0.15.0', '0.15.1'])('v%s uses the LDC bridge policy', (version) => {
   try {
     vi.stubEnv('GITHUB_REF_TYPE', 'tag')
-    vi.stubEnv('GITHUB_REF_NAME', 'v0.15.0')
-    assertBridgeBuild(source)
-    for (const team of [recipient, 'OTHERTEAM1', '']) expect(() => assertBridgeBuild(team)).toThrow()
-    vi.stubEnv('GITHUB_REF_NAME', 'v0.15.1')
-    expect(() => assertBridgeBuild(source)).toThrow()
+    vi.stubEnv('GITHUB_REF_NAME', 'v' + version)
+    expect(assertBridgeBuild(source, version)).toBe(version)
+    expect(() => assertBridgeBuild(recipient, version)).toThrow('LDC Developer ID')
   } finally {
     vi.unstubAllEnvs()
+  }
+})
+
+test('the release tag must match the desktop version', () => {
+  try {
+    vi.stubEnv('GITHUB_REF_TYPE', 'tag')
+    vi.stubEnv('GITHUB_REF_NAME', 'v' + desktopVersion)
+    expect(assertBridgeBuild(source)).toBe(desktopVersion)
+    vi.stubEnv('GITHUB_REF_NAME', 'v0.14.10')
+    expect(() => assertBridgeBuild(source)).toThrow(`must match desktop version v${desktopVersion}`)
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
+test('the LDC bridge policy ends with the 0.15 series', () => {
+  for (const version of ['0.14.10', '0.16.0']) {
+    expect(() => assertBridgeBuild(source, version)).toThrow('requires a 0.15.x release')
   }
 })
 

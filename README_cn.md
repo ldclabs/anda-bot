@@ -30,7 +30,7 @@ Rust 可执行程序 `anda` 运行本地后台服务，并内嵌 [Anda Brain](ht
 | macOS，Apple Silicon | `Anda-mac-arm64.dmg` |
 | Windows，x64 | `Anda-win-x64.exe` |
 
-macOS 版更换签名团队时，请先升级到 **0.15.0**，再接收首个由 Yiwen 签名的更新。如果错过过渡版后自动更新失败，可用官方 0.15.0 DMG 覆盖安装，再检查更新。[macOS 过渡版](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+macOS 用户请先升级到由 LDC 签名的 **0.15.x** 过渡版，再接收首个由 Yiwen 签名的更新（计划为 **0.16.0**）。如果错过过渡版后自动更新失败，可用官方 0.15.0 DMG 覆盖安装，再检查更新。[macOS 过渡版](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
 
 macOS 也可以使用 Homebrew：
 

@@ -1,10 +1,10 @@
-// Release policy for the last LDC-signed macOS bridge.
+// Release policy for the LDC-signed macOS bridge series.
 const { execFileSync, spawnSync } = require('node:child_process')
 const { createHash } = require('node:crypto')
 const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
 
-const bridgeVersion = '0.15.0'
+const desktopVersion = require('../desktop/package.json').version
 const sourceTeam = 'S9Z2WAMAV8'
 const recipientTeam = '63G8VNQPXB'
 const identifiers = {
@@ -13,12 +13,14 @@ const identifiers = {
   launcher: 'ai.anda.anda-bot.launcher'
 }
 
-function assertBridgeBuild(team) {
-  const version = require('../desktop/package.json').version
-  const tag = process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : undefined
-  if (team !== sourceTeam || version !== bridgeVersion || (tag !== undefined && tag !== 'v' + bridgeVersion)) {
-    throw new Error(`The macOS bridge requires v${bridgeVersion} and LDC Developer ID team ${sourceTeam}`)
+function assertBridgeBuild(team, version = desktopVersion) {
+  if (team !== sourceTeam || !/^0\.15\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`The macOS bridge requires a 0.15.x release and LDC Developer ID team ${sourceTeam}`)
   }
+  if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== 'v' + version) {
+    throw new Error(`The macOS bridge tag must match desktop version v${version}`)
+  }
+  return version
 }
 
 function requirement(kind, teams) {
@@ -46,6 +48,7 @@ function verifySignature(file, kind) {
 }
 
 function verifyPackage(app, standalone) {
+  const expectedVersion = assertBridgeBuild(sourceTeam)
   verifySignature(app, 'app')
   const resources = join(app, 'Contents/Resources')
   // The standalone signing job only needs Node. Desktop packaging supplies yaml.
@@ -61,9 +64,9 @@ function verifyPackage(app, standalone) {
   const manifest = JSON.parse(readFileSync(join(runtime, 'manifest.json'), 'utf8'))
   const digest = file => createHash('sha256').update(readFileSync(file)).digest('hex')
   const sha256 = digest(binary)
-  if (version !== bridgeVersion || manifest.version !== 'anda_bot ' + bridgeVersion ||
+  if (version !== expectedVersion || manifest.version !== 'anda_bot ' + expectedVersion ||
       manifest.sha256 !== sha256 || sha256 !== digest(standalone)) {
-    throw new Error('The bridge app, runtime manifest and standalone release binary must match')
+    throw new Error(`The bridge app, runtime manifest and standalone binary must match release ${expectedVersion}`)
   }
 }
 

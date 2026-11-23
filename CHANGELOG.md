@@ -19,6 +19,7 @@ All notable changes to Anda Bot.
 
 ### Fixed
 
+- macOS 0.15.1 uses the LDC signing bridge introduced in 0.15.0. Release packaging checks the app and bundled runtime against the current 0.15.x version.
 - Anda Desktop shows the running call on the working line when the newest conversation group is still empty.
 - Code Mode runs started by subagents no longer leave receipts that are later reported as interrupted. Interrupted runs with no completed or uncertain calls no longer wait for your reply, and a script waits up to 30 seconds for a busy worker instead of failing at once.
 - Code Mode honors JSON formatting and decoding options and supports writing `print` output to Python file-like objects.
