@@ -113,6 +113,33 @@ fn code_mode_worker_returns_parallel_errors_as_data() {
 }
 
 #[test]
+fn code_mode_worker_imports_re_math_and_datetime() {
+    let result = execute(json!({"op":"exec","source":
+        "import re, math, heapq\nfrom datetime import date, datetime, timedelta, timezone\nfrom collections import Counter, namedtuple\nfrom functools import lru_cache\nPoint = namedtuple('Point', 'x y')\n@lru_cache\ndef square(n):\n    return n * n\nstamp = datetime(2024, 3, 1, 10, 30, tzinfo=timezone.utc)\n{'ids': re.findall(r'#(\\d+)', 'fix #12 and #345'), 'swap': re.sub(r'(\\w+)@(\\w+)', r'\\2 at \\1', 'me@home', 1), 'pages': math.ceil(7 / 3), 'root': math.isqrt(17), 'due': date(2024, 2, 28) + timedelta(days=2), 'stamp': stamp, 'label': stamp.strftime('%a %H:%M'), 'epoch': datetime.utcfromtimestamp(0), 'point': Point(1, 2)._asdict(), 'top': Counter('abracadabra').most_common(2), 'square': square(12), 'small': heapq.nsmallest(2, [5, 1, 4])}"}));
+    // A positional re.sub() count and utcfromtimestamp() warn upstream; the
+    // worker drops the warnings.
+    assert_eq!(
+        result["value"]["value"],
+        json!({"ids":["12","345"],"swap":"home at me","pages":3,"root":4,"due":"2024-03-01","stamp":"2024-03-01T10:30:00+00:00","label":"Fri 10:30","epoch":"1970-01-01T00:00:00","point":{"x":1,"y":2},"top":[["a",5],["b",2]],"square":144,"small":[1,4]}),
+        "{result}"
+    );
+    // Dates passed to tools become ISO strings as well.
+    let mut worker = start(json!({"op":"exec","source":
+        "from datetime import date\nreturn tools.page(since=date(2024, 1, 2))"}));
+    let child = &mut worker.child;
+    assert_eq!(
+        read(child)["calls"],
+        json!([["page",{"since":"2024-01-02"}]])
+    );
+    send(
+        child,
+        json!({"op":"results","items":[{"value":{"ok":true}}]}),
+    );
+    assert_eq!(read(child)["value"]["value"], json!({"ok":true}));
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
 fn code_mode_worker_validates_declarations_and_defaults_without_running_the_function() {
     let source = "def count(n: int = 20, label: str | None = None) -> int:\n    \"\"\"Count entries.\"\"\"\n    return tools.count(n=n)";
     let declaration = execute(json!({"op":"inspect","source":source}));
@@ -183,8 +210,8 @@ fn code_mode_worker_limits_output_and_imports() {
         "{modules}"
     );
     for (source, message) in [
-        ("import re", "can import only"),
-        ("from collections import namedtuple", "namedtuple"),
+        ("import time", "can import only"),
+        ("import sys", "can import only"),
         ("tools.page(1)", "keyword arguments only"),
         ("parallel([tools.page])", "(tool_name, kwargs) pairs"),
     ] {

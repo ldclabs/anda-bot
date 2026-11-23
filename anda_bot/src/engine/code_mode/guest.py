@@ -130,7 +130,7 @@ class Tools:
 
 
 def _call_batch(calls, batch):
-    items = _exchange({"op": "calls", "batch": batch, "calls": calls})
+    items = _exchange({"op": "calls", "batch": batch, "calls": [(name, plain(args)) for name, args in calls]})
     results = []
     for item in items:
         if "error" in item:
@@ -163,50 +163,18 @@ def capture(*args, sep=" ", end="\n", file=None, flush=False):
     _truncated = _truncated or len(data) > remaining
 
 
+_import = __import__
+# Pure computation modules: native in the VM or frozen into the worker.
+_MODULES = ("collections", "datetime", "functools", "heapq", "itertools", "math", "operator", "re")
+
+
 def import_data(name, globals=None, locals=None, fromlist=(), level=0):
-    module = _modules.get(name) if level == 0 else None
-    if module is None:
-        raise ImportError("Code Mode can import only " + ", ".join(sorted(_modules))
-                          + "; files, network, re, math and datetime are unavailable")
-    return module
-
-
-class Module:
-    """A namespace standing in for the parts of a standard module the worker has."""
-
-    def __init__(self, name, **members):
-        self.__name__ = name
-        self.__dict__.update(members)
-
-    def __getattr__(self, name):
-        raise AttributeError(f"{self.__name__}.{name} is not available in Code Mode")
-
-
-class Counter(dict):
-    """collections.Counter: missing keys count as zero."""
-
-    def __init__(self, iterable=None, **counts):
-        super().__init__()
-        self.update(iterable, **counts)
-
-    def __missing__(self, key):
-        return 0
-
-    def update(self, iterable=None, **counts):
-        if isinstance(iterable, dict):
-            for key, count in iterable.items():
-                self[key] = self[key] + count
-        elif iterable is not None:
-            _collections._count_elements(self, iterable)
-        for key, count in counts.items():
-            self[key] = self[key] + count
-
-    def most_common(self, n=None):
-        items = sorted(self.items(), key=lambda item: item[1], reverse=True)
-        return items if n is None else items[:n]
-
-    def total(self):
-        return sum(self.values())
+    if level == 0 and name == "json":
+        return _json_module
+    if level == 0 and name.partition(".")[0] in _MODULES:
+        return _import(name, None, None, fromlist, 0)
+    raise ImportError("Code Mode can import only " + ", ".join(sorted(_MODULES + ("json",)))
+                      + "; files, network and processes are unavailable")
 
 
 class JsonModule:
@@ -223,26 +191,18 @@ class JsonModule:
 
 
 _json_module = JsonModule()
-_modules = {
-    "json": _json_module,
-    "itertools": itertools,
-    "operator": _operator,
-    "functools": Module("functools", reduce=_functools.reduce, partial=_functools.partial,
-                        cmp_to_key=_functools.cmp_to_key),
-    "collections": Module("collections", Counter=Counter, defaultdict=_collections.defaultdict,
-                          deque=_collections.deque,
-                          OrderedDict=getattr(_collections, "OrderedDict", dict)),
-}
 
 
 def plain(value):
-    """Return parallel() errors and sets as JSON data; JSON keys are strings."""
+    """Return parallel() errors, sets and dates as JSON data; JSON keys are strings."""
     if isinstance(value, ToolError):
         return {"error": {"code": value.code, "message": value.message, "data": plain(value.data)}}
     if isinstance(value, dict):
         return {key if isinstance(key, str) else str(key): plain(item) for key, item in value.items()}
     if isinstance(value, (list, tuple, set, frozenset)):
         return [plain(item) for item in value]
+    if type(value).__module__ in ("datetime", "_pydatetime") and hasattr(type(value), "isoformat"):
+        return value.isoformat()
     return value
 
 

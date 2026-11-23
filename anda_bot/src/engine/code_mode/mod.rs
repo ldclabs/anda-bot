@@ -1,5 +1,6 @@
 //! Python composition and an owner/workspace-scoped library of named tools.
 mod library;
+mod math;
 mod run;
 mod sandbox;
 #[cfg(test)]
@@ -321,9 +322,11 @@ impl Tool<BaseCtx> for CodeTool {
                 "tools['name-with-dash'](**kwargs). A call returns the tool's JSON; a failure raises ",
                 "ToolError (.code, .message, .data). For independent calls use ",
                 "parallel([(name, kwargs), ...]): items keep their order, each a value or a ToolError, ",
-                "and their approvals are asked together. Imports: json, itertools, operator, ",
-                "functools (reduce, partial, cmp_to_key) and collections (Counter, defaultdict, deque, ",
-                "OrderedDict); no files, network, re, math or datetime. Limits: 5 s CPU, 128 tool ",
+                "and their approvals are asked together. Imports: json, re, math, datetime, ",
+                "collections, functools, itertools, operator and heapq; no files, network or ",
+                "processes. datetime has no strptime and its local time may be UTC, so pass time ",
+                "zones explicitly; dates become ISO strings in results and tool arguments. ",
+                "Limits: 5 s CPU, 128 tool ",
                 "calls, 32 KiB result, 4 KiB print output. Call a single tool directly, use shell for ",
                 "local files and programs, and keep original text when the answer depends on reading it."
             ),

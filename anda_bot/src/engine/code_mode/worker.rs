@@ -129,6 +129,18 @@ fn oversized(vm: &VirtualMachine, envelope: &PyObjectRef) -> Value {
         "output_shape":{"type":kind,"items":items,"bytes_at_least":OUTPUT_LIMIT+1}})
 }
 
+/// A VM without RustPython's standard library: its built-in modules, `math`
+/// and the pure Python modules frozen from `pylib`. The guest's allowlist
+/// decides which of them scripts import.
+fn interpreter() -> Interpreter {
+    let builder = Interpreter::builder(Default::default());
+    let math = super::math::module_def(&builder.ctx);
+    builder
+        .add_native_module(math)
+        .add_frozen_modules(rustpython_vm::py_freeze!(dir = "pylib"))
+        .build()
+}
+
 fn evaluate(vm: &VirtualMachine, request: Value) -> Value {
     let inspecting = request["op"] == "inspect";
     let result: PyResult<PyObjectRef> = (|| {
@@ -144,12 +156,6 @@ fn evaluate(vm: &VirtualMachine, request: Value) -> Value {
         scope
             .globals
             .set_item("_dumps", vm.new_function("_dumps", dumps).into(), vm)?;
-        // Pure computation modules built into the VM. Scripts reach them
-        // only through the guest's import allowlist.
-        for name in ["itertools", "_operator", "_functools", "_collections"] {
-            let module = rustpython_vm::import::import_builtin(vm, name)?;
-            scope.globals.set_item(name, module, vm)?;
-        }
         let code = vm
             .compile(
                 include_str!("guest.py"),
@@ -254,7 +260,7 @@ pub(crate) fn main() -> Result<(), BoxError> {
         );
     }
     let execute = move || {
-        let vm = Interpreter::without_stdlib(Default::default());
+        let vm = interpreter();
         let result = vm.enter(|vm| evaluate(vm, request));
         write_frame(&result)
     };

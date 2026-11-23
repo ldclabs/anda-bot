@@ -89,6 +89,10 @@ rustpython-vm = { version = "=0.6.0", default-features = false, features = [
   "serde",
 ] }
 rustpython-host_env = { version = "=0.6.0", default-features = false, features = ["ctypes"] }
+# The Code Mode `math` module, copied from rustpython-stdlib 0.6.0.
+pymath = { version = "=0.2.0", default-features = false, features = ["mul_add", "malachite-bigint"] }
+malachite-bigint = "0.12.0"
+num-traits = "0.2"
 # Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs`
 # is the sole crypto backend in the tree (reqwest's rustls and cose2's
 # `crypto-aws-lc-rs` both use it), so this adds the API without introducing a

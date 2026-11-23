@@ -19,7 +19,7 @@ code_mode:
 
 `code_exec` 运行 Python 函数体，返回 `return` 的值或末尾表达式的值。用具名参数调用工具，用 `parallel` 提交独立调用。`code_register` 保存带参数类型标注和文档字符串的函数。用 `code_list` 查名称和修订号，再用 `tools_select` 加载该函数即可直接调用。脚本库按所有者和工作区隔离，更新和删除需要当前修订号。关闭功能后，已保存的脚本仍在磁盘上。
 
-脚本可导入 `json`、`itertools`、`operator`、`functools` 和 `collections`，不提供 `re`、`math` 和 `datetime`。文件、网络和消息操作使用当前会话获准的宿主工具。
+脚本可导入 `json`、`re`、`math`、`datetime`、`collections`、`functools`、`itertools`、`operator` 和 `heapq`。不提供 `datetime.strptime`；工作进程内的本地时间可能是 UTC，请显式指定时区。文件、网络和消息操作使用当前会话获准的宿主工具。
 
 如果你在 Code Mode 运行期间停止任务，或者运行中断，Anda 会在会话继续时报告已完成和结果不确定的工具调用，并等你回复后再调用工具。
 

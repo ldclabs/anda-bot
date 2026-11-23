@@ -194,11 +194,14 @@ dependencies = [
  "keyring",
  "libc",
  "log",
+ "malachite-bigint",
  "markdown",
  "mimalloc",
+ "num-traits",
  "object_store",
  "parking_lot 0.13.0",
  "prost",
+ "pymath",
  "rand 0.10.4",
  "ratatui",
  "reqwest",
@@ -6368,6 +6371,19 @@ checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "pymath"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc10e50b7a1f2cc3887e983721cb51fc7574be0066c84bff3ef9e5c096e8d6d5"
+dependencies = [
+ "libc",
+ "libm",
+ "malachite-bigint",
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]

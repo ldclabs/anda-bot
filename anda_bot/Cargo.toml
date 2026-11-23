@@ -25,7 +25,13 @@ path = "src/bin/anda_launcher.rs"
 
 [features]
 default = ["code-mode"]
-code-mode = ["dep:rustpython-vm", "dep:rustpython-host_env"]
+code-mode = [
+  "dep:rustpython-vm",
+  "dep:rustpython-host_env",
+  "dep:pymath",
+  "dep:malachite-bigint",
+  "dep:num-traits",
+]
 mib = ["anda_brain/experiments"]
 learning = ["anda_brain/learning"]
 
@@ -63,6 +69,9 @@ reqwest = { workspace = true }
 rmcp = { workspace = true }
 rust-i18n = { workspace = true }
 rustpython-vm = { workspace = true, optional = true }
+pymath = { workspace = true, optional = true }
+malachite-bigint = { workspace = true, optional = true }
+num-traits = { workspace = true, optional = true }
 rustls = { workspace = true }
 tempfile = { workspace = true }
 tokio-util = { workspace = true }
