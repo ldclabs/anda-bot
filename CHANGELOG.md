@@ -4,6 +4,8 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-11-23
+
 ### Added
 
 - Code Mode scripts can import `re`, `math`, `datetime`, `collections`, `functools`, `itertools`, `operator` and `heapq`, and a script that ends with an expression returns its value. Dates in results and tool arguments become ISO strings. `datetime.strptime` is not available.
