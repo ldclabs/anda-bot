@@ -2,7 +2,7 @@
 
 PYCF_ONLY_AST = 1024
 
-# The host supplies only a private IPC function and bounded JSON conversion.
+# The host supplies only a private IPC function and a bounded JSON encoder.
 # Native permissions and run accounting live outside the interpreter.
 class ToolError(Exception):
     def __init__(self, error):
@@ -151,10 +151,13 @@ def parallel(calls):
 
 _stdout = bytearray()
 _truncated = False
+_print = print
 
 
 def capture(*args, sep=" ", end="\n", file=None, flush=False):
     global _truncated
+    if file is not None:
+        return _print(*args, sep=sep, end=end, file=file, flush=flush)
     sep = " " if sep is None else sep
     end = "\n" if end is None else end
     data = (sep.join(str(arg) for arg in args) + end).encode()
@@ -178,16 +181,20 @@ def import_data(name, globals=None, locals=None, fromlist=(), level=0):
 
 
 class JsonModule:
-    # The host reads and writes compact UTF-8 JSON. Formatting options do not change the data.
-    JSONDecodeError = ValueError
+    @property
+    def JSONDecodeError(self):
+        return _import("json").JSONDecodeError
 
     @staticmethod
     def loads(s, **options):
-        return _loads(s.decode() if isinstance(s, (bytes, bytearray)) else s)
+        return _import("json").loads(s, **options)
 
     @staticmethod
     def dumps(obj, **options):
-        return _dumps(obj)
+        # Keep compact UTF-8 output for existing scripts that pass no options.
+        if not options:
+            return _dumps(obj)
+        return _import("json").dumps(obj, **options)
 
 
 _json_module = JsonModule()

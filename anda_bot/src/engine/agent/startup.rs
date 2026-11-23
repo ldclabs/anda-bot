@@ -154,16 +154,16 @@ impl AndaBot {
         let agent_label = ctx.label.clone();
         let ctx = ctx.child(Self::NAME, &agent_label)?;
         #[cfg(feature = "code-mode")]
-        let recovery = if let Some(mode) = &self.inner.code_mode {
+        let has_recovery = if let Some(mode) = &self.inner.code_mode {
             ctx.base.set_state(SessionRequestMeta::new(meta.clone()));
             mode.attach(&ctx, &meta).await;
             mode.prepare_recovery(&ctx.base, &meta, &conversation).await
         } else {
-            None
+            false
         };
         #[cfg(not(feature = "code-mode"))]
-        let recovery: Option<String> = None;
-        if chat_history.is_empty() && recovery.is_none() {
+        let has_recovery = false;
+        if chat_history.is_empty() && !has_recovery {
             return Ok(());
         }
         self.ensure_plan_owner(&conversation.user, &meta)?;
@@ -174,7 +174,6 @@ impl AndaBot {
             source = source_key;
             "startup self-check continuing conversation from source"
         );
-        let prompt = recovery.map_or(prompt.clone(), |summary| format!("{prompt}\n{summary}"));
         let home_dir = self.inner.home_dir.to_string_lossy().to_string();
         let available_tools = available_tool_names(&ctx).await;
         let instructions = self

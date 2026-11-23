@@ -200,7 +200,7 @@ export function firstLine(text: string): string {
   return oneLine(line.replace(/^[#>*\-\s]+/, ''))
 }
 
-function parseJsonString(value: Json | undefined): Json | undefined {
+export function parseJsonString(value: Json | undefined): Json | undefined {
   if (typeof value !== 'string') return value
   const trimmed = value.trim()
   if (!/^[[{]/.test(trimmed)) return value
@@ -219,7 +219,7 @@ function capped(text: string): string {
   return text.length > DETAIL_MAX_CHARS ? `${text.slice(0, DETAIL_MAX_CHARS)}\n…` : text
 }
 
-function isRecord(value: Json | undefined): value is Record<string, Json> {
+export function isRecord(value: Json | undefined): value is Record<string, Json> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 

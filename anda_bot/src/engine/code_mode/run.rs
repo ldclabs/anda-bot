@@ -464,7 +464,7 @@ impl CodeMode {
         ctx: &BaseCtx,
         meta: &RequestMeta,
         conversation: &Conversation,
-    ) -> Option<String> {
+    ) -> bool {
         ctx.set_state(FinishedRuns::new(&ctx.agent));
         // The replay history drops unanswered calls. Read the saved messages
         // so recovery can still match the original call IDs.
@@ -473,13 +473,18 @@ impl CodeMode {
             .iter()
             .filter_map(|message| Message::deserialize(message).ok())
             .collect();
-        match self.recovery(ctx, meta, conversation._id, &recorded).await {
+        let note = match self.recovery(ctx, meta, conversation._id, &recorded).await {
             Ok(summary) => summary,
             Err(err) => {
                 log::warn!(conversation=conversation._id; "Code Mode receipts could not be read: {err}");
-                ctx.set_state(RecoveryHold::default());
                 Some("Code Mode receipts could not be read. Ask the user to check the outcome before starting new operations.".into())
             }
+        };
+        if let Some(note) = note {
+            ctx.set_state(RecoveryHold::new(note));
+            true
+        } else {
+            false
         }
     }
 
@@ -508,7 +513,6 @@ impl CodeMode {
             if pending.is_empty() {
                 return Ok(None);
             }
-            ctx.set_state(RecoveryHold::default());
             return Ok(Some("This conversation does not retain Code Mode receipts. Ask the user to reconcile any interrupted operations before continuing.".into()));
         }
         let path = self.home.join("runs").join(conv.to_string());
@@ -554,7 +558,6 @@ impl CodeMode {
         if summaries.is_empty() {
             return Ok(None);
         }
-        ctx.set_state(RecoveryHold::default());
         Ok(Some(interrupted_note(&summaries)))
     }
 }
@@ -693,28 +696,29 @@ const HOLD_WAITING_FOR_REPLY: u8 = 1;
 const HOLD_RELEASED: u8 = 2;
 
 #[derive(Clone)]
-pub(crate) struct RecoveryHold(Arc<std::sync::atomic::AtomicU8>);
-impl Default for RecoveryHold {
-    fn default() -> Self {
-        Self(Arc::new(std::sync::atomic::AtomicU8::new(
-            HOLD_WAITING_FOR_REPLY,
-        )))
-    }
+pub(crate) struct RecoveryHold(Arc<RecoveryReport>);
+
+struct RecoveryReport {
+    note: String,
+    status: std::sync::atomic::AtomicU8,
 }
+
 impl RecoveryHold {
-    /// A stop goes idle without running the model. Hold tools through the next
-    /// turn so the model reports the interrupted calls before a user reply can
-    /// release the hold.
-    pub(crate) fn after_stop() -> Self {
-        Self(Arc::new(std::sync::atomic::AtomicU8::new(
-            HOLD_PENDING_REPORT,
-        )))
+    pub(crate) fn new(note: String) -> Self {
+        Self(Arc::new(RecoveryReport {
+            note,
+            status: std::sync::atomic::AtomicU8::new(HOLD_PENDING_REPORT),
+        }))
+    }
+    pub(crate) fn pending_report(&self) -> Option<&str> {
+        (self.0.status.load(std::sync::atomic::Ordering::Acquire) == HOLD_PENDING_REPORT)
+            .then_some(&self.0.note)
     }
     pub(crate) fn waiting(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::Acquire) != HOLD_RELEASED
+        self.0.status.load(std::sync::atomic::Ordering::Acquire) != HOLD_RELEASED
     }
     pub(crate) fn report_delivered(&self) {
-        let _ = self.0.compare_exchange(
+        let _ = self.0.status.compare_exchange(
             HOLD_PENDING_REPORT,
             HOLD_WAITING_FOR_REPLY,
             std::sync::atomic::Ordering::AcqRel,
@@ -722,7 +726,7 @@ impl RecoveryHold {
         );
     }
     pub(crate) fn user_replied(&self) {
-        let _ = self.0.compare_exchange(
+        let _ = self.0.status.compare_exchange(
             HOLD_WAITING_FOR_REPLY,
             HOLD_RELEASED,
             std::sync::atomic::Ordering::AcqRel,

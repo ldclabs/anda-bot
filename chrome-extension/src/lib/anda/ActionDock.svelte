@@ -82,6 +82,7 @@
   } = $props()
 
   const andaClient = useAndaClient()
+  const failureId = $props.id()
   let root = $state<HTMLElement | null>(null)
   // Per-question state is keyed by the action id, so the next question starts fresh.
   let collapsedId = $state('')
@@ -275,16 +276,21 @@
     respondingRow = 'batch'
     failure = { actionId: '', text: '' }
     const results = await Promise.allSettled(answers.map((answer) => andaClient.respondAction(answer)))
+    const pendingIds = new Set(pending.map((item) => item.id))
     const failed = answers.flatMap((answer, index) => {
       const result = results[index]
-      return result.status === 'rejected' ? [{ id: answer.actionId, text: errorText(result.reason) }] : []
+      return result.status === 'rejected' && pendingIds.has(answer.actionId)
+        ? [{ id: answer.actionId, text: errorText(result.reason) }]
+        : []
     })
     // Answered cards leave the dock, so the error stays with the first card still waiting.
     if (failed.length) {
       failure = { actionId: failed[0].id, text: failed.map((item) => item.text).join('\n') }
     }
     respondingRow = ''
-    selected = []
+    selected = answers
+      .filter(({ actionId, approve }) => approve && failed.some(({ id }) => id === actionId))
+      .map(({ actionId }) => actionId)
   }
 
   /** Answers the docked approval; the host's shortcuts call this. */
@@ -393,6 +399,7 @@
             type="button"
             class="action-dock-option"
             aria-disabled={readyActionId !== actionId}
+            aria-describedby={error ? failureId : undefined}
             onclick={answerBatch}
           >
             {getMessage('codeBatchApply')}
@@ -527,7 +534,7 @@
       </div>
 
       {#if error}
-        <p class="action-dock-error" role="alert">{error}</p>
+        <p id={failureId} class="action-dock-error" role="alert">{error}</p>
       {/if}
       {#if hint}
         <p class="action-dock-hint">{hint}</p>

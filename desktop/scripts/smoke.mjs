@@ -36,6 +36,7 @@ const sources = {}
 const conversations = new Map()
 let next = 1
 let approvals = 0
+const batchAttempts = new Map()
 let lastChoice = null
 let lastWorkspace = null
 const project = join(directory, 'smoke-project')
@@ -357,6 +358,29 @@ wsServer.on('connection', (ws, request) => {
           ],
           timestamp: Date.now() + 2
         })
+      if (prompt === 'Batch approval check') {
+        for (const target of ['Alpha', 'Beta', 'Gamma']) {
+          c.messages.push({
+            role: 'assistant',
+            name: '$action',
+            content: [{
+              type: 'Action',
+              name: 'anda.tool_approval',
+              payload: {
+                id: `batch-${target}`,
+                kind: 'tool_approval',
+                title: target,
+                status: 'pending',
+                batch_id: 'smoke-batch',
+                parent_run_id: 'smoke-run',
+                created_at: Date.now(),
+                expires_at: Date.now() + 60_000
+              }
+            }],
+            timestamp: Date.now() + 2
+          })
+        }
+      }
       conversations.set(cid, c)
       sources[source] = { c: cid, s: 'idle', t: Date.now() }
       result = { conversation: cid, content: '', usage }
@@ -368,6 +392,15 @@ wsServer.on('connection', (ws, request) => {
         const action = c.messages
           .flatMap((m) => m.content)
           .find((part) => part.type === 'Action' && part.payload.id === input.args.action_id)
+        if (action.payload.batch_id === 'smoke-batch') {
+          const attempts = batchAttempts.get(action.payload.id) || []
+          attempts.push(input.args.approve)
+          batchAttempts.set(action.payload.id, attempts)
+          if (action.payload.id !== 'batch-Gamma' && attempts.length === 1) {
+            ws.send(JSON.stringify({ id, result: { output: { error: 'Retry this decision' }, usage } }))
+            return
+          }
+        }
         const choice = input.args.choice_id
         if (choice) lastChoice = choice
         action.payload.status = choice ? 'selected' : input.args.approve ? 'approved' : 'denied'
@@ -741,7 +774,10 @@ try {
     await sendEvent({ type: 'state' })
   }
   await appendChatMessages(
-    { role: 'assistant', content: [{ type: 'ToolCall', callId: 'inspect', name: 'read_file' }] },
+    {
+      role: 'assistant',
+      content: [{ type: 'ToolCall', callId: 'inspect', name: 'read_file', args: { path: 'smoke.txt' } }]
+    },
     {
       role: 'tool',
       content: [{ type: 'ToolOutput', callId: 'inspect', name: 'read_file', output: 'Open result' }]
@@ -985,6 +1021,22 @@ try {
   await dock.waitFor({ state: 'detached' })
   assert.equal(lastChoice, 'dev')
   assert.equal(approvals, 2)
+  await page.locator('.composer-container textarea').fill('Batch approval check')
+  await page.locator('.composer-container textarea').press('Enter')
+  const apply = dock.getByRole('button', { name: 'Apply these decisions' })
+  const alpha = dock.getByRole('checkbox', { name: 'Alpha' })
+  await alpha.check()
+  await apply.click()
+  const batchError = dock.getByRole('alert').filter({ hasText: 'Retry this decision' })
+  await batchError.waitFor()
+  assert.equal(await apply.getAttribute('aria-describedby'), await batchError.getAttribute('id'))
+  assert.equal(await dock.getByRole('checkbox', { name: 'Gamma' }).count(), 0)
+  assert.equal(await alpha.isChecked(), true)
+  await apply.click()
+  await dock.waitFor({ state: 'detached' })
+  assert.deepEqual(batchAttempts.get('batch-Alpha'), [true, true])
+  assert.deepEqual(batchAttempts.get('batch-Beta'), [false, false])
+  assert.deepEqual(batchAttempts.get('batch-Gamma'), [false])
   // A chat's menu closes on a click elsewhere, and Rename keeps focus in its
   // inline field after the menu finishes closing.
   const approvalRow = page.locator('.chat-row').filter({ hasText: 'Approval check' })

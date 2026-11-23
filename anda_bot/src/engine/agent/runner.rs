@@ -320,7 +320,7 @@ impl SessionRunner {
         let note = done.report_interrupted(self.runner.chat_history()).await?;
         self.ctx
             .base
-            .set_state(crate::engine::code_mode::RecoveryHold::after_stop());
+            .set_state(crate::engine::code_mode::RecoveryHold::new(note.clone()));
         Some(note)
     }
 
@@ -453,13 +453,14 @@ impl SessionRunner {
             .extend(code_mode.map(|note| ContentPart::Text {
                 text: system_runtime_prompt("Code Mode recovery", note),
             }));
-        self.runner.append_chat_history(vec![stopped]);
-
         let mut output = self.runner.stop_current_task(anda_core::AgentOutput {
             content,
             conversation: Some(self.conversation._id),
             ..Default::default()
         });
+        // Close outstanding tool calls before the next user-role message.
+        self.runner.append_chat_history(vec![stopped.clone()]);
+        output.chat_history.push(stopped);
         mark_special_user_messages(&mut output.chat_history);
 
         self.replace_conversation_messages_from_chat_history(output.chat_history);
@@ -1088,23 +1089,44 @@ impl SessionRunner {
         }
 
         let now_ms = unix_ms();
-        if self.conversation.status != ConversationStatus::Working
-            && (!follow_up_batch.is_empty() || !steer_batch.is_empty() || !self.runner.is_idle())
-        {
+        let has_request =
+            !follow_up_batch.is_empty() || !steer_batch.is_empty() || !self.runner.is_idle();
+        if self.conversation.status != ConversationStatus::Working && has_request {
             self.conversation.status = ConversationStatus::Working;
             self.conversation.failed_reason = None;
             self.conversation.updated_at = now_ms;
             self.persist_conversation_state().await?;
         }
 
-        if let Some(mut extra_user_context) = self.extra_user_context.take() {
+        let extra_user_context = self.extra_user_context.take().map(|mut context| {
             if let Some(datetime) = rfc3339_datetime(now_ms) {
-                extra_user_context.content.push(ContentPart::Text {
+                context.content.push(ContentPart::Text {
                     text: format!("Current datetime: {}", datetime),
                 });
             }
-
-            self.runner.implicit_context(extra_user_context);
+            context
+        });
+        #[cfg(feature = "code-mode")]
+        let extra_user_context = if has_request
+            && let Some(hold) = self
+                .ctx
+                .base
+                .get_state::<crate::engine::code_mode::RecoveryHold>()
+            && let Some(note) = hold.pending_report()
+        {
+            let prompt = system_runtime_prompt("Code Mode recovery", note);
+            Some(match extra_user_context {
+                Some(mut context) => {
+                    context.content.push(prompt.into());
+                    context
+                }
+                None => system_user_message(prompt, now_ms),
+            })
+        } else {
+            extra_user_context
+        };
+        if let Some(context) = extra_user_context {
+            self.runner.implicit_context(context);
         }
 
         // Compact the idle context before attaching anything if doing so would exceed the window,
@@ -1393,17 +1415,6 @@ impl SessionRunner {
                 {
                     plan::finish_turn(&self.ctx.base, &mut self.conversation);
                 }
-                #[cfg(feature = "code-mode")]
-                if res.failed_reason.is_none()
-                    && self.runner.is_idle()
-                    && let Some(hold) = self
-                        .ctx
-                        .base
-                        .get_state::<crate::engine::code_mode::RecoveryHold>()
-                {
-                    hold.report_delivered();
-                }
-
                 self.conversation.status = if res.failed_reason.is_some() {
                     ConversationStatus::Failed
                 } else if is_done {
@@ -1423,7 +1434,19 @@ impl SessionRunner {
                 }
                 self.persist_conversation_state().await?;
                 #[cfg(feature = "code-mode")]
-                self.acknowledge_code_mode_runs().await;
+                {
+                    if self.conversation.failed_reason.is_none()
+                        && self.runner.is_idle()
+                        && !res.content.trim().is_empty()
+                        && let Some(hold) = self
+                            .ctx
+                            .base
+                            .get_state::<crate::engine::code_mode::RecoveryHold>()
+                    {
+                        hold.report_delivered();
+                    }
+                    self.acknowledge_code_mode_runs().await;
+                }
                 if cron_finished {
                     self.cron_receipts.finish();
                 }
@@ -3634,8 +3657,20 @@ mod tests {
     #[tokio::test]
     async fn stop_reports_the_calls_of_a_dropped_code_mode_run() {
         use crate::engine::code_mode::{FinishedRuns, RecoveryHold};
+        use anda_engine::model::testing::ScriptedCompleter;
+
         let bot = build_runner_bot().await;
-        let (mut r, _rx) = build_session_runner(&bot).await;
+        let completer = ScriptedCompleter::new("recovery")
+            .push_output(AgentOutput::default())
+            .push_output(AgentOutput {
+                content: "The earlier run completed one message send. How should I proceed?".into(),
+                ..Default::default()
+            })
+            .into_arc();
+        let ctx = EngineBuilder::new()
+            .with_model(Model::with_completer(completer.clone()))
+            .mock_ctx();
+        let (mut r, _rx) = build_session_runner_with_ctx(&bot, ctx).await;
         let dir = tempfile::tempdir().unwrap();
         let journal = dir.path().join("run.json");
         let record = serde_json::json!({"run_id":"run","conversation_id":1,"caller":"owner","route":null,"outer_call_id":"c","revision":null,
@@ -3664,18 +3699,33 @@ mod tests {
         // Receipts stay on disk until the model reports them and the user replies.
         assert!(journal.is_file());
 
-        // The first message after Stop runs the reporting turn: tools stay held
-        // and the receipt stays on disk.
-        r.run(
-            vec![input(PromptCommand::Plain {
-                prompt: "continue".into(),
-            })],
-            &mut HashMap::new(),
-        )
-        .await
-        .unwrap();
-        assert!(hold.waiting());
-        assert!(journal.is_file());
+        // A model request must carry the note. An empty reply still leaves
+        // the report pending; the next request gets the note again.
+        for prompt in ["continue", "what is the status?"] {
+            r.run(
+                vec![input(PromptCommand::Plain {
+                    prompt: prompt.into(),
+                })],
+                &mut HashMap::new(),
+            )
+            .await
+            .unwrap();
+            assert!(hold.waiting());
+            assert!(journal.is_file());
+        }
+        let requests = completer.requests();
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert!(
+                request
+                    .chat_history
+                    .iter()
+                    .filter_map(Message::text)
+                    .any(|text| {
+                        text.contains("Code Mode recovery") && text.contains("send_im_message")
+                    })
+            );
+        }
 
         // Once the user replies after the report, tools unlock and the receipt retires.
         r.run(

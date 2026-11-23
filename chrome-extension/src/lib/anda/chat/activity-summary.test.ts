@@ -31,25 +31,37 @@ describe('activityCounts', () => {
       ...tools(
         { name: 'shell', args: { command: 'git status' } },
         { name: 'shell', args: { command: 'cargo test' } },
-        { name: 'read_file', args: { path: 'src/main.rs' } },
-        { name: 'read_file', args: { path: 'src/main.rs' } },
+        { name: 'read_file', args: { path: 'src/main.rs' }, output: {} },
+        { name: 'read_file', args: { path: 'src/main.rs' }, output: {} },
         { name: 'search_file', args: { pattern: 'TODO' } },
-        { name: 'edit_file', args: { path: 'src/main.rs' } },
+        { name: 'edit_file', args: { path: 'src/main.rs' }, output: {} },
         { name: 'recall_memory', args: { query: 'release' } },
         { name: 'fetch_web_resources', args: { url: 'https://example.com' } },
         { name: 'subagent', args: { task: 'Review' } },
-        { name: 'update_plan', args: { advance: true } }
+        { name: 'update_plan', args: { advance: true }, output: {} }
       )
     ])
     expect(counts).toEqual({
       commands: 2,
-      filesRead: 2,
+      filesRead: 1,
       filesEdited: 1,
       memory: 1,
       web: 1,
-      tools: 1,
+      tools: 2,
       plan: true
     })
+  })
+
+  it('counts full paths and describes unsuccessful file calls and Python runs as tools', () => {
+    const counts = activityCounts(
+      tools(
+        { name: 'read_file', args: { path: '/workspace/one/very-long-package/src/main.rs' }, output: {} },
+        { name: 'read_file', args: { path: '/workspace/two/very-long-package/src/main.rs' }, output: {} },
+        { name: 'edit_file', args: { path: 'src/main.rs' }, output: { error: 'not found' } },
+        { name: 'code_exec', args: { code: 'sum(range(10))' }, output: {} }
+      )
+    )
+    expect(counts).toMatchObject({ commands: 0, filesRead: 2, filesEdited: 0, tools: 2 })
   })
 })
 
@@ -60,8 +72,8 @@ describe('activityLabel', () => {
         tools(
           { name: 'shell', args: { command: 'ls' } },
           { name: 'shell', args: { command: 'pwd' } },
-          { name: 'read_file', args: { path: 'a.md' } },
-          { name: 'update_plan' }
+          { name: 'read_file', args: { path: 'a.md' }, output: {} },
+          { name: 'update_plan', output: {} }
         )
       )
     )

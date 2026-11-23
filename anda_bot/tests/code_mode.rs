@@ -197,10 +197,6 @@ fn code_mode_worker_limits_output_and_imports() {
     assert_eq!(result["value"]["value"], json!([1, 2]), "{result}");
     assert_eq!(result["value"]["stdout"].as_str().unwrap().len(), 4096);
     assert_eq!(result["value"]["stdout_truncated"], true);
-    let standard = execute(json!({"op":"exec","source":
-        "import json\nprint('a', 'b', sep=None, end=None, flush=True)\ntry:\n    json.loads('{')\nexcept json.JSONDecodeError:\n    print('invalid')\ntext = json.dumps({'k': '中'}, indent=2, ensure_ascii=False, sort_keys=True)\nreturn json.loads(text.encode())"}));
-    assert_eq!(standard["value"]["value"], json!({"k":"中"}), "{standard}");
-    assert_eq!(standard["value"]["stdout"], "a b\ninvalid\n");
     // The pure modules built into the VM; a final expression is the result.
     let modules = execute(json!({"op":"exec","source":
         "from collections import Counter, defaultdict, deque, OrderedDict\nimport itertools, operator\nfrom functools import reduce, partial\ncounts = Counter(['b', 'a', 'b'])\ncounts.update({'c': 1}, a=2)\ngroups = defaultdict(list)\nfor key, items in itertools.groupby(sorted([3, 1, 2], key=operator.neg), key=lambda n: n % 2):\n    groups[key].extend(items)\n{'common': counts.most_common(2), 'groups': groups, 'sum': reduce(operator.add, deque([1, 2, 3])), 'ids': Counter([7, 7]), 'set': {1}, 'ordered': OrderedDict(a=1), 'add': partial(operator.add, 1)(2)}"}));
@@ -235,6 +231,39 @@ fn code_mode_worker_limits_output_and_imports() {
         execute(json!({"op":"exec","source":"return 'x' * 50000"}))["code"],
         "resource_limit"
     );
+}
+
+#[test]
+fn code_mode_worker_honors_json_and_print_options() {
+    let result = execute(json!({"op":"exec","source":r#"
+import json
+from json import JSONDecodeError
+
+class Buffer:
+    def __init__(self):
+        self.parts = []
+        self.flushed = False
+    def write(self, part):
+        self.parts.append(part)
+    def flush(self):
+        self.flushed = True
+
+buffer = Buffer()
+print('a', 'b', sep=None, end=None, file=buffer, flush=True)
+try:
+    json.loads('{')
+except JSONDecodeError as error:
+    print(error.lineno, error.colno, flush=True)
+data = {'z': '中', 'a': 1}
+pretty = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True)
+return [pretty, json.dumps({'k': '中'}), json.loads(pretty.encode(), parse_int=str), ''.join(buffer.parts), buffer.flushed]
+"#}));
+    assert_eq!(
+        result["value"]["value"],
+        json!(["{\n  \"a\": 1,\n  \"z\": \"中\"\n}", "{\"k\":\"中\"}", {"a":"1","z":"中"}, "a b\n", true]),
+        "{result}"
+    );
+    assert_eq!(result["value"]["stdout"], "1 2\n");
 }
 
 #[test]

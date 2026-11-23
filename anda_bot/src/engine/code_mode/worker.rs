@@ -98,10 +98,6 @@ fn exchange(request: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> 
     }
 }
 
-fn loads(s: String, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-    let value = serde_json::from_str(&s).map_err(|e| py_error(vm, e))?;
-    from_json(value, vm)
-}
 fn dumps(value: PyObjectRef, vm: &VirtualMachine) -> PyResult<String> {
     String::from_utf8(encode(vm, &value, FRAME_LIMIT).map_err(|e| py_error(vm, e))?)
         .map_err(|e| py_error(vm, e))
@@ -150,9 +146,6 @@ fn evaluate(vm: &VirtualMachine, request: Value) -> Value {
             vm.new_function("_exchange", exchange).into(),
             vm,
         )?;
-        scope
-            .globals
-            .set_item("_loads", vm.new_function("_loads", loads).into(), vm)?;
         scope
             .globals
             .set_item("_dumps", vm.new_function("_dumps", dumps).into(), vm)?;

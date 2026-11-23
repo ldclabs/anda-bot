@@ -444,11 +444,13 @@ async fn code_mode_recovery_reconciles_before_dispatch_and_waits_for_user() {
         ..Default::default()
     };
     for _ in 0..2 {
-        let summary = bot
-            .mode
-            .prepare_recovery(&bot.ctx.base, meta, &conversation)
-            .await
-            .unwrap();
+        assert!(
+            bot.mode
+                .prepare_recovery(&bot.ctx.base, meta, &conversation)
+                .await
+        );
+        let hold = bot.ctx.base.get_state::<RecoveryHold>().unwrap();
+        let summary = hold.pending_report().unwrap();
         for state in ["cancelled", "outcome_unknown", "completed"] {
             assert!(summary.contains(state));
         }
@@ -464,11 +466,11 @@ async fn code_mode_recovery_reconciles_before_dispatch_and_waits_for_user() {
             .unwrap()
             .is_none()
     );
-    bot.ctx
-        .base
-        .get_state::<RecoveryHold>()
-        .unwrap()
-        .user_replied();
+    let hold = bot.ctx.base.get_state::<RecoveryHold>().unwrap();
+    hold.user_replied();
+    assert!(!bot.mode.executable(&bot.ctx.base, "send_im_message"));
+    hold.report_delivered();
+    hold.user_replied();
     assert!(bot.mode.executable(&bot.ctx.base, "send_im_message"));
     done.acknowledge(&[], true).await;
     assert!(!receipt.exists());

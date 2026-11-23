@@ -1,6 +1,6 @@
 import { getMessage, uiLocale } from '$lib/i18n'
 import type { ActivityDetail } from './message-display'
-import { firstLine, toolCallSummary, toolKind } from './tool-view'
+import { firstLine, isRecord, parseJsonString, toolCallStatus, toolKind } from './tool-view'
 
 type Notice = Extract<ActivityDetail, { kind: 'notice' }>
 
@@ -21,7 +21,7 @@ export function noticeSummary(notice: Notice): string {
  */
 export interface ActivityCounts {
   commands: number
-  /** Distinct files (or searches) the file tools looked at. */
+  /** Distinct files successfully read by read_file. */
   filesRead: number
   filesEdited: number
   memory: number
@@ -31,8 +31,6 @@ export interface ActivityCounts {
   /** The plan shows separately; its updates are named, not counted. */
   plan: boolean
 }
-
-const FILE_CHANGE = /write|edit|patch|delete|remove|move|rename|create/
 
 export function activityCounts(details: ActivityDetail[]): ActivityCounts {
   const counts: ActivityCounts = {
@@ -49,25 +47,38 @@ export function activityCounts(details: ActivityDetail[]): ActivityCounts {
   for (const detail of details) {
     if (detail.kind !== 'tool') continue
     const { tool } = detail
-    if (tool.name === 'update_plan') {
-      counts.plan = true
-      continue
-    }
-    switch (toolKind(tool.name)) {
+    const name = tool.name.toLowerCase()
+    switch (name) {
       case 'shell':
         counts.commands++
         break
-      case 'file':
-        ;(FILE_CHANGE.test(tool.name.toLowerCase()) ? edited : read).add(toolCallSummary(tool))
+      case 'update_plan':
+        if (toolCallStatus(tool) === 'ok') counts.plan = true
+        else counts.tools++
         break
-      case 'memory':
-        counts.memory++
+      case 'read_file':
+      case 'edit_file':
+      case 'write_file': {
+        const args = parseJsonString(tool.args)
+        if (
+          toolCallStatus(tool) === 'ok' &&
+          isRecord(args) &&
+          typeof args.path === 'string' &&
+          args.path
+        ) {
+          const paths = name === 'read_file' ? read : edited
+          paths.add(args.path)
+        } else {
+          counts.tools++
+        }
         break
-      case 'web':
-        counts.web++
-        break
-      default:
-        counts.tools++
+      }
+      default: {
+        const kind = toolKind(name)
+        if (kind === 'memory') counts.memory++
+        else if (kind === 'web') counts.web++
+        else counts.tools++
+      }
     }
   }
   counts.filesRead = read.size
