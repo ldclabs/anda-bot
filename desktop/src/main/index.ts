@@ -630,6 +630,7 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'submitKeyMode',
     'approvalMode',
     'notifications',
+    'betaUpdates',
     'launchAtLogin',
     'sidebarWidth',
     'workbench',
@@ -641,6 +642,8 @@ function validatePreferences(patch: Partial<Preferences>): void {
     'drafts'
   ])
   if (Object.keys(patch).some((key) => !allowed.has(key))) throw new Error('Unknown preference')
+  if ('betaUpdates' in patch && typeof patch.betaUpdates !== 'boolean')
+    throw new Error('Invalid beta update preference')
   if (patch.workbench !== undefined && !validWorkbench(patch.workbench))
     throw new Error('Invalid workbench layout')
   if (patch.detachedPanels !== undefined && !validDetached(patch.detachedPanels))
@@ -906,6 +909,8 @@ async function setup(): Promise<void> {
   })
   handleFrom('anda:preferences', async (sender, patch: Partial<Preferences>) => {
     validatePreferences(patch)
+    if (patch.betaUpdates !== undefined && patch.betaUpdates !== store.state.preferences.betaUpdates)
+      updater.changeBetaUpdates(patch.betaUpdates)
     store.state.preferences = { ...store.state.preferences, ...patch }
     await store.save()
     // The other windows merge the change into the preferences they show.
@@ -1001,6 +1006,11 @@ async function setup(): Promise<void> {
       title: 'Choose the anda executable'
     })
     if (!result.canceled && result.filePaths[0]) {
+      if (store.state.preferences.betaUpdates) {
+        updater.changeBetaUpdates(false)
+        store.state.preferences.betaUpdates = false
+        broadcast({ type: 'preferences', value: { betaUpdates: false } })
+      }
       store.state.binary = result.filePaths[0]
       await store.save()
       daemon.disconnect()

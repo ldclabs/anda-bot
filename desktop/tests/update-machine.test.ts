@@ -59,4 +59,7 @@ it('orders release versions numerically', () => {
   expect(isOlderRelease('v0.13.0', 'v0.13.0')).toBe(false)
   expect(isOlderRelease('0.13.1', 'v0.13.0')).toBe(false)
   expect(isOlderRelease('v0.13', 'v0.13.1')).toBe(true)
+  expect(isOlderRelease('v0.16.0-beta.2', '0.16.0-beta.10')).toBe(true)
+  expect(isOlderRelease('0.16.0-beta.10', 'v0.16.0')).toBe(true)
+  expect(isOlderRelease('0.16.0', 'v0.16.0-beta.10')).toBe(false)
 })

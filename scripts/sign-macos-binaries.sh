@@ -28,9 +28,9 @@ error() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 : "${MAC_CSC_LINK:?}" "${MAC_CSC_KEY_PASSWORD:?}"
 : "${APPLE_ID:?}" "${APPLE_APP_SPECIFIC_PASSWORD:?}" "${APPLE_TEAM_ID:?}"
 
-BRIDGE="$ROOT/scripts/macos-bridge.cjs"
-node "$BRIDGE" check-build "$APPLE_TEAM_ID"
-RUNTIME_REQUIREMENT=$(node "$BRIDGE" runtime-requirement)
+SIGNING="$ROOT/scripts/macos-signing.cjs"
+node "$SIGNING" check-build "$APPLE_TEAM_ID"
+RUNTIME_REQUIREMENT=$(node "$SIGNING" runtime-requirement)
 
 WORK=$(mktemp -d)
 KEYCHAIN="${WORK}/signing.keychain-db"
@@ -69,10 +69,10 @@ for file in "$@"; do
     case "$(basename "$file")" in
         anda_launcher-*)
             sign --identifier ai.anda.anda-bot.launcher "$file"
-            node "$BRIDGE" verify-launcher "$file" ;;
+            node "$SIGNING" verify-launcher "$file" ;;
         anda-*)
             sign --identifier ai.anda.anda-bot -r "$RUNTIME_REQUIREMENT" --entitlements "$ENTITLEMENTS" "$file"
-            node "$BRIDGE" verify-runtime "$file" ;;
+            node "$SIGNING" verify-runtime "$file" ;;
         *) error "Not an anda release binary: $file" ;;
     esac
     cp "$file" "${WORK}/notarize/"

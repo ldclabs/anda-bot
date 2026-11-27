@@ -41,6 +41,7 @@ export class DesktopStore {
       const { panelWidth: _panelWidth, ...stored } = (raw.preferences ||
         {}) as Partial<Preferences> & { panelWidth?: unknown }
       const preferences = { ...defaultPreferences, ...stored }
+      preferences.betaUpdates = stored.betaUpdates === true
       preferences.detachedPanels = validDetached(stored.detachedPanels) ? stored.detachedPanels : []
       preferences.workbench = readWorkbench(stored.workbench, preferences.detachedPanels)
       // Drafts of never-sent chats cannot be reopened after a restart.

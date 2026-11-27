@@ -129,6 +129,8 @@ anda update
 
 Las instalaciones con Homebrew se actualizan con `brew upgrade anda`. **Buscar actualizaciones**, en la bandeja de Anda Desktop o en Ajustes, comprueba tanto `anda` como la aplicación de escritorio. La instalación del runtime espera a que terminen las tareas activas; la comprobación del escritorio continúa tanto si esa actualización se instala como si se pospone o falla. Las versiones firmadas del escritorio se actualizan sin detener el servicio; las compilaciones sin firmar requieren instalar manualmente el nuevo paquete de escritorio.
 
+A partir de 0.16.0, Yiwen AI Limited firma los paquetes de escritorio para macOS y Windows. Los Mac anteriores a 0.15.0 reciben primero la versión de transición 0.15.0 firmada por LDC. Reinicie la aplicación y vuelva a buscar actualizaciones. El canal estable es el predeterminado. Si Anda Desktop gestiona el servicio, active **Ajustes → Motor → Recibir actualizaciones beta** para recibir también betas más recientes. Al desactivar la opción, la versión instalada se conserva hasta que haya una versión estable superior.
+
 Gestione el daemon en segundo plano con:
 
 ```bash

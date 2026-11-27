@@ -30,7 +30,9 @@ Download an installer from [GitHub Releases](https://github.com/ldclabs/anda-bot
 | macOS, Apple Silicon | `Anda-mac-arm64.dmg` |
 | Windows, x64 | `Anda-win-x64.exe` |
 
-For the macOS signing-team change, update to an LDC-signed **0.15.x** release before installing the first Yiwen-signed update, planned for **0.16.0**. If you miss the bridge and automatic update fails, install the official 0.15.0 DMG over the existing app, then check for updates again. [macOS bridge release](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+Anda Desktop 0.16.0 uses Yiwen AI Limited’s signing certificates. Macs on versions earlier than 0.15.0 receive the LDC-signed 0.15.0 bridge first. Check for updates again after restarting to get the Yiwen release. If the first update fails, install the official 0.15.0 DMG over the existing app. [macOS bridge release](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+
+Stable updates are the default. To receive numbered betas, enable **Settings → Runtime → Receive beta updates** in a desktop installation that manages its bundled runtime. Turning it off keeps the installed version until a newer stable release is available.
 
 On macOS, you can also use Homebrew:
 

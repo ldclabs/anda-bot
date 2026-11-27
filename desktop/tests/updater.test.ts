@@ -6,6 +6,8 @@ import type { DaemonClient, RuntimeUpdateState } from '../src/main/daemon-client
 import type { DesktopStore } from '../src/main/store'
 import type { UpdateStatus } from '../src/shared/contract'
 import { DesktopUpdater } from '../src/main/updater'
+import { BetaFeed } from '../src/main/beta-feed'
+import { defaultPreferences } from '../src/shared/contract'
 
 const build = vi.hoisted(() => ({ packaged: false }))
 vi.mock('electron', () => ({
@@ -20,6 +22,7 @@ vi.mock('electron', () => ({
 vi.mock('electron-updater', () => ({
   autoUpdater: {
     on: vi.fn(),
+    setFeedURL: vi.fn(),
     checkForUpdates: vi.fn(),
     downloadUpdate: vi.fn(),
     quitAndInstall: vi.fn()
@@ -83,7 +86,10 @@ function fixture(running = true) {
       current_tag: 'v0.14.0'
     }))
   }
-  const store = { state: {}, save: vi.fn(async () => {}) } as unknown as DesktopStore
+  const store = {
+    state: { preferences: { ...defaultPreferences } },
+    save: vi.fn(async () => {})
+  } as unknown as DesktopStore
   const updater = new DesktopUpdater(
     daemon as unknown as DaemonClient,
     store,
@@ -108,6 +114,91 @@ function packagedFixture(running = true) {
   vi.mocked(readFile).mockResolvedValue(JSON.stringify({ provider: 'github' }))
   return fixture(running)
 }
+
+it('pins a beta download to the selected tag and forgets it on return to stable', async () => {
+  const f = packagedFixture()
+  f.daemon.bundleOwnsRuntime = true
+  const installer = process.platform === 'darwin' ? 'Anda-mac-arm64.zip' : 'Anda-win-x64.exe'
+  const version = '0.16.0-beta.10'
+  const selected = vi.spyOn(BetaFeed.prototype, 'latest').mockResolvedValue({
+    version,
+    channel: 'beta',
+    installer,
+    assets: [installer]
+  })
+  try {
+    f.updater.changeBetaUpdates(true)
+    f.store.state.preferences.betaUpdates = true
+    const beta = appRelease(true, version)
+    vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue({
+      ...beta,
+      updateInfo: { ...beta.updateInfo, files: [{ url: installer, sha512: 'hash' }] }
+    })
+    vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false })
+    await f.updater.checkDesktop()
+    expect(autoUpdater.setFeedURL).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'generic',
+        url: `https://github.com/ldclabs/anda-bot/releases/download/v${version}/`,
+        channel: 'beta'
+      })
+    )
+    expect(autoUpdater.allowDowngrade).toBe(false)
+    expect(f.updater.offer).toEqual({ version, ready: true })
+    f.updater.changeBetaUpdates(false)
+    f.store.state.preferences.betaUpdates = false
+    expect(f.updater.desktopRelease).toBeNull()
+    vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease())
+    await f.updater.checkDesktop()
+    expect(autoUpdater.allowPrerelease).toBe(false)
+    expect(autoUpdater.allowDowngrade).toBe(false)
+    expect(selected).toHaveBeenCalledTimes(1)
+  } finally {
+    selected.mockRestore()
+  }
+})
+
+it('rejects an unowned runtime and a manifest that does not match the selected beta', async () => {
+  const f = packagedFixture()
+  expect(() => f.updater.changeBetaUpdates(true)).toThrow('runtime')
+  f.daemon.bundleOwnsRuntime = true
+  f.store.state.preferences.betaUpdates = true
+  const selected = vi.spyOn(BetaFeed.prototype, 'latest').mockResolvedValue({
+    version: '0.16.0-beta.10',
+    channel: 'beta',
+    installer: 'Anda-win-x64.exe',
+    assets: []
+  })
+  try {
+    vi.mocked(autoUpdater.checkForUpdates).mockResolvedValue(appRelease(true, '0.16.0-beta.2'))
+    await expect(f.updater.checkDesktop()).rejects.toThrow('manifest')
+    expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  } finally {
+    selected.mockRestore()
+  }
+})
+
+it('discards a background beta check that finishes after opting out', async () => {
+  const f = packagedFixture()
+  f.daemon.bundleOwnsRuntime = true
+  f.store.state.preferences.betaUpdates = true
+  const response = Promise.withResolvers<Awaited<ReturnType<BetaFeed['latest']>>>()
+  const selected = vi.spyOn(BetaFeed.prototype, 'latest').mockReturnValue(response.promise)
+  try {
+    f.updater.startAutomaticChecks()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(selected).toHaveBeenCalledTimes(1)
+    f.updater.changeBetaUpdates(false)
+    f.store.state.preferences.betaUpdates = false
+    response.resolve({ version: '0.16.0-beta.1', channel: 'beta', installer: 'Anda-win-x64.exe', assets: [] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(f.updater.desktopRelease).toBeNull()
+    expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled()
+    expect(autoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  } finally {
+    selected.mockRestore()
+  }
+})
 
 /** The app installed the shared runtime from its bundle, so desktop releases carry it. */
 function bundledFixture(running = true) {

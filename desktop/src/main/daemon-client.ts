@@ -142,6 +142,7 @@ export class DaemonClient extends EventEmitter {
   async discover(): Promise<string> {
     const chosen = this.store.state.binary
     if (chosen) {
+      this.view.bundleOwnsRuntime = false
       if (await exists(chosen)) return chosen
       throw new Error('The anda executable chosen in Settings no longer exists.')
     }
@@ -169,6 +170,7 @@ export class DaemonClient extends EventEmitter {
     }
     const report = JSON.parse(output) as InstallReport
     this.installReport = report
+    this.view.bundleOwnsRuntime = this.bundleOwnsRuntime
     this.emit('installed', report)
     return report.path
   }

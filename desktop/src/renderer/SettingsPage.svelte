@@ -61,6 +61,16 @@
       client.fail(error)
     }
   }
+  async function setBetaUpdates(input: HTMLInputElement) {
+    const betaUpdates = input.checked
+    input.checked = client.preferences.betaUpdates
+    try {
+      await window.anda.preferences({ betaUpdates })
+      client.preferences.betaUpdates = betaUpdates
+    } catch (error) {
+      client.fail(error)
+    }
+  }
 </script>
 
 {#snippet toggle(checked: boolean, name: string, onchange: (value: boolean) => void)}
@@ -131,6 +141,19 @@
           <dd class="runtime-path">{client.connection.home}</dd>
         </dl>
       </section>
+      <label class="setting-row">
+        <span class="setting-label">
+          {t('betaUpdates')}
+          {#if !client.connection.bundleOwnsRuntime}<small>{t('betaRuntimeRequired')}</small>{/if}
+        </span>
+        <input
+          type="checkbox"
+          checked={client.preferences.betaUpdates}
+          disabled={(!client.connection.bundleOwnsRuntime && !client.preferences.betaUpdates) ||
+            client.updateStatus?.phase === 'running'}
+          onchange={(event) => void setBetaUpdates(event.currentTarget)}
+        />
+      </label>
       <div class="settings-buttons">
         <button onclick={() => void chooseBinary()}>{t('chooseBinary')}</button><button
           onclick={() => runtime.showLogs()}>{t('logs')}</button

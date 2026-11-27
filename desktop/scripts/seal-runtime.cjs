@@ -3,7 +3,7 @@ const { promisify } = require('node:util')
 const { join } = require('node:path')
 const { readFile, writeFile } = require('node:fs/promises')
 const { createHash } = require('node:crypto')
-const { identifiers, verifySignature } = require('../../scripts/macos-bridge.cjs')
+const { identifiers, verifySignature } = require('../../scripts/macos-signing.cjs')
 const run = promisify(execFile)
 
 // Release packaging preserves the already notarized anda binary byte for byte.

@@ -50,11 +50,13 @@ runs `anda install` to remove the launcher's login entry, app bundle, shortcuts
 and sidecar, keeps the daemon starting at login, starts the daemon, and shows a
 one-time notice pointing to Anda Desktop.
 
-Windows Authenticode signing is optional. When Microsoft Artifact Signing is
-configured, the GitHub workflow signs the Windows `anda` and `anda_launcher`
-binaries before checksums are generated; the Anda Desktop installer is signed
-separately with the certificates of the `desktop-release` environment. When it is not configured, the
-workflow still publishes unsigned Windows artifacts. To enable signing, create
+Signing the standalone Windows binaries is optional. Microsoft Artifact Signing signs the
+standalone Windows `anda` and `anda_launcher` binaries before the workflow
+generates their checksums. The desktop installer requires separate Yiwen Certum SimplySign
+or PFX credentials in the `desktop-release` environment.
+[Windows installer signing](../desktop/README.md#windows-installer-signing)
+
+To enable signing for the standalone binaries, create
 an Azure Artifact Signing account, complete identity validation, create a
 certificate profile, grant the app registration's service principal the
 Certificate Profile Signer role, and add a federated credential for this

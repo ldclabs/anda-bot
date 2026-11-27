@@ -56,5 +56,10 @@ export function isOlderRelease(version: string, than: string): boolean {
     const difference = (left[index] || 0) - (right[index] || 0)
     if (difference) return difference < 0
   }
-  return false
+  // Published prereleases are beta.N. The final version follows every beta
+  // with the same numeric core, and beta.10 follows beta.2.
+  const prerelease = (value: string) => value.split('+')[0]!.split('-')[1] || ''
+  const a = prerelease(version)
+  const b = prerelease(than)
+  return Boolean(a) && (!b || a.localeCompare(b, 'en', { numeric: true }) < 0)
 }

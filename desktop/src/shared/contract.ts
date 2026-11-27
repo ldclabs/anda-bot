@@ -27,6 +27,7 @@ export interface Preferences {
   submitKeyMode: 'enter' | 'modifier-enter'
   approvalMode: ApprovalMode
   notifications: boolean
+  betaUpdates: boolean
   launchAtLogin: boolean
   /** Sidebar width in CSS pixels, set by dragging its edge. */
   sidebarWidth: number
@@ -47,6 +48,7 @@ export const defaultPreferences: Preferences = {
   submitKeyMode: 'enter',
   approvalMode: 'on_risk',
   notifications: true,
+  betaUpdates: false,
   launchAtLogin: false,
   sidebarWidth: 242,
   workbench: defaultWorkbench,
@@ -64,6 +66,7 @@ export interface DaemonView {
   baseUrl: string
   /** The shared `anda` CLI this app runs its daemon commands with. */
   binary: string | null
+  bundleOwnsRuntime?: boolean
   error?: string
   version?: string
   desktopProtocol?: number

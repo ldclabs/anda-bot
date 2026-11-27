@@ -4,6 +4,17 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-11-27
+
+### Added
+
+- Anda Desktop can receive numbered beta releases from **Settings → Runtime → Receive beta updates** when it manages the shared runtime. Stable is the default. Opting in includes newer stable releases, and opting out keeps the installed version until a higher stable version is available.
+- The bundled skill catalog adds MCP development, offline web guidance and standalone web artifacts. The Word and slide tools can process revisions and preview layouts without an office suite.
+
+### Changed
+
+- Yiwen AI Limited signs the macOS desktop app, CLI and launcher. Macs running a version below 0.15.0 receive the original LDC-signed 0.15.0 bridge, then the Yiwen release on the next update check.
+- Windows desktop releases require a timestamped Yiwen Authenticode signature on the app and NSIS installer. The release workflow supports Certum SimplySign and verifies the signed package before publication.
 - Tool discovery uses native tool additions where available and the Engine’s `tools_call` proxy on other models. Chat activity shows the target tool.
 - MCP resources now support directory browsing and in-call input. Enable remote skill reads per server with `anda mcp options <id> --skills on`. OAuth connections support confidential clients, client metadata documents and incremental consent.
 

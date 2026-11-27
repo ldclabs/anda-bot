@@ -1,22 +1,22 @@
 const { resolve } = require('node:path')
 const { signAsync } = require('@electron/osx-sign')
-const { bridgeRequirement, verifySignature } = require('../../scripts/macos-bridge.cjs')
+const { releaseRequirement, verifySignature } = require('../../scripts/macos-signing.cjs')
 
 // Squirrel.Mac uses the outer app's designated requirement to validate its successor.
-function optionsForBridge(options) {
+function optionsForRelease(options) {
   const app = resolve(options.app)
   return {
     ...options,
     optionsForFile(file) {
       const original = options.optionsForFile?.(file)
       if (resolve(file) !== app) return original
-      return { ...original, requirements: '=designated => ' + bridgeRequirement('app') }
+      return { ...original, requirements: '=designated => ' + releaseRequirement('app') }
     }
   }
 }
 
 module.exports = async function signMac(options) {
-  await signAsync(optionsForBridge(options))
+  await signAsync(optionsForRelease(options))
   verifySignature(options.app, 'app')
 }
-module.exports.optionsForBridge = optionsForBridge
+module.exports.optionsForRelease = optionsForRelease

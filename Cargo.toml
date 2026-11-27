@@ -52,6 +52,7 @@ http = "1.5"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 parking_lot = "0.13"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 # Keep YAML parser upgrades within the validated 2.x release line.

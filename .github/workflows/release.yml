@@ -6,11 +6,23 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        run: node scripts/release-config.cjs
+
   build-binary:
+    needs: version
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +259,7 @@ jobs:
 
   build-desktop:
     needs:
+      - version
       - build-binary
       - sign-macos-binary
     strategy:
@@ -300,42 +313,99 @@ jobs:
           pnpm --dir desktop build
           node desktop/scripts/prepare-runtime.mjs
 
+      - name: Read the Certum signing certificate
+        if: runner.os == 'Windows'
+        id: certum
+        shell: pwsh
+        env:
+          HAS_USERNAME: ${{ secrets.CERTUM_USERNAME != '' }}
+          HAS_OTP_URI: ${{ secrets.CERTUM_OTP_URI != '' }}
+          HAS_PFX: ${{ secrets.WIN_CSC_LINK != '' }}
+        run: |
+          if ($env:HAS_USERNAME -ne $env:HAS_OTP_URI) {
+            throw 'Configure both CERTUM_USERNAME and CERTUM_OTP_URI in desktop-release.'
+          }
+          $pem = Get-Content -LiteralPath scripts/certum-signer.crt -Raw
+          $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem($pem)
+          "publisher=$($cert.Subject)" >> $env:GITHUB_OUTPUT
+          if ($env:HAS_USERNAME -eq 'true') {
+            "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+          } elseif ($env:HAS_PFX -ne 'true') {
+            throw 'Configure Yiwen SimplySign credentials or a Yiwen PFX in desktop-release.'
+          }
+
+      - name: Connect Certum SimplySign
+        if: steps.certum.outputs.thumbprint != ''
+        uses: dismine/windows-app-signing-setup-action@89ae3b032d4bc7a5b98d1a42a34e61ecb6faad64 # v1.2.5
+        with:
+          certum-username: ${{ secrets.CERTUM_USERNAME }}
+          certum-otp-uri: ${{ secrets.CERTUM_OTP_URI }}
+          certum-key-id: ${{ steps.certum.outputs.thumbprint }}
+          simplysign-url: https://files.certum.eu/software/SimplySignDesktop/Windows/9.4.5.95/SimplySignDesktop-9.4.5.95-64-bit-en.msi
+
       - name: Package desktop
         shell: bash
         working-directory: desktop
         env:
-          CSC_LINK: ${{ secrets[matrix.certificate] }}
-          CSC_KEY_PASSWORD: ${{ secrets[matrix.password] }}
+          CSC_LINK: ${{ steps.certum.outputs.thumbprint == '' && secrets[matrix.certificate] || '' }}
+          CSC_KEY_PASSWORD: ${{ steps.certum.outputs.thumbprint == '' && secrets[matrix.password] || '' }}
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ runner.os == 'macOS' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ runner.os == 'macOS' && secrets.APPLE_TEAM_ID || '' }}
-          ANDA_WINDOWS_PUBLISHER: ${{ vars.ANDA_WINDOWS_PUBLISHER }}
-        run: |
-          args=(--config electron-builder.release.cjs --publish never)
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            # Desktop and CLI share the release version, which the update feed compares.
-            args+=("-c.extraMetadata.version=${GITHUB_REF_NAME#v}")
-          fi
-          pnpm exec electron-builder "${args[@]}"
+          ANDA_WINDOWS_CERT_SHA1: ${{ steps.certum.outputs.thumbprint }}
+          ANDA_WINDOWS_PUBLISHER: ${{ steps.certum.outputs.publisher }}
+        run: pnpm exec electron-builder --config electron-builder.release.cjs --publish never
 
-      - name: Prepare both macOS update feeds and verify the notarized bridge
+      - name: Verify the Yiwen-signed Windows desktop
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_THUMBPRINT: ${{ steps.certum.outputs.thumbprint }}
+          EXPECTED_PUBLISHER: ${{ steps.certum.outputs.publisher }}
+        run: |
+          foreach ($file in 'desktop/release/Anda-win-x64.exe', 'desktop/release/win-unpacked/Anda.exe') {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate -or
+                $signature.SignerCertificate.Subject -ne $env:EXPECTED_PUBLISHER -or
+                ($env:EXPECTED_THUMBPRINT -and $signature.SignerCertificate.Thumbprint -ne $env:EXPECTED_THUMBPRINT)) {
+              throw "Expected a timestamped Yiwen signature on $file ($($signature.Status), $($signature.SignerCertificate.Subject))"
+            }
+          }
+          $bundled = Get-FileHash -LiteralPath 'desktop/release/win-unpacked/resources/runtime/anda.exe'
+          if ($bundled.Hash -ne (Get-FileHash -LiteralPath $env:ANDA_DESKTOP_RUNTIME).Hash) {
+            throw 'The bundled anda.exe differs from the standalone release binary.'
+          }
+
+      - name: Verify the notarized Yiwen update
         if: runner.os == 'macOS'
         run: |
-          test -s desktop/release/stable-mac.yml
-          cp desktop/release/stable-mac.yml desktop/release/latest-mac.yml
           ditto -x -k desktop/release/Anda-mac-arm64.zip "$RUNNER_TEMP/anda-update"
-          node scripts/macos-bridge.cjs verify-package "$RUNNER_TEMP/anda-update/Anda.app" "$ANDA_DESKTOP_RUNTIME"
+          node scripts/macos-signing.cjs verify-package "$RUNNER_TEMP/anda-update/Anda.app" "$ANDA_DESKTOP_RUNTIME"
           xcrun stapler validate "$RUNNER_TEMP/anda-update/Anda.app"
+
+      - name: Verify the update manifest against the signed package
+        env:
+          ANDA_WINDOWS_PUBLISHER: ${{ steps.certum.outputs.publisher }}
+        run: node desktop/scripts/verify-release-feed.cjs
+
+      - name: Prepare the LDC bridge for older macOS clients
+        if: runner.os == 'macOS' && needs.version.outputs.channel == 'stable'
+        run: bash scripts/stage-macos-bridge.sh desktop/release
 
       - name: Collect desktop artifacts
         shell: bash
+        env:
+          CHANNEL: ${{ needs.version.outputs.channel }}
         run: |
           mkdir -p desktop-release
           cp desktop/release/Anda-* desktop-release/
-          if [ "$RUNNER_OS" = macOS ]; then
+          if [ "$CHANNEL" = beta ]; then
+            feed=beta.yml
+            if [ "$RUNNER_OS" = macOS ]; then feed=beta-mac.yml; fi
+            cp "desktop/release/$feed" desktop-release/
+          elif [ "$RUNNER_OS" = macOS ]; then
             cp desktop/release/{latest,stable}-mac.yml desktop-release/
-          fi
-          if [ -f desktop/release/latest.yml ]; then
+          else
             cp desktop/release/latest.yml desktop-release/latest.yml
           fi
           for file in desktop-release/Anda-*.dmg desktop-release/Anda-*.zip desktop-release/Anda-*.exe; do
@@ -357,7 +427,10 @@ jobs:
           if-no-files-found: error
 
   release:
+    permissions:
+      contents: write
     needs:
+      - version
       - build-binary
       - sign-macos-binary
       - package-skills
@@ -375,12 +448,28 @@ jobs:
           merge-multiple: true
           path: release
 
-      - name: Publish GitHub Release
+      - name: Upload all assets to a draft
+        id: upload
         uses: softprops/action-gh-release@v2
         with:
+          draft: true
+          prerelease: ${{ needs.version.outputs.channel == 'beta' }}
           files: release/*
+          fail_on_unmatched_files: true
+
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.upload.outputs.id }}
+          BETA: ${{ needs.version.outputs.channel == 'beta' }}
+        run: |
+          latest=true
+          if [ "$BETA" = true ]; then latest=false; fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F prerelease="$BETA" -f make_latest="$latest"
 
       - name: Publish Homebrew formula
+        if: needs.version.outputs.channel == 'stable'
         env:
           CHECKSUM_DIR: release
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

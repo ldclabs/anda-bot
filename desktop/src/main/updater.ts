@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DaemonClient, downloadedRelease, type RuntimeUpdateState } from './daemon-client'
 import { DesktopStore } from './store'
+import { BetaFeed, type DesktopRelease } from './beta-feed'
 import { installRuntimeUpdate, isOlderRelease } from './update-machine'
 import type { UpdateOffer, UpdateOperation, UpdateStatus } from '../shared/contract'
 import { label, updateOperationLabels, type Label } from '../renderer/labels'
@@ -17,10 +18,9 @@ const updateCheckInterval = 6 * 3600_000
 type AppRelease = { message: string } | { version: string; downloaded: boolean; runtime: boolean }
 
 /**
- * Two update channels from one GitHub release. The shared `anda` runtime
- * updates through its own release channel (the CLI updater), draining active
- * work first; the desktop application updates through electron-updater, and
- * its executable lives outside the daemon's. The desktop package bundles the
+ * The CLI updater installs stable releases of the shared `anda` runtime after
+ * draining active work. Electron-updater installs the desktop application from
+ * the profile's selected release channel. The desktop package bundles the
  * same release's `anda`, which the app installs on start, so when the app owns
  * the shared runtime a desktop update brings both: one download, one
  * confirmation, and a drained service that the restarted app starts again.
@@ -37,6 +37,8 @@ export class DesktopUpdater {
   private notifiedApp = new Set<string>()
   private backgroundCheck?: Promise<void>
   private automaticChecksStarted = false
+  private readonly betaFeed = new BetaFeed()
+  private channelCheck = new AbortController()
   /** The service was stopped for an app installation that has not quit yet. */
   private serviceStopped = false
   private timer?: NodeJS.Timeout
@@ -70,6 +72,17 @@ export class DesktopUpdater {
   }
   private t(key: Label): string {
     return label(this.store.state.preferences?.language || 'en', key)
+  }
+  /** A different channel must never install an offer or cached download from the old one. */
+  changeBetaUpdates(enabled: boolean): void {
+    if (this.busy || this.installing) throw new Error(this.t('updateInProgress'))
+    if (enabled && !this.daemon.bundleOwnsRuntime) throw new Error(this.t('betaRuntimeRequired'))
+    this.channelCheck.abort()
+    this.channelCheck = new AbortController()
+    this.downloaded = undefined
+    this.availableApp = undefined
+    this.notifiedApp.clear()
+    this.changed()
   }
   private progress(message: string): void {
     this.setStatus({ phase: 'running', message })
@@ -315,24 +328,69 @@ export class DesktopUpdater {
     } catch {}
     return configured ? null : this.t('desktopUpdatesManual')
   }
-  private async findAppUpdate() {
+  private async findAppUpdate(signal: AbortSignal): Promise<string | undefined> {
+    const mac = process.platform === 'darwin'
+    let candidate: DesktopRelease | null = null
+    if (this.store.state.preferences?.betaUpdates === true && this.daemon.bundleOwnsRuntime) {
+      candidate = await this.betaFeed.latest(app.getVersion(), signal)
+      signal.throwIfAborted()
+      if (!candidate) return undefined
+      autoUpdater.setFeedURL({
+        provider: 'generic',
+        url: `https://github.com/ldclabs/anda-bot/releases/download/v${candidate.version}/`,
+        channel: candidate.channel,
+        useMultipleRangeRequest: false
+      })
+    } else {
+      autoUpdater.setFeedURL({ provider: 'github', owner: 'ldclabs', repo: 'anda-bot' })
+    }
+    autoUpdater.channel = candidate?.channel ?? (mac ? 'stable' : 'latest')
+    autoUpdater.allowPrerelease = candidate?.channel === 'beta'
+    // Assigning channel enables downgrades in electron-updater.
+    autoUpdater.allowDowngrade = false
     const result = await autoUpdater.checkForUpdates()
+    signal.throwIfAborted()
     if (!result) throw new Error(this.t('desktopUpdateCheckUnavailable'))
-    this.availableApp = result.isUpdateAvailable ? result.updateInfo.version : undefined
-    this.changed()
-    return result
+    if (!result.isUpdateAvailable) return undefined
+    const info = result.updateInfo
+    if (
+      candidate &&
+      (info.version !== candidate.version ||
+        info.files.filter((file) => file.url.endsWith(mac ? '.zip' : '.exe')).length !== 1 ||
+        !info.files.some((file) => file.url === candidate.installer) ||
+        !info.files.every((file) => candidate.assets.includes(file.url)))
+    ) {
+      throw new Error('The update manifest does not match the selected Anda release.')
+    }
+    if (!candidate && info.version.includes('-')) throw new Error('Expected a stable Anda release.')
+    return info.version
   }
   private async findApp(): Promise<AppRelease> {
+    const { signal } = this.channelCheck
     const unavailable = await this.appUpdateUnavailable()
     if (unavailable) return { message: unavailable }
+    // Discover the runtime owner before considering a beta. Stable checks can
+    // still report that the app is current without installing the bundled CLI.
+    const beta = this.store.state.preferences?.betaUpdates === true
+    if (beta) await this.daemon.discover().catch(() => {})
+    signal.throwIfAborted()
+    if (this.downloaded?.includes('-beta.') && !(beta && this.daemon.bundleOwnsRuntime)) {
+      this.downloaded = undefined
+    }
     let version = this.downloaded
     if (!version) {
-      const result = await this.findAppUpdate()
-      if (!result.isUpdateAvailable) return { message: this.t('desktopUpToDate') }
-      version = result.updateInfo.version
+      version = await this.findAppUpdate(signal)
+      signal.throwIfAborted()
+      this.availableApp = version
+      this.changed()
+      if (!version) {
+        const waiting =
+          app.getVersion().includes('-beta.') && !this.store.state.preferences?.betaUpdates
+        return { message: this.t(waiting ? 'waitingStable' : 'desktopUpToDate') }
+      }
     }
-    // Resolving the runtime runs the bundle's `anda install`, which reports its owner.
-    await this.daemon.discover().catch(() => {})
+    if (!beta) await this.daemon.discover().catch(() => {})
+    signal.throwIfAborted()
     return {
       version,
       downloaded: version === this.downloaded,

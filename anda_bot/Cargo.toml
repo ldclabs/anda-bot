@@ -1,7 +1,7 @@
 [package]
 name = "anda_bot"
 publish = false
-version = "0.15.1"
+version = "0.16.0"
 default-run = "anda"
 description.workspace = true
 license.workspace = true
@@ -79,6 +79,7 @@ toml = { workspace = true }
 zeroize = { workspace = true }
 tokio-tungstenite = { workspace = true }
 structured-logger = { workspace = true }
+semver = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde-saphyr = { workspace = true }

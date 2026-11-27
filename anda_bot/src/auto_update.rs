@@ -243,28 +243,13 @@ pub(crate) fn is_newer_release(latest_tag: &str, current_tag: &str) -> bool {
         parse_release_version(latest_tag),
         parse_release_version(current_tag),
     ) {
-        (Some(latest), Some(current)) => latest > current,
+        (Some(latest), Some(current)) => latest.cmp_precedence(&current).is_gt(),
         _ => true,
     }
 }
 
-/// Numeric parts, then whether this is a final release: `v0.13.0-beta.1`
-/// sorts before `v0.13.0`.
-fn parse_release_version(tag: &str) -> Option<(Vec<u64>, bool)> {
-    let tag = tag.trim().trim_start_matches('v');
-    let (version, release) = match tag.split_once('-') {
-        Some((version, _)) => (version, false),
-        None => (tag, true),
-    };
-    let version = version.split('+').next().unwrap_or_default();
-    if version.is_empty() {
-        return None;
-    }
-    let parts = version
-        .split('.')
-        .map(|part| part.parse::<u64>().ok())
-        .collect::<Option<Vec<_>>>()?;
-    Some((parts, release))
+fn parse_release_version(tag: &str) -> Option<semver::Version> {
+    semver::Version::parse(tag.trim().trim_start_matches('v')).ok()
 }
 
 async fn download_release_asset(
@@ -405,6 +390,8 @@ mod tests {
 
     #[test]
     fn final_release_is_newer_than_its_prerelease() {
+        assert!(is_newer_release("v1.0.0-beta.10", "v1.0.0-beta.2"));
+        assert!(!is_newer_release("v1.0.0-beta.2", "v1.0.0-beta.10"));
         assert!(is_newer_release("v0.13.0", "v0.13.0-beta.1"));
         assert!(!is_newer_release("v0.13.0-beta.1", "v0.13.0"));
         assert!(is_newer_release("v0.13.1-beta.1", "v0.13.0"));
@@ -612,13 +599,10 @@ mod tests {
     #[test]
     fn parse_release_version_handles_prerelease_and_garbage() {
         assert_eq!(
-            parse_release_version("v1.2.3-rc.1"),
-            Some((vec![1, 2, 3], false))
+            parse_release_version("v1.2.3-rc.1").unwrap().pre.as_str(),
+            "rc.1"
         );
-        assert_eq!(
-            parse_release_version("0.4.0+build"),
-            Some((vec![0, 4, 0], true))
-        );
+        assert!(!is_newer_release("0.4.0+build", "v0.4.0"));
         assert!(parse_release_version("v").is_none());
         assert!(parse_release_version("not-a-version").is_none());
     }

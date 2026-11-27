@@ -30,7 +30,9 @@ Rust 可执行程序 `anda` 运行本地后台服务，并内嵌 [Anda Brain](ht
 | macOS，Apple Silicon | `Anda-mac-arm64.dmg` |
 | Windows，x64 | `Anda-win-x64.exe` |
 
-macOS 用户请先升级到由 LDC 签名的 **0.15.x** 过渡版，再接收首个由 Yiwen 签名的更新（计划为 **0.16.0**）。如果错过过渡版后自动更新失败，可用官方 0.15.0 DMG 覆盖安装，再检查更新。[macOS 过渡版](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+Anda 桌面端 0.16.0 使用 Yiwen AI Limited 的签名证书。低于 0.15.0 的 macOS 客户端会先收到由 LDC 签名的 0.15.0 过渡版。重启后再次检查更新，即可升级到 Yiwen 签名的版本。如果第一步失败，可用官方 0.15.0 DMG 覆盖安装。[macOS 过渡版](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
+
+桌面端默认接收稳定版更新。使用桌面端自带运行时的用户，可在**设置 → 运行时 → 接收 Beta 更新**中选择加入。关闭后会保留当前版本，直到有更高版本的稳定版可用。
 
 macOS 也可以使用 Homebrew：
 
