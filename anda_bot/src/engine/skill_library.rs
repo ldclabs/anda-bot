@@ -429,6 +429,7 @@ impl SkillLibrary {
             "shell_session".to_string(),
             "read_file".to_string(),
             "search_file".to_string(),
+            "tools_search".to_string(),
             "tools_select".to_string(),
             "skills_read".to_string(),
         ];

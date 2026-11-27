@@ -348,7 +348,7 @@ impl Tool<BaseCtx> for CodeTool {
             ),
             _ => concat!(
                 "List saved Python functions. Use an exact published name, no cursor and ",
-                "include_source=true to read source. Select a saved function with tools_select to inspect its parameters."
+                "include_source=true to read source. Select a saved function with tools_search to inspect its parameters."
             ),
         };
         description.into()

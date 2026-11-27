@@ -17,7 +17,7 @@ code_mode:
   enabled: false
 ```
 
-`code_exec` runs a Python function body and returns the value of `return` or of a final expression. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_select` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.
+`code_exec` runs a Python function body and returns the value of `return` or of a final expression. Call tools with named arguments and use `parallel` for independent calls. `code_register` saves one annotated function with a docstring. Use `code_list` to find its name and revision, then `tools_search` to load it for a direct call. The library is private to the owner and workspace. Updates and removals require the current revision. Disabling Code Mode keeps saved functions on disk.
 
 Scripts can import `json`, `re`, `math`, `datetime`, `collections`, `functools`, `itertools`, `operator` and `heapq`. `datetime.strptime` is not available, and local time inside the worker may be UTC, so give time zones explicitly. Use host tools for files, network access and messaging.
 

@@ -25,10 +25,10 @@ The Rust binary, `anda`, runs a local daemon with an embedded [Anda Brain](https
 
 Download an installer from [GitHub Releases](https://github.com/ldclabs/anda-bot/releases/latest):
 
-| Platform | Installer |
-| --- | --- |
+| Platform             | Installer            |
+| -------------------- | -------------------- |
 | macOS, Apple Silicon | `Anda-mac-arm64.dmg` |
-| Windows, x64 | `Anda-win-x64.exe` |
+| Windows, x64         | `Anda-win-x64.exe`   |
 
 Anda Desktop 0.16.0 uses Yiwen AI Limited’s signing certificates. Macs on versions earlier than 0.15.0 receive the LDC-signed 0.15.0 bridge first. Check for updates again after restarting to get the Yiwen release. If the first update fails, install the official 0.15.0 DMG over the existing app. [macOS bridge release](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
 
@@ -124,15 +124,15 @@ Model reload updates the agent's providers. Brain keeps its startup model until 
 
 Start `anda` from a project directory, or choose a folder for a new chat in Desktop. A session loads the root `AGENTS.md` from that workspace when it starts, so project conventions can accompany the task.
 
-| Chat command | Purpose |
-| --- | --- |
-| `/new` | Start a new conversation. |
-| `/goal <objective>` | Continue working toward a goal, with a supervisor checking progress. |
-| `/steer <instruction>` | Redirect work already in progress. |
-| `/side <question>` or `/btw <question>` | Run a separate side request. |
-| `/skill <name> <task>` or `$<name> <task>` | Invoke a runtime skill. |
-| `/stop` | Stop current work and its background tasks; keep the conversation available. |
-| `/cancel` | Stop work and close the active conversation session. |
+| Chat command                               | Purpose                                                                      |
+| ------------------------------------------ | ---------------------------------------------------------------------------- |
+| `/new`                                     | Start a new conversation.                                                    |
+| `/goal <objective>`                        | Continue working toward a goal, with a supervisor checking progress.         |
+| `/steer <instruction>`                     | Redirect work already in progress.                                           |
+| `/side <question>` or `/btw <question>`    | Run a separate side request.                                                 |
+| `/skill <name> <task>` or `$<name> <task>` | Invoke a runtime skill.                                                      |
+| `/stop`                                    | Stop current work and its background tasks; keep the conversation available. |
+| `/cancel`                                  | Stop work and close the active conversation session.                         |
 
 In the TUI, Enter sends, Shift+Enter or Ctrl+J inserts a newline, Ctrl+U clears the input, and Ctrl+C exits the client. Exiting the client does not shut down the daemon; use `anda stop` for that.
 
@@ -156,7 +156,7 @@ Interactive sessions request approval for risky shell operations and MCP actions
 
 `anda --full-access` starts an interactive session with approval prompts bypassed where the policy permits. **Cron jobs and active goals run with full access.** MCP event automations do not receive that elevation: operations that need approval are refused. An explicit MCP `ask` policy still requires approval, including in full-access mode. These controls govern the local runtime; shell commands execute with your OS user's permissions.
 
-Tool discovery adapts to the model. Models that support native tool additions can call selected tools directly. For other models, `tools_select` lists targets in `call_via_tools_call` and the agent invokes them through `tools_call`, keeping the initial tool list stable for prompt caching.
+Tool discovery adapts to the model. Models that support native tool additions can call selected tools directly. For other models, `tools_search` lists targets in `call_via_tools_call` and the agent invokes them through `tools_call`, keeping the initial tool list stable for prompt caching.
 
 ### Python Code Mode
 
@@ -276,32 +276,32 @@ Ask Anda to schedule a prompt or shell command, or use Desktop's **Automations**
 
 ## Service management and local data
 
-| Command | Purpose |
-| --- | --- |
-| `anda status` | Inspect daemon status; add `--json` for structured output. |
-| `anda start` / `anda stop` / `anda restart` | Manage the background daemon. |
-| `anda daemon` | Run the daemon in the foreground. |
-| `anda models reload` | Reload model providers. |
-| `anda autostart install` / `uninstall` / `status` | Manage login startup. |
-| `anda update` | Update an install-script release. Homebrew installs use `brew upgrade anda`. |
-| `anda update --skills` | Refresh bundled skills. |
-| `anda validate-config` | Validate YAML from stdin without starting services or creating a home. |
-| `anda --help` | List commands; subcommands also support `--help`. |
+| Command                                           | Purpose                                                                      |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `anda status`                                     | Inspect daemon status; add `--json` for structured output.                   |
+| `anda start` / `anda stop` / `anda restart`       | Manage the background daemon.                                                |
+| `anda daemon`                                     | Run the daemon in the foreground.                                            |
+| `anda models reload`                              | Reload model providers.                                                      |
+| `anda autostart install` / `uninstall` / `status` | Manage login startup.                                                        |
+| `anda update`                                     | Update an install-script release. Homebrew installs use `brew upgrade anda`. |
+| `anda update --skills`                            | Refresh bundled skills.                                                      |
+| `anda validate-config`                            | Validate YAML from stdin without starting services or creating a home.       |
+| `anda --help`                                     | List commands; subcommands also support `--help`.                            |
 
 For Desktop updates, use **Check for updates** in the tray or Settings; Homebrew-managed components are upgraded with Homebrew. See the [desktop update guide](desktop/README.md#updates--更新) for bundled runtime and platform differences.
 
 The default gateway is `127.0.0.1:8042`. Runtime state lives under `~/.anda` (`%USERPROFILE%\.anda` on Windows):
 
-| Path | Contents |
-| --- | --- |
-| `config.yaml` | Models, channels, workspaces, speech, and startup settings. |
-| `db/` | Conversations, memory graph, task state, and other persisted records. |
-| `workspace/` | Default working files. |
-| `channels/` | Channel-specific state and attachments. |
-| `skills/`, `bundled-skills/` | Personal and release-managed skills. |
+| Path                                             | Contents                                                                   |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| `config.yaml`                                    | Models, channels, workspaces, speech, and startup settings.                |
+| `db/`                                            | Conversations, memory graph, task state, and other persisted records.      |
+| `workspace/`                                     | Default working files.                                                     |
+| `channels/`                                      | Channel-specific state and attachments.                                    |
+| `skills/`, `bundled-skills/`                     | Personal and release-managed skills.                                       |
 | `mcp.json`, `mcp_secrets.json`, `mcp_state.json` | MCP configuration, locally protected secrets, and connection/review state. |
-| `credentials/`, `chatgpt/` | Encrypted trusted-user credentials and ChatGPT account state. |
-| `logs/` | Runtime logs. |
+| `credentials/`, `chatgpt/`                       | Encrypted trusted-user credentials and ChatGPT account state.              |
+| `logs/`                                          | Runtime logs.                                                              |
 
 Daemon and owner identity keys normally live in the OS secure credential store; explicitly initialized file keys and the Linux fallback use `keys/`. Desktop also stores UI preferences and its browser profile in the OS application-data directory. Local storage does not mean offline inference: configured model providers and connected services receive the content needed for their calls.
 
@@ -329,17 +329,17 @@ pnpm install --frozen-lockfile
 pnpm --dir desktop dev
 ```
 
-| Directory | Role |
-| --- | --- |
-| `anda_bot/src/` | CLI, daemon, engine, Brain integration, channels, cron, speech, and TUI. |
-| `anda_bot/assets/` | Default configuration, prompts, and runtime examples. |
-| `desktop/` | Electron + Svelte desktop app, reusing extension UI components. |
-| `chrome-extension/` | Svelte + TypeScript Chrome side panel and dashboard. |
-| `skills/` | Bundled runtime skill packages. |
-| `docsite/` | Docusaurus documentation and translations. |
-| `website/` | SvelteKit website. |
-| `scripts/` | Installation, signing, and release helpers. |
-| `docs/` | Integration guides, design documents, and implementation records. |
+| Directory           | Role                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `anda_bot/src/`     | CLI, daemon, engine, Brain integration, channels, cron, speech, and TUI. |
+| `anda_bot/assets/`  | Default configuration, prompts, and runtime examples.                    |
+| `desktop/`          | Electron + Svelte desktop app, reusing extension UI components.          |
+| `chrome-extension/` | Svelte + TypeScript Chrome side panel and dashboard.                     |
+| `skills/`           | Bundled runtime skill packages.                                          |
+| `docsite/`          | Docusaurus documentation and translations.                               |
+| `website/`          | SvelteKit website.                                                       |
+| `scripts/`          | Installation, signing, and release helpers.                              |
+| `docs/`             | Integration guides, design documents, and implementation records.        |
 
 Run checks for the components you change. Rust:
 
@@ -351,12 +351,12 @@ cargo clippy --locked --all-targets --all-features
 
 `make test` runs the Rust workspace with all features and the same enlarged test-thread stack. Keep `RUST_MIN_STACK=16777216` on direct test commands for the embedded Brain's debug builds.
 
-| Component | Checks |
-| --- | --- |
-| Desktop | `pnpm --dir desktop check`, `test`, `build` |
+| Component        | Checks                                                       |
+| ---------------- | ------------------------------------------------------------ |
+| Desktop          | `pnpm --dir desktop check`, `test`, `build`                  |
 | Chrome extension | `pnpm --dir chrome-extension check`, `test`, `i18n`, `build` |
-| Website | `pnpm --dir website check`, `test`, `lint`, `build` |
-| Documentation | `pnpm --dir docsite typecheck`, `build` |
+| Website          | `pnpm --dir website check`, `test`, `lint`, `build`          |
+| Documentation    | `pnpm --dir docsite typecheck`, `build`                      |
 
 In the table, each script uses the same `pnpm --dir <directory>` prefix. See [AGENTS.md](AGENTS.md) for repository conventions and [desktop validation](desktop/README.md#validation) for GUI checks.
 

@@ -9,43 +9,43 @@
 
 ## 1. 交付边界与实施顺序
 
-| 版本 | 交付范围 | 允许对用户承诺 |
-| --- | --- | --- |
-| R0 / P0 | 普通记忆概览、离线指南、技术入口分层 | 能开始使用，知道服务和可选待办分别是否可达 |
-| R1 / P1 | 按原对话关联的整理状态、重启后可查询 | 知道对应对话的处理结果；不承诺逐事实保存 |
-| R2 / P2 | 有来源的记忆视图、更正、受执行约束的会话策略、删除 | 能核对和管理已支持范围内的记忆 |
-| R3 / P3 | 按需设置持久待办、真实事项与稳定回复 | 确认问题可跨会话保留，回答结果可追踪 |
-| R4 / P4 | 隔离评测 runner、预算说明、成对报告 | 在声明条件下比较记忆效果 |
-| R5 / P5 | 受支持业务模板、独立观察、批准与回退 | 仅在明确业务边界内运行已经准备好的学习流程 |
+| 版本    | 交付范围                                           | 允许对用户承诺                             |
+| ------- | -------------------------------------------------- | ------------------------------------------ |
+| R0 / P0 | 普通记忆概览、离线指南、技术入口分层               | 能开始使用，知道服务和可选待办分别是否可达 |
+| R1 / P1 | 按原对话关联的整理状态、重启后可查询               | 知道对应对话的处理结果；不承诺逐事实保存   |
+| R2 / P2 | 有来源的记忆视图、更正、受执行约束的会话策略、删除 | 能核对和管理已支持范围内的记忆             |
+| R3 / P3 | 按需设置持久待办、真实事项与稳定回复               | 确认问题可跨会话保留，回答结果可追踪       |
+| R4 / P4 | 隔离评测 runner、预算说明、成对报告                | 在声明条件下比较记忆效果                   |
+| R5 / P5 | 受支持业务模板、独立观察、批准与回退               | 仅在明确业务边界内运行已经准备好的学习流程 |
 
 R0 可以独立发布，但完整日常产品的完成门槛是 R2。R3–R5 不阻塞普通记忆；R4 可在隔离分支上与 R2 并行开发。本文只规划文档中的工作，不要求当前提交执行模型评测、修改生产配置或跨仓库提交代码。
 
 ## 2. 已核实的现状及必要依赖
 
-| 实现位置 | 当前事实 | 设计约束 |
-| --- | --- | --- |
-| [runner.rs](../anda_bot/src/engine/agent/runner.rs) `submit_pending_formation` | 用历史窗口提交，过滤 action message，裁剪内容；失败退避 60 秒 | 原始窗口不是“提交了每条原文”的证明；展示需要保留具体映射 |
-| [journal.rs](../anda_bot/src/brain/journal.rs) | `FormationSubmission` 没有 caller、路由和原消息映射；`RecallDelivery` 有 caller 和可选工具调用 ID | 不能直接将整个 journal 给前端；补来源元数据与授权投影 |
-| [journal.rs](../anda_bot/src/brain/journal.rs) | 创建前占位；有 Brain ID 则查状态；无 ID 的不确定窗口不盲重发 | 产品不能加一个无条件“重试保存”按钮 |
-| [instructions.rs](../anda_bot/src/engine/agent/instructions.rs) | 系统上下文读取 primer、user_info、Notes；user_info 是 get-or-init 路径 | 禁止记忆读取/写入必须早于系统指令构建，不止拦截 Recall |
-| [meta.rs](../anda_bot/src/engine/agent/meta.rs)、[startup.rs](../anda_bot/src/engine/agent/startup.rs) | 会话 extra 保存 metadata，恢复时移除临时请求字段 | 持久策略必须保留；恢复不能重置为默认模式 |
-| [conversation.rs](../anda_bot/src/engine/conversation.rs) | 会话读取检查 `conversation.user == caller` | 可复用会话授权；这不等于共享 Brain 图谱已有逐条 ACL |
-| [engine.rs](../anda_bot/src/engine.rs) | 有 HTTP 身份校验、owner 身份、配置写锁与备份；一般认证辅助函数不检查 owner | 新管理端点需要显式 owner 检查，不直接沿用“认证过即可” |
-| [browser_ws.rs](../anda_bot/src/engine/browser_ws.rs) | 验证 WS 调用者，Brain 调用保留原 bearer | 新 HTTP/WS 入口必须共享业务服务，不能借用 daemon token |
-| [Inbox.svelte](../chrome-extension/src/lib/anda/brain/Inbox.svelte) | 发送前保存事件键和正文，再尝试投递 | 保留持久重试语义，补状态与错误展示，不重写为易丢失的请求 |
-| [mib.rs](../anda_bot/src/mib.rs) | 两个协议、隔离进程内实验、累计成本；无完整计量、无 native learning 组 | runner、评分、预算是新增产品层，不修改能力布尔值冒充接线 |
+| 实现位置                                                                                               | 当前事实                                                                                          | 设计约束                                                 |
+| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [runner.rs](../anda_bot/src/engine/agent/runner.rs) `submit_pending_formation`                         | 用历史窗口提交，过滤 action message，裁剪内容；失败退避 60 秒                                     | 原始窗口不是“提交了每条原文”的证明；展示需要保留具体映射 |
+| [journal.rs](../anda_bot/src/brain/journal.rs)                                                         | `FormationSubmission` 没有 caller、路由和原消息映射；`RecallDelivery` 有 caller 和可选工具调用 ID | 不能直接将整个 journal 给前端；补来源元数据与授权投影    |
+| [journal.rs](../anda_bot/src/brain/journal.rs)                                                         | 创建前占位；有 Brain ID 则查状态；无 ID 的不确定窗口不盲重发                                      | 产品不能加一个无条件“重试保存”按钮                       |
+| [instructions.rs](../anda_bot/src/engine/agent/instructions.rs)                                        | 系统上下文读取 primer、user_info、Notes；user_info 是 get-or-init 路径                            | 禁止记忆读取/写入必须早于系统指令构建，不止拦截 Recall   |
+| [meta.rs](../anda_bot/src/engine/agent/meta.rs)、[startup.rs](../anda_bot/src/engine/agent/startup.rs) | 会话 extra 保存 metadata，恢复时移除临时请求字段                                                  | 持久策略必须保留；恢复不能重置为默认模式                 |
+| [conversation.rs](../anda_bot/src/engine/conversation.rs)                                              | 会话读取检查 `conversation.user == caller`                                                        | 可复用会话授权；这不等于共享 Brain 图谱已有逐条 ACL      |
+| [engine.rs](../anda_bot/src/engine.rs)                                                                 | 有 HTTP 身份校验、owner 身份、配置写锁与备份；一般认证辅助函数不检查 owner                        | 新管理端点需要显式 owner 检查，不直接沿用“认证过即可”    |
+| [browser_ws.rs](../anda_bot/src/engine/browser_ws.rs)                                                  | 验证 WS 调用者，Brain 调用保留原 bearer                                                           | 新 HTTP/WS 入口必须共享业务服务，不能借用 daemon token   |
+| [Inbox.svelte](../chrome-extension/src/lib/anda/brain/Inbox.svelte)                                    | 发送前保存事件键和正文，再尝试投递                                                                | 保留持久重试语义，补状态与错误展示，不重写为易丢失的请求 |
+| [mib.rs](../anda_bot/src/mib.rs)                                                                       | 两个协议、隔离进程内实验、累计成本；无完整计量、无 native learning 组                             | runner、评分、预算是新增产品层，不修改能力布尔值冒充接线 |
 
 ### 依赖门槛
 
-| ID | 必须证实的合同 | 阻塞范围 | 最小验证交付 |
-| --- | --- | --- | --- |
-| G1 | Brain 记录能返回稳定 ID、修订、来源与有效状态；来源能关联到 Bot 可授权的记录 | 来源卡片、逐事实保存证明 | 固定依赖版本下的 contract fixture；无来源/多来源/旧数据样例 |
-| G2 | 可信原生更正支持条件更新、明确结果查询；明确是否支持调用幂等 | 精确更正、停用/删除 | 并发冲突、ACK 丢失、重启后结果查询测试；缺幂等时保留 unknown |
-| G3 | 原生检索、索引、维护、再次 Formation 都遵守停用/删除及来源抑制 | “不再使用”“删除”上线 | 多来源派生、缓存、重建、重启和在途写入验证 |
-| G4 | memory policy 可到达所有宿主注入点、可发现工具、子任务和恢复路径 | “不使用/不保存长期记忆” | 无网络模型 fixture 的 read/write 调用计数与绕过测试 |
-| G5 | 受支持 Watch/Decision 的创建与撤销合同明确，只有 inbox adapter 不够 | 用户创建真实持久事项 | 最小事项从创建到回答/取消的 native 集成 fixture |
-| G6 | 可约束和观测各模型阶段、重试及取消后的成本 | 一键实测、金额上限文案 | 部分计量报告；宣称金额上限前必须有完整计量和最坏预留验证 |
-| G7 | executor / observer / source、固定摘要、校准和权限实际匹配 | 业务自动学习 | 独立服务探测及拒绝不匹配配置的测试 |
+| ID  | 必须证实的合同                                                               | 阻塞范围                 | 最小验证交付                                                 |
+| --- | ---------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| G1  | Brain 记录能返回稳定 ID、修订、来源与有效状态；来源能关联到 Bot 可授权的记录 | 来源卡片、逐事实保存证明 | 固定依赖版本下的 contract fixture；无来源/多来源/旧数据样例  |
+| G2  | 可信原生更正支持条件更新、明确结果查询；明确是否支持调用幂等                 | 精确更正、停用/删除      | 并发冲突、ACK 丢失、重启后结果查询测试；缺幂等时保留 unknown |
+| G3  | 原生检索、索引、维护、再次 Formation 都遵守停用/删除及来源抑制               | “不再使用”“删除”上线     | 多来源派生、缓存、重建、重启和在途写入验证                   |
+| G4  | memory policy 可到达所有宿主注入点、可发现工具、子任务和恢复路径             | “不使用/不保存长期记忆”  | 无网络模型 fixture 的 read/write 调用计数与绕过测试          |
+| G5  | 受支持 Watch/Decision 的创建与撤销合同明确，只有 inbox adapter 不够          | 用户创建真实持久事项     | 最小事项从创建到回答/取消的 native 集成 fixture              |
+| G6  | 可约束和观测各模型阶段、重试及取消后的成本                                   | 一键实测、金额上限文案   | 部分计量报告；宣称金额上限前必须有完整计量和最坏预留验证     |
+| G7  | executor / observer / source、固定摘要、校准和权限实际匹配                   | 业务自动学习             | 独立服务探测及拒绝不匹配配置的测试                           |
 
 G1–G3/G5 的现有原生能力需要专项核实。本文的宿主接口是目标合同，不宣称 Brain 当前已有同名 API。若需上游改动，先提交明确的上游合同与测试，再使用 registry 发布版本接入；保留单一 DB/Core 类型身份，不为产品层另起一套图谱。
 
@@ -69,18 +69,18 @@ flowchart LR
 
 建议文件划分如下，随对应阶段新增，不在 R0 建空框架：
 
-| 文件（拟新增） | 职责 |
-| --- | --- |
-| `anda_bot/src/brain/product.rs` | DTO、能力与证据状态的纯映射；不调用模型 |
-| `anda_bot/src/brain/service.rs` | `MemoryService`，组合现有 Client/Host、会话查询、索引 |
-| `anda_bot/src/brain/activity.rs` | journal 元数据、活动投影、恢复与只读状态协调 |
-| `anda_bot/src/brain/catalog.rs` | 经 G1 验证的原生记录到用户视图的转换 |
-| `anda_bot/src/brain/mutation.rs` | 更正/删除预览、条件提交、结果对账 |
-| `anda_bot/src/engine/memory_api.rs` | HTTP/WS 共用授权与请求分发，不注册为通用模型写工具 |
-| `anda_bot/src/engine/agent/memory_policy.rs` | 会话策略的建立、继承和实际执行检查 |
-| `anda_bot/src/cli/memory.rs` | 人类可读输出与稳定 JSON；不复制业务规则 |
-| `chrome-extension/src/lib/anda/memory/` | 产品 API、状态 store、概览/活动/详情组件 |
-| `anda_bot/src/mib/evaluator.rs`、`report.rs` | 显式隔离评测，不读取生产 home |
+| 文件（拟新增）                               | 职责                                                  |
+| -------------------------------------------- | ----------------------------------------------------- |
+| `anda_bot/src/brain/product.rs`              | DTO、能力与证据状态的纯映射；不调用模型               |
+| `anda_bot/src/brain/service.rs`              | `MemoryService`，组合现有 Client/Host、会话查询、索引 |
+| `anda_bot/src/brain/activity.rs`             | journal 元数据、活动投影、恢复与只读状态协调          |
+| `anda_bot/src/brain/catalog.rs`              | 经 G1 验证的原生记录到用户视图的转换                  |
+| `anda_bot/src/brain/mutation.rs`             | 更正/删除预览、条件提交、结果对账                     |
+| `anda_bot/src/engine/memory_api.rs`          | HTTP/WS 共用授权与请求分发，不注册为通用模型写工具    |
+| `anda_bot/src/engine/agent/memory_policy.rs` | 会话策略的建立、继承和实际执行检查                    |
+| `anda_bot/src/cli/memory.rs`                 | 人类可读输出与稳定 JSON；不复制业务规则               |
+| `chrome-extension/src/lib/anda/memory/`      | 产品 API、状态 store、概览/活动/详情组件              |
+| `anda_bot/src/mib/evaluator.rs`、`report.rs` | 显式隔离评测，不读取生产 home                         |
 
 在 [engine.rs](../anda_bot/src/engine.rs) 组装同一 service 注入 HTTP 和 BrowserWebSocketState。沿用 [gateway/client.rs](../anda_bot/src/gateway/client.rs)、[service_worker.ts](../chrome-extension/src/service_worker.ts) 的传输方式；不要从 UI 回调调用模型工具来间接实现管理动作。
 
@@ -118,17 +118,17 @@ flowchart LR
 
 `observed_at` 使用 Unix 毫秒；传给 JavaScript 的 conversation/record/revision 等标识统一为字符串，避免 u64 精度损失。未知值用 null，不用 0、空数组或 false 冒充测量结果。所有分页结果区分 `complete`、`partial_reason` 和 `next_cursor`。
 
-| HTTP（拟议） | WS method（拟议） | 阶段 / 行为 |
-| --- | --- | --- |
-| `GET /overview` | `memory_overview` | R0；两类状态并行读取，部分失败仍可返回完整诊断形状 |
-| `GET /activity?conversation=...&cursor=...&limit=20` | `memory_activity` | R1；只读活动、按会话授权，不触发 Formation |
-| `GET /records?cursor=...&limit=20` | `memory_records` | R2；有来源的结构化记录，不调用模型 |
-| `GET /records/{id}` | `memory_record` | R2；详情与来源权限，ID 必须通过类型校验 |
-| `POST /search` | `memory_search` | R2；显式自然语言 Recall，可能调用模型 |
-| `POST /changes/prepare` | `memory_change_prepare` | R2；产生范围确定的更正/删除预览，不改变图谱 |
-| `POST /changes/{operation_id}/commit` | `memory_change_commit` | R2；用户确认后的条件变更 |
-| `GET /changes/{operation_id}` | `memory_change_status` | R2；只读结果和不确定状态；不重复提交 |
-| `POST /inbox/setup/prepare`、`POST /inbox/setup/commit` | `memory_inbox_setup_prepare/commit` | R3；owner 配置事务，两步确认 |
+| HTTP（拟议）                                            | WS method（拟议）                   | 阶段 / 行为                                        |
+| ------------------------------------------------------- | ----------------------------------- | -------------------------------------------------- |
+| `GET /overview`                                         | `memory_overview`                   | R0；两类状态并行读取，部分失败仍可返回完整诊断形状 |
+| `GET /activity?conversation=...&cursor=...&limit=20`    | `memory_activity`                   | R1；只读活动、按会话授权，不触发 Formation         |
+| `GET /records?cursor=...&limit=20`                      | `memory_records`                    | R2；有来源的结构化记录，不调用模型                 |
+| `GET /records/{id}`                                     | `memory_record`                     | R2；详情与来源权限，ID 必须通过类型校验            |
+| `POST /search`                                          | `memory_search`                     | R2；显式自然语言 Recall，可能调用模型              |
+| `POST /changes/prepare`                                 | `memory_change_prepare`             | R2；产生范围确定的更正/删除预览，不改变图谱        |
+| `POST /changes/{operation_id}/commit`                   | `memory_change_commit`              | R2；用户确认后的条件变更                           |
+| `GET /changes/{operation_id}`                           | `memory_change_status`              | R2；只读结果和不确定状态；不重复提交               |
+| `POST /inbox/setup/prepare`、`POST /inbox/setup/commit` | `memory_inbox_setup_prepare/commit` | R3；owner 配置事务，两步确认                       |
 
 WS 参数继续使用现有 tuple 数组风格：无参 `[]`，单 typed 对象 `[request]`，不另创序列化规则。浏览器只有在扩展 transport 不存在时才选择 HTTP；一次已发送请求失败不能自动改通道重发写操作。
 
@@ -160,13 +160,13 @@ HTTP 错误映射固定为 400（参数）、401、403、404、409（游标/修�
 
 ### 5.2 客户端合同
 
-| 命令（拟议） | 行为 |
-| --- | --- |
-| `anda memory guide` | 解析参数后，在创建 home、读配置/identity/logger 前输出本地指南；退出 0 |
-| `anda memory` / `anda memory status` | 相同只读概览；不自动启动 daemon；无现成身份时提示启动/初始化，不生成新身份 |
+| 命令（拟议）                                       | 行为                                                                                   |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `anda memory guide`                                | 解析参数后，在创建 home、读配置/identity/logger 前输出本地指南；退出 0                 |
+| `anda memory` / `anda memory status`               | 相同只读概览；不自动启动 daemon；无现成身份时提示启动/初始化，不生成新身份             |
 | `anda memory --json` / `anda memory status --json` | 输出同一个 versioned DTO；诊断写 stderr；普通状态不可用退出 1，只有 inbox 失败仍退出 0 |
-| TUI `/memory`、裸 `/brain` | 展示概览；显式 `/brain inbox/status/formation/...` 保持行为 |
-| TUI `/memory help` | 不发请求；普通聊天示例和模型费用/数据位置说明 |
+| TUI `/memory`、裸 `/brain`                         | 展示概览；显式 `/brain inbox/status/formation/...` 保持行为                            |
+| TUI `/memory help`                                 | 不发请求；普通聊天示例和模型费用/数据位置说明                                          |
 
 `guide --json` 明确拒绝为参数错误，不静默忽略。`--home` 只对状态操作选用既有 home；guide 即使传入不存在的 home，也不创建它。图谱页面和设置保留原链接，首页迁移在 R2 进行。
 
@@ -178,16 +178,16 @@ R0 同步 `README.md`/`README_cn.md`、两组集成文档、配置模板注释�
 
 保留 `bot-brain/v1/formation/{conversation}/{window_start}` 和现有状态，给 `FormationSubmission` 添加 `#[serde(default)]` 的可选元数据：
 
-| 字段 | 意义 |
-| --- | --- |
-| `provenance_version: Option<u32>` | 新格式为 1；旧记录为 None，不能隐式补成完整 |
-| `caller: Option<String>` | 从可信会话创建上下文写入，与 `Conversation.user` 交叉校验 |
-| `origin: Option<FormationOrigin>` | source/channel、reply_target、thread、external_user、归属主体；来自冻结的宿主元数据 |
-| `source_messages: Vec<SourceMessageRef>` | Bot conversation、持久化消息 index、角色、内容摘要 digest；只引用实际纳入的消息 |
-| `input_digest: Option<String>` | 对最终序列化 Formation 输入的 canonical digest，包含经处理的内容/context/timestamp |
-| `updated_at: Option<u64>` | 最近一次实际状态查询/写入时间 |
-| `failure_stage: Option<...>` | `submission_rejected | native_failed | interrupted | unknown`，防止 UI 将所有 failed 都视为可重试 |
-| `policy_revision: Option<String>` | 提交时的有效会话策略；以后用于排除策略混淆 |
+| 字段                                     | 意义                                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| `provenance_version: Option<u32>`        | 新格式为 1；旧记录为 None，不能隐式补成完整                                         |
+| `caller: Option<String>`                 | 从可信会话创建上下文写入，与 `Conversation.user` 交叉校验                           |
+| `origin: Option<FormationOrigin>`        | source/channel、reply_target、thread、external_user、归属主体；来自冻结的宿主元数据 |
+| `source_messages: Vec<SourceMessageRef>` | Bot conversation、持久化消息 index、角色、内容摘要 digest；只引用实际纳入的消息     |
+| `input_digest: Option<String>`           | 对最终序列化 Formation 输入的 canonical digest，包含经处理的内容/context/timestamp  |
+| `updated_at: Option<u64>`                | 最近一次实际状态查询/写入时间                                                       |
+| `failure_stage: Option<...>`             | `submission_rejected                                                                | native_failed | interrupted | unknown`，防止 UI 将所有 failed 都视为可重试 |
+| `policy_revision: Option<String>`        | 提交时的有效会话策略；以后用于排除策略混淆                                          |
 
 不在这些元数据中复制完整聊天、bearer、模型 key 或回复正文。新增字段需兼容旧 JSON；使用 fixture 验证旧记录可读。原生 conversation ID 仍是处理结果证据，宿主只转换展示，不修改原生状态。
 
@@ -195,16 +195,16 @@ R0 同步 `README.md`/`README_cn.md`、两组集成文档、配置模板注释�
 
 ### 6.2 展示状态转换
 
-| 原始情况 | 产品状态 | 可操作行为 |
-| --- | --- | --- |
-| 已可靠写 journal，尚在本次提交调用中 | `submitting` / 等待整理 | 无需阻塞聊天 |
-| 有 ID、native Submitted | `accepted` / 等待后台整理 | 查状态 |
-| native Working/Idle | `processing` / 正在整理 | 查状态 |
-| native Completed | `completed` / 对话整理完成 | 查看关联记录；无 G1 证据不展示逐事实保存 |
-| 明确提交拒绝、没有 ID | `rejected` / 提交失败 | runner 原有退避路径；R1 不新增手动发送接口 |
-| native Failed/Cancelled，有 ID | `failed` / 整理未完成 | 查看原因；不自动复制成新任务 |
-| 传输丢失/崩溃后 Pending 且无 ID | `unknown` / 正在确认结果 | 只对账，不重发 |
-| 旧记录缺少可靠元数据 | `legacy_unattributed` / 历史处理记录 | owner 对话级诊断，不伪造消息或事实证明 |
+| 原始情况                             | 产品状态                             | 可操作行为                                 |
+| ------------------------------------ | ------------------------------------ | ------------------------------------------ |
+| 已可靠写 journal，尚在本次提交调用中 | `submitting` / 等待整理              | 无需阻塞聊天                               |
+| 有 ID、native Submitted              | `accepted` / 等待后台整理            | 查状态                                     |
+| native Working/Idle                  | `processing` / 正在整理              | 查状态                                     |
+| native Completed                     | `completed` / 对话整理完成           | 查看关联记录；无 G1 证据不展示逐事实保存   |
+| 明确提交拒绝、没有 ID                | `rejected` / 提交失败                | runner 原有退避路径；R1 不新增手动发送接口 |
+| native Failed/Cancelled，有 ID       | `failed` / 整理未完成                | 查看原因；不自动复制成新任务               |
+| 传输丢失/崩溃后 Pending 且无 ID      | `unknown` / 正在确认结果             | 只对账，不重发                             |
+| 旧记录缺少可靠元数据                 | `legacy_unattributed` / 历史处理记录 | owner 对话级诊断，不伪造消息或事实证明     |
 
 “等待整理”不意味着已经有完整可恢复 outbox；R1 不新增自动重放能力。unknown 可恢复为 accepted/failed 的前提是获得可验证的原生关联证据。没有服务端幂等键或可查的提交关联时，保持 unknown，并提供技术详情；不以超时阈值改成 failed 后重发。
 
@@ -228,15 +228,15 @@ Recall 活动复用 `RecallDelivery`，展示“已检索到相关记忆”或�
 
 `MemoryRecordView` 至少包含：
 
-| 字段 | 规则 |
-| --- | --- |
-| `id`, `revision` | 来源于原生稳定身份/修订，不用正文 hash 代替身份 |
-| `text`, `kind` | 人类可读文本；kind 为 preference/project/fact/other 的产品分类，未知归 other |
-| `scope` | 人物/项目/时间范围；未知为 null，不默认“所有人/永久” |
-| `effective_at`, `updated_at` | 能证实才赋值；不拿抓取时间冒充事实变更时间 |
-| `state` | current/superseded/suppressed/unknown，由原生语义推导 |
-| `sources[]`, `sources_complete` | 原生引用 + 可授权的 Bot message ref；旧数据可以不完整 |
-| `allowed_actions[]` | 服务端权限与原生能力共同决定，每次执行仍再验证 |
+| 字段                            | 规则                                                                         |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `id`, `revision`                | 来源于原生稳定身份/修订，不用正文 hash 代替身份                              |
+| `text`, `kind`                  | 人类可读文本；kind 为 preference/project/fact/other 的产品分类，未知归 other |
+| `scope`                         | 人物/项目/时间范围；未知为 null，不默认“所有人/永久”                         |
+| `effective_at`, `updated_at`    | 能证实才赋值；不拿抓取时间冒充事实变更时间                                   |
+| `state`                         | current/superseded/suppressed/unknown，由原生语义推导                        |
+| `sources[]`, `sources_complete` | 原生引用 + 可授权的 Bot message ref；旧数据可以不完整                        |
+| `allowed_actions[]`             | 服务端权限与原生能力共同决定，每次执行仍再验证                               |
 
 混合来源记录：不能因为其中一条来源属于 caller 就暴露其他来源或整条复合推断。首版 owner-only；未来支持其他主体前必须定义记录 ACL 与派生授权合同。授权失败的数据在服务端过滤，计数/分页同样不能泄漏。
 
@@ -268,11 +268,11 @@ TUI `/memory` 扩展为概览；`/memory activity` 列当前会话活动。记�
 
 ### 8.1 固定三种模式
 
-| 模式（拟议） | UI 名称 | 自动读取 Brain/Notes | 自动写入 Brain/Notes |
-| --- | --- | --- | --- |
-| `standard` | 正常使用记忆 | 允许，沿用既有授权 | 允许，沿用异步 Formation |
-| `no_store` | 本次不保存长期记忆 | 允许 | 禁止，包括 get-or-init 和隐式迁移写入 |
-| `off` | 本次不使用长期记忆 | 禁止 | 禁止 |
+| 模式（拟议） | UI 名称            | 自动读取 Brain/Notes | 自动写入 Brain/Notes                  |
+| ------------ | ------------------ | -------------------- | ------------------------------------- |
+| `standard`   | 正常使用记忆       | 允许，沿用既有授权   | 允许，沿用异步 Formation              |
+| `no_store`   | 本次不保存长期记忆 | 允许                 | 禁止，包括 get-or-init 和隐式迁移写入 |
+| `off`        | 本次不使用长期记忆 | 禁止                 | 禁止                                  |
 
 范围是宿主管理的 Brain/Notes 记忆，不意味着聊天、文件、日志、浏览器或模型服务无痕，也不能限制拥有文件读取权限的用户自行查看文件。UI 在选择处说明这些边界，不宣称对拥有任意 shell 权限的会话提供数据隔离沙箱。
 
@@ -285,7 +285,7 @@ TUI `/memory` 扩展为概览；`/memory activity` 列当前会话活动。记�
 必须覆盖以下路径，G4 的 fixture 对每项记录实际调用次数：
 
 1. 初始/恢复/压缩后 `build_system_instructions_for_user`：off 不调用 primer、user_info、Notes；no_store 使用只读 profile 查询，不调用 get-or-init 或 legacy Notes 写迁移。只读接口不存在时先补齐或返回能力不可用。
-2. `recall_memory`、Brain 相关 tools、动态 tools_select、Notes 工具：既限制可见名称，又在调用执行前检查有效 policy；不能靠隐藏 schema 防绕过。
+2. `recall_memory`、Brain 相关 tools、动态 tools_search、Notes 工具：既限制可见名称，又在调用执行前检查有效 policy；不能靠隐藏 schema 防绕过。
 3. `submit_pending_formation` 的所有路径：正常回复、idle、stop、后台完成、goal、compaction、启动恢复。no_store/off 跳过整个写入窗口并保留宿主策略记录，不留下以后可误重放的待提交窗口。
 4. 子任务、side task 与后台回调继承父策略；子任务不能放宽。混合来源合并时采用最严格读写约束，并保留来源标签；策略不能证明时拒绝自动持久化。
 5. 被排除会话的摘要、工具结果、自动书签摘要及后续批量记忆导入不得绕过排除；所有宿主自动记忆写入入口检查来源排除标记。用户手动复制重述的文本不是系统能可靠识别的同一来源，产品不承诺阻止这种再输入。
@@ -394,27 +394,27 @@ report.md                  # 从同一 report.json 生成的人类可读报告
 
 每个工作包对应一个可审阅 PR 或一个明确的上游依赖交付。下表不意味着当前创建 issue/PR；开发时按 ID 引用，未完成项保持未勾选。W 编号表示前置工作包；G 编号表示该工作包完成/开放能力的验收门槛，可由本包连同上游工作交付，不形成“必须先完成自己才能开工”的依赖。
 
-| ID | 依赖 | 具体交付 | 完成条件 |
-| --- | --- | --- | --- |
-| W00 | 无 | 固定 DTO/error/capability schema、owner/会话授权函数；新增 `memory_api.rs` 的合同 fixture | HTTP/WS 同一语义；匿名/非 owner/伪造 caller 拒绝 |
-| W01 | W00 | `product.rs`/`service.rs` 普通状态与 runtime 独立读取 | 超时/403/空图谱区分；模型调用计数为 0 |
-| W02 | W01 | CLI/TUI 离线指南和概览；双语及既有 locale 文档入口 | guide 无文件/身份副作用；TUI 不阻塞；显式 `/brain` 子命令兼容；R0 可发布 |
-| W03 | W00 | 核查 G1–G3/G5，提交 native 能力矩阵、样例与精确上游缺口 | 每项 available/needs-upstream 明确，不留“前端以后猜” |
-| W04 | W00 | journal provenance、实际消息映射、legacy reader | 过滤/裁剪/compaction/路由样例映射正确；歧义只挂对话级 |
-| W05 | W04 | 活动索引、分页、恢复 worker、activity API | 崩溃恢复/部分索引/迟到响应不篡改真相；不重放 unknown |
-| W06 | W02、W05 | 对话旁状态和 TUI activity；账号切换/错误文案 | native Completed 无提取证据时只显示整理完成；R1 可发布 |
-| W07 | W03、G1 | 原生 catalog adapter、来源授权、记录 DTO | 旧数据、多来源、修订与无来源结果均有合同 fixture |
-| W08 | W01、W07 | 记忆首页/详情/搜索、旧图谱入口、来源导航 | 查询不伪造记录；跨身份缓存隔离；窄屏与读屏可用 |
-| W09 | W03、G2 | prepare/commit/status 操作账本和条件写入 adapter | 并发修订冲突；同 key 异文拒绝；ACK 丢失不重复副作用 |
-| W10 | W08、W09 | 明确范围的更正交互、结果投影与 undo 新操作 | 用户确认内容与 native 变更一致；投影失败不再次改写 |
-| W11 | W04、G4 | typed 会话策略及所有读取/写入/恢复继承路径 | off/no_store fixture 中禁止调用为 0；旧会话兼容、未知模式拒绝 |
-| W12 | W09、W11、G3 | suppress/delete 预览、原生 fence、缓存与防复活 | 在途 Formation、维护、重建、恢复后仍满足删除范围 |
-| W13 | W06、W08、W10–W12 | R2 集成验证、隐私范围文案、迁移/回滚演练 | 第 14 节全部 R2 门槛通过；可用性试验另列结果 |
-| W14 | W00、W03、G5 | setup 配置事务与受支持事项模板 | 环境覆盖/既有配置/重启失败可恢复；不给额外 grant |
-| W15 | W14 | 复用 browser pending、TUI outbox、回答状态 | 同事件原文重试；换账号与 item 关闭测试；R3 可发布 |
-| W16 | W00 | 隔离 evaluate plan/run/report、协议状态机与模板 | 机制 fixture 全流程；生产 home/identity/IM/cron 从未初始化 |
-| W17 | W16、G6 | 阶段预算、计量覆盖、报告与取消清理 | 累计成本不重复、未知不算零；实测需单独批准；R4 可发布 |
-| W18 | W14、W17、G7 | 学习模板准备度、隔离试验与业务授权/回退 | 原生服务与独立证据全接通，错误配置拒绝；R5 可发布 |
+| ID  | 依赖              | 具体交付                                                                                  | 完成条件                                                                 |
+| --- | ----------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| W00 | 无                | 固定 DTO/error/capability schema、owner/会话授权函数；新增 `memory_api.rs` 的合同 fixture | HTTP/WS 同一语义；匿名/非 owner/伪造 caller 拒绝                         |
+| W01 | W00               | `product.rs`/`service.rs` 普通状态与 runtime 独立读取                                     | 超时/403/空图谱区分；模型调用计数为 0                                    |
+| W02 | W01               | CLI/TUI 离线指南和概览；双语及既有 locale 文档入口                                        | guide 无文件/身份副作用；TUI 不阻塞；显式 `/brain` 子命令兼容；R0 可发布 |
+| W03 | W00               | 核查 G1–G3/G5，提交 native 能力矩阵、样例与精确上游缺口                                   | 每项 available/needs-upstream 明确，不留“前端以后猜”                     |
+| W04 | W00               | journal provenance、实际消息映射、legacy reader                                           | 过滤/裁剪/compaction/路由样例映射正确；歧义只挂对话级                    |
+| W05 | W04               | 活动索引、分页、恢复 worker、activity API                                                 | 崩溃恢复/部分索引/迟到响应不篡改真相；不重放 unknown                     |
+| W06 | W02、W05          | 对话旁状态和 TUI activity；账号切换/错误文案                                              | native Completed 无提取证据时只显示整理完成；R1 可发布                   |
+| W07 | W03、G1           | 原生 catalog adapter、来源授权、记录 DTO                                                  | 旧数据、多来源、修订与无来源结果均有合同 fixture                         |
+| W08 | W01、W07          | 记忆首页/详情/搜索、旧图谱入口、来源导航                                                  | 查询不伪造记录；跨身份缓存隔离；窄屏与读屏可用                           |
+| W09 | W03、G2           | prepare/commit/status 操作账本和条件写入 adapter                                          | 并发修订冲突；同 key 异文拒绝；ACK 丢失不重复副作用                      |
+| W10 | W08、W09          | 明确范围的更正交互、结果投影与 undo 新操作                                                | 用户确认内容与 native 变更一致；投影失败不再次改写                       |
+| W11 | W04、G4           | typed 会话策略及所有读取/写入/恢复继承路径                                                | off/no_store fixture 中禁止调用为 0；旧会话兼容、未知模式拒绝            |
+| W12 | W09、W11、G3      | suppress/delete 预览、原生 fence、缓存与防复活                                            | 在途 Formation、维护、重建、恢复后仍满足删除范围                         |
+| W13 | W06、W08、W10–W12 | R2 集成验证、隐私范围文案、迁移/回滚演练                                                  | 第 14 节全部 R2 门槛通过；可用性试验另列结果                             |
+| W14 | W00、W03、G5      | setup 配置事务与受支持事项模板                                                            | 环境覆盖/既有配置/重启失败可恢复；不给额外 grant                         |
+| W15 | W14               | 复用 browser pending、TUI outbox、回答状态                                                | 同事件原文重试；换账号与 item 关闭测试；R3 可发布                        |
+| W16 | W00               | 隔离 evaluate plan/run/report、协议状态机与模板                                           | 机制 fixture 全流程；生产 home/identity/IM/cron 从未初始化               |
+| W17 | W16、G6           | 阶段预算、计量覆盖、报告与取消清理                                                        | 累计成本不重复、未知不算零；实测需单独批准；R4 可发布                    |
+| W18 | W14、W17、G7      | 学习模板准备度、隔离试验与业务授权/回退                                                   | 原生服务与独立证据全接通，错误配置拒绝；R5 可发布                        |
 
 默认执行队列：W00 → W01 → W02；随后 W03 与 W04，推进 W05/W06 和 W07–W12；W13 才是完整日常记忆版本验收。不要因为上游 G2/G3 暂未满足而把只有入口的版本标记为 R2 完成。
 
@@ -422,26 +422,26 @@ report.md                  # 从同一 report.json 生成的人类可读报告
 
 优先新增能反映用户承诺的行为测试，使用本地 fixture/mock provider；不为纯文案编写镜像测试。模型调用次数和原生请求次数需可计数，便于证明只读/受限模式没有额外调用。
 
-| 编号 | 关键场景 | 门槛 |
-| --- | --- | --- |
-| A01 | guide 使用不存在 home、未配置模型/身份 | 退出 0，无新增目录，无网络 |
-| A02 | 普通状态成功，runtime 403/timeout/not-configured 分别返回 | 普通状态保留；三类 runtime 原因不混同 |
-| A03 | JSON 同时含 error 与 partial result | 仍为错误，不展示 ready/空记忆 |
-| A04 | HTTP/WS caller 过期、非 owner、跨 conversation、external sender | 一致拒绝，不借用 daemon 身份，不泄漏计数 |
-| A05 | durable message 经 action 过滤、裁剪、压缩切链 | activity 只关联可证实的原消息 |
-| A06 | journal 写完/原生接受/投影写入各点崩溃 | 原生已接受内容不重复发送；索引可重建 |
-| A07 | 重启后的 Pending 无 native ID、并行相同 Recall | unknown 不重发；Recall 不猜 tool-call 归属 |
-| A08 | native Completed 但未产出目标事实 | 只显示对话整理完成 |
-| A09 | 翻页期间新增/删除记录、权限撤销、旧游标换 caller | 无跨用户数据；partial/游标语义一致 |
-| A10 | 两个客户端同时更正同一 revision；ACK 丢失后重试 | 一次可确认更正，其余 conflict/unknown；无盲目重做 |
-| A11 | off/no_store 的初始、恢复、compaction、tools_select、Notes、子任务、cron 派生 | 禁止的 read/write 为 0；metadata 不能放宽策略 |
-| A12 | 删除遇到在途写入、旧来源重放、多来源派生、缓存/备份恢复 | 与声明范围一致；不满足即不开放该动作 |
-| A13 | setup 两文件写入各点中断、环境覆盖、自定义配置、撤销授权后重启 | 配置可恢复且授权不升级 |
-| A14 | inbox 请求发送后断线、页面重载、local storage 失败、换账号、同键异文 | 原 key 原文恢复；存储失败不发送；不跨身份 |
-| A15 | MIB reset/observe/maintain/close 失败、host epoch 改变、Ctrl+C | 清理与无效样例完整记录，生产状态不触碰 |
-| A16 | 多条累计成本快照、失败后费用未知、provider 重试、预算并发 | 不重复累加、不漏标缺测、不误报金额上限 |
-| A17 | learning feature 存在但服务/校准/身份缺失 | 不能启动自动学习，不能改 descriptor 冒充支持 |
-| A18 | 浏览器旧连接、旧版本 backend、窄屏/键盘/读屏、全部 locale | 无支持能力明确说明；可完成已开放流程 |
+| 编号 | 关键场景                                                                      | 门槛                                              |
+| ---- | ----------------------------------------------------------------------------- | ------------------------------------------------- |
+| A01  | guide 使用不存在 home、未配置模型/身份                                        | 退出 0，无新增目录，无网络                        |
+| A02  | 普通状态成功，runtime 403/timeout/not-configured 分别返回                     | 普通状态保留；三类 runtime 原因不混同             |
+| A03  | JSON 同时含 error 与 partial result                                           | 仍为错误，不展示 ready/空记忆                     |
+| A04  | HTTP/WS caller 过期、非 owner、跨 conversation、external sender               | 一致拒绝，不借用 daemon 身份，不泄漏计数          |
+| A05  | durable message 经 action 过滤、裁剪、压缩切链                                | activity 只关联可证实的原消息                     |
+| A06  | journal 写完/原生接受/投影写入各点崩溃                                        | 原生已接受内容不重复发送；索引可重建              |
+| A07  | 重启后的 Pending 无 native ID、并行相同 Recall                                | unknown 不重发；Recall 不猜 tool-call 归属        |
+| A08  | native Completed 但未产出目标事实                                             | 只显示对话整理完成                                |
+| A09  | 翻页期间新增/删除记录、权限撤销、旧游标换 caller                              | 无跨用户数据；partial/游标语义一致                |
+| A10  | 两个客户端同时更正同一 revision；ACK 丢失后重试                               | 一次可确认更正，其余 conflict/unknown；无盲目重做 |
+| A11  | off/no_store 的初始、恢复、compaction、tools_search、Notes、子任务、cron 派生 | 禁止的 read/write 为 0；metadata 不能放宽策略     |
+| A12  | 删除遇到在途写入、旧来源重放、多来源派生、缓存/备份恢复                       | 与声明范围一致；不满足即不开放该动作              |
+| A13  | setup 两文件写入各点中断、环境覆盖、自定义配置、撤销授权后重启                | 配置可恢复且授权不升级                            |
+| A14  | inbox 请求发送后断线、页面重载、local storage 失败、换账号、同键异文          | 原 key 原文恢复；存储失败不发送；不跨身份         |
+| A15  | MIB reset/observe/maintain/close 失败、host epoch 改变、Ctrl+C                | 清理与无效样例完整记录，生产状态不触碰            |
+| A16  | 多条累计成本快照、失败后费用未知、provider 重试、预算并发                     | 不重复累加、不漏标缺测、不误报金额上限            |
+| A17  | learning feature 存在但服务/校准/身份缺失                                     | 不能启动自动学习，不能改 descriptor 冒充支持      |
+| A18  | 浏览器旧连接、旧版本 backend、窄屏/键盘/读屏、全部 locale                     | 无支持能力明确说明；可完成已开放流程              |
 
 Rust 命令必须保留栈设置。以下是实施后的验证菜单，按工作包运行；本次仅文档提交不执行这些未来测试：
 

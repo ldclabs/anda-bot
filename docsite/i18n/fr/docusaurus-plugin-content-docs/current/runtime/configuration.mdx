@@ -17,7 +17,7 @@ code_mode:
   enabled: false
 ```
 
-`code_exec` exécute le corps d’une fonction Python et renvoie la valeur de `return` ou de l’expression finale. Utilisez des arguments nommés et `parallel` pour des appels indépendants. Enregistrez une fonction annotée avec une docstring via `code_register`. Retrouvez son nom et sa révision avec `code_list`, puis chargez sa définition via `tools_select`. La bibliothèque est privée par propriétaire et espace de travail. Toute modification ou suppression exige la révision actuelle. La désactivation conserve les scripts.
+`code_exec` exécute le corps d’une fonction Python et renvoie la valeur de `return` ou de l’expression finale. Utilisez des arguments nommés et `parallel` pour des appels indépendants. Enregistrez une fonction annotée avec une docstring via `code_register`. Retrouvez son nom et sa révision avec `code_list`, puis chargez sa définition via `tools_search`. La bibliothèque est privée par propriétaire et espace de travail. Toute modification ou suppression exige la révision actuelle. La désactivation conserve les scripts.
 
 Les scripts peuvent importer `json`, `re`, `math`, `datetime`, `collections`, `functools`, `itertools`, `operator` et `heapq`. `datetime.strptime` n’est pas disponible et l’heure locale du processus peut être UTC, donc indiquez explicitement le fuseau horaire. Les fichiers, le réseau et les messages passent par les outils autorisés de la session.
 

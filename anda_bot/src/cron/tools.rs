@@ -97,7 +97,7 @@ impl Tool<BaseCtx> for CreateCronTool {
             "Creates a scheduled job that runs a shell command (job_kind=shell) or submits a prompt to the agent runtime (job_kind=agent). ",
             "schedule_kind picks a cron expression, a one-time RFC3339 timestamp (at), a repeating interval (every), or a single run after a delay (once); ",
             "the parameter descriptions give each value format. ",
-            "Relevant tools: update_cron_job, manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_select."
+            "Relevant tools: update_cron_job, manage_cron_job, list_cron_jobs, list_cron_runs, shell, tools_search."
         )
         .to_string()
     }

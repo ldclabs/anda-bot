@@ -25,10 +25,10 @@ Rust 可执行程序 `anda` 运行本地后台服务，并内嵌 [Anda Brain](ht
 
 从 [GitHub Releases](https://github.com/ldclabs/anda-bot/releases/latest) 下载安装包：
 
-| 平台 | 安装包 |
-| --- | --- |
+| 平台                 | 安装包               |
+| -------------------- | -------------------- |
 | macOS，Apple Silicon | `Anda-mac-arm64.dmg` |
-| Windows，x64 | `Anda-win-x64.exe` |
+| Windows，x64         | `Anda-win-x64.exe`   |
 
 Anda 桌面端 0.16.0 使用 Yiwen AI Limited 的签名证书。低于 0.15.0 的 macOS 客户端会先收到由 LDC 签名的 0.15.0 过渡版。重启后再次检查更新，即可升级到 Yiwen 签名的版本。如果第一步失败，可用官方 0.15.0 DMG 覆盖安装。[macOS 过渡版](https://github.com/ldclabs/anda-bot/releases/tag/v0.15.0)
 
@@ -124,15 +124,15 @@ anda models reload
 
 在项目目录中运行 `anda`，或在桌面端为新对话选择文件夹。会话启动时会读取该工作区根目录下的 `AGENTS.md`，让项目约定随任务一起进入上下文。
 
-| 对话命令 | 用途 |
-| --- | --- |
-| `/new` | 开始新对话。 |
-| `/goal <objective>` | 围绕目标持续工作，由监督智能体检查进度。 |
-| `/steer <instruction>` | 调整正在进行的工作。 |
-| `/side <question>` 或 `/btw <question>` | 发起独立的临时侧线请求。 |
-| `/skill <name> <task>` 或 `$<name> <task>` | 调用运行时技能。 |
-| `/stop` | 停止当前工作及其后台任务，保留对话以便继续输入。 |
-| `/cancel` | 停止工作并关闭当前对话会话。 |
+| 对话命令                                   | 用途                                             |
+| ------------------------------------------ | ------------------------------------------------ |
+| `/new`                                     | 开始新对话。                                     |
+| `/goal <objective>`                        | 围绕目标持续工作，由监督智能体检查进度。         |
+| `/steer <instruction>`                     | 调整正在进行的工作。                             |
+| `/side <question>` 或 `/btw <question>`    | 发起独立的临时侧线请求。                         |
+| `/skill <name> <task>` 或 `$<name> <task>` | 调用运行时技能。                                 |
+| `/stop`                                    | 停止当前工作及其后台任务，保留对话以便继续输入。 |
+| `/cancel`                                  | 停止工作并关闭当前对话会话。                     |
 
 TUI 中，Enter 发送，Shift+Enter 或 Ctrl+J 换行，Ctrl+U 清空输入，Ctrl+C 退出客户端。退出客户端不会关闭后台服务；停止服务请用 `anda stop`。
 
@@ -156,7 +156,7 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 `anda --full-access` 以完全访问模式启动交互会话，在策略允许的范围内跳过审批。**Cron 任务和处于活动状态的目标任务使用完全访问权限。** MCP 事件自动化不会获得这一权限提升，需要审批的操作会被拒绝。显式配置的 MCP `ask` 策略在完全访问模式下也仍然要求审批。这些是本地运行时的控制，shell 命令以你的操作系统用户权限执行。
 
-工具发现会适配模型能力。支持原生追加工具的模型可以直接调用选中的工具。对其他模型，`tools_select` 会在 `call_via_tools_call` 中列出目标，智能体通过 `tools_call` 调用，以保持初始工具列表稳定，便于复用提示词缓存。
+工具发现会适配模型能力。支持原生追加工具的模型可以直接调用选中的工具。对其他模型，`tools_search` 会在 `call_via_tools_call` 中列出目标，智能体通过 `tools_call` 调用，以保持初始工具列表稳定，便于复用提示词缓存。
 
 ### Python Code Mode
 
@@ -276,32 +276,32 @@ anda voice --record-secs 8 --no-playback
 
 ## 服务管理与本地数据
 
-| 命令 | 用途 |
-| --- | --- |
-| `anda status` | 查看后台服务状态，加 `--json` 输出结构化结果。 |
-| `anda start` / `anda stop` / `anda restart` | 管理后台服务。 |
-| `anda daemon` | 在前台运行服务。 |
-| `anda models reload` | 重载模型服务商配置。 |
-| `anda autostart install` / `uninstall` / `status` | 管理登录启动。 |
-| `anda update` | 更新脚本安装的发行版；Homebrew 安装使用 `brew upgrade anda`。 |
-| `anda update --skills` | 更新内置技能。 |
-| `anda validate-config` | 从标准输入校验 YAML，不启动服务或创建数据目录。 |
-| `anda --help` | 查看命令；子命令也支持 `--help`。 |
+| 命令                                              | 用途                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------- |
+| `anda status`                                     | 查看后台服务状态，加 `--json` 输出结构化结果。                |
+| `anda start` / `anda stop` / `anda restart`       | 管理后台服务。                                                |
+| `anda daemon`                                     | 在前台运行服务。                                              |
+| `anda models reload`                              | 重载模型服务商配置。                                          |
+| `anda autostart install` / `uninstall` / `status` | 管理登录启动。                                                |
+| `anda update`                                     | 更新脚本安装的发行版；Homebrew 安装使用 `brew upgrade anda`。 |
+| `anda update --skills`                            | 更新内置技能。                                                |
+| `anda validate-config`                            | 从标准输入校验 YAML，不启动服务或创建数据目录。               |
+| `anda --help`                                     | 查看命令；子命令也支持 `--help`。                             |
 
 桌面端可通过托盘或设置中的「检查更新」更新；Homebrew 管理的组件使用 Homebrew 升级。内置运行时与平台差异见[桌面端更新说明](desktop/README.md#updates--更新)。
 
 默认网关地址为 `127.0.0.1:8042`。运行时状态位于 `~/.anda`，Windows 对应 `%USERPROFILE%\.anda`：
 
-| 路径 | 内容 |
-| --- | --- |
-| `config.yaml` | 模型、渠道、工作区、语音和启动设置。 |
-| `db/` | 对话、记忆图谱、任务状态和其他持久记录。 |
-| `workspace/` | 默认工作文件。 |
-| `channels/` | 渠道状态和附件。 |
-| `skills/`、`bundled-skills/` | 个人技能和发行版管理的技能。 |
+| 路径                                             | 内容                                             |
+| ------------------------------------------------ | ------------------------------------------------ |
+| `config.yaml`                                    | 模型、渠道、工作区、语音和启动设置。             |
+| `db/`                                            | 对话、记忆图谱、任务状态和其他持久记录。         |
+| `workspace/`                                     | 默认工作文件。                                   |
+| `channels/`                                      | 渠道状态和附件。                                 |
+| `skills/`、`bundled-skills/`                     | 个人技能和发行版管理的技能。                     |
 | `mcp.json`、`mcp_secrets.json`、`mcp_state.json` | MCP 配置、本地受保护的密钥，以及连接与审阅状态。 |
-| `credentials/`、`chatgpt/` | 加密的可信用户凭据和 ChatGPT 账户状态。 |
-| `logs/` | 运行日志。 |
+| `credentials/`、`chatgpt/`                       | 加密的可信用户凭据和 ChatGPT 账户状态。          |
+| `logs/`                                          | 运行日志。                                       |
 
 后台服务和所有者的身份密钥通常保存在操作系统安全凭据库中；显式初始化的文件密钥和 Linux 回退密钥使用 `keys/`。桌面端还会在操作系统应用数据目录中保存界面偏好和浏览器配置。本地存储不代表离线推理：已配置的模型服务商和外部服务会接收调用所需的内容。
 
@@ -329,17 +329,17 @@ pnpm install --frozen-lockfile
 pnpm --dir desktop dev
 ```
 
-| 目录 | 职责 |
-| --- | --- |
-| `anda_bot/src/` | CLI、后台服务、引擎、Brain 集成、渠道、cron、语音和 TUI。 |
-| `anda_bot/assets/` | 默认配置、提示词和运行时示例。 |
-| `desktop/` | Electron + Svelte 桌面应用，复用扩展的 UI 组件。 |
-| `chrome-extension/` | Svelte + TypeScript Chrome 侧边栏与仪表盘。 |
-| `skills/` | 内置运行时技能包。 |
-| `docsite/` | Docusaurus 文档和翻译。 |
-| `website/` | SvelteKit 官网。 |
-| `scripts/` | 安装、签名和发布脚本。 |
-| `docs/` | 集成指南、设计文档和实施记录。 |
+| 目录                | 职责                                                      |
+| ------------------- | --------------------------------------------------------- |
+| `anda_bot/src/`     | CLI、后台服务、引擎、Brain 集成、渠道、cron、语音和 TUI。 |
+| `anda_bot/assets/`  | 默认配置、提示词和运行时示例。                            |
+| `desktop/`          | Electron + Svelte 桌面应用，复用扩展的 UI 组件。          |
+| `chrome-extension/` | Svelte + TypeScript Chrome 侧边栏与仪表盘。               |
+| `skills/`           | 内置运行时技能包。                                        |
+| `docsite/`          | Docusaurus 文档和翻译。                                   |
+| `website/`          | SvelteKit 官网。                                          |
+| `scripts/`          | 安装、签名和发布脚本。                                    |
+| `docs/`             | 集成指南、设计文档和实施记录。                            |
 
 按修改的组件运行检查。Rust：
 
@@ -351,12 +351,12 @@ cargo clippy --locked --all-targets --all-features
 
 `make test` 使用所有特性运行 Rust 工作区测试，并设置相同的测试线程栈大小。直接运行测试命令时保留 `RUST_MIN_STACK=16777216`，以满足内嵌 Brain 调试构建的栈需求。
 
-| 组件 | 检查 |
-| --- | --- |
-| 桌面端 | `pnpm --dir desktop check`、`test`、`build` |
+| 组件        | 检查                                                         |
+| ----------- | ------------------------------------------------------------ |
+| 桌面端      | `pnpm --dir desktop check`、`test`、`build`                  |
 | Chrome 扩展 | `pnpm --dir chrome-extension check`、`test`、`i18n`、`build` |
-| 官网 | `pnpm --dir website check`、`test`、`lint`、`build` |
-| 文档站 | `pnpm --dir docsite typecheck`、`build` |
+| 官网        | `pnpm --dir website check`、`test`、`lint`、`build`          |
+| 文档站      | `pnpm --dir docsite typecheck`、`build`                      |
 
 表中每个脚本都使用相同的 `pnpm --dir <directory>` 前缀。仓库约定见 [AGENTS.md](AGENTS.md)，GUI 检查见[桌面端验证说明](desktop/README.md#validation)。
 

@@ -194,11 +194,7 @@ async fn code_mode_register_restart_and_reuse_through_runner() {
         .pop()
         .unwrap();
     let selected = bot
-        .call(
-            "tools_select",
-            json!({"tools":[name],"query":"","group":"","limit":1}),
-            None,
-        )
+        .call(TOOLS_SEARCH_NAME, json!({"query":name,"limit":1}), None)
         .await;
     assert_eq!(selected.output["tools"][0]["name"], name);
     assert!(

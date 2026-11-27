@@ -4,6 +4,15 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-11-28
+
+### Changed
+
+- Updated to Anda Engine 0.18.3 and `rmcp` 3.12, bringing Gemini 4 `thinkingLevel` (`XHIGH`) and tool-image support, MCP Streamable HTTP session-expiry detection on HTTP 404, and stable tool lists across repeated `tools_call` proxy selections.
+- Updated the default Gemini presets in `config.yaml` to `gemini-4-neon` and `gemini-4-hydrogen` with `effort: high`, and aligned `gemini-flash-lite-latest` to `effort: high`.
+- Steered runtime prompts, skills, and documentation to prefer `tools_search` for schema discovery while retaining `tools_select` for capability-group expansion and exact batch selection, and added `tools_search` to default skill tools and `auto-research`.
+- Aligned the CLI, Anda Desktop, Chrome extension, and website versions to 0.16.1.
+
 ## [0.16.0] — 2026-11-27
 
 ### Added

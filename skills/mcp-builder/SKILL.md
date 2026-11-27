@@ -34,6 +34,6 @@ anda mcp add example-remote --url https://example.com/mcp
 anda mcp tools example
 ```
 
-In chat, `tools_groups` and `tools_select` expose the tools that the caller may use. Verify the exact registered name before calling it. Keep credentials in the configured secret mechanism.
+In chat, `tools_groups` and `tools_search` expose the tools that the caller may use. Verify the exact registered name before calling it. Keep credentials in the configured secret mechanism.
 
 For repeated task-level evaluations, use realistic read-only questions with known answers from a stable fixture. The [evaluation guide](reference/evaluation.md) includes an optional Anthropic-specific runner that sends questions and tool results to that provider. Ordinary Anda integration checks use the configured Anda model and the MCP client.

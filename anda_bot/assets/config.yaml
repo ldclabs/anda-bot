@@ -110,7 +110,7 @@ model:
       disabled: false
 
     - family: gemini
-      model: "gemini-pro-latest"
+      model: "gemini-4-neon"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
       effort: high
@@ -121,10 +121,10 @@ model:
       disabled: false
 
     - family: gemini
-      model: "gemini-flash-latest"
+      model: "gemini-4-hydrogen"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
-      effort: max
+      effort: high
       context_window: 400000
       max_output: 64000
       labels: ["flash", "image", "audio", "video"]
@@ -135,7 +135,7 @@ model:
       model: "gemini-flash-lite-latest"
       api_base: "https://generativelanguage.googleapis.com/v1beta/models"
       api_key: ""
-      effort: max
+      effort: high
       context_window: 400000
       max_output: 64000
       labels: ["lite"]

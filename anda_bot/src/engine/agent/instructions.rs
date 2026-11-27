@@ -25,7 +25,7 @@ pub(super) struct SystemInstructionSections<'a> {
 
 pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
-        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` to look up a missing schema and follow its calling instructions.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n{project}\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
+        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_search` to look up a missing schema and follow its calling instructions.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n{project}\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
         ins = SELF_INSTRUCTIONS.trim(),
         knowledge = sections.self_knowledge,
         tools = format_available_tools(sections.available_tools),
@@ -53,7 +53,7 @@ fn format_available_tools(available_tools: &[String]) -> String {
             .map(String::as_str)
             .collect();
         let mut directory = format!(
-            "{}\nWhen a request needs several tool calls whose intermediate results you do not need to read, such as pages, details for many items, joins, filtering, counting or one action for many targets, run one code_exec script instead of calling the tools one by one. Scripts call tools with your current permissions; use tools_select first for a tool whose parameters you do not know.",
+            "{}\nWhen a request needs several tool calls whose intermediate results you do not need to read, such as pages, details for many items, joins, filtering, counting or one action for many targets, run one code_exec script instead of calling the tools one by one. Scripts call tools with your current permissions; use tools_search first for a tool whose parameters you do not know.",
             names.join(", ")
         );
         if names.contains(&LIST) {
@@ -244,6 +244,7 @@ mod tests {
         assert!(SELF_INSTRUCTIONS.contains("external untrusted user"));
         assert!(SELF_INSTRUCTIONS.contains("Available Callable Names"));
         assert!(SELF_INSTRUCTIONS.contains("tools_groups"));
+        assert!(SELF_INSTRUCTIONS.contains("tools_search"));
         assert!(SELF_INSTRUCTIONS.contains("tools_select"));
         assert!(SELF_INSTRUCTIONS.contains(r#"{ "group": "group_id" }"#));
         assert!(SELF_INSTRUCTIONS.contains("Never invent tool parameters"));
@@ -258,7 +259,7 @@ mod tests {
         let tools = vec![
             "shell".to_string(),
             "tools_groups".to_string(),
-            "tools_select".to_string(),
+            "tools_search".to_string(),
         ];
         let prompt = render_system_instructions(SystemInstructionSections {
             self_knowledge: "{}",
@@ -272,7 +273,7 @@ mod tests {
 
         assert!(prompt.contains("# Runtime Context"));
         assert!(prompt.contains("## Available Callable Names"));
-        assert!(prompt.contains("shell, tools_groups, tools_select"));
+        assert!(prompt.contains("shell, tools_groups, tools_search"));
         assert!(prompt.contains("schemas are intentionally omitted"));
         assert!(prompt.contains("current workspace (authoritative): /workspace/current"));
         assert!(!prompt.contains("## Project Instructions"));

@@ -24,7 +24,7 @@ async-trait = "0.1"
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.17" }
-anda_engine = { version = "0.18.2" }
+anda_engine = { version = "0.18.3" }
 anda_engine_server = { version = "0.18" }
 anda_web3_client = { version = "0.19", features = ["client"] }
 anda_object_store = "0.14"
@@ -76,7 +76,7 @@ reqwest = { version = "0.13", features = [
 # resolve to the rmcp anda_engine uses (one type identity): keep the same
 # version line. The server features serve the memory MCP endpoint other
 # agents connect to (`engine::memory_mcp`).
-rmcp = { version = "3.11", default-features = false, features = [
+rmcp = { version = "3.12", default-features = false, features = [
   "auth",
   "server",
   "transport-streamable-http-server",

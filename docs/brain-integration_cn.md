@@ -73,7 +73,7 @@ brain:
 
 浏览器 Brain 页面提供“记忆待办”。TUI 使用 `/brain inbox`、`/brain status`、`/brain next <cursor>`；回答用 `/brain answer <id> <event_key> <answer>`，陈述用 `/brain statement <id> <event_key> <statement>`，帮助为 `/brain help`。
 
-模型通过 `tools_select` 发现 `brain_attention`、`brain_respond`、`brain_runtime_status`、`brain_feedback`。无论是否配置待办，`brain_attention` 都会附带 `memory_attention`：调用者上次查看以来提起的到期承诺和已触发的 Watch，游标按调用者保存。`brain_runtime_status` 附带 Brain 声明的 Memory Interface 描述符。`brain_feedback` 把模型对某个决定或尝试的自述记录为带归属的 agent 证据（`feedback`），它不是评分、结果或已验证事实，受限记忆模式下不可用。回答工具严格 schema 要求同时传 `answer` 和 `statement`，未使用的字段为 null，校验后转换成 Brain 原生请求。外部不可信 IM 用户不能使用这些工具。HTTP/WS 转发调用者自己的 bearer；Engine 工具从真实认证上下文映射显式配置的原生主体。匿名、local、public 模式不绕过运行时认证；用户队列及审计清单相互隔离。
+模型通过 `tools_search` 发现 `brain_attention`、`brain_respond`、`brain_runtime_status`、`brain_feedback`。无论是否配置待办，`brain_attention` 都会附带 `memory_attention`：调用者上次查看以来提起的到期承诺和已触发的 Watch，游标按调用者保存。`brain_runtime_status` 附带 Brain 声明的 Memory Interface 描述符。`brain_feedback` 把模型对某个决定或尝试的自述记录为带归属的 agent 证据（`feedback`），它不是评分、结果或已验证事实，受限记忆模式下不可用。回答工具严格 schema 要求同时传 `answer` 和 `statement`，未使用的字段为 null，校验后转换成 Brain 原生请求。外部不可信 IM 用户不能使用这些工具。HTTP/WS 转发调用者自己的 bearer；Engine 工具从真实认证上下文映射显式配置的原生主体。匿名、local、public 模式不绕过运行时认证；用户队列及审计清单相互隔离。
 
 分页读取不领取工作，`complete` 只表示分页结束。cursor 过期或失效时从首页刷新。回答 URL 使用返回的十六进制 `id`，不是 `wake/v1/...`。浏览器先保存事件键和正文再发送，丢失确认或重载后可原样重试；TUI 重试须保留相同事件键和正文。同键异文返回冲突。澄清回答不授予权限，自述不是独立 Outcome。
 

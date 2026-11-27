@@ -68,7 +68,7 @@ The repository also contains:
 - Put shared dependency versions in the root `Cargo.toml`, then reference them
   from `anda_bot/Cargo.toml`.
 - Source builds track the KIP 2.0 stack (Brain 0.13 with its Memory Interface,
-  DB 0.14, Nexus/KIP 0.15, Core 0.17, Engine 0.18.2). These crates resolve
+  DB 0.14, Nexus/KIP 0.15, Core 0.17, Engine 0.18.3). These crates resolve
   from crates.io. When using local Cargo patches for development, verify with
   `cargo metadata` that Brain, Engine and the server share the same types.
 - With the embedded host, Formation windows are Memory Interface `observe`

@@ -1,7 +1,9 @@
 use anda_core::{AgentOutput, BoxError, Principal};
 use anda_db::database::AndaDB;
 use anda_engine::{
-    context::{AgentCtx, TOOLS_CALL_NAME, TOOLS_GROUPS_NAME, TOOLS_SELECT_NAME, Web3SDK},
+    context::{
+        AgentCtx, TOOLS_CALL_NAME, TOOLS_GROUPS_NAME, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME, Web3SDK,
+    },
     engine::{Engine, EngineRef},
     extension::{fs, mcp::McpToolProvider, shell, skill},
     management::{BaseManagement, Visibility},
@@ -344,6 +346,7 @@ fn build_skill_registry(
         "read_file".to_string(),
         "search_file".to_string(),
         TOOLS_GROUPS_NAME.to_string(),
+        TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
         TOOLS_CALL_NAME.to_string(),
         skill::SkillsReadTool::NAME.to_string(),
