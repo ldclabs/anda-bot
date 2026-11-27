@@ -1,113 +1,115 @@
-"""Accept all tracked changes in a DOCX file using LibreOffice.
-
-Requires LibreOffice Writer with Basic macro support.
-"""
+"""Accept Word text, move, paragraph-mark and formatting revisions in a new DOCX."""
 
 import argparse
-import shutil
-import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 
-from office.soffice import get_soffice_env
+from lxml import etree
 
-ACCEPT_CHANGES_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd">
-<script:module xmlns:script="http://openoffice.org/2000/script" script:name="Module1" script:language="StarBasic">
-    Sub AcceptAllTrackedChanges()
-        Dim document As Object
-        Dim dispatcher As Object
-        Dim args(0) As New com.sun.star.beans.PropertyValue
-        document = ThisComponent
-        dispatcher = createUnoService("com.sun.star.frame.DispatchHelper")
-        dispatcher.executeDispatch(document.CurrentController.Frame, ".uno:AcceptAllTrackedChanges", "", 0, Array())
-        If document.Redlines.Count = 0 Then
-            args(0).Name = "FilterName"
-            args(0).Value = "Office Open XML Text"
-            document.storeToURL(document.URL &amp; ".accepted.docx", args())
-        End If
-        document.setModified(False)
-        document.close(True)
-        StarDesktop.terminate()
-    End Sub
-</script:module>"""
+from office.helpers import rezip, safe_extract
+
+WORD_NAMESPACES = {
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "http://purl.oclc.org/ooxml/wordprocessingml/main",
+}
+RUN_CONTAINERS = {"p", "hyperlink", "sdtContent", "customXml", "smartTag", "fldSimple",
+                  "ins", "del", "moveFrom", "moveTo", "dir", "bdo"}
+FORMATTING = {"rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange",
+              "tblGridChange", "trPrChange", "tcPrChange", "numberingChange"}
 
 
-def accept_changes(
-    input_file: str,
-    output_file: str,
-) -> tuple[None, str]:
-    input_path = Path(input_file)
-    output_path = Path(output_file)
+MOVE_RANGES = {"moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd"}
 
-    if not input_path.is_file():
-        return None, f"Error: Input file not found: {input_file}"
 
-    if input_path.suffix.lower() != ".docx":
-        return None, f"Error: Input file is not a DOCX file: {input_file}"
+def accept_part(tree):
+    changed = False
+    joins = []
+    # Only visit the accepted view. A deleted run can contain older nested revisions.
+    pending = list(reversed(tree.getroot()))
+    while pending:
+        node = pending.pop()
+        if not isinstance(node.tag, str):
+            continue
+        parent = node.getparent()
+        tag = etree.QName(node)
+        kind = tag.localname
+        if tag.namespace not in WORD_NAMESPACES:
+            if kind in {"conflictIns", "conflictDel"}:
+                raise ValueError(f"Resolve the {kind} conflict in a Word editor")
+            pending.extend(reversed(node))
+            continue
 
+        word = "{" + tag.namespace + "}"
+        if kind in FORMATTING or kind in MOVE_RANGES:
+            # The current properties are on the parent; the change holds the previous ones.
+            parent.remove(node)
+        elif kind in {"ins", "del", "moveFrom", "moveTo"}:
+            keep = kind in {"ins", "moveTo"}
+            if parent.tag == word + "rPr" and parent.getparent().tag == word + "pPr":
+                if not keep:
+                    joins.append(parent.getparent().getparent())
+            elif parent.tag == word + "trPr" and keep:
+                pass  # Keep an inserted table row and remove its revision marker.
+            elif etree.QName(parent).localname in RUN_CONTAINERS:
+                if keep:
+                    children = list(node)
+                    for child in children:
+                        node.addprevious(child)
+                    pending.extend(reversed(children))
+            else:
+                raise ValueError(f"Unsupported {kind} revision inside {etree.QName(parent).localname}")
+            parent.remove(node)
+        elif kind in {"cellIns", "cellDel", "cellMerge"} or kind.startswith(("customXmlInsRange", "customXmlDelRange", "customXmlMove")):
+            raise ValueError(f"Resolve the {kind} structural revision in a Word editor")
+        else:
+            pending.extend(reversed(node))
+            continue
+        changed = True
+
+    # Each surviving paragraph mark owns the resulting paragraph's formatting.
+    for paragraph in joins:
+        following = paragraph.getnext()
+        if following is None or following.tag != paragraph.tag:
+            raise ValueError("Cannot join a deleted paragraph mark across a structural boundary")
+        properties_tag = etree.QName(etree.QName(paragraph).namespace, "pPr").text
+        offset = int(len(following) > 0 and following[0].tag == properties_tag)
+        for child in reversed(list(paragraph)):
+            if child.tag != properties_tag:
+                following.insert(offset, child)
+        paragraph.getparent().remove(paragraph)
+    return changed
+
+
+def accept_changes(input_file: str, output_file: str) -> tuple[None, str]:
+    source = Path(input_file).resolve()
+    output = Path(output_file).resolve()
+    if source == output:
+        return None, "Error: choose a separate output file"
     try:
-        output_path = output_path.resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=output_path.parent) as temporary:
-            staging = Path(temporary)
-            document = staging / "document.docx"
-            shutil.copyfile(input_path, document)
-            # A separate application profile keeps this macro and its shutdown
-            # away from interactive sessions and other simultaneous conversions.
-            profile = staging / "profile"
-            command = ["soffice", f"-env:UserInstallation={profile.as_uri()}", "--headless"]
-            env = get_soffice_env()
-            subprocess.run(
-                command + ["--terminate_after_init"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=True,
-                env=env,
-            )
-            macro = profile / "user/basic/Standard/Module1.xba"
-            macro.write_text(ACCEPT_CHANGES_MACRO, encoding="utf-8")
-            subprocess.run(
-                command
-                + [
-                    "--norestore",
-                    str(document),
-                    "macro:///Standard.Module1.AcceptAllTrackedChanges()",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=True,
-                env=env,
-            )
-            accepted = staging / "document.docx.accepted.docx"
-            if not accepted.is_file():
-                return None, "Error: LibreOffice did not produce a document with all changes accepted"
-            shutil.copymode(input_path, accepted)
-            accepted.replace(output_path)
-    except subprocess.TimeoutExpired:
-        return None, "Error: LibreOffice timed out accepting tracked changes"
-    except subprocess.CalledProcessError as err:
-        return None, f"Error: LibreOffice failed: {err.stderr.strip() or err}"
-    except OSError as err:
-        return None, f"Error: {err}"
-
-    return None, f"Successfully accepted all tracked changes: {input_file} -> {output_file}"
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            with zipfile.ZipFile(source) as archive:
+                safe_extract(archive, folder)
+            if not (folder / "word/document.xml").is_file():
+                raise ValueError("Missing word/document.xml")
+            parser = etree.XMLParser(resolve_entities=False, no_network=True)
+            for part in (folder / "word").rglob("*.xml"):
+                tree = etree.parse(str(part), parser)
+                if accept_part(tree):
+                    tree.write(str(part), xml_declaration=True, encoding="UTF-8", standalone=True)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            rezip(folder, output)
+    except (OSError, ValueError, zipfile.BadZipFile, etree.XMLSyntaxError) as error:
+        return None, f"Error: {error}"
+    return None, f"Accepted tracked changes in {output}"
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Accept all tracked changes in a DOCX file"
-    )
-    parser.add_argument("input_file", help="Input DOCX file with tracked changes")
-    parser.add_argument(
-        "output_file", help="Output DOCX file (clean, no tracked changes)"
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("input_file")
+    parser.add_argument("output_file")
     args = parser.parse_args()
-
     _, message = accept_changes(args.input_file, args.output_file)
     print(message)
-
-    if message.startswith("Error:"):
-        raise SystemExit(1)
+    raise SystemExit(1 if message.startswith("Error:") else 0)

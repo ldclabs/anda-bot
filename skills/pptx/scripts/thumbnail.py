@@ -1,30 +1,16 @@
-"""Create thumbnail grids from PowerPoint presentation slides.
-
-Creates a grid layout of slide thumbnails for quick visual analysis.
-Labels each thumbnail with its XML filename (e.g., slide1.xml).
-Hidden slides are shown with a placeholder pattern.
-
-Usage:
-    python thumbnail.py input.pptx [output_prefix] [--cols N]
-
-Examples:
-    python thumbnail.py presentation.pptx
-    # Creates: thumbnails.jpg
-
-    python thumbnail.py template.pptx grid --cols 4
-    # Creates: grid.jpg (or grid-1.jpg, grid-2.jpg for large decks)
-"""
+"""Build a slide layout map, or a thumbnail grid from a presentation's exported PDF."""
 
 import argparse
+import io
 import subprocess
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
-import defusedxml.minidom
-from office.soffice import get_soffice_env
 from PIL import Image, ImageDraw, ImageFont
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.package import Package
+
 
 THUMBNAIL_WIDTH = 300
 CONVERSION_DPI = 100
@@ -39,9 +25,9 @@ LABEL_PADDING_RATIO = 0.4
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Create thumbnail grids from PowerPoint slides."
+        description=__doc__
     )
-    parser.add_argument("input", help="Input PowerPoint file (.pptx)")
+    parser.add_argument("input", help="Input PowerPoint file (.pptx or .potx)")
     parser.add_argument(
         "output_prefix",
         nargs="?",
@@ -55,31 +41,41 @@ def main():
         help=f"Number of columns (default: {DEFAULT_COLS}, max: {MAX_COLS})",
     )
 
+    parser.add_argument("--pdf", type=Path, help="PDF exported from this deck, one slide per page")
     args = parser.parse_args()
+    if args.cols < 1:
+        parser.error("--cols must be at least 1")
 
     cols = min(args.cols, MAX_COLS)
     if args.cols > MAX_COLS:
         print(f"Warning: Columns limited to {MAX_COLS}")
 
     input_path = Path(args.input)
-    if not input_path.exists() or input_path.suffix.lower() != ".pptx":
+    if not input_path.exists() or input_path.suffix.lower() not in {".pptx", ".potx"}:
         print(f"Error: Invalid PowerPoint file: {args.input}", file=sys.stderr)
         sys.exit(1)
 
     output_path = Path(f"{args.output_prefix}.jpg")
 
     try:
-        slide_info = get_slide_info(input_path)
-
+        deck = Package.open(str(input_path)).main_document_part.presentation
+        if not len(deck.slides):
+            raise ValueError("Presentation contains no slides")
+        slide_info = [
+            {"name": Path(slide.part.partname).name, "hidden": slide._element.get("show") in {"0", "false"}}
+            for slide in deck.slides
+        ]
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            visible_images = convert_to_images(input_path, temp_path)
-
-            if not visible_images and not any(s["hidden"] for s in slide_info):
-                print("Error: No slides found", file=sys.stderr)
-                sys.exit(1)
-
-            slides = build_slide_list(slide_info, visible_images, temp_path)
+            if args.pdf:
+                slides = build_slide_list(slide_info, pdf_pages(args.pdf, temp_path), temp_path)
+            else:
+                slides = []
+                for i, (slide, info) in enumerate(zip(deck.slides, slide_info)):
+                    path = temp_path / f"layout-{i}.png"
+                    draw_layout(slide, deck.slide_width, deck.slide_height).save(path)
+                    label = info["name"] + (" (hidden layout)" if info["hidden"] else " (layout)")
+                    slides.append((path, label))
 
             grid_files = create_grids(slides, cols, THUMBNAIL_WIDTH, output_path)
 
@@ -92,30 +88,39 @@ def main():
         sys.exit(1)
 
 
-def get_slide_info(pptx_path: Path) -> list[dict]:
-    with zipfile.ZipFile(pptx_path, "r") as zf:
-        rels_content = zf.read("ppt/_rels/presentation.xml.rels").decode("utf-8")
-        rels_dom = defusedxml.minidom.parseString(rels_content)
-
-        rid_to_slide = {}
-        for rel in rels_dom.getElementsByTagName("Relationship"):
-            rid = rel.getAttribute("Id")
-            target = rel.getAttribute("Target")
-            rel_type = rel.getAttribute("Type")
-            if "slide" in rel_type and target.startswith("slides/"):
-                rid_to_slide[rid] = target.replace("slides/", "")
-
-        pres_content = zf.read("ppt/presentation.xml").decode("utf-8")
-        pres_dom = defusedxml.minidom.parseString(pres_content)
-
-        slides = []
-        for sld_id in pres_dom.getElementsByTagName("p:sldId"):
-            rid = sld_id.getAttribute("r:id")
-            if rid in rid_to_slide:
-                hidden = sld_id.getAttribute("show") == "0"
-                slides.append({"name": rid_to_slide[rid], "hidden": hidden})
-
-        return slides
+def draw_layout(slide, slide_width: int, slide_height: int) -> Image.Image:
+    """Show object positions, short labels and embedded raster pictures at preview scale."""
+    width = 600
+    scale = width / slide_width
+    height = max(1, round(slide_height * scale))
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    for shape in slide.shapes:
+        if None in (shape.left, shape.top, shape.width, shape.height):
+            continue
+        left = max(0, round(shape.left * scale))
+        top = max(0, round(shape.top * scale))
+        right = min(width, round((shape.left + shape.width) * scale))
+        bottom = min(height, round((shape.top + shape.height) * scale))
+        if right <= left or bottom <= top:
+            continue
+        draw.rectangle((left, top, right - 1, bottom - 1), outline="gray")
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            try:
+                with Image.open(io.BytesIO(shape.image.blob)) as picture:
+                    picture.thumbnail((right - left, bottom - top))
+                    image.paste(picture.convert("RGB"), (left, top))
+                continue
+            except (OSError, ValueError):
+                pass  # For vector pictures the shape label still identifies the frame.
+        label = shape.text if shape.has_text_frame else shape.name
+        label = " ".join(label.split())
+        if label:
+            # A clipped label belongs to its frame even when the source text is long.
+            region = image.crop((left, top, right, bottom))
+            ImageDraw.Draw(region).text((2, 2), label[:90], fill="black")
+            image.paste(region, (left, top))
+    return image
 
 
 def build_slide_list(
@@ -123,6 +128,15 @@ def build_slide_list(
     visible_images: list[Path],
     temp_dir: Path,
 ) -> list[tuple[Path, str]]:
+    visible_count = sum(1 for info in slide_info if not info["hidden"])
+    rendered_hidden = len(visible_images) == len(slide_info) != visible_count
+
+    if not rendered_hidden and visible_count != len(visible_images):
+        raise ValueError(
+            f"The supplied PDF has {len(visible_images)} page(s) for {visible_count} "
+            f"visible slide(s) of {len(slide_info)}; thumbnails would be mislabeled"
+        )
+
     if visible_images:
         with Image.open(visible_images[0]) as img:
             placeholder_size = img.size
@@ -133,15 +147,15 @@ def build_slide_list(
     visible_idx = 0
 
     for info in slide_info:
-        if info["hidden"]:
+        if info["hidden"] and not rendered_hidden:
             placeholder_path = temp_dir / f"hidden-{info['name']}.jpg"
             placeholder_img = create_hidden_placeholder(placeholder_size)
             placeholder_img.save(placeholder_path, "JPEG")
             slides.append((placeholder_path, f"{info['name']} (hidden)"))
         else:
-            if visible_idx < len(visible_images):
-                slides.append((visible_images[visible_idx], info["name"]))
-                visible_idx += 1
+            label = f"{info['name']} (hidden)" if info["hidden"] else info["name"]
+            slides.append((visible_images[visible_idx], label))
+            visible_idx += 1
 
     return slides
 
@@ -155,26 +169,7 @@ def create_hidden_placeholder(size: tuple[int, int]) -> Image.Image:
     return img
 
 
-def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
-    pdf_path = temp_dir / f"{pptx_path.stem}.pdf"
-
-    result = subprocess.run(
-        [
-            "soffice",
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(temp_dir),
-            str(pptx_path),
-        ],
-        capture_output=True,
-        text=True,
-        env=get_soffice_env(),
-    )
-    if result.returncode != 0 or not pdf_path.exists():
-        raise RuntimeError("PDF conversion failed")
-
+def pdf_pages(pdf_path: Path, temp_dir: Path) -> list[Path]:
     result = subprocess.run(
         [
             "pdftoppm",
@@ -188,7 +183,7 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
         text=True,
     )
     if result.returncode != 0:
-        raise RuntimeError("Image conversion failed")
+        raise RuntimeError(f"Could not render the supplied PDF: {result.stderr.strip()}")
 
     return sorted(temp_dir.glob("slide-*.jpg"))
 

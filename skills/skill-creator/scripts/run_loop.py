@@ -12,7 +12,6 @@ import random
 import sys
 import tempfile
 import time
-import webbrowser
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -20,25 +19,25 @@ if __package__ in (None, ""):
 
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
-from scripts.run_eval import run_eval
+from scripts.run_eval import eval_runtime, run_eval
 from scripts.utils import parse_skill_md
 
 
 def split_eval_set(eval_set: list[dict], holdout: float, seed: int = 42) -> tuple[list[dict], list[dict]]:
     """Split eval set into train and test sets, stratified by should_trigger."""
-    random.seed(seed)
+    rng = random.Random(seed)
 
     # Separate by should_trigger
     trigger = [e for e in eval_set if e["should_trigger"]]
     no_trigger = [e for e in eval_set if not e["should_trigger"]]
 
     # Shuffle each group
-    random.shuffle(trigger)
-    random.shuffle(no_trigger)
+    rng.shuffle(trigger)
+    rng.shuffle(no_trigger)
 
     # Calculate split points
-    n_trigger_test = max(1, int(len(trigger) * holdout))
-    n_no_trigger_test = max(1, int(len(no_trigger) * holdout))
+    n_trigger_test = max(0, min(len(trigger) - 1, max(1, int(len(trigger) * holdout))))
+    n_no_trigger_test = max(0, min(len(no_trigger) - 1, max(1, int(len(no_trigger) * holdout))))
 
     # Split
     test_set = trigger[:n_trigger_test] + no_trigger[:n_no_trigger_test]
@@ -209,18 +208,19 @@ def run_loop(
             {k: v for k, v in h.items() if not k.startswith("test_")}
             for h in history
         ]
-        new_description = improve_description(
-            skill_name=name,
-            skill_content=content,
-            current_description=current_description,
-            eval_results=train_results,
-            history=blinded_history,
-            anda_command=anda_command,
-            home=home,
-            timeout=improve_timeout,
-            log_dir=log_dir,
-            iteration=iteration,
-        )
+        with eval_runtime(anda_command, home, config_from) as runtime:
+            new_description = improve_description(
+                skill_name=name,
+                skill_content=content,
+                current_description=current_description,
+                eval_results=train_results,
+                history=blinded_history,
+                anda_command=anda_command,
+                home=runtime,
+                timeout=improve_timeout,
+                log_dir=log_dir,
+                iteration=iteration,
+            )
         improve_elapsed = time.time() - t0
 
         if verbose:
@@ -271,8 +271,8 @@ def main():
     parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for temp file, 'none' to disable)")
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
     parser.add_argument("--anda-command", default=None, help="Command used to invoke Anda (default: anda or ANDA_COMMAND)")
-    parser.add_argument("--home", default=None, help="Anda home to use. Defaults to an isolated temporary home for eval runs")
-    parser.add_argument("--config-from", default=None, help="Config file copied into temporary eval homes")
+    parser.add_argument("--home", default=None, help="Source Anda home for model configuration only")
+    parser.add_argument("--config-from", default=None, help="YAML file providing model settings")
     parser.add_argument("--workspace", default=None, help="Workspace passed to anda agent run")
     parser.add_argument("--keep-home", action="store_true", help="Keep temporary eval homes after runs")
     parser.add_argument("--force-skill", action="store_true", help="Prefix trigger eval queries with /skill skill-name")
@@ -295,9 +295,8 @@ def main():
             live_report_path = Path(tempfile.gettempdir()) / f"skill_description_report_{skill_path.name}_{timestamp}.html"
         else:
             live_report_path = Path(args.report)
-        # Open the report immediately so the user can watch
+        # The report can be opened from any Anda client.
         live_report_path.write_text("<html><body><h1>Starting optimization loop...</h1><meta http-equiv='refresh' content='5'></body></html>")
-        webbrowser.open(str(live_report_path))
     else:
         live_report_path = None
 

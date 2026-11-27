@@ -64,6 +64,8 @@ Cron 工具仅供可信用户使用。由 owner 的 CLI 创建的任务会验证
 /skill git-assistant 根据当前 diff 写一条 Conventional Commit message。
 ```
 
+大多数技能在当前会话中执行。Anda 读取完整的 `SKILL.md`，可以结合聊天记录、使用附件，也可以向你提问。声明 `execution: subagent` 的技能由独立的子智能体执行。内置的 `auto-research` 使用这种模式：调用时提供目标、工作区和完成条件，它会向调用方返回研究结果以及需要你决定的事项。
+
 ## Subagents 的角色
 
 Subagents 可以承担研究、实现、审查、监督等专门角色。主会话负责保留目标和最终判断，Subagents 负责局部任务。

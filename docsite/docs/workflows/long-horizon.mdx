@@ -67,9 +67,9 @@ Personal runtime skills live in `~/.anda/skills`; bundled release skills load fr
 Most skills run **inline**: Anda reads the whole `SKILL.md` and follows it in the
 current conversation, so it can still see your chat history, ask you questions,
 and use the files you attached. A skill whose frontmatter declares
-`execution: subagent` runs as an isolated worker instead — right for
-long-running or unattended procedures such as `codex`, `claude-code`, and
-`auto-research`, and wrong for anything that needs to talk to you mid-task.
+`execution: subagent` runs as an isolated worker. The bundled `auto-research`
+skill uses this mode. Give it the objective, workspace and completion criteria.
+It returns its findings and any decisions that need your input to the caller.
 
 ## What Subagents Do
 

@@ -14,7 +14,7 @@ from typing import Any
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.run_eval import run_anda_prompt
+from scripts.run_eval import eval_runtime, run_anda_prompt
 from scripts.utils import parse_skill_md
 
 
@@ -29,6 +29,7 @@ def _call_anda(
         prompt=prompt,
         anda_command=anda_command,
         home=home,
+        workspace=home / "workspace" if home else None,
         timeout=timeout,
         session_id=f"skill-description-{uuid.uuid4().hex}",
     )
@@ -70,7 +71,7 @@ def improve_description(
 
     prompt = f"""You are optimizing the `description` frontmatter for an Anda Bot runtime skill named "{skill_name}".
 
-Anda Bot loads each skill as a subagent named `skill_<skill_name>` with hyphens converted to underscores. The frontmatter description is the primary signal used when the main agent or `tools_select` decides whether this skill is relevant. Users can also force a skill with `/skill {skill_name} ...`, but this optimization is about natural selection.
+Anda selects a skill using its name and description. An inline skill is read into the current conversation; a delegated skill runs through its callable. Optimize for natural requests, without an explicit /skill command.
 
 Current description:
 <current_description>
@@ -167,6 +168,8 @@ Respond with only the new description inside <new_description> tags."""
         transcript["rewrite_char_count"] = len(shortened)
         description = shortened
 
+    if not description or len(description) > 1024:
+        raise ValueError("Model did not return a description within the 1–1024 character limit")
     transcript["final_description"] = description
 
     if log_dir:
@@ -208,16 +211,18 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    new_description = improve_description(
-        skill_name=name,
-        skill_content=content,
-        current_description=current_description,
-        eval_results=eval_results,
-        history=history,
-        anda_command=args.anda_command,
-        home=Path(args.home).expanduser().resolve() if args.home else None,
-        timeout=args.timeout,
-    )
+    source_home = Path(args.home).expanduser().resolve() if args.home else None
+    with eval_runtime(args.anda_command, source_home, None) as runtime:
+        new_description = improve_description(
+            skill_name=name,
+            skill_content=content,
+            current_description=current_description,
+            eval_results=eval_results,
+            history=history,
+            anda_command=args.anda_command,
+            home=runtime,
+            timeout=args.timeout,
+        )
 
     if args.verbose:
         print(f"Improved: {new_description}", file=sys.stderr)

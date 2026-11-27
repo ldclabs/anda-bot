@@ -2488,20 +2488,18 @@ mod tests {
         assert_eq!(file.size, content.len() as u64);
     }
 
-    #[test]
-    fn bundled_skills_declare_the_intended_execution_mode() {
+    #[tokio::test]
+    async fn bundled_skills_declare_the_intended_execution_mode() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../skills");
-        let mut parsed = Vec::new();
-        for entry in fs::read_dir(&root).unwrap() {
-            let dir = entry.unwrap().path();
-            let skill_md = dir.join("SKILL.md");
-            if !skill_md.is_file() {
-                continue;
-            }
-            let content = fs::read_to_string(&skill_md).unwrap();
-            parsed.push(
-                parse_skill_md(dir.clone(), &content)
-                    .unwrap_or_else(|err| panic!("{} is invalid: {err}", skill_md.display())),
+        let manager = SkillManager::new(root);
+        let report = manager.reload().await.unwrap();
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        assert!(!report.truncated);
+        let parsed = manager.list();
+        for skill in parsed.values() {
+            assert_eq!(
+                skill.base_dir.file_name(),
+                Some(OsStr::new(&skill.frontmatter.name))
             );
         }
         assert!(
@@ -2514,19 +2512,22 @@ mod tests {
         // everything else follows the inline default so it keeps the user, the
         // chat history, and the turn's attachments in reach.
         let mut subagents: Vec<&str> = parsed
-            .iter()
+            .values()
             .filter(|skill| skill.is_subagent())
             .map(|skill| skill.frontmatter.name.as_str())
             .collect();
         subagents.sort_unstable();
-        assert_eq!(subagents, ["auto-research", "claude-code", "codex"]);
+        assert_eq!(subagents, ["auto-research"]);
+
+        let catalog = manager.catalog();
+        for name in ["handoff", "teach"] {
+            let skill = catalog.skills.iter().find(|s| s.name == name).unwrap();
+            assert!(!skill.metadata.policy.allow_implicit_invocation);
+        }
 
         // `allowed-tools` is an upper bound, so a delegated skill that declares
         // one gets nothing else: trimming this list silently removes capability.
-        let auto_research = parsed
-            .iter()
-            .find(|skill| skill.frontmatter.name == "auto-research")
-            .unwrap();
+        let auto_research = &parsed["skill_auto_research"];
         for tool in ["shell", "read_file", "write_file", "subagents_manager"] {
             assert!(
                 auto_research.tools.iter().any(|name| name == tool),

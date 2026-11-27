@@ -1,47 +1,30 @@
-"""Shared utilities for skill-creator scripts."""
+"""Read the UTF-8 frontmatter used by the skill creation helpers."""
 
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:
+    raise SystemExit("The offline skill helpers require PyYAML. Anda can also validate content with skills_api.")
+
+
+def split_skill_md(content: str) -> tuple[dict, str]:
+    lines = content.strip().splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("SKILL.md is missing the opening ---")
+    for end, line in enumerate(lines[1:], 1):
+        if line.strip() == "---":
+            try:
+                frontmatter = yaml.safe_load("".join(lines[1:end]))
+            except yaml.YAMLError as error:
+                raise ValueError(f"Invalid YAML frontmatter: {error}") from error
+            if not isinstance(frontmatter, dict):
+                raise ValueError("Frontmatter must be a mapping")
+            return frontmatter, "".join(lines[end + 1:])
+    raise ValueError("SKILL.md is missing the closing ---")
 
 
 def parse_skill_md(skill_path: Path) -> tuple[str, str, str]:
-    """Parse a SKILL.md file, returning (name, description, full_content)."""
-    content = (skill_path / "SKILL.md").read_text()
-    lines = content.split("\n")
-
-    if lines[0].strip() != "---":
-        raise ValueError("SKILL.md missing frontmatter (no opening ---)")
-
-    end_idx = None
-    for i, line in enumerate(lines[1:], start=1):
-        if line.strip() == "---":
-            end_idx = i
-            break
-
-    if end_idx is None:
-        raise ValueError("SKILL.md missing frontmatter (no closing ---)")
-
-    name = ""
-    description = ""
-    frontmatter_lines = lines[1:end_idx]
-    i = 0
-    while i < len(frontmatter_lines):
-        line = frontmatter_lines[i]
-        if line.startswith("name:"):
-            name = line[len("name:"):].strip().strip('"').strip("'")
-        elif line.startswith("description:"):
-            value = line[len("description:"):].strip()
-            # Handle YAML multiline indicators (>, |, >-, |-)
-            if value in (">", "|", ">-", "|-"):
-                continuation_lines: list[str] = []
-                i += 1
-                while i < len(frontmatter_lines) and (frontmatter_lines[i].startswith("  ") or frontmatter_lines[i].startswith("\t")):
-                    continuation_lines.append(frontmatter_lines[i].strip())
-                    i += 1
-                description = " ".join(continuation_lines)
-                continue
-            else:
-                description = value.strip('"').strip("'")
-        i += 1
-
-    return name, description, content
+    content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter, _ = split_skill_md(content)
+    return frontmatter["name"], frontmatter["description"], content

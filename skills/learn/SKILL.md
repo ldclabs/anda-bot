@@ -1,6 +1,6 @@
 ---
 name: learn
-description: One-shot deep concept anatomy for a concept, term, idea, or phrase. Use when the user asks to dissect or deeply understand a concept through multiple lenses, especially with prompts like "解剖概念", "概念解剖", "learn concept", "explain this concept deeply", or "/learn". Produces concise org-mode output with anchors, eight analytical cuts, introspection, and compression into a formula, one-liner, and ASCII structure diagram. Do not use for multi-session teaching plans or current factual research unless the user explicitly asks for those.
+description: Dissect a concept, term or phrase in one sitting (解剖概念). Explore eight perspectives and distill them into a formula, a sentence and an ASCII diagram in Org format.
 metadata:
   source: https://github.com/lijigang/ljg-skills/blob/master/skills/ljg-learn/SKILL.md
 ---
@@ -16,7 +16,7 @@ Act as a concept anatomist. Take one concept and cut it open from several direct
 3. Avoid encyclopedia sprawl. Prefer structural insight over completeness.
 4. Do not invent etymology, history, or technical claims. Mark uncertainty briefly when needed.
 5. Choose the delivery mode:
-   - For `/learn`, or explicit save/export requests, write an org file.
+   - For an explicit skill invocation such as `/skill learn entropy` or `$learn entropy`, or a save/export request, write an Org file.
    - Otherwise, answer inline in org-mode without writing a file.
 
 ## Anatomy
@@ -92,8 +92,8 @@ When saving is required:
 1. Run `date +%Y%m%dT%H%M%S` for a timestamp when shell access is available.
 2. Choose the output directory in this order:
    - The directory explicitly requested by the user.
-   - `LEARN_NOTES_DIR`, then `NOTES_DIR`, if either environment variable is set.
-   - `notes/` under the current working directory.
+   - `LEARN_NOTES_DIR`, then `NOTES_DIR`, if set and writable under the session's workspace policy.
+   - `notes/` under the current Anda workspace.
 3. Create the output directory if it does not exist.
 4. Save to `{output-directory}/{timestamp}--concept-anatomy-{concept-name}__concept.org`, using the platform's native path format.
 5. Sanitize `{concept-name}` for a filename by replacing whitespace and path separators with `-`; do not overwrite an existing file.

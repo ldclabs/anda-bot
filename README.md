@@ -13,7 +13,7 @@ The Rust binary, `anda`, runs a local daemon with an embedded [Anda Brain](https
 ## What you can do
 
 - **Carry context across conversations.** Brain organizes useful preferences, people, projects, and decisions into a knowledge graph. The Memory workspace lets you inspect sources, correct records, stop using them, or preview their deletion.
-- **Work on extended tasks.** The agent can maintain a plan, delegate to subagents, compact context, and continue toward an explicit goal. Runtime skills include workflows for external tools such as Claude Code and Codex.
+- **Work on extended tasks.** The agent can maintain a plan, delegate to subagents, compact context, and continue toward an explicit goal. The bundled `auto-research` skill records progress and verification in the workspace so another run can resume the work.
 - **Work inside a project.** Anda Desktop brings together chat, file previews, Git diffs and commits, recoverable worktrees, interactive terminals, and an embedded browser. The terminal client works from your current directory.
 - **Connect tools and services.** Manage local and remote MCP servers, OAuth connections, tool permissions, resources, and imports from other apps. Other agents can also access Anda's memory through its own MCP endpoint.
 - **Automate recurring work.** Schedule agent prompts or shell commands, inspect their run history, or react to events from MCP servers that support event subscriptions.
@@ -266,7 +266,7 @@ Remove `--no-playback` for spoken replies; this requires configured TTS and `ffp
 
 ## Skills and scheduled tasks
 
-Manage runtime skills from the Skills workspace in Desktop or the extension dashboard. Personal skills live in `~/.anda/skills`, release-managed skills in `~/.anda/bundled-skills`, and shared skills can be discovered from `~/.agents/skills`. The repository's [skills](skills) include research, document, coding-tool, and skill-authoring workflows; individual skills may require additional tools.
+Manage runtime skills from the Skills workspace in Desktop or the extension dashboard. Personal skills live in `~/.anda/skills`, release-managed skills in `~/.anda/bundled-skills`, and shared skills can be discovered from `~/.agents/skills`. The [bundled skills](skills) cover research, teaching, Office and PDF files, Git, MCP servers, standalone HTML, and skill authoring. Each skill lists the local programs its workflow needs.
 
 Ask Anda to schedule a prompt or shell command, or use Desktop's **Automations** page. Cron supports one-time, interval, and cron-expression schedules, with local run history and pause/resume controls. Scheduled work requires the daemon to be running. MCP event automations are managed from the MCP page.
 

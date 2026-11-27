@@ -64,6 +64,8 @@ Les compétences (Skills) de runtime personnelles résident dans `~/.anda/skills
 /skill git-assistant Rédiger un message de commit de type Conventional Commit à partir du diff actuel.
 ```
 
+La plupart des skills s’exécutent dans la conversation en cours. Anda lit le fichier `SKILL.md` en entier et peut utiliser l’historique et les pièces jointes ou vous poser des questions. Un skill qui déclare `execution: subagent` s’exécute dans un agent indépendant. Le skill intégré `auto-research` utilise ce mode. Précisez l’objectif, l’espace de travail et les critères de réussite. Il transmet ses résultats et les décisions en attente à l’agent qui l’a appelé.
+
 ## Rôle des sous-agents
 
 Les sous-agents peuvent assumer des rôles spécialisés tels que la recherche, l'implémentation, la révision et la supervision. La session principale conserve l'objectif et le jugement final ; les sous-agents gèrent les tâches ciblées.

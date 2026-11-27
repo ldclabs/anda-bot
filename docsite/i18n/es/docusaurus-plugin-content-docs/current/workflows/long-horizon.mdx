@@ -64,6 +64,8 @@ Las habilidades (Skills) de runtime personales residen en `~/.anda/skills`, mien
 /skill git-assistant Redactar un mensaje de commit de tipo Conventional Commit a partir del diff actual.
 ```
 
+La mayoría de las habilidades se ejecutan en la conversación actual. Anda lee el archivo `SKILL.md` completo y puede usar el historial y los archivos adjuntos o hacerte preguntas. Una habilidad con `execution: subagent` se ejecuta en un agente independiente. La habilidad incluida `auto-research` usa este modo. Indícale el objetivo, el espacio de trabajo y los criterios de finalización. Devuelve sus resultados y las decisiones pendientes al agente que la invocó.
+
 ## Qué hacen los subagentes
 
 Los subagentes pueden asumir roles especializados como investigación, implementación, revisión y supervisión. La sesión principal conserva el objetivo general y el juicio final, mientras que los subagentes se encargan de llevar a cabo el trabajo enfocado.

@@ -1,186 +1,61 @@
 #!/usr/bin/env python3
-"""
-Quick validation script for skills - minimal version
-"""
+"""Check an Anda skill package before sharing or running it."""
 
-import json
 import re
 import sys
 from pathlib import Path
 
+if __package__:
+    from .utils import split_skill_md
+else:
+    from utils import split_skill_md
 
-ALLOWED_PROPERTIES = {
-    "name",
-    "description",
-    "license",
-    "execution",
-    "allowed-tools",
-    "resource-tags",
-    "metadata",
-    "compatibility",
-}
-
-EXECUTION_MODES = {"inline", "subagent"}
-
-
-def _strip_yaml_scalar(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    if len(value) >= 2 and value[0] == value[-1] == "'":
-        return value[1:-1].replace("''", "'")
-    return value
-
-
-def parse_frontmatter(frontmatter_text):
-    """Parse the small subset of YAML frontmatter needed for validation."""
-    result = {}
-    lines = frontmatter_text.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or line.startswith((" ", "\t")):
-            i += 1
-            continue
-
-        if ":" not in line:
-            raise ValueError(f"Invalid frontmatter line: {line}")
-
-        key, raw_value = line.split(":", 1)
-        key = key.strip()
-        value = raw_value.strip()
-
-        if key not in ALLOWED_PROPERTIES:
-            result[key] = _strip_yaml_scalar(value)
-            i += 1
-            continue
-
-        if value in (">", "|", ">-", "|-"):
-            block = []
-            i += 1
-            while i < len(lines) and (
-                lines[i].startswith((" ", "\t")) or not lines[i].strip()
-            ):
-                block.append(lines[i].strip())
-                i += 1
-            result[key] = "\n".join(block).strip()
-            continue
-
-        if value == "":
-            result[key] = ""
-        else:
-            result[key] = _strip_yaml_scalar(value)
-        i += 1
-
-    return result
 
 def validate_skill(skill_path):
-    """Basic validation of a skill"""
-    skill_path = Path(skill_path)
-
-    # Check SKILL.md exists
-    skill_md = skill_path / 'SKILL.md'
-    if not skill_md.exists():
-        return False, "SKILL.md not found"
-
-    # Read and validate frontmatter
-    content = skill_md.read_text()
-    if not content.startswith('---'):
-        return False, "No YAML frontmatter found"
-
-    # Extract frontmatter
-    match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
-    if not match:
-        return False, "Invalid frontmatter format"
-
-    frontmatter_text = match.group(1)
-
-    # Parse frontmatter. This intentionally avoids external dependencies so
-    # packaging works in a fresh Anda Bot runtime.
+    folder = Path(skill_path).resolve()
+    document = folder / "SKILL.md"
+    if document.is_symlink() or not document.is_file():
+        return False, "SKILL.md must be a regular file in the skill directory"
     try:
-        frontmatter = parse_frontmatter(frontmatter_text)
-        if not isinstance(frontmatter, dict):
-            return False, "Frontmatter must be a dictionary"
-    except ValueError as e:
-        return False, f"Invalid YAML in frontmatter: {e}"
+        frontmatter, body = split_skill_md(document.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return False, str(error)
 
-    # Define allowed properties
-    # Check for unexpected properties (excluding nested keys under metadata)
-    unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES
-    if unexpected_keys:
-        return False, (
-            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. "
-            f"Allowed properties are: {', '.join(sorted(ALLOWED_PROPERTIES))}"
-        )
+    name = frontmatter.get("name")
+    if not isinstance(name, str) or len(name) > 64 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        return False, "name must be 1–64 lowercase ASCII letters, digits and single internal hyphens"
+    if folder.name != name:
+        return False, f"Package directory {folder.name!r} must match the skill name {name!r}"
+    description = frontmatter.get("description")
+    if not isinstance(description, str) or not description.strip() or len(description) > 1024:
+        return False, "description must be a nonblank string of at most 1024 characters"
+    compatibility = frontmatter.get("compatibility")
+    if compatibility is not None and (
+        not isinstance(compatibility, str) or not compatibility.strip() or len(compatibility) > 500
+    ):
+        return False, "compatibility must be a nonblank string of at most 500 characters"
+    metadata = frontmatter.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return False, "metadata must be a mapping"
+    mode = frontmatter.get("execution")
+    if mode is None or isinstance(mode, str) and not mode.strip():
+        mode = metadata.get("execution", "inline")
+    if not isinstance(mode, str) or mode.strip().lower() not in ("inline", "subagent"):
+        return False, "execution must be inline or subagent"
+    for field in ("allowed-tools", "resource-tags"):
+        value = frontmatter.get(field, frontmatter.get(field.replace("-", "_")))
+        if value is not None and not isinstance(value, str) and not (
+            isinstance(value, list) and all(isinstance(item, str) for item in value)
+        ):
+            return False, f"{field} must be a string or a list of strings"
+    if not body.strip():
+        return False, "SKILL.md has no instructions"
+    return True, "Skill is valid"
 
-    # Check required fields
-    if 'name' not in frontmatter:
-        return False, "Missing 'name' in frontmatter"
-    if 'description' not in frontmatter:
-        return False, "Missing 'description' in frontmatter"
-
-    # Extract name for validation
-    name = frontmatter.get('name', '')
-    if not isinstance(name, str):
-        return False, f"Name must be a string, got {type(name).__name__}"
-    name = name.strip()
-    if name:
-        # Check naming convention (kebab-case: lowercase with hyphens)
-        if not re.match(r'^[a-z0-9-]+$', name):
-            return False, f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)"
-        if name.startswith('-') or name.endswith('-') or '--' in name:
-            return False, f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens"
-        # Check name length (max 64 characters per spec)
-        if len(name) > 64:
-            return False, f"Name is too long ({len(name)} characters). Maximum is 64 characters."
-
-    # Extract and validate description
-    description = frontmatter.get('description', '')
-    if not isinstance(description, str):
-        return False, f"Description must be a string, got {type(description).__name__}"
-    description = description.strip()
-    if description:
-        # Check for angle brackets
-        if '<' in description or '>' in description:
-            return False, "Description cannot contain angle brackets (< or >)"
-        # Check description length (max 1024 characters per spec)
-        if len(description) > 1024:
-            return False, f"Description is too long ({len(description)} characters). Maximum is 1024 characters."
-
-    # Validate compatibility field if present (optional)
-    compatibility = frontmatter.get('compatibility', '')
-    if compatibility:
-        if not isinstance(compatibility, str):
-            return False, f"Compatibility must be a string, got {type(compatibility).__name__}"
-        if len(compatibility) > 500:
-            return False, f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters."
-
-    # Validate execution mode if present (optional, defaults to inline)
-    execution = frontmatter.get('execution', '')
-    if execution:
-        if not isinstance(execution, str):
-            return False, f"Execution must be a string, got {type(execution).__name__}"
-        if execution.strip().lower() not in EXECUTION_MODES:
-            return False, (
-                f"Unknown execution mode '{execution}'. "
-                f"Expected one of: {', '.join(sorted(EXECUTION_MODES))}"
-            )
-
-    # `resource-tags` only takes effect for subagent skills
-    if frontmatter.get('resource-tags') and execution.strip().lower() != 'subagent':
-        return False, "resource-tags only applies to skills that declare execution: subagent"
-
-    return True, "Skill is valid!"
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python quick_validate.py <skill_directory>")
-        sys.exit(1)
-    
+        sys.exit("Usage: python3 quick_validate.py <skill-directory>")
     valid, message = validate_skill(sys.argv[1])
     print(message)
     sys.exit(0 if valid else 1)

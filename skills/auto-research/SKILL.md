@@ -1,8 +1,8 @@
 ---
 name: auto-research
-description: Long-horizon research and implementation loop for Anda Bot. Use when a task should keep moving through registered tools such as goal, subagents_manager, cron scheduling tools, file tools, and file-backed state instead of ending after one response; especially for autonomous research, multi-hour audits, repeated experiments, stall recovery, or unattended follow-up.
+description: Run a long research or implementation task with resumable workspace records, repeated experiments and explicit completion checks. Use when work must survive a handoff or continue across iterations.
 execution: subagent
-allowed-tools: shell, read_file, write_file, edit_file, search_file, subagents_manager, create_cron_job, list_cron_jobs, update_cron_job, manage_cron_job, list_cron_runs, recall_memory, skills_manager, tools_groups, tools_select
+allowed-tools: shell shell_session read_file write_file edit_file search_file subagents_manager create_cron_job list_cron_jobs update_cron_job manage_cron_job list_cron_runs recall_memory skills_manager skills_read tools_groups tools_select
 metadata:
   source: https://victorchen96.github.io/auto_research/framework.html
   type: Agent Framework
@@ -15,10 +15,10 @@ Turn a broad or long-running request into an Anda Bot loop with a file-backed
 ledger. The ledger is the source of truth: every iteration reads it before work
 and writes it after work.
 
-Use this skill to run the work, not to propose a framework. If the user invoked
-the skill with a real objective, execute until a completion criterion is met, a
-safety approval is required, or the ledger proves the task is structurally
-blocked.
+The caller supplies the objective, authorized workspace, inputs and completion
+criteria in the delegation prompt. Work until those criteria are met or a
+specific dependency prevents progress. Only the main Anda session can change
+the `goal`; return decisions, approval requests and goal changes to the caller.
 
 ## Operating Rules
 
@@ -39,8 +39,8 @@ blocked.
 ## Start Or Continue
 
 1. Choose the task directory. Prefer a user-specified directory. Otherwise use
-   `auto-research/<slug>/` in the active Anda workspace; for repository work,
-   keep state outside the repo unless the user asked for repo-local artifacts.
+   `auto-research/<slug>/` in the active Anda workspace. Reuse the same
+   absolute path across runs and keep scratch records out of source commits.
 2. Create or read:
 
    ```text
@@ -70,9 +70,9 @@ For each iteration:
    `findings.jsonl`, and `checks.md`.
 3. Pick one direction that differs from every tried direction. Append it to
    `directions.json` before starting the work.
-4. Launch a focused worker when subagents are available; otherwise do the work
-   directly. Give the worker a bounded prompt with objective, directory, inputs,
-   output file, validation command, and completion criterion.
+4. Do the work directly or delegate an independent check when permitted. Give
+   each worker its own output path. The orchestrator merges its verified findings
+   into the ledger so concurrent workers do not overwrite one another.
 5. Append durable findings to `findings.jsonl` and decisions or failures to
    `logs/events.jsonl`.
 6. Run the relevant check before the next iteration: tests, build, citation
@@ -92,8 +92,7 @@ Objective: ...
 Task directory: ...
 Read first: state/task_spec.md, state/progress.json, state/directions.json
 Direction for this iteration: ...
-Write findings to: state/findings.jsonl
-Write decisions/failures to: logs/events.jsonl
+Write findings, decisions and failures to: <assigned worker output path>
 Validation: ...
 Done when: ...
 Constraints: do not ask the user; stop only for required approval or a proven blocker.
@@ -105,7 +104,7 @@ Constraints: do not ask the user; stop only for required approval or a proven bl
 | --- | --- |
 | No new findings, no check improvement, or repeated failure mode | Increment `stale_count` |
 | `stale_count >= 2` | Pivot structurally before the next worker |
-| `stale_count >= 4` | Stop nudging and report a structurally blocked state |
+| Repeated pivots yield no progress | Record which dependency or missing evidence prevents the next check, and report it to the caller |
 | Last output was a question but no approval is required | Convert the question into a local decision and continue |
 | External dependency is down or unauthorized | Log exact evidence, retry only if a bounded retry is useful, then report the blocker |
 | Citation, benchmark, or generated data is used | Verify near the point of use; do not batch large unverified claims |
@@ -115,6 +114,10 @@ toolchain, validation method, or ownership boundary. Rephrasing the same prompt
 is not a pivot.
 
 ## Patrol Boundaries
+
+Use a scheduled follow-up when the request calls for one and the session has
+access to cron. Record the job ID and route, check for an existing job before
+creating one, and pause the job when its purpose is complete.
 
 A patrol may perform only:
 
