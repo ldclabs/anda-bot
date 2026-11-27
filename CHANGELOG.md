@@ -15,7 +15,7 @@ All notable changes to Anda Bot.
 
 - Yiwen AI Limited signs the macOS desktop app, CLI and launcher. Macs running a version below 0.15.0 receive the original LDC-signed 0.15.0 bridge, then the Yiwen release on the next update check.
 - Windows desktop releases require a timestamped Yiwen Authenticode signature on the app and NSIS installer. The release workflow supports Certum SimplySign and verifies the signed package before publication.
-- Tool discovery uses native tool additions where available and the Engine’s `tools_call` proxy on other models. Chat activity shows the target tool.
+- The main agent starts with `tools_search` available. Tool discovery uses native tool additions where available and the Engine’s `tools_call` proxy on other models. Chat activity shows the target tool.
 - MCP resources now support directory browsing and in-call input. Enable remote skill reads per server with `anda mcp options <id> --skills on`. OAuth connections support confidential clients, client metadata documents and incremental consent.
 
 ## [0.15.1] — 2026-11-23

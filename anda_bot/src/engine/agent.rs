@@ -191,11 +191,12 @@ fn base_tool_dependencies() -> Vec<String> {
 
 fn base_tools() -> Vec<String> {
     vec![
-        brain::Client::NAME.to_string(),
-        TOOLS_SELECT_NAME.to_string(),
         TOOLS_CALL_NAME.to_string(),
+        TOOLS_SEARCH_NAME.to_string(),
+        TOOLS_SELECT_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
+        brain::Client::NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
         SubAgentManager::NAME.to_string(),
         SkillManager::NAME.to_string(),
@@ -1745,6 +1746,8 @@ mod tests {
     fn base_agent_tools_include_some_tools() {
         assert!(base_tools().contains(&TOOLS_CALL_NAME.to_string()));
         assert!(base_tool_dependencies().contains(&TOOLS_CALL_NAME.to_string()));
+        assert!(base_tools().contains(&TOOLS_SEARCH_NAME.to_string()));
+        assert!(base_tool_dependencies().contains(&TOOLS_SEARCH_NAME.to_string()));
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(!base_tools().contains(&GoalTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
