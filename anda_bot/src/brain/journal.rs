@@ -548,9 +548,18 @@ impl RecallTurn {
         state.turn = ic_auth_types::Xid::new().to_string();
         state.calls = calls
             .iter()
-            .filter(|call| call.name == super::Client::NAME && call.result.is_none())
+            .filter(|call| call.result.is_none())
             .filter_map(|call| {
-                serde_json::from_value::<anda_brain::types::RecallInput>(call.args.clone())
+                let args = if call.name == super::Client::NAME {
+                    call.args.clone()
+                } else {
+                    let proxy = anda_engine::context::ToolsCallArgs::from_tool_call(call)?;
+                    if !proxy.name.eq_ignore_ascii_case(super::Client::NAME) {
+                        return None;
+                    }
+                    proxy.arguments
+                };
+                serde_json::from_value::<anda_brain::types::RecallInput>(args)
                     .ok()
                     .and_then(|args| serde_json::to_value(args).ok())
                     .map(|args| (args, call.call_id.clone()))
@@ -658,7 +667,15 @@ mod tests {
         let args = serde_json::from_value(call.args.clone()).unwrap();
         trace.prepare(9, std::slice::from_ref(&call));
         assert_eq!(trace.identify(&args).2.as_deref(), Some("call-1"));
-        trace.prepare(9, &[call.clone(), call]);
+        let proxy = anda_core::ToolCall {
+            name: anda_engine::context::TOOLS_CALL_NAME.into(),
+            args: json!({"name": call.name, "arguments": call.args}),
+            call_id: Some("proxy-id".into()),
+            ..call.clone()
+        };
+        trace.prepare(9, std::slice::from_ref(&proxy));
+        assert_eq!(trace.identify(&args).2.as_deref(), Some("proxy-id"));
+        trace.prepare(9, &[call, proxy]);
         assert_eq!(trace.identify(&args).2, None);
     }
 }

@@ -154,6 +154,8 @@ anda agent run --workspace . --prompt "介绍这个项目的结构"
 
 `anda --full-access` 以完全访问模式启动交互会话，在策略允许的范围内跳过审批。**Cron 任务和处于活动状态的目标任务使用完全访问权限。** MCP 事件自动化不会获得这一权限提升，需要审批的操作会被拒绝。显式配置的 MCP `ask` 策略在完全访问模式下也仍然要求审批。这些是本地运行时的控制，shell 命令以你的操作系统用户权限执行。
 
+工具发现会适配模型能力。支持原生追加工具的模型可以直接调用选中的工具。对其他模型，`tools_select` 会在 `call_via_tools_call` 中列出目标，智能体通过 `tools_call` 调用，以保持初始工具列表稳定，便于复用提示词缓存。
+
 ### Python Code Mode
 
 工作进程可隔离运行时，Code Mode 默认开启。如需关闭，在 `~/.anda/config.yaml` 中设置 `code_mode: { enabled: false }`，然后运行 `anda restart`。模型可以用 `code_exec` 编写 Python 来组合工具，用 `code_register` 保存带类型标注的函数，再用 `code_list` 在同一工作区找回。每次工具调用都按调用者当时的权限执行。[配置与示例](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx#python-code-mode)
@@ -227,7 +229,7 @@ anda mcp reload
 
 示例 URL 是占位符，请替换为实际服务地址。本地服务通过 stdio 连接，需要预先安装相应命令或运行时；远程服务通过 HTTP 连接，并可支持 OAuth 登录。配置保存在 `~/.anda/mcp.json`，与 `config.yaml` 分开，支持 `mcpServers` 和 `servers` 两种根键。手动编辑后需要重载。
 
-用 `anda mcp secret set NAME` 保存密钥，再通过 `${secret:NAME}` 引用。MCP 工具受审批策略和定义变更审阅约束。服务还可以提供可附加到消息中的资源，或在工具执行期间请求用户输入。
+用 `anda mcp secret set NAME` 保存密钥，再通过 `${secret:NAME}` 引用。MCP 工具受审批策略和定义变更审阅约束。可以在聊天附件选择器中浏览服务提供的资源目录。运行 `anda mcp options docs --skills on` 后，智能体可以通过 `mcp_resources` 查看该服务的远端技能清单并读取指定文件。静态技能文件会核对清单中的大小和 SHA-256 摘要。
 
 支持 MCP Events 的服务可以通过 Events 页签或 `anda mcp triggers` 创建事件自动化。这类任务支持事件批处理、可跨重启恢复的失败重试、频率限制和连续失败自动暂停。dMsg 可通过获得 `events.endpoint` 授权的专用 Agent ID 中转 webhook 事件。配置、导入、OAuth、权限与事件投递详见 [MCP 配置指南](docsite/i18n/zh-Hans/docusaurus-plugin-content-docs/current/runtime/configuration.mdx)。
 

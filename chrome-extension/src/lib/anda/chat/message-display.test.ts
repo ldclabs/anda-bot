@@ -76,6 +76,33 @@ describe('chatTranscript', () => {
     expect(rows[2]?.lastMessageId).toBe('step')
   })
 
+  it('displays proxy targets and pairs results by their original wire calls', () => {
+    const call = {
+      name: 'tools_call',
+      args: { name: 'read_file', arguments: '{"path":"notes.md"}' }
+    }
+    const source = [
+      message('calls', {
+        tools: [
+          call,
+          { ...call, callId: 'two', args: { name: 'shell', arguments: { command: 'pwd' } } }
+        ]
+      }),
+      message('results', {
+        role: 'tool',
+        tools: [
+          { name: 'tools_call', callId: 'two', output: 'cwd' },
+          { name: 'tools_call', output: 'notes' }
+        ]
+      })
+    ]
+    expect(chatTranscript(source).messages[0]?.tools).toEqual([
+      { name: 'read_file', args: { path: 'notes.md' }, output: 'notes' },
+      { name: 'shell', callId: 'two', args: { command: 'pwd' }, output: 'cwd' }
+    ])
+    expect(source[0]?.tools?.[0]).toBe(call)
+  })
+
   it('pairs by name when ids are missing, within the same user turn and conversation', () => {
     const call = { name: 'read_file' }
     const source = [

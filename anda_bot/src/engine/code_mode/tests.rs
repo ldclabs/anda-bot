@@ -144,6 +144,7 @@ impl Fixture {
             .completion_iter(
                 CompletionRequest {
                     prompt: "run recorded call".into(),
+                    tools: self.ctx.definitions(Some(&[TOOLS_CALL_NAME.into()])).await,
                     ..Default::default()
                 },
                 Vec::new(),
@@ -207,7 +208,13 @@ async fn code_mode_register_restart_and_reuse_through_runner() {
             .contains("recent")
     );
     crate::util::json_schema::assert_openai_strict_parameters(&def.parameters);
-    let out = bot.call(name, json!({"job_id":42,"recent":20}), None).await;
+    let out = bot
+        .call(
+            TOOLS_CALL_NAME,
+            json!({"name":name,"arguments":{"job_id":42,"recent":20}}),
+            None,
+        )
+        .await;
     assert_eq!(out.output, json!({"result":2}), "{out:?}");
     let out = bot
         .call(
@@ -223,6 +230,14 @@ async fn code_mode_register_restart_and_reuse_through_runner() {
         .await;
     assert_eq!(denied.output["error"]["code"], "scope_denied", "{denied:?}");
     assert_eq!(bot.calls.load(Ordering::SeqCst), 2);
+    let nested = bot
+        .call(
+            EXEC,
+            json!({"code": "return tools.tools_call(name='list_cron_runs', arguments={})"}),
+            None,
+        )
+        .await;
+    assert_eq!(nested.output["error"]["code"], "scope_denied");
     bot.ctx
         .base
         .set_state(MemoryPolicy::new(crate::engine::MemoryMode::NoStore));

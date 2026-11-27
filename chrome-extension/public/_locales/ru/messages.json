@@ -2843,6 +2843,12 @@
   "mcpResourcesSearch": {
     "message": "Поиск ресурсов"
   },
+  "mcpResourcesOpenDirectory": {
+    "message": "Открыть каталог $1"
+  },
+  "mcpResourcesEmptyDirectory": {
+    "message": "Этот каталог пуст."
+  },
   "mcpResourcesNone": {
     "message": "Ни один подключённый MCP-сервер не предлагает ресурсов."
   },
@@ -2866,6 +2872,12 @@
   },
   "mcpAutomationsPaused": {
     "message": "Автоматизаций по событиям: $1, на паузе: $2"
+  },
+  "mcpOptionMessageLimit": {
+    "message": "Лимит сообщения (байты)"
+  },
+  "mcpOptionSkills": {
+    "message": "Разрешить чтение удалённых навыков"
   },
   "mcpOptionResources": {
     "message": "Ресурсы"

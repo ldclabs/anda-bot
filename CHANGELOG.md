@@ -4,6 +4,9 @@ All notable changes to Anda Bot.
 
 ## [Unreleased]
 
+- Tool discovery uses native tool additions where available and the Engine’s `tools_call` proxy on other models. Chat activity shows the target tool.
+- MCP resources now support directory browsing and in-call input. Enable remote skill reads per server with `anda mcp options <id> --skills on`. OAuth connections support confidential clients, client metadata documents and incremental consent.
+
 ## [0.15.1] — 2026-11-23
 
 ### Added

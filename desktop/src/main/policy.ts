@@ -157,6 +157,7 @@ const mcpMethods = new Set([
   'mcp_trigger_get',
   'mcp_trigger_apply',
   'mcp_resources',
+  'mcp_resource_directory',
   'mcp_resource_read'
 ])
 

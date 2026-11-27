@@ -146,9 +146,10 @@ Optional per-server fields tune how Anda talks to the endpoint and runs the serv
 | `tasks` | Opts into the tasks extension, so a long-running tool can hand back a task Anda polls to completion instead of holding its response open. Takes `{"max_wait_secs": <seconds>}`, default `300`. Omit it and the server must answer every call inline. |
 | `timeouts` | Deadlines in seconds, each between 1 and 86400: `setup_secs` to connect (default 90), `list_secs` to list the tools (30), `request_secs` for one request (180), `call_secs` for a whole tool call (600) and `elicitation_secs` for you to answer a server's request for input (300). |
 | `concurrency` | Which of the server's tools may run at the same time: `serial` (default), `read_only_parallel` for tools the server marks read-only, or `parallel`. |
-| `limits` | `{"output_text_bytes": <bytes>}`: the text the agent gets from one result, between 256 and 1048576 (default 32768). |
+| `limits` | `output_text_bytes` limits text sent to the model per tool result (256–1048576, default 32768). `message_bytes` limits each incoming stdio line, HTTP JSON body or SSE event (default 8388608). Set it with `anda mcp options <id> --message-limit <bytes>`. |
 | `inherit_env` | Local servers only. `true` (default) gives the process the daemon's whole environment; `false` gives it only the platform's essentials (`PATH`, `HOME`, `TMPDIR` and the like) and its own `env`, so no other secret in the daemon's environment reaches it. |
 | `events` | `{"webhook_ingress": true}` makes this server (dMsg) receive webhooks for [event automations](#event-automations) whose events only a webhook delivers. One server can be the ingress. |
+| `skills` | Set to `true` to allow explicit reads of remote skill manifests and files through `mcp_resources`. Defaults to `false` independently of `resources`. |
 | `resources` | Whether the agent and the apps may list and read the server's [resources](#resources-and-requests-for-input). On unless `false`. |
 | `elicitation` | Whether the server may [ask you for input](#resources-and-requests-for-input) while one of its tools runs. On unless `false`. |
 
@@ -182,9 +183,9 @@ enabling, disabling, removing or signing out of a server asks for your approval
 first.
 
 For OAuth endpoints, `connect_mcp_server` runs the browser authorization and
-stores the tokens in the local credential store. Calling it again on a connected
-server only verifies the connection; pass `reauthorize: true` to sign out and
-consent again, which is what granting a different set of scopes requires.
+stores the tokens in the local credential store. A server that needs another scope can challenge a live call. Connect again to request that scope while retaining the existing grant. Use `reauthorize: true` to start a new consent flow explicitly.
+
+In an HTTP server’s `oauth` object, `client_id` selects a pre-registered client and `client_secret` can reference `${secret:NAME}` for a confidential client. With no pre-registered ID, Anda uses `client_metadata_url` when the issuer supports Client ID Metadata Documents, then falls back to dynamic registration. Set `application_type` for issuers that require it. Leaving `scopes` empty lets the engine select them from the server challenge or resource metadata and request offline access when advertised.
 
 ### Managing servers with `anda mcp`
 
@@ -495,17 +496,18 @@ Anda event run and reconnect/replay has not repeated it.
 
 Servers can offer resources: files, records and other context by URI. The agent
 lists and reads them with `mcp_resources` (`list`, with no server for every
-connected one; `templates` for URI templates to fill in; and `read`); short text
+connected one, `templates` for URI templates, `directory` for the direct children of a directory, and `read` for a file); short text
 comes back inline, and long or binary contents as attachments. In Anda Desktop
 and the extension, the message box's + menu has MCP resource, which lists the
-connected servers' resources and attaches the one you pick to your message. A
+connected servers’ resources. Open a directory to browse its children, then select a file to attach. A
 read changes nothing, so it follows the server's approval policy as a reviewed
 read-only tool does: it runs without asking unless the server is set to `ask`
 or the session asks before everything, and external IM users reach only servers
 that allow them. What a server returns is untrusted, like a tool's result.
 
-A server can also ask you for input while one of its tools runs (MCP
-elicitation). Anda shows the request above the message box of the conversation
+Enable remote skills for a server with `anda mcp options <id> --skills on`. In `mcp_resources`, `list_skills` lists skill URIs, `get_skill` takes a `skill_uri` ending in `SKILL.md`, and `read_skill_file` takes both the `skill_uri` and a file `uri`. The engine verifies static files against their manifest size and SHA-256 digest and checks that dynamic files stay inside the skill directory. Reads follow the same approval and external-user policies as resource reads. The content stays on the server until explicitly read and is never installed as a local skill.
+
+A server can also ask you for input during a tool call, a resource read, or an opted-in long-running task (MCP elicitation). Anda shows the request above the message box of the conversation
 the call runs for: a form becomes one card per field, which checks your answer
 (a number in range, an email address, one of the options), and a request to
 open a page becomes a card with the link, which opens when you choose Open the

@@ -20,10 +20,7 @@ use anda_engine::{
 use serde_json::json;
 use std::sync::Arc;
 
-use super::{
-    McpChange, McpElicitations, McpManager, redact::redact_json, review::McpReview,
-    state::McpSource,
-};
+use super::{McpChange, McpManager, redact::redact_json, review::McpReview, state::McpSource};
 use crate::{
     config::McpApproval,
     engine::{
@@ -40,19 +37,13 @@ const CARD_ARGUMENTS_BYTES: usize = 4096;
 pub(crate) struct McpGate {
     provider: Arc<McpToolProvider>,
     manager: McpManager,
-    elicitations: Arc<McpElicitations>,
 }
 
 impl McpGate {
-    pub fn new(
-        provider: Arc<McpToolProvider>,
-        manager: McpManager,
-        elicitations: Arc<McpElicitations>,
-    ) -> Self {
+    pub fn new(manager: McpManager) -> Self {
         Self {
-            provider,
+            provider: manager.provider().clone(),
             manager,
-            elicitations,
         }
     }
 
@@ -253,11 +244,10 @@ impl ToolProvider<BaseCtx> for McpGate {
             input.name = route.name.clone();
             // The server may ask the user for input while the call runs.
             let result = self
-                .elicitations
-                .during(
+                .manager
+                .during_call(
                     &route.server_id,
-                    &ctx,
-                    self.manager.elicitation_timeout(&route.server_id),
+                    Some(&ctx),
                     self.provider.call_route_with_cancellation(
                         route.clone(),
                         input,
@@ -600,11 +590,7 @@ mod tests {
         manager.provider().refresh_server("mock").await.unwrap();
         Fixture {
             _dir: dir,
-            gate: McpGate::new(
-                manager.provider().clone(),
-                manager.clone(),
-                Arc::new(McpElicitations::default()),
-            ),
+            gate: McpGate::new(manager.clone()),
             manager,
             catalog,
         }

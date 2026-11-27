@@ -1,4 +1,4 @@
-use jiff::{ToSpan, Zoned, civil::Date};
+use jiff::{ToSpan, ZonedDateTime, civil::Date};
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -30,7 +30,7 @@ pub fn init_daily_json_logger(
 /// the `-YYYYMMDD` date embedded in the file name. Files whose names do not
 /// parse are left alone.
 fn prune_old_daily_logs(logs_dir: &Path) {
-    let today = Zoned::now().date();
+    let today = ZonedDateTime::now().date();
     let Ok(cutoff) = today.checked_sub(LOG_RETENTION_DAYS.days()) else {
         return;
     };
@@ -61,7 +61,10 @@ fn daily_log_file_date(file_name: &str) -> Option<Date> {
 }
 
 pub fn current_daily_log_file_path(logs_dir: &Path, file_prefix: &str) -> PathBuf {
-    logs_dir.join(daily_log_file_name(file_prefix, Zoned::now().date()))
+    logs_dir.join(daily_log_file_name(
+        file_prefix,
+        ZonedDateTime::now().date(),
+    ))
 }
 
 struct DailyJsonWriter {
@@ -79,7 +82,7 @@ impl DailyJsonWriter {
     fn new(logs_dir: PathBuf, file_prefix: &'static str) -> io::Result<Self> {
         std::fs::create_dir_all(&logs_dir)?;
 
-        let date = Zoned::now().date();
+        let date = ZonedDateTime::now().date();
         let file = open_daily_log_file(&logs_dir, file_prefix, date)?;
 
         Ok(Self {
@@ -96,7 +99,7 @@ impl Writer for DailyJsonWriter {
         serde_json::to_writer(&mut buf, value).map_err(io::Error::from)?;
         buf.write_all(b"\n")?;
 
-        let date = Zoned::now().date();
+        let date = ZonedDateTime::now().date();
         let mut current = self.current.lock();
         if current.date != date {
             current.file = open_daily_log_file(&self.logs_dir, self.file_prefix, date)?;
@@ -145,7 +148,7 @@ mod tests {
     #[test]
     fn daily_json_writer_creates_log_directory_and_file() {
         let dir = tempfile::tempdir().unwrap();
-        let date = Zoned::now().date();
+        let date = ZonedDateTime::now().date();
         let expected = dir.path().join(daily_log_file_name("anda-test", date));
 
         let _writer = DailyJsonWriter::new(dir.path().join("nested"), "anda-test").unwrap();
@@ -170,7 +173,7 @@ mod tests {
         entry.insert(key, value);
         writer.write_log(&entry).unwrap();
 
-        let date = Zoned::now().date();
+        let date = ZonedDateTime::now().date();
         let log_path = dir.path().join(daily_log_file_name("anda-test", date));
         let content = std::fs::read_to_string(log_path).unwrap();
         assert_eq!(content, "{\"msg\":\"daemon started\"}\n");
@@ -190,9 +193,10 @@ mod tests {
     fn prune_old_daily_logs_removes_only_expired_files() {
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("anda-test-20200101.log");
-        let recent = dir
-            .path()
-            .join(daily_log_file_name("anda-test", Zoned::now().date()));
+        let recent = dir.path().join(daily_log_file_name(
+            "anda-test",
+            ZonedDateTime::now().date(),
+        ));
         let unrelated = dir.path().join("notes.txt");
         std::fs::write(&old, "old").unwrap();
         std::fs::write(&recent, "recent").unwrap();
@@ -215,7 +219,7 @@ mod tests {
         log::info!(target: "logger-test", "hello from test");
         log::logger().flush();
 
-        let date = Zoned::now().date();
+        let date = ZonedDateTime::now().date();
         let log_path = dir.path().join(daily_log_file_name("anda-test", date));
         assert!(log_path.is_file());
     }

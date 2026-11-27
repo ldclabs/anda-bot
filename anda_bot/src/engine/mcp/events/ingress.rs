@@ -320,12 +320,15 @@ impl DmsgIngress {
             self.manager
                 .provider()
                 .call_server_tool(server_id, tool, arguments, cancel.clone());
-        let result = tokio::time::timeout(CALL_TIMEOUT, call)
-            .await
-            .map_err(|_| {
-                cancel.cancel();
-                format!("{tool} timed out")
-            })??;
+        let result = tokio::time::timeout(
+            CALL_TIMEOUT,
+            self.manager.during_call(server_id, None, call),
+        )
+        .await
+        .map_err(|_| {
+            cancel.cancel();
+            format!("{tool} timed out")
+        })??;
         tool_json(tool, result)
     }
 }

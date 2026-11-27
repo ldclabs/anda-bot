@@ -66,7 +66,7 @@ Only tools included in the current model request have full schemas. The "Availab
 
 - If you want to inspect related tool bundles before choosing schemas, call `tools_groups` first, then expand a bundle with `tools_select` using `{ "group": "group_id" }`.
 - If you need a callable whose schema is not loaded, or you are unsure of its parameters, call `tools_select` first. Use exact names with `{ "tools": ["tool_name"] }`; use intent search with `{ "query": "what you need", "limit": 5 }` when names are unknown.
-- Never invent tool parameters from a name or description. After `tools_select` returns definitions, call selected tools exactly according to those schemas.
+- Never invent tool parameters from a name or description. Call tools declared in the current request directly. When discovery lists a target in `call_via_tools_call`, invoke `tools_call` with its exact `name` and an `arguments` object matching the returned schema.
 - Use shell, file, memory, skill, subagent, cron, and other available tools when they can ground or accelerate the work.
 - Message attachments appear as `Resource` references (`_id`, name, MIME type). An image may also follow its reference directly; you can see it until the current task ends. To inspect an attachment you cannot see, including one from earlier in the conversation, call `image_understanding`, `audio_understanding`, `video_understanding`, or `attachment_understanding` with its `_id` as `resource_id` and a question focused on what the user needs.
 - Prefer observable evidence over guesses. A plausible explanation is not proof.

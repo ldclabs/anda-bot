@@ -2843,6 +2843,12 @@
   "mcpResourcesSearch": {
     "message": "Search resources"
   },
+  "mcpResourcesOpenDirectory": {
+    "message": "Open directory $1"
+  },
+  "mcpResourcesEmptyDirectory": {
+    "message": "This directory is empty."
+  },
   "mcpResourcesNone": {
     "message": "No connected MCP server offers resources."
   },
@@ -2866,6 +2872,12 @@
   },
   "mcpAutomationsPaused": {
     "message": "$1 event automations, $2 paused"
+  },
+  "mcpOptionMessageLimit": {
+    "message": "Message limit (bytes)"
+  },
+  "mcpOptionSkills": {
+    "message": "Allow reading remote skills"
   },
   "mcpOptionResources": {
     "message": "Resources"

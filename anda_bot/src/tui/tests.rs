@@ -597,17 +597,29 @@ fn chat_message_lines_render_tool_calls_as_dim_summary() {
     let mut app = ready_app();
     app.chat.messages.push(anda_core::Message {
         role: "assistant".to_string(),
-        content: vec![ContentPart::ToolCall {
-            name: "search".to_string(),
-            args: serde_json::json!({"q": "anda"}),
-            call_id: None,
-        }],
+        content: vec![
+            ContentPart::ToolCall {
+                name: "search".to_string(),
+                args: serde_json::json!({"q": "anda"}),
+                call_id: None,
+            },
+            ContentPart::ToolCall {
+                name: "tools_call".into(),
+                args: serde_json::json!({"name": "read_file", "arguments": {"path": "notes.md"}}),
+                call_id: None,
+            },
+        ],
         ..Default::default()
     });
 
     let lines = chat_message_lines(&app, 80);
 
     assert!(line_text(&lines[0]).starts_with("🐼 ❯ → search("));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line_text(line).contains(r#"→ read_file({"path":"notes.md"})"#))
+    );
     assert_eq!(lines[0].spans[1].style, theme::dim_style());
 }
 

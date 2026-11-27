@@ -19,7 +19,10 @@ use anda_core::{
     BoxError, BoxFut, FunctionDefinition, Principal, RequestMeta, Resource, StateFeatures, Tool,
     ToolGroupInfo, ToolInput, ToolOutput, ToolProvider,
 };
-use anda_engine::context::{AgentCtx, BaseCtx, RequestCatalog, RequestToolCatalog};
+use anda_engine::context::{
+    AgentCtx, BaseCtx, RequestCatalog, RequestToolCatalog, TOOLS_CALL_NAME, TOOLS_SEARCH_NAME,
+    TOOLS_SELECT_NAME,
+};
 use library::{Declaration, Library};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -257,7 +260,7 @@ impl RequestCatalog for CodeMode {
             .map(|s| s.revision.clone())
     }
     fn interface(&self, ctx: &BaseCtx, def: &FunctionDefinition) -> Option<String> {
-        if matches!(def.name.as_str(), EXEC | "tools_select" | "tools_search") {
+        if !script_callable(&def.name) {
             return None;
         }
         let output = match def.name.as_str() {
@@ -295,6 +298,14 @@ impl RequestCatalog for CodeMode {
             Some(format!("tools.{}({params}) -> {output}", def.name))
         }
     }
+}
+
+// Scripts dispatch each target directly under its own permissions and accounting.
+fn script_callable(name: &str) -> bool {
+    !matches!(
+        name,
+        EXEC | TOOLS_SELECT_NAME | TOOLS_SEARCH_NAME | TOOLS_CALL_NAME
+    )
 }
 
 pub(crate) struct CodeTool {
@@ -337,7 +348,7 @@ impl Tool<BaseCtx> for CodeTool {
             ),
             _ => concat!(
                 "List saved Python functions. Use an exact published name, no cursor and ",
-                "include_source=true to read source. Load a saved function with tools_select for direct calls."
+                "include_source=true to read source. Select a saved function with tools_select to inspect its parameters."
             ),
         };
         description.into()

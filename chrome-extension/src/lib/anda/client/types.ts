@@ -668,12 +668,14 @@ export interface McpServerOptions {
     call_secs?: number
     elicitation_secs?: number
   }
-  limits?: { output_text_bytes?: number }
+  limits?: { output_text_bytes?: number; message_bytes?: number }
   /** Local servers only: the daemon's whole environment, or only the essentials and `env`. */
   inherit_env?: boolean
   tasks?: { max_wait_secs?: number }
   /** The agent and the apps may list and read its resources; on unless false. */
   resources?: boolean
+  /** Allow explicit reads of remote skill manifests and files. Defaults to false. */
+  skills?: boolean
   /** It may ask the user for input while a call runs; on unless false. */
   elicitation?: boolean
 }

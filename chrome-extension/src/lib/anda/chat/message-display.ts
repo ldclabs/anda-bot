@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatToolCall } from '../client/types'
-import { runtimeNotices } from './tool-view'
+import { isRecord, parseJsonString, runtimeNotices } from './tool-view'
 
 export type ActivityDetail = { id: string; messageId: string } & (
   | { kind: 'thought'; text: string }
@@ -33,6 +33,23 @@ export function chatTranscript(source: ChatMessage[]): Transcript {
   return transcript
 }
 
+/** Use the target for display and keep the outer wire call for result pairing. */
+function displayToolCall(call: ChatToolCall): ChatToolCall {
+  if (call.name.toLowerCase() !== 'tools_call') return call
+  const payload = parseJsonString(call.args)
+  if (!isRecord(payload) || typeof payload.name !== 'string') return call
+  const name = payload.name.trim()
+  if (!name || Object.keys(payload).some((key) => key !== 'name' && key !== 'arguments'))
+    return call
+  const args = payload.arguments
+  if (args == null || (typeof args === 'string' && !args.trim())) return { ...call, name, args: {} }
+  if (typeof args === 'string') {
+    const parsed = parseJsonString(args)
+    return { ...call, name, args: isRecord(parsed) ? parsed : args }
+  }
+  return isRecord(args) ? { ...call, name, args } : call
+}
+
 function pairToolResults(messages: ChatMessage[]): ChatMessage[] {
   const output: ChatMessage[] = []
   const pending: { message: number; index: number; call: ChatToolCall; turn: number }[] = []
@@ -60,7 +77,7 @@ function pairToolResults(messages: ChatMessage[]): ChatMessage[] {
         if (at < 0) return true
         const paired = pending.splice(at, 1)[0]!
         output[paired.message]!.tools![paired.index] = {
-          ...paired.call,
+          ...output[paired.message]!.tools![paired.index]!,
           output: result.output ?? null
         }
         return false
@@ -69,8 +86,8 @@ function pairToolResults(messages: ChatMessage[]): ChatMessage[] {
         if (!unpaired.length && !hasBody(message) && !message.thinkingText?.trim()) continue
         message = { ...message, tools: unpaired }
       }
-    } else if (tools?.some((tool) => tool.output === undefined)) {
-      message = { ...message, tools: [...tools] }
+    } else if (tools?.length) {
+      message = { ...message, tools: tools.map(displayToolCall) }
       tools.forEach((call, index) => {
         if (call.output === undefined) pending.push({ message: output.length, index, call, turn })
       })

@@ -2843,6 +2843,12 @@
   "mcpResourcesSearch": {
     "message": "搜索资源"
   },
+  "mcpResourcesOpenDirectory": {
+    "message": "打开目录 $1"
+  },
+  "mcpResourcesEmptyDirectory": {
+    "message": "此目录为空。"
+  },
   "mcpResourcesNone": {
     "message": "已连接的 MCP 服务器都没有提供资源。"
   },
@@ -2866,6 +2872,12 @@
   },
   "mcpAutomationsPaused": {
     "message": "$1 个事件自动化，$2 个已暂停"
+  },
+  "mcpOptionMessageLimit": {
+    "message": "消息上限（字节）"
+  },
+  "mcpOptionSkills": {
+    "message": "允许读取远端技能"
   },
   "mcpOptionResources": {
     "message": "资源"

@@ -24,7 +24,7 @@ async-trait = "0.1"
 # http2 is additive.
 axum = { version = "0.8", features = ["http2"] }
 anda_core = { version = "0.17" }
-anda_engine = { version = "0.18.1" }
+anda_engine = { version = "0.18.2" }
 anda_engine_server = { version = "0.18" }
 anda_web3_client = { version = "0.19", features = ["client"] }
 anda_object_store = "0.14"
@@ -44,7 +44,7 @@ ed25519-dalek = "3"
 # patch releases before, so upgrades should be validated explicitly.
 keyring = "=4.2.0"
 # Keep named cron zones available in standalone installations without system tzdata.
-jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+jiff = { version = "1.0", features = ["tzdb-bundle-always"] }
 jiff-cron = "0.3"
 futures = "0.3"
 hkdf = "0.13"
@@ -75,7 +75,7 @@ reqwest = { version = "0.13", features = [
 # resolve to the rmcp anda_engine uses (one type identity): keep the same
 # version line. The server features serve the memory MCP endpoint other
 # agents connect to (`engine::memory_mcp`).
-rmcp = { version = "3.5", default-features = false, features = [
+rmcp = { version = "3.11", default-features = false, features = [
   "auth",
   "server",
   "transport-streamable-http-server",
@@ -88,9 +88,15 @@ rustpython-vm = { version = "=0.6.0", default-features = false, features = [
   "gc",
   "serde",
 ] }
-rustpython-host_env = { version = "=0.6.0", default-features = false, features = ["ctypes"] }
+rustpython-host_env = { version = "=0.6.0", default-features = false, features = [
+  "ctypes",
+] }
 # The Code Mode `math` module, copied from rustpython-stdlib 0.6.0.
-pymath = { version = "=0.2.0", default-features = false, features = ["mul_add", "malachite-bigint"] }
+pymath = { version = "=0.2.0", default-features = false, features = [
+  "mul_add",
+  "malachite-bigint",
+] }
+# RustPython's PyInt and pymath exchange this type across the module boundary.
 malachite-bigint = "0.12.0"
 num-traits = "0.2"
 # Pulled in only to install a process-level CryptoProvider at startup. `aws_lc_rs`

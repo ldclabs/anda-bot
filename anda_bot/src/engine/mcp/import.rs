@@ -814,6 +814,14 @@ fn credential_fields(entry: &Map<String, Value>) -> Vec<(&'static str, String)> 
         }
     }
     if entry
+        .get("oauth")
+        .and_then(|oauth| oauth.get("client_secret"))
+        .and_then(Value::as_str)
+        .is_some_and(is_plaintext)
+    {
+        fields.push(("oauth", "client_secret".into()));
+    }
+    if entry
         .get("bearer_token")
         .and_then(Value::as_str)
         .is_some_and(is_plaintext)
@@ -1119,6 +1127,9 @@ const ANDA_FIELDS: &[&str] = &[
     "timeouts",
     "concurrency",
     "limits",
+    "skills",
+    "resources",
+    "elicitation",
     "inherit_env",
 ];
 
@@ -1214,7 +1225,7 @@ impl Convert<'_> {
                         .to_string(),
                 );
             }
-            if let Some(oauth) = self.oauth(&mut raw, &mut warnings) {
+            if let Some(oauth) = self.oauth(&mut raw, &mut secrets)? {
                 entry.insert("oauth".into(), oauth);
             }
         }
@@ -1272,9 +1283,14 @@ impl Convert<'_> {
     }
 
     /// An OAuth marker from Claude Code's `oauth` or Cursor's `auth`.
-    fn oauth(&self, raw: &mut Map<String, Value>, warnings: &mut Vec<String>) -> Option<Value> {
-        let auth = raw.remove("oauth").or_else(|| raw.remove("auth"))?;
-        let auth = auth.as_object()?;
+    fn oauth(
+        &self,
+        raw: &mut Map<String, Value>,
+        secrets: &mut BTreeMap<String, String>,
+    ) -> Result<Option<Value>, String> {
+        let Some(Value::Object(auth)) = raw.remove("oauth").or_else(|| raw.remove("auth")) else {
+            return Ok(None);
+        };
         let field = |names: &[&str]| names.iter().find_map(|name| auth.get(*name));
         let mut oauth = Map::new();
         if let Some(client_id) =
@@ -1294,13 +1310,23 @@ impl Convert<'_> {
         if !scopes.is_empty() {
             oauth.insert("scopes".into(), json!(scopes));
         }
-        if field(&["clientSecret", "client_secret", "CLIENT_SECRET"]).is_some() {
-            warnings.push(
-                "its OAuth client secret was not imported; Anda signs in as a public client"
-                    .to_string(),
+        if let Some(secret) =
+            field(&["clientSecret", "client_secret", "CLIENT_SECRET"]).and_then(Value::as_str)
+        {
+            oauth.insert(
+                "client_secret".into(),
+                json!(self.text(secret, "oauth.client_secret", secrets)?),
             );
         }
-        Some(Value::Object(oauth))
+        for (key, alias) in [
+            ("client_metadata_url", "clientMetadataUrl"),
+            ("application_type", "applicationType"),
+        ] {
+            if let Some(value) = field(&[key, alias]).and_then(Value::as_str) {
+                oauth.insert(key.into(), json!(value));
+            }
+        }
+        Ok(Some(Value::Object(oauth)))
     }
 
     /// An object of string values, translated.
@@ -1784,9 +1810,9 @@ bearer_token_env_var = "REMOTE_TOKEN"
         let notes = find(&scan, McpImportSource::Cursor, "notes");
         assert_eq!(
             entry(notes)["oauth"],
-            json!({ "client_id": "notes-client", "scopes": ["read"] })
+            json!({ "client_id": "notes-client", "client_secret": "shh", "scopes": ["read"] })
         );
-        assert!(notes.warnings[0].contains("client secret"));
+        assert_eq!(notes.plaintext, ["oauth.client_secret"]);
 
         let search = find(&scan, McpImportSource::Vscode, "search");
         assert_eq!(search.status, McpImportStatus::New);

@@ -115,6 +115,7 @@ describe('desktop host boundaries', () => {
     ).not.toThrow()
     // The composer attaches a server's resources.
     expect(() => validateRpc('mcp_resources', [{}])).not.toThrow()
+    expect(() => validateRpc('mcp_resource_directory', [{ id: 'docs', uri: 'file:///' }])).not.toThrow()
     expect(() =>
       validateRpc('mcp_resource_read', [{ id: 'docs', uri: 'file:///notes.md' }])
     ).not.toThrow()

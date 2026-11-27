@@ -1,15 +1,11 @@
 //! [`McpElicitations`]: the questions an MCP server asks the user while one
 //! of its tools runs (MCP elicitation).
 //!
-//! A form becomes one choice card per field and a request to open a page one
-//! card with the link; the answers go back to the server. A question is asked
-//! in the conversation whose call the server is serving: [`McpGate`] notes
-//! each call while it runs. A question nobody can answer is cancelled: no
-//! call of that server is running, or more than one is, or the run is one
-//! nobody watches (an automation, a scheduled job, an IM chat). So is one the
-//! user answers in chat instead.
-//!
-//! [`McpGate`]: super::McpGate
+//! A form becomes one choice card per field. A URL request becomes a card
+//! with the link. Answers go to the server from the conversation that started
+//! the tool call or resource read. An out-of-band question needs exactly one
+//! active call on that server. An unattended request or an ambiguous question
+//! is cancelled.
 
 use anda_core::{BoxError, CancellationToken};
 use anda_engine::{context::BaseCtx, extension::mcp::McpElicitationHandler};
@@ -45,25 +41,30 @@ const NOTE: &str = "This answer goes to the MCP server. Never enter passwords, k
 
 tokio::task_local! {
     /// The server call the current task makes, and who it is for.
-    static CALL: (String, BaseCtx, Duration);
+    static CALL: ActiveCall;
+}
+
+#[derive(Clone)]
+struct ActiveCall {
+    server_id: String,
+    // Owner API and background operations have no conversation to answer in.
+    asker: Option<(BaseCtx, Duration)>,
 }
 
 /// Routes servers' questions to the user each call runs for, and asks them.
 #[derive(Default)]
 pub(crate) struct McpElicitations {
-    calls: Mutex<HashMap<u64, (String, BaseCtx, Duration)>>,
+    calls: Mutex<HashMap<u64, ActiveCall>>,
     next: AtomicU64,
 }
 
 impl McpElicitations {
-    /// Runs `call`, a request to server `server_id` made for `ctx`, so that
-    /// the server's questions during it reach that user. `timeout` is how
-    /// long the server waits for an answer.
+    /// Route questions to this call's user within their deadline. A call
+    /// without an asker also counts when routing out-of-band questions.
     pub(crate) async fn during<T>(
         &self,
         server_id: &str,
-        ctx: &BaseCtx,
-        timeout: Duration,
+        asker: Option<(&BaseCtx, Duration)>,
         call: impl Future<Output = T>,
     ) -> T {
         struct Done<'a>(&'a McpElicitations, u64);
@@ -73,7 +74,10 @@ impl McpElicitations {
             }
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let call_of = (server_id.to_string(), ctx.clone(), timeout);
+        let call_of = ActiveCall {
+            server_id: server_id.to_string(),
+            asker: asker.map(|(ctx, timeout)| (ctx.clone(), timeout)),
+        };
         self.calls.lock().insert(id, call_of.clone());
         let _done = Done(self, id);
         CALL.scope(call_of, call).await
@@ -83,15 +87,20 @@ impl McpElicitations {
     /// (a question within the call's own rounds), else the only call of that
     /// server that runs (one the server sends on its own).
     fn asker(&self, server_id: &str) -> Option<(BaseCtx, Duration)> {
-        if let Ok(Some(asker)) =
-            CALL.try_with(|(id, ctx, timeout)| (id == server_id).then(|| (ctx.clone(), *timeout)))
-        {
-            return Some(asker);
+        if let Ok(call) = CALL.try_with(Clone::clone) {
+            return if call.server_id == server_id {
+                call.asker
+            } else {
+                None
+            };
         }
         let calls = self.calls.lock();
-        let mut calls = calls.values().filter(|(id, _, _)| id == server_id);
-        let (_, ctx, timeout) = calls.next()?;
-        calls.next().is_none().then(|| (ctx.clone(), *timeout))
+        let mut calls = calls.values().filter(|call| call.server_id == server_id);
+        let only = calls.next()?;
+        if calls.next().is_some() {
+            return None;
+        }
+        only.asker.clone()
     }
 }
 
@@ -741,8 +750,7 @@ mod tests {
         elicitations
             .during(
                 "mock",
-                ctx,
-                timeout,
+                Some((ctx, timeout)),
                 elicitations.elicit("mock", request, CancellationToken::new()),
             )
             .await
@@ -925,11 +933,22 @@ mod tests {
                 .unwrap()
         };
         let (_, _, ambiguous) = tokio::join!(
-            elicitations.during("mock", &first, Duration::from_secs(5), hold()),
-            elicitations.during("mock", &second, Duration::from_secs(5), hold()),
+            elicitations.during("mock", Some((&first, Duration::from_secs(5))), hold()),
+            elicitations.during("mock", Some((&second, Duration::from_secs(5))), hold()),
             ambiguous
         );
         assert_eq!(ambiguous.action, ElicitationAction::Cancel);
+        // An attachment read without a chat must never borrow another call's asker.
+        elicitations
+            .during("mock", Some((&first, Duration::from_secs(5))), async {
+                elicitations
+                    .during("mock", None, async {
+                        assert!(elicitations.asker("mock").is_none());
+                    })
+                    .await;
+                assert!(elicitations.asker("mock").is_some());
+            })
+            .await;
         // With one call of the server running, a question the server sends
         // on its own, outside the call's task, reaches that call's user.
         let (only, cards) = answering(ctx(&[]), vec![(DECLINE, None)]);
@@ -941,7 +960,7 @@ mod tests {
                 .unwrap()
         };
         let (_, single) = tokio::join!(
-            elicitations.during("mock", &only, Duration::from_secs(5), hold()),
+            elicitations.during("mock", Some((&only, Duration::from_secs(5))), hold()),
             single
         );
         assert_eq!(single.action, ElicitationAction::Decline);

@@ -141,7 +141,9 @@ pub(crate) fn redact_entry(entry: &Value) -> Value {
                 ),
                 _ => redacted_value(),
             },
-            "bearer_token" => redacted_secret(value),
+            "bearer_token" | "client_secret" | "clientSecret" | "CLIENT_SECRET" => {
+                redacted_secret(value)
+            }
             "args" => match value {
                 Value::Array(args) if args.iter().all(Value::is_string) => {
                     let args: Vec<String> = args
@@ -153,12 +155,12 @@ pub(crate) fn redact_entry(entry: &Value) -> Value {
                 }
                 _ => redacted_value(),
             },
-            "url" => match value.as_str() {
+            "url" | "client_metadata_url" => match value.as_str() {
                 Some(url) => json!(display_url(url)),
                 None => redacted_value(),
             },
             // The older list form nests the transport fields.
-            "transport" => redact_entry(value),
+            "transport" | "oauth" | "auth" => redact_entry(value),
             _ => value.clone(),
         };
         out.insert(key.clone(), value);
@@ -227,6 +229,13 @@ mod tests {
             "approval": { "default": "ask" },
             "transport": { "env": { "NESTED": "nested-secret" } }
         });
+        for raw in [
+            json!({"oauth": {"client_secret": "client-password"}}),
+            json!({"auth": {"CLIENT_SECRET": "client-password"}}),
+            json!({"transport": {"oauth": {"clientSecret": "client-password"}}}),
+        ] {
+            assert!(!redact_entry(&raw).to_string().contains("client-password"));
+        }
         let redacted = redact_entry(&entry);
         let rendered = redacted.to_string();
         for secret in [

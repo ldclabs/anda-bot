@@ -4,7 +4,7 @@ use anda_core::{
     text_from_bytes_with_encoding,
 };
 use anda_engine::{
-    context::{AgentCtx, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
+    context::{AgentCtx, TOOLS_CALL_NAME, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME},
     extension::{
         fs::{ReadFileTool, SearchFileTool},
         shell::ShellTool,
@@ -251,6 +251,7 @@ pub(super) fn other_understanding_tool_names() -> Vec<String> {
     vec![
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
+        TOOLS_CALL_NAME.to_string(),
         SkillManager::NAME.to_string(),
         SkillsListTool::NAME.to_string(),
         SkillsReadTool::NAME.to_string(),

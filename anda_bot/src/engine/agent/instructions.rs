@@ -25,7 +25,7 @@ pub(super) struct SystemInstructionSections<'a> {
 
 pub(super) fn render_system_instructions(sections: SystemInstructionSections<'_>) -> String {
     format!(
-        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` before calling any name whose full schema is not already loaded.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n{project}\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
+        "{ins}\n\n---\n\n# Runtime Context\n\n## Self Knowledge\n{knowledge}\n\n## Available Callable Names\nNames only; schemas are intentionally omitted here. Use `tools_select` to look up a missing schema and follow its calling instructions.\n{tools}\n\n## Environment\n- home: {home}\n- current workspace (authoritative): {workspace}\n\nUse the current workspace for filesystem and shell operations. Workspace paths in history are historical unless the user explicitly selects them.\n{project}\n## User Profile\n{user_profile}\n\n## Current Datetime: {local_date}",
         ins = SELF_INSTRUCTIONS.trim(),
         knowledge = sections.self_knowledge,
         tools = format_available_tools(sections.available_tools),
@@ -57,7 +57,7 @@ fn format_available_tools(available_tools: &[String]) -> String {
             names.join(", ")
         );
         if names.contains(&LIST) {
-            directory.push_str(" Select code_list to find saved functions, and use tools_select to load one for direct calls.");
+            directory.push_str(" Select code_list to find saved functions, and select its schema before calling it.");
         }
         if names.contains(&REGISTER) {
             directory.push_str(" Select code_register to save a new function.");
@@ -225,7 +225,7 @@ fn format_local_date(now_ms: u64) -> String {
         .ok()
         .and_then(|ms| Timestamp::from_millisecond(ms).ok())
         .map(|dt| {
-            dt.to_zoned(TimeZone::system())
+            dt.to_zoned_datetime(TimeZone::system())
                 .strftime("%Y-%m-%d %I%p %:z")
                 .to_string()
         })
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn format_local_date_returns_datetime_with_timezone() {
         let result = format_local_date(unix_ms());
-        assert!(jiff::Zoned::strptime("%Y-%m-%d %I%p %:z", result).is_ok());
+        assert!(jiff::ZonedDateTime::strptime("%Y-%m-%d %I%p %:z", result).is_ok());
     }
 
     #[test]

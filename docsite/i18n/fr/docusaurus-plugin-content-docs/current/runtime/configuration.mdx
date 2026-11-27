@@ -80,6 +80,10 @@ GLM_API_KEY
 
 Anda Bot peut se connecter à des serveurs MCP via des processus enfants stdio ou des points de terminaison HTTP. Placez une configuration MCP portable dans `~/.anda/mcp.json`, puis exécutez `anda mcp reload` (ou redémarrez le démon). Le fichier accepte à la fois `mcpServers` et `servers` comme clé racine, afin de vous permettre de coller des configurations provenant d'autres outils compatibles avec MCP avec un minimum de modifications.
 
+Le sélecteur de pièces jointes MCP permet de parcourir les répertoires. L’agent peut en lister le contenu avec l’action `directory` de `mcp_resources`. Pour autoriser la lecture des compétences distantes d’un serveur, exécutez `anda mcp options <id> --skills on`. Elle est désactivée par défaut. `list_skills` liste les compétences, `get_skill` prend le `skill_uri` d’un `SKILL.md` et `read_skill_file` prend aussi l’`uri` du fichier. Anda vérifie la taille et le SHA-256 des fichiers statiques et limite les fichiers dynamiques au répertoire de la compétence. Ces lectures respectent les autorisations du serveur et n’installent pas la compétence.
+
+`limits.message_bytes` limite chaque ligne stdio, réponse HTTP JSON ou événement SSE (8 Mio par défaut). L’option CLI est `--message-limit`. L’objet `oauth` accepte `client_id` et `client_secret` (utilisez `${secret:NAME}`), `client_metadata_url` et `application_type` pour l’enregistrement dynamique. Laissez `scopes` vide pour suivre le défi du serveur ou les métadonnées de la ressource. Si le serveur demande des autorisations supplémentaires, reconnectez-vous pour étendre les droits déjà accordés. Les tâches en cours et les lectures de ressources peuvent aussi demander une réponse dans leur conversation d’origine.
+
 ```json
 {
   "mcpServers": {

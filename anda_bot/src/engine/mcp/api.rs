@@ -92,6 +92,8 @@ enum McpRequest {
     TriggerApply(TriggerChange),
     /// The resources of one connected server, or of each.
     Resources(Option<String>),
+    /// The direct children of one resource directory.
+    ResourceDirectory(ResourceReadParams),
     /// A resource read to attach to a message.
     ResourceRead {
         id: String,
@@ -406,6 +408,7 @@ impl McpRequest {
             } else {
                 params_of::<ResourcesParams>(method, params)?.id
             }),
+            "mcp_resource_directory" => Self::ResourceDirectory(params_of(method, params)?),
             "mcp_resource_read" => {
                 let ResourceReadParams { id, uri } = params_of(method, params)?;
                 Self::ResourceRead { id, uri }
@@ -530,6 +533,9 @@ impl McpApiState {
             McpRequest::TriggerGet(id) => respond(self.events.trigger_detail(id).await),
             McpRequest::TriggerApply(change) => respond(self.apply_trigger(change).await),
             McpRequest::Resources(id) => ok(resources::app_listing(manager, id.as_deref()).await),
+            McpRequest::ResourceDirectory(params) => {
+                respond(resources::app_directory(manager, &params.id, &params.uri).await)
+            }
             McpRequest::ResourceRead { id, uri } => {
                 respond(resources::app_read(manager, &id, &uri).await)
             }

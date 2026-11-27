@@ -40,7 +40,7 @@ pub fn side_agent(instructions: String) -> SubAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anda_engine::context::TOOLS_SELECT_NAME;
+    use anda_engine::context::{TOOLS_CALL_NAME, TOOLS_SELECT_NAME};
 
     #[test]
     fn side_agent_prompt_is_independent_and_read_only() {
@@ -58,7 +58,12 @@ mod tests {
         let agent = side_agent(String::new());
 
         assert_eq!(agent.tools, side_tool_names());
-        assert!(!agent.tools.iter().any(|tool| tool == TOOLS_SELECT_NAME));
+        assert!(
+            !agent
+                .tools
+                .iter()
+                .any(|tool| matches!(tool.as_str(), TOOLS_SELECT_NAME | TOOLS_CALL_NAME))
+        );
         assert!(
             !agent
                 .tools

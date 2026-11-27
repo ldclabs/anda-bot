@@ -37,13 +37,16 @@ use std::{
 use tokio::{sync::Mutex, time::timeout};
 
 use super::{
-    McpError,
+    McpElicitations, McpError,
     config_store::{self, McpConfigFile, McpFileEdit},
     import::{
         self, McpImportContext, McpImportRequest, McpImportScan, McpImportSource, McpImportTarget,
         McpKnownServer,
     },
-    oauth::{McpOAuthFlows, configure_authorization, default_server_id_from_url, open_in_browser},
+    oauth::{
+        McpOAuthFlows, OAUTH_CLIENT_NAME, configure_authorization, default_server_id_from_url,
+        open_in_browser,
+    },
     review::{self, McpReview, McpToolDiff},
     secrets::{
         MCP_SECRETS_FILE_NAME, McpSecretStore, McpSecretView, orphaned_secrets, secret_views,
@@ -86,7 +89,7 @@ pub(crate) struct McpManagerConfig {
     pub gateway_addr: SocketAddr,
     /// The provider has an elicitation handler, so servers may ask the user
     /// for input. Without one, their entries' `elicitation` is turned off.
-    pub elicitation: bool,
+    pub elicitation: Option<Arc<McpElicitations>>,
 }
 
 /// One change to the configured servers.
@@ -215,10 +218,10 @@ pub(crate) struct SignIn {
     /// Defaults to the URL's host.
     #[serde(default)]
     pub id: Option<String>,
-    /// Defaults to the scopes the server advertises.
+    /// Empty lets the engine select scopes from the challenge or resource metadata.
     #[serde(default)]
     pub scopes: Vec<String>,
-    /// Sign out first and ask for consent again.
+    /// Force a new consent flow. A step-up challenge preserves previous grants.
     #[serde(default)]
     pub reauthorize: bool,
     /// The browser's address after consent, for a redirect that could not
@@ -254,7 +257,7 @@ struct Inner {
     state: McpStateStore,
     secrets: McpSecretStore,
     /// See [`McpManagerConfig::elicitation`].
-    elicitation: bool,
+    elicitation: Option<Arc<McpElicitations>>,
 }
 
 #[derive(Default)]
@@ -879,6 +882,24 @@ impl McpManager {
         receipt
     }
 
+    /// Bind server questions to the conversation that initiated this call.
+    /// An app or background read participates in routing with no answering user.
+    pub(super) async fn during_call<T>(
+        &self,
+        id: &str,
+        ctx: Option<&anda_engine::context::BaseCtx>,
+        call: impl Future<Output = T>,
+    ) -> T {
+        match &self.inner.elicitation {
+            Some(handler) => {
+                handler
+                    .during(id, ctx.map(|ctx| (ctx, self.elicitation_timeout(id))), call)
+                    .await
+            }
+            None => call.await,
+        }
+    }
+
     /// How long server `id` waits for the user to answer its questions.
     pub fn elicitation_timeout(&self, id: &str) -> std::time::Duration {
         let view = self.inner.view.read();
@@ -1492,15 +1513,15 @@ impl McpManager {
                 let mut view = self.inner.view.write();
                 view.registered
                     .insert(id.clone(), Registered::new(server.clone()));
-                // A runtime server that signed in is saved now.
-                view.runtime.remove(id);
             }
-            self.persist_oauth_locked(server).await.map_err(|err| {
+            let persisted = self.persist_oauth_locked(server).await.map_err(|err| {
                 format!(
                     "MCP server {id} is authorized, but failed to persist to {}: {err}",
                     self.inner.config_path.display()
                 )
-            })?
+            })?;
+            self.inner.view.write().runtime.remove(id);
+            persisted
         };
         self.refresh(id).await.map_err(|err| {
             format!(
@@ -1525,34 +1546,49 @@ impl McpManager {
         let Some(McpOAuthConfig::AuthorizationCode(auth)) = &http.auth else {
             return Err("missing OAuth configuration".into());
         };
-        let oauth = McpOAuthSettings {
-            client_id: auth.client_id.clone(),
-            scopes: auth.scopes.clone(),
-        };
         let file = McpConfigFile::read(&self.inner.config_path).await?;
         if McpSettings::from_json_contents(file.text())?.declares(id) {
-            self.commit_locked(None, McpFileEdit::SetOAuth(id, &oauth))
-                .await?;
+            self.commit_locked(
+                None,
+                McpFileEdit::SetOAuth {
+                    id,
+                    client_id: auth.client_id.as_deref(),
+                    scopes: &auth.scopes,
+                },
+            )
+            .await?;
             return Ok(false);
         }
-        let server = McpServerSettings {
-            id: id.to_string(),
-            disabled: false,
-            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
-                url: http.url.clone(),
-                bearer_token: None,
-                headers: http.headers.clone(),
-                oauth: Some(oauth),
-            }),
-            include: config.include.clone(),
-            exclude: config.exclude.clone(),
-            lifecycle: (config.lifecycle != Default::default()).then_some(config.lifecycle),
-            // The Bot default (background discovery), not the engine's.
-            startup: None,
-            tasks: config.tasks.clone(),
-            // A server authorized for this daemon only had no policy to keep.
-            ..Default::default()
+        // A temporary entry may reference secrets in its URL, headers or OAuth
+        // settings. Persist the original entry, before expansion.
+        let mut server = self
+            .inner
+            .view
+            .read()
+            .runtime
+            .get(id)
+            .map(|entry| entry.settings.clone())
+            .unwrap_or_else(|| McpServerSettings {
+                id: id.clone(),
+                transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                    url: http.url.clone(),
+                    ..Default::default()
+                }),
+                include: config.include.clone(),
+                exclude: config.exclude.clone(),
+                lifecycle: (config.lifecycle != Default::default()).then_some(config.lifecycle),
+                tasks: config.tasks.clone(),
+                ..Default::default()
+            });
+        let McpTransportSettings::StreamableHttp(transport) = &mut server.transport else {
+            return Err("OAuth requires HTTP transport".into());
         };
+        transport.bearer_token = None;
+        let oauth = transport
+            .oauth
+            .get_or_insert_with(McpOAuthSettings::default);
+        oauth.client_id = auth.client_id.clone();
+        oauth.scopes = auth.scopes.clone();
         self.commit_locked(None, McpFileEdit::Add(&server)).await?;
         Ok(true)
     }
@@ -1615,8 +1651,18 @@ impl McpManager {
             },
             (None, None) => return Err(McpError::not_found(&id)),
         };
-        let mut config =
-            known.unwrap_or_else(|| McpServerConfig::streamable_http(id.clone(), url.clone()));
+        let new_server = || McpServerSettings {
+            id: id.clone(),
+            transport: McpTransportSettings::StreamableHttp(McpStreamableHttpSettings {
+                url: url.clone(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut config = match known {
+            Some(config) => config,
+            None => self.build(&new_server())?,
+        };
         match &config.transport {
             McpTransportConfig::StreamableHttp(http) if http.url == url => {}
             _ => {
@@ -1628,105 +1674,104 @@ impl McpManager {
 
         // The user may still be working through the URL handed out earlier,
         // or about to paste its redirect: restarting would invalidate both.
-        if !reauthorize && let Some(auth_url) = self.inner.flows.pending_url(&id).await {
+        let pending = self.inner.flows.pending_url(&id).await;
+        if !reauthorize && let Some(auth_url) = &pending {
             return Ok(SignInStart::Done(
-                self.authorization_required(&id, &auth_url),
+                self.authorization_required(&id, auth_url),
             ));
         }
         let provider = &self.inner.provider;
+        // Refresh and re-registration can clear a tool's 403 challenge. Keep it
+        // across both so the authorization session can request cumulative scopes.
+        let mut challenge = provider.last_auth_challenge(&id);
         let mut unreachable = None;
-        if provider.contains_server(&id) {
+        if provider.contains_server(&id) && challenge.is_none() {
             if reauthorize {
-                // Sign out before re-consenting. `clear_credentials` discards
-                // the stored grant and drops the session that pinned the old
-                // token, so the flow below cannot silently reuse the previous
-                // scopes.
                 provider.clear_credentials(&id).await?;
                 provider.remove_server(&id);
             } else {
                 match self.refresh(&id).await {
                     Ok(()) => return Ok(SignInStart::Done(self.connected_summary(&id, false))),
-                    // Dead credentials (revoked, or the store was cleared): drop
-                    // the registration and run a fresh interactive
-                    // authorization below.
-                    Err(err) if is_authorization_required(&err) => {
-                        provider.remove_server(&id);
+                    Err(err) => {
+                        challenge = provider.last_auth_challenge(&id);
+                        if !is_authorization_required(&err) {
+                            unreachable = Some(err);
+                        }
                     }
-                    // Perhaps it needs a sign-in it was never given: the
-                    // endpoint decides below.
-                    Err(err) => unreachable = Some(err),
                 }
             }
         }
 
-        // Let the endpoint itself decide the auth mode: OAuth servers
-        // advertise authorization metadata, others (static bearer, none) do
-        // not.
-        let discovered = McpToolProvider::discover_http_oauth(&url).await;
-        // A configured server that answers neither way is just down.
-        if let Some(err) = unreachable
-            && !matches!(discovered, Ok(Some(_)))
-        {
-            return Err(format!("MCP server {id} already exists but is unreachable: {err}").into());
-        }
-        match discovered? {
-            None => {
-                provider.add_server(config.clone()).await?;
-                let mut view = self.inner.view.write();
-                view.registered
-                    .insert(id.clone(), Registered::new(config.clone()));
-                if !view.file.settings.declares(&id) {
-                    view.runtime.insert(
-                        id.clone(),
-                        RuntimeServer {
-                            settings: McpServerSettings {
-                                id: id.clone(),
-                                transport: McpTransportSettings::StreamableHttp(
-                                    McpStreamableHttpSettings {
-                                        url: url.clone(),
-                                        ..Default::default()
-                                    },
-                                ),
-                                ..Default::default()
-                            },
-                            config,
-                        },
-                    );
-                }
-                drop(view);
-                Ok(SignInStart::Done(self.connected_summary(&id, false)))
+        // An explicit OAuth config or a reactive challenge can point to an
+        // issuer that proactive discovery from the bare URL cannot find.
+        let configured_oauth = matches!(&config.transport, McpTransportConfig::StreamableHttp(http)
+            if matches!(http.auth, Some(McpOAuthConfig::AuthorizationCode(_))));
+        let uses_oauth = if configured_oauth || challenge.is_some() {
+            true
+        } else {
+            let discovery = McpToolProvider::discover_http_oauth(&url).await;
+            if let Some(err) = unreachable
+                && !matches!(discovery, Ok(Some(_)))
+            {
+                return Err(
+                    format!("MCP server {id} already exists but is unreachable: {err}").into(),
+                );
             }
-            Some(meta) => {
+            discovery?.is_some()
+        };
+        if !uses_oauth {
+            provider.add_server(config.clone()).await?;
+            let mut view = self.inner.view.write();
+            view.registered
+                .insert(id.clone(), Registered::new(config.clone()));
+            if !view.file.settings.declares(&id) {
+                view.runtime.insert(
+                    id.clone(),
+                    RuntimeServer {
+                        settings: new_server(),
+                        config,
+                    },
+                );
+            }
+            drop(view);
+            Ok(SignInStart::Done(self.connected_summary(&id, false)))
+        } else {
+            // Reuse the live registration (including its discovered metadata URL)
+            // when the requested scopes already match it.
+            let reuse = pending.is_none()
+                && provider.contains_server(&id)
+                && matches!(&config.transport, McpTransportConfig::StreamableHttp(http)
+                    if matches!(&http.auth, Some(McpOAuthConfig::AuthorizationCode(auth))
+                        if (scopes.is_empty() || auth.scopes == scopes) && auth.redirect_uri == self.redirect_uri()));
+            configure_authorization(&mut config, self.redirect_uri(), scopes)?;
+            if !reuse {
                 provider.remove_server(&id);
-                configure_authorization(
-                    &mut config,
-                    self.redirect_uri(),
-                    scopes,
-                    meta.scopes_supported,
-                )?;
                 provider.register_server(config.clone())?;
-                let auth_url = match provider.begin_authorization(&id).await {
-                    Ok(auth_url) => auth_url,
-                    Err(err) => {
-                        // Nothing is pending yet, so only the registration
-                        // has to go.
-                        provider.remove_server(&id);
-                        return Err(err);
-                    }
-                };
-                let waiter = match self.inner.flows.begin(config, &auth_url).await {
-                    Ok(waiter) => waiter,
-                    Err(err) => {
-                        provider.remove_server(&id);
-                        return Err(err);
-                    }
-                };
-                Ok(SignInStart::Authorize {
-                    id,
-                    auth_url,
-                    waiter,
-                })
             }
+            let auth_url = match provider
+                .begin_authorization_with_challenge(&id, challenge.as_deref())
+                .await
+            {
+                Ok(auth_url) => auth_url,
+                Err(err) => {
+                    if !reuse {
+                        provider.remove_server(&id);
+                    }
+                    return Err(err);
+                }
+            };
+            let waiter = match self.inner.flows.begin(config, &auth_url).await {
+                Ok(waiter) => waiter,
+                Err(err) => {
+                    provider.remove_server(&id);
+                    return Err(err);
+                }
+            };
+            Ok(SignInStart::Authorize {
+                id,
+                auth_url,
+                waiter,
+            })
         }
     }
 
@@ -2082,7 +2127,13 @@ impl McpManager {
     /// An engine config this manager's provider can connect: without an
     /// elicitation handler, nobody would answer a server's questions.
     fn finish(&self, mut config: McpServerConfig) -> McpServerConfig {
-        config.elicitation &= self.inner.elicitation;
+        config.elicitation &= self.inner.elicitation.is_some();
+        if let McpTransportConfig::StreamableHttp(http) = &mut config.transport
+            && let Some(McpOAuthConfig::AuthorizationCode(auth)) = &mut http.auth
+        {
+            auth.redirect_uri = self.redirect_uri().to_owned();
+            auth.client_name = Some(OAUTH_CLIENT_NAME.into());
+        }
         config
     }
 
@@ -2213,7 +2264,7 @@ impl McpManager {
             default_cwd: None,
             write_lock: Arc::new(Mutex::new(())),
             gateway_addr: "127.0.0.1:8042".parse().unwrap(),
-            elicitation: false,
+            elicitation: None,
         })
         .await
     }
@@ -2666,7 +2717,7 @@ mod tests {
             default_cwd: None,
             write_lock: Arc::new(Mutex::new(())),
             gateway_addr: "127.0.0.1:8042".parse().unwrap(),
-            elicitation: false,
+            elicitation: None,
         })
         .await;
 
@@ -3182,6 +3233,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sign_in_uses_the_live_challenge_and_preserves_granted_scopes() {
+        use anda_engine::extension::mcp::{
+            InMemoryMcpCredentialStore, McpCredentialStore, StoredCredentials,
+        };
+        use axum::{http::HeaderMap, response::IntoResponse};
+        use tokio_util::sync::CancellationToken;
+
+        async fn endpoint(
+            headers: HeaderMap,
+            Json(request): Json<Value>,
+        ) -> axum::response::Response {
+            let result = match request["method"].as_str() {
+                Some("initialize") => json!({
+                    "protocolVersion": request["params"]["protocolVersion"],
+                    "serverInfo": {"name": "test", "version": "1"},
+                    "capabilities": {"resources": {}, "tools": {}}
+                }),
+                Some("tools/list") => json!({"tools": []}),
+                Some("resources/read") => {
+                    let host = headers["host"].to_str().unwrap();
+                    let challenge = format!(
+                        r#"Bearer error="insufficient_scope", scope="write", resource_metadata="http://{host}/tenant/resource""#
+                    );
+                    return (StatusCode::FORBIDDEN, [("www-authenticate", challenge)])
+                        .into_response();
+                }
+                _ => return StatusCode::ACCEPTED.into_response(),
+            };
+            Json(json!({"jsonrpc": "2.0", "id": request["id"], "result": result})).into_response()
+        }
+
+        let app = axum::Router::new()
+            .route("/mcp", routing::post(endpoint))
+            .route("/tenant/resource", routing::get(|headers: HeaderMap| async move {
+                let base = format!("http://{}", headers["host"].to_str().unwrap());
+                Json(json!({
+                    "resource": format!("{base}/mcp"),
+                    "authorization_servers": [format!("{base}/tenant")]
+                }))
+            }))
+            .route("/.well-known/oauth-authorization-server/tenant", routing::get(|headers: HeaderMap| async move {
+                let base = format!("http://{}", headers["host"].to_str().unwrap());
+                Json(json!({
+                    "issuer": format!("{base}/tenant"),
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                    "response_types_supported": ["code"],
+                    "code_challenge_methods_supported": ["S256"]
+                }))
+            }))
+            .route("/register", routing::post(|Json(request): Json<Value>| async move {
+                Json(json!({"client_id": "test-client", "redirect_uris": request["redirect_uris"]}))
+            }));
+        let base = crate::test_support::spawn_http_mock(app).await;
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            &json!({"mcpServers":{"docs":{"url":format!("{base}/mcp"),"lifecycle":"initialize"}}})
+                .to_string(),
+        )
+        .await;
+        let store = Arc::new(InMemoryMcpCredentialStore::new());
+        store
+            .save(
+                "docs",
+                StoredCredentials::new("test-client".into(), None, vec!["read".into()], None),
+            )
+            .await
+            .unwrap();
+        let provider = Arc::new(
+            McpToolProvider::builder()
+                .credential_store(store)
+                .build()
+                .unwrap(),
+        );
+        let manager = McpManager::open(McpManagerConfig {
+            provider: provider.clone(),
+            home_dir: dir.path().into(),
+            default_cwd: None,
+            write_lock: Default::default(),
+            gateway_addr: "127.0.0.1:8042".parse().unwrap(),
+            elicitation: None,
+        })
+        .await;
+        provider.refresh_server("docs").await.unwrap();
+        assert!(
+            provider
+                .read_resource("docs", "file:///notes".into(), CancellationToken::new())
+                .await
+                .is_err()
+        );
+        let result = manager
+            .sign_in(
+                SignIn {
+                    id: Some("docs".into()),
+                    reauthorize: true,
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap();
+        let url = reqwest::Url::parse(result["authorization_url"].as_str().unwrap()).unwrap();
+        let scope = url.query_pairs().find(|(key, _)| key == "scope").unwrap().1;
+        assert_eq!(
+            scope.split_whitespace().collect::<BTreeSet<_>>(),
+            BTreeSet::from(["read", "write"])
+        );
+    }
+
+    #[tokio::test]
     async fn an_unmatched_redirect_is_rejected_without_side_effects() {
         let dir = tempfile::tempdir().unwrap();
         let manager = McpManager::for_test(dir.path()).await;
@@ -3279,13 +3442,7 @@ mod tests {
         let manager = McpManager::for_test(home).await;
         let mut server = McpServerConfig::streamable_http("srv", format!("{base_url}/mcp"));
         server.lifecycle = McpLifecycle::Initialize;
-        configure_authorization(
-            &mut server,
-            manager.redirect_uri(),
-            vec!["read".into()],
-            vec![],
-        )
-        .unwrap();
+        configure_authorization(&mut server, manager.redirect_uri(), vec!["read".into()]).unwrap();
         if let McpTransportConfig::StreamableHttp(http) = &mut server.transport
             && let Some(McpOAuthConfig::AuthorizationCode(auth)) = &mut http.auth
         {
@@ -3331,24 +3488,26 @@ mod tests {
         let home = dir.path();
         write_config(
             home,
-            r#"{"mcpServers":{"srv":{"url":"https://mcp.example.test/mcp","headers":{"X-Tenant":"${ANDA_HOME}"},"include":["read"],"approval":{"default":"ask"},"oauth":{"scopes":["old"]}}}}"#,
+            r#"{"mcpServers":{"srv":{"url":"https://mcp.example.test/mcp","headers":{"X-Tenant":"${ANDA_HOME}"},"include":["read"],"approval":{"default":"ask"},"oauth":{"scopes":["old"],"client_id":"docs-client","client_secret":"${ANDA_HOME}","client_metadata_url":"https://example.test/client.json","application_type":"native"}}}}"#,
         )
         .await;
         let manager = McpManager::for_test(home).await;
         let mut config = manager.config_of("srv").unwrap();
-        configure_authorization(
-            &mut config,
-            manager.redirect_uri(),
-            vec!["new".into()],
-            vec![],
-        )
-        .unwrap();
+        configure_authorization(&mut config, manager.redirect_uri(), vec!["new".into()]).unwrap();
         let _ops = manager.inner.ops.lock().await;
         assert!(!manager.persist_oauth_locked(&config).await.unwrap());
 
         let json = read_config(home).await;
         let entry = &json["mcpServers"]["srv"];
         assert_eq!(entry["oauth"]["scopes"], json!(["new"]));
+        assert_eq!(entry["oauth"]["client_secret"], "${ANDA_HOME}");
+        assert_eq!(entry["oauth"]["application_type"], "native");
+        assert_eq!(
+            entry["oauth"]["client_metadata_url"],
+            "https://example.test/client.json"
+        );
+        let view = manager.server("srv").await.unwrap().server;
+        assert_eq!(view.settings["oauth"]["client_secret"]["redacted"], true);
         assert_eq!(entry["headers"]["X-Tenant"], "${ANDA_HOME}");
         assert_eq!(entry["include"], json!(["read"]));
         assert_eq!(entry["approval"]["default"], "ask");
@@ -3363,13 +3522,11 @@ mod tests {
         let base = McpServerConfig::streamable_http("srv", "https://mcp.example.test/mcp");
         let mut authorized = base.clone();
         authorized.startup = McpStartup::Eager;
-        configure_authorization(&mut authorized, "http://127.0.0.1:8042/cb", vec![], vec![])
-            .unwrap();
+        configure_authorization(&mut authorized, "http://127.0.0.1:8042/cb", vec![]).unwrap();
         let mut reloaded = base.clone();
         configure_authorization(
             &mut reloaded,
             crate::config::MCP_OAUTH_REDIRECT_PLACEHOLDER,
-            vec![],
             vec![],
         )
         .unwrap();
@@ -3502,7 +3659,8 @@ mod tests {
             "startup": "eager",
             "concurrency": "read_only_parallel",
             "timeouts": { "call_secs": 900 },
-            "limits": { "output_text_bytes": 65536 },
+            "limits": { "output_text_bytes": 65536, "message_bytes": 262144 },
+            "skills": true,
             "tasks": { "max_wait_secs": 120 }
         }))
         .unwrap();
@@ -3523,11 +3681,17 @@ mod tests {
         assert_eq!(docs["concurrency"], "read_only_parallel");
         // What Anda does not read stays.
         assert_eq!(docs["timeouts"], json!({ "call_secs": 900, "custom": 1 }));
-        assert_eq!(docs["limits"], json!({ "output_text_bytes": 65536 }));
+        assert_eq!(
+            docs["limits"],
+            json!({ "output_text_bytes": 65536, "message_bytes": 262144 })
+        );
+        assert_eq!(docs["skills"], true);
         assert_eq!(docs["tasks"], json!({ "max_wait_secs": 120 }));
         let view = manager.server("docs").await.unwrap().server;
         let shown = view.options.unwrap();
         assert_eq!(shown.timeouts.call_secs, Some(900));
+        assert_eq!(shown.skills, Some(true));
+        assert_eq!(shown.limits.message_bytes, Some(262144));
         assert_eq!(view.startup, McpStartup::Eager);
 
         let set = |id: &str, options: Value| {

@@ -168,6 +168,7 @@ fn server_settings(args: AddMcpServerArgs) -> Result<McpServerSettings, BoxError
         limits: Default::default(),
         events: None,
         resources: None,
+        skills: None,
         elicitation: None,
     };
     let issues = server.setup_issues();
@@ -407,12 +408,11 @@ pub struct ConnectMcpServerArgs {
     /// Optional stable server id used in local tool names. Defaults to the host.
     #[serde(default)]
     pub id: Option<String>,
-    /// Optional OAuth scopes to request. Defaults to the scopes the server
-    /// advertises during discovery.
+    /// Optional OAuth scopes. The engine chooses scopes from the challenge or metadata by default.
     #[serde(default)]
     pub scopes: Vec<String>,
     /// Re-run the browser authorization even though the stored credentials are
-    /// still valid, discarding them first.
+    /// still valid. A step-up challenge carries forward previously granted scopes.
     #[serde(default)]
     pub reauthorize: bool,
     /// Full redirect URL copied from the browser's address bar, for finishing an
@@ -444,7 +444,7 @@ impl Tool<BaseCtx> for McpConnectTool {
             "can approve access, then finishes connecting automatically; the connection is ",
             "persisted (tokens in the local credential store, server in mcp.json) and survives ",
             "daemon restarts. Calling it again on a connected server verifies the connection, ",
-            "and re-runs the browser authorization if the credentials have died. ",
+            "and re-runs browser authorization after a server requests additional scopes. ",
             "Pass reauthorize=true to sign out and re-consent while the stored credentials are ",
             "still valid, which is what changing the granted scopes requires. ",
             "When no browser can be opened here, the call returns status=authorization_required ",
@@ -541,7 +541,7 @@ fn connect_mcp_server_parameters() -> Value {
             "scopes": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Optional OAuth scopes to request. Omit to request the scopes the server advertises."
+                "description": "Optional OAuth scopes. Omit to use the server challenge or resource metadata."
             },
             "reauthorize": {
                 "type": "boolean",

@@ -154,6 +154,8 @@ Interactive sessions request approval for risky shell operations and MCP actions
 
 `anda --full-access` starts an interactive session with approval prompts bypassed where the policy permits. **Cron jobs and active goals run with full access.** MCP event automations do not receive that elevation: operations that need approval are refused. An explicit MCP `ask` policy still requires approval, including in full-access mode. These controls govern the local runtime; shell commands execute with your OS user's permissions.
 
+Tool discovery adapts to the model. Models that support native tool additions can call selected tools directly. For other models, `tools_select` lists targets in `call_via_tools_call` and the agent invokes them through `tools_call`, keeping the initial tool list stable for prompt caching.
+
 ### Python Code Mode
 
 Code Mode is enabled by default when worker isolation is available. To turn it off, set `code_mode: { enabled: false }` in `~/.anda/config.yaml` and run `anda restart`. Use `code_exec` to compose tools in Python, `code_register` to save a typed function and `code_list` to find it again in the same workspace. Each tool call uses the caller’s current permissions. [Configuration and examples](docsite/docs/runtime/configuration.mdx#python-code-mode)
@@ -227,7 +229,7 @@ anda mcp reload
 
 The example URL is a placeholder; replace it with your server. Local servers use stdio and require their command/runtime to be installed. Remote servers use HTTP and can support OAuth sign-in. Configuration lives in `~/.anda/mcp.json`, separate from `config.yaml`; both `mcpServers` and `servers` root keys are accepted. Reload after editing it manually.
 
-Store secrets with `anda mcp secret set NAME` and reference them as `${secret:NAME}`. MCP tools have approval policies and definition-change review. Servers may also provide resources to attach to a message or request input during a tool call.
+Store secrets with `anda mcp secret set NAME` and reference them as `${secret:NAME}`. MCP tools have approval policies and definition-change review. Browse resource directories from the message attachment picker. To let the agent inspect remote skills from a trusted server, run `anda mcp options docs --skills on`. It can then read manifests and individual files through `mcp_resources`. Static skill files are checked against their declared size and SHA-256 digest.
 
 Servers that support MCP Events can drive automations through the Events tab or `anda mcp triggers`. These runs support batching, durable retries, rate limits, and automatic pause after repeated failures. dMsg can relay webhook events through a dedicated Agent ID with the `events.endpoint` grant. See the [MCP guide](docsite/docs/runtime/configuration.mdx#mcp-servers) for configuration, imports, OAuth, permissions, and event delivery.
 

@@ -2843,6 +2843,12 @@
   "mcpResourcesSearch": {
     "message": "البحث في الموارد"
   },
+  "mcpResourcesOpenDirectory": {
+    "message": "فتح الدليل $1"
+  },
+  "mcpResourcesEmptyDirectory": {
+    "message": "هذا الدليل فارغ."
+  },
   "mcpResourcesNone": {
     "message": "لا يقدم أي خادم MCP متصل موارد."
   },
@@ -2866,6 +2872,12 @@
   },
   "mcpAutomationsPaused": {
     "message": "عمليات أتمتة على الأحداث: $1، منها $2 متوقفة مؤقتًا"
+  },
+  "mcpOptionMessageLimit": {
+    "message": "الحد الأقصى لحجم الرسالة (بالبايت)"
+  },
+  "mcpOptionSkills": {
+    "message": "السماح بقراءة المهارات البعيدة"
   },
   "mcpOptionResources": {
     "message": "الموارد"

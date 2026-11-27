@@ -496,11 +496,18 @@ impl CodeMode {
         history: &[Message],
     ) -> Result<Option<String>, BoxError> {
         if !MemoryPolicy::current(ctx).may_write() {
+            let is_script = |name: &str| name == super::EXEC || name.starts_with("script__");
             let mut pending = std::collections::BTreeSet::new();
             for part in history.iter().flat_map(|m| &m.content) {
                 match part {
-                    ContentPart::ToolCall { name, call_id, .. }
-                        if name == super::EXEC || name.starts_with("script__") =>
+                    ContentPart::ToolCall {
+                        name,
+                        call_id,
+                        args,
+                        ..
+                    } if is_script(name)
+                        || crate::util::proxied_tool_call(name, args)
+                            .is_some_and(|call| is_script(&call.name.to_ascii_lowercase())) =>
                     {
                         pending.insert((name, call_id));
                     }
@@ -941,9 +948,7 @@ impl WorkerRun {
         site: CallSite,
     ) -> Result<Value, Failure> {
         let name = name.to_ascii_lowercase();
-        if matches!(name.as_str(), super::EXEC | "tools_select" | "tools_search")
-            || !dispatch.permits(ctx, &name)
-        {
+        if !super::script_callable(&name) || !dispatch.permits(ctx, &name) {
             return Err(Failure::new(
                 "scope_denied",
                 "tool is not permitted in this script",

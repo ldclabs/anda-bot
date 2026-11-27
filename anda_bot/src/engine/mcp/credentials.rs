@@ -1,8 +1,7 @@
 //! Persistent storage for MCP OAuth credentials.
 //!
-//! mcp.json only records *that* a server authenticates via OAuth
-//! (`transport.oauth`); the secrets — the dynamically registered client id and
-//! the access/refresh tokens — live here, one JSON file per server under
+//! mcp.json holds client registration settings and secret references. The
+//! issued client ID and access/refresh tokens live in one JSON file per server under
 //! `mcp_credentials/` in ANDA_HOME. With both halves present the daemon
 //! reconnects an OAuth server after a restart without any human in the loop:
 //! the engine rebuilds its authorization from the stored refresh token.
@@ -97,6 +96,21 @@ impl McpCredentialStore for FileMcpCredentialStore {
         }
     }
 
+    async fn on_refresh_token_rejected(
+        &self,
+        server_id: &str,
+        rejected: &StoredCredentials,
+    ) -> Result<(), BoxError> {
+        // rmcp holds our refresh guard. A rejection of an older token must
+        // never discard a replacement grant.
+        if let Some(current) = self.load(server_id).await?
+            && serde_json::to_value(current)? == serde_json::to_value(rejected)?
+        {
+            self.clear(server_id).await?;
+        }
+        Ok(())
+    }
+
     async fn acquire_refresh_guard(
         &self,
         server_id: &str,
@@ -150,6 +164,23 @@ mod tests {
         assert!(store.load("alink").await.unwrap().is_none());
         // Clearing again is a no-op, not an error.
         store.clear("alink").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejection_only_removes_the_grant_used_for_that_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileMcpCredentialStore::new(dir.path().into());
+        let old = credentials("client");
+        let mut current = old.clone();
+        current.token_received_at = Some(2_000_000);
+        store.save("docs", current.clone()).await.unwrap();
+        store.on_refresh_token_rejected("docs", &old).await.unwrap();
+        assert!(store.load("docs").await.unwrap().is_some());
+        store
+            .on_refresh_token_rejected("docs", &current)
+            .await
+            .unwrap();
+        assert!(store.load("docs").await.unwrap().is_none());
     }
 
     #[cfg(unix)]

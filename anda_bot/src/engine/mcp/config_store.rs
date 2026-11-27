@@ -16,8 +16,8 @@ use tokio::sync::Mutex;
 use super::McpError;
 use crate::{
     config::{
-        McpApproval, McpOAuthSettings, McpServerOptions, McpServerSettings, McpSettings,
-        McpTimeoutSettings, McpTransportSettings,
+        McpApproval, McpServerOptions, McpServerSettings, McpSettings, McpTimeoutSettings,
+        McpTransportSettings,
     },
     engine::{backup_daemon_config, daemon_config_revision, write_daemon_config_atomically},
     util::text::read_text_file,
@@ -53,6 +53,7 @@ const ENTRY_FIELDS: &[&str] = &[
     "limits",
     "events",
     "resources",
+    "skills",
     "elicitation",
 ];
 
@@ -73,6 +74,7 @@ const LIST_ENTRY_FIELDS: &[&str] = &[
     "limits",
     "events",
     "resources",
+    "skills",
     "elicitation",
 ];
 
@@ -136,7 +138,11 @@ pub(crate) enum McpFileEdit<'a> {
         visible: bool,
     },
     /// Records the OAuth marker of an authorized server.
-    SetOAuth(&'a str, &'a McpOAuthSettings),
+    SetOAuth {
+        id: &'a str,
+        client_id: Option<&'a str>,
+        scopes: &'a [String],
+    },
     /// Sets the approval policy of one tool, or with no tool the server's
     /// default. `None` removes it, so the tool follows the server's default
     /// and the server falls back to `auto`.
@@ -266,14 +272,28 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
                 }
             }
         }
-        McpFileEdit::SetOAuth(id, oauth) => {
+        McpFileEdit::SetOAuth {
+            id,
+            client_id,
+            scopes,
+        } => {
             let (entry, _) = entry_mut(&mut root, id)?;
             // The older list form nests the transport fields.
             let transport = match entry.get_mut("transport") {
                 Some(Value::Object(transport)) => transport,
                 _ => entry,
             };
-            transport.insert("oauth".into(), serde_json::to_value(oauth)?);
+            let mut oauth = match transport.remove("oauth") {
+                Some(Value::Object(oauth)) => oauth,
+                _ => Map::new(),
+            };
+            set_or_remove_value(&mut oauth, "client_id", client_id.map(|id| json!(id)));
+            set_or_remove_value(
+                &mut oauth,
+                "scopes",
+                (!scopes.is_empty()).then(|| json!(scopes)),
+            );
+            transport.insert("oauth".into(), Value::Object(oauth));
             transport.remove("bearer_token");
         }
         McpFileEdit::SetApproval { id, tool, approval } => {
@@ -315,6 +335,7 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
                 ("concurrency", options.concurrency.map(|v| json!(v))),
                 ("tasks", options.tasks.as_ref().map(|v| json!(v))),
                 ("resources", options.resources.map(|v| json!(v))),
+                ("skills", options.skills.map(|v| json!(v))),
                 ("elicitation", options.elicitation.map(|v| json!(v))),
             ] {
                 set_or_remove_value(entry, key, value);
@@ -334,7 +355,11 @@ pub(crate) fn apply_edit(content: &str, edit: McpFileEdit<'_>) -> Result<String,
             merge_fields(
                 entry,
                 "limits",
-                [(&"output_text_bytes", options.limits.output_text_bytes)].into_iter(),
+                [
+                    (&"output_text_bytes", options.limits.output_text_bytes),
+                    (&"message_bytes", options.limits.message_bytes),
+                ]
+                .into_iter(),
             );
             // The older list form nests the transport fields.
             let transport = match (form, entry.get_mut("transport")) {
@@ -521,6 +546,9 @@ pub(crate) fn entry_json(server: &McpServerSettings) -> Map<String, Value> {
     }
     if let Some(resources) = server.resources {
         object.insert("resources".into(), json!(resources));
+    }
+    if let Some(skills) = server.skills {
+        object.insert("skills".into(), json!(skills));
     }
     if let Some(elicitation) = server.elicitation {
         object.insert("elicitation".into(), json!(elicitation));
@@ -952,13 +980,11 @@ mod tests {
         ] {
             let updated = apply_edit(
                 content,
-                McpFileEdit::SetOAuth(
-                    "srv",
-                    &McpOAuthSettings {
-                        client_id: Some("public-client".into()),
-                        scopes: vec!["read".into()],
-                    },
-                ),
+                McpFileEdit::SetOAuth {
+                    id: "srv",
+                    client_id: Some("public-client"),
+                    scopes: &["read".into()],
+                },
             )
             .unwrap();
             assert!(

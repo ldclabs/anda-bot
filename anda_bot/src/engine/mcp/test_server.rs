@@ -10,6 +10,21 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 pub(crate) type Catalog = Arc<RwLock<Vec<Value>>>;
+pub(crate) const SKILL_URI: &str = "skill://mock/notes/SKILL.md";
+const SKILL_TEXT: &str = "Read the supplied notes.";
+const SKILL_FILE: &str = "skill://mock/notes/example.bin";
+
+fn skill_manifest() -> Value {
+    json!({
+        "uri": SKILL_URI,
+        "frontmatter": {"name": "notes", "description": "Read the supplied notes"},
+        "resources": [
+            rmcp::model::SkillResource::from_bytes(SKILL_URI, SKILL_TEXT.as_bytes()),
+            rmcp::model::SkillResource::from_bytes(SKILL_FILE, b"expected bytes")
+        ]
+    })
+}
+
 pub(crate) type Instructions = Arc<RwLock<String>>;
 
 /// A read-only tool definition named `name`.
@@ -43,10 +58,18 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
                         "jsonrpc": "2.0", "id": id,
                         "result": {
                             "protocolVersion": request["params"]["protocolVersion"],
-                            "capabilities": { "tools": {}, "resources": {} },
+                            "capabilities": {
+                                "resources": {},
+                                "tools": (!catalog.read().is_empty()).then(|| json!({})),
+                                "extensions": { "io.modelcontextprotocol/skills": { "directoryRead": true } }
+                            },
                             "serverInfo": { "name": "mock", "title": "Mock Server", "version": "1.0.0" },
                             "instructions": *instructions.read()
                         }
+                    }),
+                    Some("tools/list") if catalog.read().is_empty() => json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "error": { "code": -32601, "message": "No tool catalog" }
                     }),
                     Some("tools/list") => json!({
                         "jsonrpc": "2.0", "id": id,
@@ -74,6 +97,17 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
                               "mimeType": "image/png", "size": 4 }
                         ] }
                     }),
+                    Some("resources/directory/read") => json!({
+                        "jsonrpc": "2.0", "id": id, "result": {
+                            "resources": [{"uri": "file:///notes.md", "name": "notes.md"}]
+                        }
+                    }),
+                    Some("skills/list") => json!({
+                        "jsonrpc": "2.0", "id": id, "result": {"skills": [skill_manifest()]}
+                    }),
+                    Some("skills/get") => json!({
+                        "jsonrpc": "2.0", "id": id, "result": {"skill": skill_manifest()}
+                    }),
                     Some("resources/templates/list") => json!({
                         "jsonrpc": "2.0", "id": id,
                         "result": { "resourceTemplates": [
@@ -81,6 +115,14 @@ pub(crate) async fn serve_with(catalog: Catalog, instructions: Instructions) -> 
                         ] }
                     }),
                     Some("resources/read") => match request["params"]["uri"].as_str() {
+                        Some(SKILL_URI) => json!({
+                            "jsonrpc":"2.0", "id":id,
+                            "result":{"contents":[{"uri":SKILL_URI, "text":SKILL_TEXT}]}
+                        }),
+                        Some(SKILL_FILE) => json!({
+                            "jsonrpc":"2.0", "id":id,
+                            "result":{"contents":[{"uri":SKILL_FILE, "text":"tampered bytes"}]}
+                        }),
                         Some("file:///notes.md") => json!({
                             "jsonrpc": "2.0", "id": id,
                             "result": { "contents": [{ "uri": "file:///notes.md",

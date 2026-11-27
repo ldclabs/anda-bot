@@ -161,6 +161,10 @@ export class McpApi extends EventTarget {
     return result.servers
   }
 
+  async resourceDirectory(id: string, uri: string): Promise<McpResourceListing> {
+    return this.#call<McpResourceListing>('mcp_resource_directory', { id, uri })
+  }
+
   /** Reads a resource to attach to a message: each of its contents as a file. */
   async readResource(id: string, uri: string): Promise<McpResourceAttachment[]> {
     const result = await this.#call<{ attachments: McpResourceAttachment[] }>('mcp_resource_read', {
@@ -285,6 +289,9 @@ export function fromOtherClient(entry: McpEntry): McpEntry {
     if (typeof next[key] === 'string') next[key] = text(next[key] as Json)
   }
   if (Array.isArray(next.args)) next.args = next.args.map(text)
+  if (isObject(next.oauth) && typeof next.oauth.client_secret === 'string') {
+    next.oauth = { ...next.oauth, client_secret: text(next.oauth.client_secret) }
+  }
   for (const key of ['env', 'headers']) {
     const values = next[key]
     if (isObject(values)) {
@@ -416,6 +423,12 @@ export function moveCredentialsToSecrets(
           )
         ])
       )
+    }
+  }
+  if (isObject(entry.oauth) && typeof entry.oauth.client_secret === 'string') {
+    next.oauth = {
+      ...entry.oauth,
+      client_secret: convert('CLIENT_SECRET', entry.oauth.client_secret, true)
     }
   }
   if (typeof entry.bearer_token === 'string') {

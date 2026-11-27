@@ -121,11 +121,13 @@ describe('McpApi', () => {
 
     expect(await api.resources()).toEqual([])
     await api.resources('docs')
+    await api.resourceDirectory('docs', 'file:///reports/')
     expect(await api.readResource('docs', 'file:///notes.md')).toEqual([])
 
     expect(rpc.mock.calls).toEqual([
       ['mcp_resources', [{}]],
       ['mcp_resources', [{ id: 'docs' }]],
+      ['mcp_resource_directory', [{ id: 'docs', uri: 'file:///reports/' }]],
       ['mcp_resource_read', [{ id: 'docs', uri: 'file:///notes.md' }]]
     ])
   })
@@ -227,14 +229,22 @@ describe('secrets', () => {
       id: 'git-hub',
       url: 'https://api.test/mcp',
       headers: { Authorization: 'Bearer ghp_x', 'X-Org': '${ORG}' },
-      bearer_token: '${secret:KEEP}'
+      bearer_token: '${secret:KEEP}',
+      oauth: { client_id: 'docs', client_secret: 'client-value' }
     })
     expect(entry.headers).toEqual({
       Authorization: '${secret:GIT_HUB_AUTHORIZATION}',
       'X-Org': '${ORG}'
     })
     expect(entry.bearer_token).toBe('${secret:KEEP}')
-    expect(secrets).toEqual({ GIT_HUB_AUTHORIZATION: 'Bearer ghp_x' })
+    expect(entry.oauth).toEqual({
+      client_id: 'docs',
+      client_secret: '${secret:GIT_HUB_CLIENT_SECRET}'
+    })
+    expect(secrets).toEqual({
+      GIT_HUB_AUTHORIZATION: 'Bearer ghp_x',
+      GIT_HUB_CLIENT_SECRET: 'client-value'
+    })
 
     const again = moveCredentialsToSecrets(
       { id: 'git-hub', headers: { Authorization: 'Bearer ghp_y' } },

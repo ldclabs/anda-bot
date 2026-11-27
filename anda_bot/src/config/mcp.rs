@@ -283,6 +283,8 @@ struct McpJsonServer {
     #[serde(default)]
     resources: Option<bool>,
     #[serde(default)]
+    skills: Option<bool>,
+    #[serde(default)]
     elicitation: Option<bool>,
 }
 
@@ -313,6 +315,7 @@ impl McpJsonServer {
             limits,
             events,
             resources,
+            skills,
             elicitation,
         } = self;
 
@@ -411,6 +414,7 @@ impl McpJsonServer {
             limits,
             events,
             resources,
+            skills,
             elicitation,
         })
     }
@@ -483,6 +487,9 @@ pub struct McpServerSettings {
     /// resources. Absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<bool>,
+    /// Allow explicit reads of remote MCP skills. Off by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<bool>,
     /// Whether the server may ask the user for input while a call runs
     /// (elicitation). Absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -569,6 +576,9 @@ pub struct McpLimitSettings {
     /// Text the model gets from one tool result, in bytes (32 KiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_text_bytes: Option<usize>,
+    /// Maximum incoming stdio line, HTTP JSON body or SSE event, in bytes (8 MiB).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_bytes: Option<usize>,
 }
 
 impl McpLimitSettings {
@@ -580,6 +590,9 @@ impl McpLimitSettings {
         let mut limits = McpLimits::default();
         if let Some(bytes) = self.output_text_bytes {
             limits.output_text_bytes = bytes;
+        }
+        if let Some(bytes) = self.message_bytes {
+            limits.message_bytes = bytes;
         }
         limits
     }
@@ -609,6 +622,9 @@ pub struct McpServerOptions {
     /// Resources the agent and the apps may read; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resources: Option<bool>,
+    /// Allow explicit reads of remote MCP skills. Off by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<bool>,
     /// Input the server may ask the user for; absent means on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elicitation: Option<bool>,
@@ -734,6 +750,9 @@ impl McpServerSettings {
                 "limits.output_text_bytes must be between {MIN_OUTPUT_TEXT_BYTES} and {MAX_OUTPUT_TEXT_BYTES}"
             ));
         }
+        if self.limits.message_bytes == Some(0) {
+            issues.push("limits.message_bytes must be positive".into());
+        }
         issues
     }
 
@@ -751,6 +770,7 @@ impl McpServerSettings {
             },
             tasks: self.tasks.clone(),
             resources: self.resources,
+            skills: self.skills,
             elicitation: self.elicitation,
         }
     }
@@ -767,6 +787,7 @@ impl McpServerSettings {
             inherit_env,
             tasks,
             resources,
+            skills,
             elicitation,
         } = options;
         match &mut self.transport {
@@ -783,6 +804,7 @@ impl McpServerSettings {
         self.limits = limits;
         self.tasks = tasks;
         self.resources = resources;
+        self.skills = skills;
         self.elicitation = elicitation;
         Ok(())
     }
@@ -815,6 +837,7 @@ impl McpServerSettings {
             // elicitation off on a provider that has nobody to ask.
             elicitation: self.elicitation.unwrap_or(true),
             resources: self.resources.unwrap_or(true),
+            skills: self.skills.unwrap_or(false),
         })
     }
 }
@@ -839,6 +862,13 @@ impl McpServerSettings {
                     scan(token);
                 }
                 http.headers.values().for_each(|value| scan(value));
+                if let Some(secret) = http
+                    .oauth
+                    .as_ref()
+                    .and_then(|oauth| oauth.client_secret.as_ref())
+                {
+                    scan(secret);
+                }
             }
         }
         names
@@ -997,23 +1027,44 @@ pub struct McpStreamableHttpSettings {
     pub oauth: Option<McpOAuthSettings>,
 }
 
-/// OAuth Authorization Code marker for an HTTP MCP server.
+/// OAuth Authorization Code settings for an HTTP MCP server.
 ///
 /// Tokens are never stored in mcp.json: access and refresh tokens live in the
-/// MCP credential store (`mcp_credentials/` under ANDA_HOME). This section only
-/// records that the server authenticates via OAuth so the daemon reconnects it
-/// from stored credentials after a restart; when those credentials are gone the
-/// server needs a new interactive `connect_mcp_server` authorization.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+/// MCP credential store (`mcp_credentials/` under ANDA_HOME). The daemon uses
+/// these client settings when authorizing or refreshing the stored grant.
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub struct McpOAuthSettings {
-    /// Pre-registered public client id. Omit to register dynamically (RFC 7591)
-    /// during authorization; the issued id is persisted with the credentials.
+    /// Pre-registered client id. Takes priority over metadata and dynamic registration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    /// Confidential client secret, normally a `${secret:NAME}` reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
+    /// HTTPS Client ID Metadata Document used when the issuer supports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_metadata_url: Option<String>,
+    /// OIDC application type sent during dynamic registration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_type: Option<String>,
     /// OAuth scopes to request during (re-)authorization. Empty means the
-    /// scopes the server advertises.
+    /// scopes selected during OAuth discovery.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<String>,
+}
+
+impl fmt::Debug for McpOAuthSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("McpOAuthSettings")
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[redacted]"),
+            )
+            .field("client_metadata_url", &self.client_metadata_url)
+            .field("application_type", &self.application_type)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
 }
 
 /// Placeholder redirect URI stored in reconnect configs. Reconnection uses the
@@ -1025,13 +1076,22 @@ pub const MCP_OAUTH_REDIRECT_PLACEHOLDER: &str = "http://127.0.0.1/callback";
 impl McpOAuthSettings {
     /// Builds the engine-side authorization config for reconnecting from
     /// stored credentials.
-    pub fn to_auth_config(&self) -> McpOAuthConfig {
-        McpOAuthConfig::AuthorizationCode(OAuthAuthorizationCodeConfig {
-            redirect_uri: MCP_OAUTH_REDIRECT_PLACEHOLDER.to_string(),
-            scopes: self.scopes.clone(),
-            client_name: None,
-            client_id: self.client_id.clone(),
-        })
+    fn to_auth_config(&self, vars: &McpExpansionVars) -> Result<McpOAuthConfig, BoxError> {
+        Ok(McpOAuthConfig::AuthorizationCode(
+            OAuthAuthorizationCodeConfig {
+                redirect_uri: MCP_OAUTH_REDIRECT_PLACEHOLDER.to_string(),
+                scopes: self.scopes.clone(),
+                client_name: None,
+                client_id: self.client_id.clone(),
+                client_secret: self
+                    .client_secret
+                    .as_deref()
+                    .map(|value| expand_config_string(value, vars, "oauth.client_secret"))
+                    .transpose()?,
+                client_metadata_url: self.client_metadata_url.clone(),
+                application_type: self.application_type.clone(),
+            },
+        ))
     }
 }
 
@@ -1047,10 +1107,29 @@ impl McpStreamableHttpSettings {
                 issues.push("bearer_token cannot be combined with oauth".to_string());
             }
         }
+        if let Some(oauth) = &self.oauth
+            && let Some(secret) = &oauth.client_secret
+        {
+            if oauth
+                .client_id
+                .as_deref()
+                .is_none_or(|id| id.trim().is_empty())
+            {
+                issues.push("oauth.client_secret requires oauth.client_id".into());
+            }
+            push_expansion_issues(secret, "oauth.client_secret", vars, issues);
+        }
         for (name, value) in &self.headers {
             let field = format!("headers.{name}");
-            if HeaderName::from_bytes(name.as_bytes()).is_err() {
-                issues.push(format!("{field} is not a valid header name"));
+            match HeaderName::from_bytes(name.as_bytes()) {
+                Err(_) => issues.push(format!("{field} is not a valid header name")),
+                Ok(name)
+                    if matches!(name.as_str(), "mcp-method" | "mcp-name")
+                        || name.as_str().starts_with("mcp-param-") =>
+                {
+                    issues.push(format!("{field} is reserved for MCP routing"))
+                }
+                _ => {}
             }
             match expand_config_string(value, vars, &field) {
                 Ok(expanded) => {
@@ -1085,7 +1164,11 @@ impl McpStreamableHttpSettings {
                     Ok((key.clone(), value))
                 })
                 .collect::<Result<_, BoxError>>()?,
-            auth: self.oauth.as_ref().map(McpOAuthSettings::to_auth_config),
+            auth: self
+                .oauth
+                .as_ref()
+                .map(|auth| auth.to_auth_config(vars))
+                .transpose()?,
         })
     }
 }
@@ -1365,6 +1448,36 @@ mod tests {
             },
             _ => panic!("expected HTTP transport"),
         }
+    }
+
+    #[test]
+    fn oauth_client_credentials_expand_only_for_the_connection() {
+        let settings = McpSettings::parse_entry("docs", &serde_json::json!({
+            "url":"https://mcp.test",
+            "oauth":{"client_id":"docs-client","client_secret":"${secret:DOCS_SECRET}",
+                "application_type":"native","client_metadata_url":"https://docs.test/client.json"}
+        })).unwrap();
+        assert_eq!(
+            settings.secret_names(),
+            BTreeSet::from(["DOCS_SECRET".into()])
+        );
+        let secrets = McpSecretValues::from([("DOCS_SECRET".into(), "test-value".into())]);
+        let config = settings
+            .server_config(Path::new("/anda"), None, &secrets)
+            .unwrap();
+        assert!(!format!("{config:?}").contains("test-value"));
+        let McpTransportConfig::StreamableHttp(http) = config.transport else {
+            panic!("expected HTTP")
+        };
+        let Some(McpOAuthConfig::AuthorizationCode(auth)) = http.auth else {
+            panic!("expected OAuth")
+        };
+        assert_eq!(auth.client_secret.as_deref(), Some("test-value"));
+        assert_eq!(auth.application_type.as_deref(), Some("native"));
+        assert_eq!(
+            auth.client_metadata_url.as_deref(),
+            Some("https://docs.test/client.json")
+        );
     }
 
     #[test]
@@ -1932,7 +2045,8 @@ mod tests {
                 "inherit_env": false,
                 "timeouts": { "call_secs": 900 },
                 "concurrency": "read-only-parallel",
-                "limits": { "output_text_bytes": 4096 }
+                "skills": true,
+                "limits": { "output_text_bytes": 4096, "message_bytes": 8192 }
             }),
         )
         .unwrap();
@@ -1946,6 +2060,8 @@ mod tests {
         );
         assert_eq!(config.concurrency, McpConcurrency::ReadOnlyParallel);
         assert_eq!(config.limits.output_text_bytes, 4096);
+        assert_eq!(config.limits.message_bytes, 8192);
+        assert!(config.skills);
         let McpTransportConfig::Stdio(stdio) = config.transport else {
             panic!("docs runs a command");
         };
@@ -1956,6 +2072,11 @@ mod tests {
             .unwrap()
             .server_config(Path::new("/anda"), None, &McpSecretValues::new())
             .unwrap();
+        assert!(!plain.skills);
+        assert_eq!(
+            plain.limits.message_bytes,
+            McpLimits::default().message_bytes
+        );
         assert_eq!(plain.concurrency, McpConcurrency::Serial);
         assert_eq!(
             plain.limits.output_text_bytes,
@@ -1977,6 +2098,14 @@ mod tests {
             assert!(err.to_string().contains(message), "{err}");
         }
         for (entry, issue) in [
+            (
+                serde_json::json!({"command": "x", "limits": {"message_bytes": 0}}),
+                "limits.message_bytes must be positive",
+            ),
+            (
+                serde_json::json!({"url": "https://mcp.test", "headers": {"MCP-Param-Foo": "bar"}}),
+                "headers.MCP-Param-Foo is reserved for MCP routing",
+            ),
             (
                 serde_json::json!({ "command": "x", "timeouts": { "setup_secs": 0 } }),
                 "timeouts.setup_secs must be between 1 and 86400 seconds",

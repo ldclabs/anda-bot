@@ -97,6 +97,10 @@ Anda Bot 可以通过 stdio 子进程或 HTTP endpoint 连接 MCP 服务。把�
 配置放到 `~/.anda/mcp.json`，然后运行 `anda mcp reload`（或重启 daemon）。该文件同时支持 `mcpServers`
 和 `servers` 两种 root key，方便直接粘贴其它 MCP 工具里的配置。
 
+在聊天的 MCP 附件选择器中可以浏览资源目录。智能体使用 `mcp_resources` 的 `directory` 操作列出子项。运行 `anda mcp options <id> --skills on` 可单独允许读取该服务的远端技能，默认关闭。`list_skills` 列出技能，`get_skill` 接受指向 `SKILL.md` 的 `skill_uri`，`read_skill_file` 还需要文件的 `uri`。静态文件按清单核对大小和 SHA-256 摘要，动态文件限定在技能目录内。读取沿用服务的审批和外部用户策略，技能不会自动安装。
+
+`limits.message_bytes` 限制单条 stdio 消息、HTTP JSON 响应或 SSE 事件的大小，默认 8 MiB，也可以用 `--message-limit` 设置。HTTP 服务的 `oauth` 支持预注册的 `client_id` 和 `client_secret`（建议用 `${secret:NAME}`）、`client_metadata_url` 和动态注册的 `application_type`。留空 `scopes` 可按服务端挑战或资源元数据选择范围。服务要求增权时，再次连接会保留原有范围并请求新增权限。运行中的任务和资源读取也可向发起对话请求输入。
+
 ```json
 {
   "mcpServers": {

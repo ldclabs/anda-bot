@@ -1,7 +1,7 @@
 use anda_core::{AgentOutput, BoxError, Principal};
 use anda_db::database::AndaDB;
 use anda_engine::{
-    context::{AgentCtx, Web3SDK},
+    context::{AgentCtx, TOOLS_CALL_NAME, TOOLS_GROUPS_NAME, TOOLS_SELECT_NAME, Web3SDK},
     engine::{Engine, EngineRef},
     extension::{fs, mcp::McpToolProvider, shell, skill},
     management::{BaseManagement, Visibility},
@@ -343,8 +343,9 @@ fn build_skill_registry(
         agent::SHELL_SESSION_NAME.to_string(),
         "read_file".to_string(),
         "search_file".to_string(),
-        "tools_groups".to_string(),
-        "tools_select".to_string(),
+        TOOLS_GROUPS_NAME.to_string(),
+        TOOLS_SELECT_NAME.to_string(),
+        TOOLS_CALL_NAME.to_string(),
         skill::SkillsReadTool::NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
     ];
@@ -746,12 +747,12 @@ impl Engines {
         // Registers the mcp.json servers; the engine connects them while it
         // initializes its providers.
         let mcp_manager = mcp::McpManager::open(mcp::McpManagerConfig {
-            provider: mcp_provider.clone(),
+            provider: mcp_provider,
             home_dir: cfg.home_dir.clone(),
             default_cwd: Some(default_workspace.clone()),
             write_lock: config_write_lock.clone(),
             gateway_addr: cfg.gateway_addr,
-            elicitation: true,
+            elicitation: Some(mcp_elicitations),
         })
         .await;
         // MCP event automations run like cron jobs, under the same admission.
@@ -885,11 +886,7 @@ impl Engines {
             }
         }
         engine_builder = engine_builder.register_tool_provider(Arc::new(
-            resources::ArtifactProvider(Arc::new(mcp::McpGate::new(
-                mcp_provider,
-                mcp_manager.clone(),
-                mcp_elicitations,
-            ))),
+            resources::ArtifactProvider(Arc::new(mcp::McpGate::new(mcp_manager.clone()))),
         ))?;
         for agent in media_agents {
             let label = agent.model_label().to_string();

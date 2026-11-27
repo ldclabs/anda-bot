@@ -2,7 +2,7 @@
 name: auto-research
 description: Run a long research or implementation task with resumable workspace records, repeated experiments and explicit completion checks. Use when work must survive a handoff or continue across iterations.
 execution: subagent
-allowed-tools: shell shell_session read_file write_file edit_file search_file subagents_manager create_cron_job list_cron_jobs update_cron_job manage_cron_job list_cron_runs recall_memory skills_manager skills_read tools_groups tools_select
+allowed-tools: shell shell_session read_file write_file edit_file search_file subagents_manager create_cron_job list_cron_jobs update_cron_job manage_cron_job list_cron_runs recall_memory skills_manager skills_read tools_groups tools_select tools_call
 metadata:
   source: https://victorchen96.github.io/auto_research/framework.html
   type: Agent Framework

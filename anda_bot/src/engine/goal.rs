@@ -339,10 +339,16 @@ fn evaluation_message(message: &Message) -> Option<Value> {
             ContentPart::Text { text } => {
                 Some(json!({ "text": clip(text, EVALUATION_TEXT_LIMIT) }))
             }
-            ContentPart::ToolCall { name, args, .. } => Some(json!({
-                "tool_call": name,
-                "args": clip(&args.to_string(), EVALUATION_TOOL_ARGS_LIMIT),
-            })),
+            ContentPart::ToolCall { name, args, .. } => {
+                let proxy = crate::util::proxied_tool_call(name, args);
+                let (name, args) = proxy
+                    .as_ref()
+                    .map_or((name, args), |call| (&call.name, &call.arguments));
+                Some(json!({
+                    "tool_call": name,
+                    "args": clip(&args.to_string(), EVALUATION_TOOL_ARGS_LIMIT),
+                }))
+            }
             ContentPart::ToolOutput {
                 name,
                 output,

@@ -79,7 +79,12 @@ fn secondary_part_text(part: &ContentPart) -> (Cow<'_, str>, usize) {
     let text = match part {
         ContentPart::Text { text } => Cow::Borrowed(text.as_str()),
         ContentPart::Reasoning { text } => format!("thinking: {text}").into(),
-        ContentPart::ToolCall { name, args, .. } => format!("→ {name}({args})").into(),
+        ContentPart::ToolCall { name, args, .. } => {
+            match crate::util::proxied_tool_call(name, args) {
+                Some(call) => format!("→ {}({})", call.name, call.arguments).into(),
+                None => format!("→ {name}({args})").into(),
+            }
+        }
         ContentPart::ToolOutput { name, output, .. } => format!("← {name}: {output}").into(),
         ContentPart::FileData {
             file_uri,

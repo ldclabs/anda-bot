@@ -27,7 +27,16 @@
   } = $props()
 
   // The engine's defaults, shown where a field is left empty.
-  const DEFAULTS = { setup: 90, list: 30, request: 180, call: 600, output: 32768, wait: 300 }
+  const id = $props.id()
+  const DEFAULTS = {
+    setup: 90,
+    list: 30,
+    request: 180,
+    call: 600,
+    output: 32768,
+    message: 8388608,
+    wait: 300
+  }
 
   type Draft = {
     startup: string
@@ -38,6 +47,8 @@
     request: string
     call: string
     output: string
+    message: string
+    skills: boolean
     env: string
     tasks: string
     wait: string
@@ -93,9 +104,17 @@
   const next = $derived(toOptions(draft))
   const changed = $derived(JSON.stringify(next) !== JSON.stringify(normalized(server.options)))
   const invalid = $derived(
-    [draft.setup, draft.list, draft.request, draft.call, draft.output, draft.wait].some(
-      (value) => value.trim() !== '' && !/^\d+$/.test(value.trim())
-    )
+    [
+      draft.setup,
+      draft.list,
+      draft.request,
+      draft.call,
+      draft.output,
+      draft.message,
+      draft.wait
+    ].some((value) => value.trim() !== '' && !/^\d+$/.test(value.trim())) ||
+      (draft.message.trim() !== '' &&
+        (!Number.isSafeInteger(Number(draft.message)) || Number(draft.message) <= 0))
   )
 
   function fromOptions(options: McpServerOptions | undefined): Draft {
@@ -110,6 +129,8 @@
       request: number(options?.timeouts?.request_secs),
       call: number(options?.timeouts?.call_secs),
       output: number(options?.limits?.output_text_bytes),
+      message: number(options?.limits?.message_bytes),
+      skills: options?.skills === true,
       env: options?.inherit_env === false ? 'off' : '',
       tasks: options?.tasks ? 'on' : '',
       wait: number(options?.tasks?.max_wait_secs),
@@ -138,7 +159,10 @@
     )
     if (Object.keys(set).length) options.timeouts = set
     const output = number(value.output)
-    if (output !== undefined) options.limits = { output_text_bytes: output }
+    const message = number(value.message)
+    if (output !== undefined || message !== undefined)
+      options.limits = { output_text_bytes: output, message_bytes: message }
+    if (value.skills) options.skills = true
     if (server.transport === 'stdio' && value.env === 'off') options.inherit_env = false
     if (value.tasks) {
       const wait = number(value.wait)
@@ -217,6 +241,16 @@
         bind:value={draft.output}
       />
     </label>
+    <div class="grid gap-1 text-xs font-medium">
+      <label for={`${id}-message-limit`}>{getMessage('mcpOptionMessageLimit')}</label>
+      <input
+        id={`${id}-message-limit`}
+        class={inputClass('h-8 text-xs tabular-nums')}
+        inputmode="numeric"
+        placeholder={String(DEFAULTS.message)}
+        bind:value={draft.message}
+      />
+    </div>
     {#if server.transport === 'stdio'}
       <div class="grid gap-1 text-xs font-medium">
         {getMessage('mcpOptionEnv')}
@@ -256,6 +290,10 @@
         bind:value={draft.resources}
         ariaLabel={getMessage('mcpOptionResources')}
       />
+    </div>
+    <div class="flex items-center gap-2 text-xs font-medium">
+      <input id={`${id}-skills`} type="checkbox" bind:checked={draft.skills} />
+      <label for={`${id}-skills`}>{getMessage('mcpOptionSkills')}</label>
     </div>
     <div class="grid gap-1 text-xs font-medium">
       {getMessage('mcpOptionElicitation')}

@@ -232,19 +232,13 @@ pub(super) fn configure_authorization(
     config: &mut McpServerConfig,
     redirect_uri: &str,
     scopes: Vec<String>,
-    advertised_scopes: Vec<String>,
 ) -> Result<(), BoxError> {
     let McpTransportConfig::StreamableHttp(http) = &mut config.transport else {
         return Err("OAuth requires an HTTP MCP server".into());
     };
     let mut auth = match http.auth.take() {
         Some(McpOAuthConfig::AuthorizationCode(auth)) => auth,
-        _ => OAuthAuthorizationCodeConfig {
-            redirect_uri: redirect_uri.into(),
-            scopes: vec![],
-            client_name: None,
-            client_id: None,
-        },
+        _ => OAuthAuthorizationCodeConfig::default(),
     };
     auth.redirect_uri = redirect_uri.into();
     // Servers reloaded from mcp.json carry no name; without one, a dynamic
@@ -253,8 +247,6 @@ pub(super) fn configure_authorization(
         .get_or_insert_with(|| OAUTH_CLIENT_NAME.into());
     if !scopes.is_empty() {
         auth.scopes = scopes;
-    } else if auth.scopes.is_empty() {
-        auth.scopes = advertised_scopes;
     }
     http.bearer_token = None;
     http.auth = Some(McpOAuthConfig::AuthorizationCode(auth));
@@ -455,10 +447,6 @@ mod tests {
 
     #[test]
     fn authorization_names_the_client_and_keeps_operator_settings() {
-        let reloaded = crate::config::McpOAuthSettings {
-            client_id: Some("registered-client".to_string()),
-            scopes: vec!["read".to_string()],
-        };
         let mut config = McpServerConfig::streamable_http("srv", "https://mcp.example.test/mcp");
         config.include.insert("read".into());
         config.exclude.insert("delete".into());
@@ -466,11 +454,17 @@ mod tests {
         config.tasks = Some(McpTasksConfig::default());
         if let McpTransportConfig::StreamableHttp(http) = &mut config.transport {
             http.headers.insert("X-Tenant".into(), "tenant".into());
-            http.auth = Some(reloaded.to_auth_config());
+            http.auth = Some(McpOAuthConfig::AuthorizationCode(
+                OAuthAuthorizationCodeConfig {
+                    client_id: Some("registered-client".into()),
+                    scopes: vec!["read".into()],
+                    ..Default::default()
+                },
+            ));
         }
         let before = serde_json::to_value(&config).unwrap();
 
-        configure_authorization(&mut config, "http://127.0.0.1:8042/cb", vec![], vec![]).unwrap();
+        configure_authorization(&mut config, "http://127.0.0.1:8042/cb", vec![]).unwrap();
         let after = serde_json::to_value(&config).unwrap();
         for key in ["include", "exclude", "lifecycle", "tasks"] {
             assert_eq!(after[key], before[key]);
@@ -488,13 +482,8 @@ mod tests {
         assert_eq!(auth.client_id.as_deref(), Some("registered-client"));
         assert_eq!(auth.scopes, vec!["read".to_string()]);
 
-        configure_authorization(
-            &mut config,
-            "http://127.0.0.1:8042/cb",
-            vec!["new".into()],
-            vec!["advertised".into()],
-        )
-        .unwrap();
+        configure_authorization(&mut config, "http://127.0.0.1:8042/cb", vec!["new".into()])
+            .unwrap();
         let McpTransportConfig::StreamableHttp(http) = &config.transport else {
             panic!("expected HTTP")
         };

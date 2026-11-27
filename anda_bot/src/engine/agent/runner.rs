@@ -129,7 +129,6 @@ impl AndaBot {
             let mut runner = ctx.clone().completion_iter(req, vec![]).unbound();
             runner.set_transient_inline_data(true);
             enable_self_compaction(&mut runner);
-            assistant.inner.apply_merge_discovered_tools(&mut runner);
             if !reserve_chat_history.is_empty() {
                 runner = runner.reserve_chat_history(reserve_chat_history);
             }
@@ -521,7 +520,7 @@ impl SessionRunner {
             }
             return Ok(true);
         };
-        let (mut runner, mut output) = match handoff {
+        let (runner, mut output) = match handoff {
             Ok(result) => result,
             Err(err) => {
                 self.mark_conversation_failed(format!("Compaction failed: {err}"))
@@ -676,9 +675,6 @@ impl SessionRunner {
         self.ctx.base.set_state(source.clone());
         runner.ctx().base.set_state(source);
         // runner 的 chat_history 作为唯一对话历史记录真相源，conversation 和 formation 都从这里获取 messages。
-        self.assistant
-            .inner
-            .apply_merge_discovered_tools(&mut runner);
         self.runner = runner;
         // The engine resumes work the compaction interrupted, and delivers again
         // input the model compacted before acting on. Queued input moves the
@@ -1214,9 +1210,6 @@ impl SessionRunner {
                 }
             }
         }
-        self.assistant
-            .inner
-            .cache_merge_discovered_tools(&self.runner);
 
         match next_result {
             Ok(None) => {

@@ -308,6 +308,9 @@ struct OptionFlags {
     /// Bytes of text the agent gets from one result (default 32768).
     #[arg(long, value_name = "BYTES")]
     output_limit: Option<String>,
+    /// Maximum incoming stdio line, HTTP JSON body or SSE event in bytes (default 8388608).
+    #[arg(long, value_name = "BYTES")]
+    message_limit: Option<String>,
     /// A local server's environment: on (default) gives it the daemon's
     /// whole environment, off only the essentials and its own env.
     #[arg(long, value_name = "on|off")]
@@ -319,6 +322,9 @@ struct OptionFlags {
     /// resources: on (default) or off.
     #[arg(long, value_name = "on|off")]
     resources: Option<String>,
+    /// Whether the agent may inspect remote MCP skills (default off).
+    #[arg(long, value_name = "on|off")]
+    skills: Option<String>,
     /// Whether the server may ask you for input while a call runs: on
     /// (default) or off.
     #[arg(long, value_name = "on|off")]
@@ -336,9 +342,11 @@ impl OptionFlags {
             &self.request_timeout,
             &self.call_timeout,
             &self.output_limit,
+            &self.message_limit,
             &self.inherit_env,
             &self.tasks,
             &self.resources,
+            &self.skills,
             &self.elicitation,
         ]
         .iter()
@@ -411,6 +419,11 @@ impl OptionFlags {
                 ["limits", "output_text_bytes"],
                 &self.output_limit,
             ),
+            (
+                "message-limit",
+                ["limits", "message_bytes"],
+                &self.message_limit,
+            ),
         ] {
             if let Some(value) = value.as_deref().map(str::trim) {
                 let value = match value {
@@ -423,6 +436,7 @@ impl OptionFlags {
         for (flag, key, value) in [
             ("inherit-env", "inherit_env", &self.inherit_env),
             ("resources", "resources", &self.resources),
+            ("skills", "skills", &self.skills),
             ("elicitation", "elicitation", &self.elicitation),
         ] {
             if let Some(value) = value.as_deref() {
@@ -1760,6 +1774,16 @@ fn print_options(id: &str, transport: &str, options: &Value) {
             .as_u64()
             .unwrap_or(32 * 1024)
     );
+    println!(
+        "  message limit: {} bytes",
+        options["limits"]["message_bytes"]
+            .as_u64()
+            .unwrap_or(8 * 1024 * 1024)
+    );
+    println!(
+        "  skills:       {}",
+        or_default(&options["skills"], "false")
+    );
     if transport == "stdio" {
         let inherit = match options["inherit_env"].as_bool() {
             None => "on (default): the daemon's whole environment",
@@ -2077,6 +2101,8 @@ mod tests {
             concurrency: Some("read-only-parallel".into()),
             startup: Some("default".into()),
             tasks: Some("120".into()),
+            skills: Some("on".into()),
+            message_limit: Some("16384".into()),
             inherit_env: Some("off".into()),
             elicitation: Some("off".into()),
             ..Default::default()
@@ -2089,6 +2115,8 @@ mod tests {
                 "timeouts": { "setup_secs": 10, "call_secs": 900 },
                 "concurrency": "read_only_parallel",
                 "inherit_env": false,
+                "skills": true,
+                "limits": {"message_bytes": 16384},
                 "elicitation": false,
                 "tasks": { "max_wait_secs": 120 }
             })
@@ -2099,9 +2127,12 @@ mod tests {
             setup_timeout: Some("default".into()),
             call_timeout: Some("default".into()),
             tasks: Some("off".into()),
+            skills: Some("default".into()),
+            message_limit: Some("default".into()),
             ..Default::default()
         };
         clear.apply(&mut options).unwrap();
+        assert!(options.get("skills").is_none() && options.get("limits").is_none());
         assert!(options.get("timeouts").is_none() && options.get("tasks").is_none());
 
         for flags in [

@@ -4,7 +4,7 @@ use jiff::{
     SignedDuration, Timestamp,
     tz::{AmbiguousOffset, Offset, TimeZone},
 };
-use jiff_cron::{Schedule as CronExprSchedule, TimeUnitSpec};
+use jiff_cron::{Schedule as CronExprSchedule, TimeUnitSpec, jiff as cron_jiff};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt, str::FromStr, time::Duration};
 
@@ -603,7 +603,9 @@ fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxE
     };
     // Search civil time on a fixed clock. The cron iterator adjusts elapsed
     // hours, which can skip valid wall times or shift a nonexistent one.
-    let mut start = timezone.to_datetime(from).to_zoned(TimeZone::UTC)?;
+    let mut start = timezone
+        .to_datetime(from)
+        .to_zoned_datetime(TimeZone::UTC)?;
     let weekdays = cron.days_of_week();
     if !weekdays.is_all() {
         // The cron iterator checks weekdays after its clock fields. Skip entire
@@ -615,11 +617,16 @@ fn schedule_next(expr: &str, from_ms: u64, tz: Option<&str>) -> Result<u64, BoxE
             date = date.tomorrow()?;
         }
         if date != first_date {
-            start = date.to_zoned(TimeZone::UTC)?.checked_sub(second)?;
+            start = date.to_zoned_datetime(TimeZone::UTC)?.checked_sub(second)?;
         }
     }
+    // jiff-cron 0.3 uses jiff 0.2. Exchange the fixed UTC clock as whole
+    // seconds, keeping all IANA and DST resolution in our bundled jiff database.
+    let start = cron_jiff::Timestamp::from_second(start.timestamp().as_second())?
+        .to_zoned(cron_jiff::tz::TimeZone::UTC);
     for candidate in cron.after(start) {
-        let local = timezone.to_ambiguous_timestamp(candidate.datetime());
+        let clock = Timestamp::from_second(candidate.timestamp().as_second())?;
+        let local = timezone.to_ambiguous_timestamp(TimeZone::UTC.to_datetime(clock));
         if matches!(local.offset(), AmbiguousOffset::Gap { .. }) {
             continue;
         }

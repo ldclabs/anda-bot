@@ -14,6 +14,19 @@ pub mod windows_process;
 #[cfg(windows)]
 pub mod windows_run_key;
 
+/// Resolve a proxy call in recorded history without changing its wire name or call ID.
+pub(crate) fn proxied_tool_call(
+    name: &str,
+    args: &serde_json::Value,
+) -> Option<anda_engine::context::ToolsCallArgs> {
+    use anda_engine::context::{TOOLS_CALL_NAME, ToolsCallArgs};
+    if name.eq_ignore_ascii_case(TOOLS_CALL_NAME) {
+        ToolsCallArgs::parse(args).ok()
+    } else {
+        None
+    }
+}
+
 /// Polls `future` behind a type-erased box, as an inlining barrier.
 ///
 /// An optimizer inlines an async function's state machine into its only

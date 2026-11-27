@@ -2843,6 +2843,12 @@
   "mcpResourcesSearch": {
     "message": "Rechercher des ressources"
   },
+  "mcpResourcesOpenDirectory": {
+    "message": "Ouvrir le répertoire $1"
+  },
+  "mcpResourcesEmptyDirectory": {
+    "message": "Ce répertoire est vide."
+  },
   "mcpResourcesNone": {
     "message": "Aucun serveur MCP connecté ne propose de ressources."
   },
@@ -2866,6 +2872,12 @@
   },
   "mcpAutomationsPaused": {
     "message": "$1 automatisations sur événements, dont $2 en pause"
+  },
+  "mcpOptionMessageLimit": {
+    "message": "Taille maximale d’un message (octets)"
+  },
+  "mcpOptionSkills": {
+    "message": "Autoriser la lecture des compétences distantes"
   },
   "mcpOptionResources": {
     "message": "Ressources"

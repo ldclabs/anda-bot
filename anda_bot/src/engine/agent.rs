@@ -9,8 +9,7 @@ use anda_db_utils::UniqueVec;
 use anda_engine::{
     ANONYMOUS,
     context::{
-        AgentCtx, BaseCtx, CompletionRunner, TOOLS_GROUPS_NAME, TOOLS_SEARCH_NAME,
-        TOOLS_SELECT_NAME,
+        AgentCtx, BaseCtx, TOOLS_CALL_NAME, TOOLS_GROUPS_NAME, TOOLS_SEARCH_NAME, TOOLS_SELECT_NAME,
     },
     extension::{
         fs::{EditFileTool, ReadFileTool, SearchFileTool, WriteFileTool},
@@ -105,7 +104,6 @@ struct AndaBotInner {
     browser_manager: Arc<ChromeBrowserTool>,
     transcription_manager: Option<Arc<TranscriptionManager>>,
     active_im_channels: HashSet<String>,
-    merge_discovered_tools_cache: RwLock<HashMap<String, bool>>,
     session_creation_lock: tokio::sync::Mutex<()>,
 }
 
@@ -159,6 +157,7 @@ fn base_tool_dependencies() -> Vec<String> {
         GoalTool::NAME.to_string(),
         TOOLS_SEARCH_NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
+        TOOLS_CALL_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
         SHELL_SESSION_NAME.to_string(),
@@ -194,6 +193,7 @@ fn base_tools() -> Vec<String> {
     vec![
         brain::Client::NAME.to_string(),
         TOOLS_SELECT_NAME.to_string(),
+        TOOLS_CALL_NAME.to_string(),
         TOOLS_GROUPS_NAME.to_string(),
         ShellTool::NAME.to_string(),
         AskUserChoiceTool::NAME.to_string(),
@@ -275,7 +275,6 @@ impl AndaBot {
                 browser_manager,
                 transcription_manager,
                 active_im_channels: active_im_channels.into_iter().collect(),
-                merge_discovered_tools_cache: RwLock::new(HashMap::new()),
                 session_creation_lock: tokio::sync::Mutex::new(()),
             }),
         }
@@ -1484,56 +1483,6 @@ impl Agent<AgentCtx> for AndaBot {
     }
 }
 
-impl AndaBotInner {
-    fn apply_merge_discovered_tools(&self, runner: &mut CompletionRunner) {
-        if let Some(merge_discovered_tools) = merge_discovered_tools_for_model(
-            &self.merge_discovered_tools_cache,
-            &runner.model().model_name(),
-        ) {
-            runner.set_merge_discovered_tools(Some(merge_discovered_tools));
-        }
-    }
-
-    fn cache_merge_discovered_tools(&self, runner: &CompletionRunner) {
-        let Some(merge_discovered_tools) = runner.merge_discovered_tools() else {
-            return;
-        };
-        let Some(model_name) = merge_discovered_tools_model_key(&runner.model().model_name())
-        else {
-            return;
-        };
-
-        self.merge_discovered_tools_cache
-            .write()
-            .insert(model_name, merge_discovered_tools);
-    }
-}
-
-/// Whether a model takes discovered tools merged into its request: the known
-/// policy of its family, otherwise what an earlier run of it found out.
-fn merge_discovered_tools_for_model(
-    cache: &RwLock<HashMap<String, bool>>,
-    model_name: &str,
-) -> Option<bool> {
-    let key = merge_discovered_tools_model_key(model_name)?;
-    if key.contains("deepseek") {
-        Some(false)
-    } else if key.starts_with("gpt") || key.contains("/gpt") || key.contains("chatgpt") {
-        Some(true)
-    } else {
-        cache.read().get(&key).copied()
-    }
-}
-
-fn merge_discovered_tools_model_key(model_name: &str) -> Option<String> {
-    let model_name = model_name.trim().to_ascii_lowercase();
-    if model_name.is_empty() {
-        None
-    } else {
-        Some(model_name)
-    }
-}
-
 /// The memory mode a request asks for. The persisted policy is host-owned and
 /// never accepted from request metadata.
 fn requested_memory_mode(ctx: &AgentCtx) -> Result<Option<memory_policy::MemoryMode>, BoxError> {
@@ -1794,49 +1743,14 @@ mod tests {
 
     #[test]
     fn base_agent_tools_include_some_tools() {
+        assert!(base_tools().contains(&TOOLS_CALL_NAME.to_string()));
+        assert!(base_tool_dependencies().contains(&TOOLS_CALL_NAME.to_string()));
         assert!(base_tool_dependencies().contains(&GoalTool::NAME.to_string()));
         assert!(!base_tools().contains(&GoalTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&McpServerTool::NAME.to_string()));
         assert!(!base_tools().contains(&McpServerTool::NAME.to_string()));
         assert!(base_tool_dependencies().contains(&ManageMcpServerTool::NAME.to_string()));
         assert!(!base_tools().contains(&ManageMcpServerTool::NAME.to_string()));
-    }
-
-    #[test]
-    fn known_merge_discovered_tools_policy_covers_deepseek_and_gpt_models() {
-        // A cached probe never overrides a known model family.
-        let cache = RwLock::new(HashMap::from([("deepseek-v4-pro".to_string(), true)]));
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "DeepSeek-V4-Pro"),
-            Some(false)
-        );
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "openai/gpt-5.4"),
-            Some(true)
-        );
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "chatgpt-codex"),
-            Some(true)
-        );
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "gemini-3-pro"),
-            None
-        );
-        assert_eq!(merge_discovered_tools_for_model(&cache, "  "), None);
-    }
-
-    #[test]
-    fn merge_discovered_tools_cache_reuses_unknown_model_probe_result() {
-        let cache = RwLock::new(HashMap::from([("custom-model".to_string(), true)]));
-
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "CUSTOM-MODEL"),
-            Some(true)
-        );
-        assert_eq!(
-            merge_discovered_tools_for_model(&cache, "unknown-model"),
-            None
-        );
     }
 
     #[test]
